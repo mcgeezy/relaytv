@@ -52,7 +52,7 @@ docker compose up -d --build
 - **Send links from Android to the TV** and start playback in seconds
 - **Queue videos for later** without interrupting what’s already playing
 - **Use Home Assistant as the control layer** for a dedicated TV box
-- **Browse Jellyfin on the TV** with a clean, full-screen interface built for living-room use
+- **Browse Jellyfin** with a clean interface built for desktop/mobile control for playback on TV.
 - **Trigger playback or on-screen notifications** from automations
 - **Build AI agent workflows** that control TV playback through the API
 
@@ -111,7 +111,7 @@ Send links directly to RelayTV from Android and control playback from your phone
 ### Integrations
 
 - **Home Assistant** for entities, services, automations, and dashboard workflows
-- **Jellyfin** for a beautiful TV-friendly library browsing experience
+- **Jellyfin** for a beautiful library browsing experience
 - **Android companion workflows** for fast share-to-TV control
 - **Local network automation and scripting** through the HTTP API
 
@@ -126,7 +126,7 @@ Send links directly to RelayTV from Android and control playback from your phone
 
 ## Jellyfin on RelayTV
 
-RelayTV includes a beautiful TV-friendly Jellyfin client experience, making it easy to browse your library and launch playback directly on the connected display.
+RelayTV includes a beautiful Jellyfin client experience, making it easy to browse your library and launch playback directly on the connected display.
 
 ### Why it matters
 
