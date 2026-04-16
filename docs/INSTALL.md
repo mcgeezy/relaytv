@@ -58,8 +58,7 @@ Source checkout install:
 cd /path/to/relaytv
 chmod +x scripts/install.sh scripts/doctor.sh
 ./scripts/install.sh
-docker compose pull
-docker compose up -d
+docker compose up -d --build
 ./scripts/doctor.sh
 ```
 
@@ -78,7 +77,6 @@ docker compose up -d --build
 
 - detects the active runtime (`wayland`, `x11`, or `drm`)
 - writes only the `.env` keys needed for the detected runtime plus non-default overrides
-- writes a non-default `RELAYTV_IMAGE_REF` when the current checkout maps to a published branch/tag image
 - emits Docker build bundle flags only when an optional runtime path needs them
 - generates host device overrides for Raspberry Pi V4L2 devices and optional HDMI-CEC passthrough
 - records host identity (`PUID`, `PGID`, render group gid)
@@ -97,14 +95,16 @@ Root `install.sh`:
 
 Published-image defaults:
 
-- `docker-compose.yml` now supports both `build:` and `image:`
+- the bootstrap installer writes a release-only `docker-compose.yml` that uses the published image
+- source checkouts use the repo `docker-compose.yml` and should start with `docker compose up -d --build`
 - default image ref is `ghcr.io/mcgeezy/relaytv:latest`
 - operators can use `docker compose pull && docker compose up -d`
-- local developers can keep using `docker compose up -d --build`
 
 Published image:
 
 - `ghcr.io/mcgeezy/relaytv:latest` is the only public image tag offered by the installer.
+- The deleted `dev` branch is not an install target and no `dev` image tag is offered.
+- Use `main` for published-image installs; use a source checkout plus `docker compose up -d --build` for local development or testing.
 - Local developers can still use build-time bundle flags with `docker compose up -d --build` when testing optional runtime paths.
 
 ## Docker Build Bundles
