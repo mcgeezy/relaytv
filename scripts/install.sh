@@ -40,7 +40,8 @@ Environment:
       Optional published image reference written to .env for the
       `docker compose pull && docker compose up -d` flow.
   RELAYTV_CEC_ENABLED=1|0
-      Enables optional HDMI-CEC device passthrough when /dev/cec* exists.
+      Enables optional HDMI-CEC runtime control and device passthrough when
+      /dev/cec* exists.
 EOF
 }
 
@@ -209,6 +210,8 @@ YTDLP_AUTO_UPDATE_TIMEOUT_SEC_VAL="${RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC:-}"
 YTDLP_AUTO_UPDATE_STATE_FILE_VAL="${RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE:-}"
 PI_VIDEO_DEVICES_ENABLED_VAL="${RELAYTV_PI_VIDEO_DEVICES_ENABLED:-}"
 CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-0}"
+CEC_RUNTIME_VAL="${RELAYTV_CEC:-}"
+CEC_MONITOR_VAL="${RELAYTV_CEC_MONITOR:-}"
 
 if [ -z "$PI_VIDEO_DEVICES_ENABLED_VAL" ]; then
   if [ "$HOST_PROFILE" = "raspi" ]; then
@@ -231,8 +234,28 @@ esac
 case "$CEC_ENABLED_VAL" in
   0|1) ;;
   *)
-    say "WARN: RELAYTV_CEC_ENABLED must be 0 or 1. Disabling HDMI-CEC passthrough."
+    say "WARN: RELAYTV_CEC_ENABLED must be 0 or 1. Disabling HDMI-CEC support."
     CEC_ENABLED_VAL="0"
+    ;;
+esac
+if [ -z "$CEC_RUNTIME_VAL" ]; then
+  CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
+fi
+if [ -z "$CEC_MONITOR_VAL" ]; then
+  CEC_MONITOR_VAL="$CEC_ENABLED_VAL"
+fi
+case "$CEC_RUNTIME_VAL" in
+  0|1) ;;
+  *)
+    say "WARN: RELAYTV_CEC must be 0 or 1. Falling back to RELAYTV_CEC_ENABLED=${CEC_ENABLED_VAL}."
+    CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
+    ;;
+esac
+case "$CEC_MONITOR_VAL" in
+  0|1) ;;
+  *)
+    say "WARN: RELAYTV_CEC_MONITOR must be 0 or 1. Falling back to RELAYTV_CEC=${CEC_RUNTIME_VAL}."
+    CEC_MONITOR_VAL="$CEC_RUNTIME_VAL"
     ;;
 esac
 
@@ -938,6 +961,16 @@ if [ "${YTDLP_AUTO_UPDATE_STATE_FILE_VAL}" != "/data/.relaytv-ytdlp-update.json"
   YTDLP_ENV_BLOCK+=$'\n'
 fi
 
+CEC_ENV_BLOCK=""
+if [ "${CEC_ENABLED_VAL}" = "1" ] || [ "${CEC_RUNTIME_VAL}" = "1" ] || [ "${CEC_MONITOR_VAL}" = "1" ]; then
+  CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC" "${CEC_RUNTIME_VAL}")
+  CEC_ENV_BLOCK+=$'\n'
+  CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC_ENABLED" "${CEC_ENABLED_VAL}")
+  CEC_ENV_BLOCK+=$'\n'
+  CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC_MONITOR" "${CEC_MONITOR_VAL}")
+  CEC_ENV_BLOCK+=$'\n'
+fi
+
 if [ "${RENDER_GID_DETECTED}" != "992" ]; then
   RENDER_ENV_BLOCK+=$(emit_env_line "RELAYTV_RENDER_GID" "${RENDER_GID_DETECTED}")
   RENDER_ENV_BLOCK+=$'\n'
@@ -958,6 +991,7 @@ fi
   emit_section "Optional Docker build feature bundles" "${BUILD_ENV_BLOCK}"
   emit_section "Headless remote display" "${HEADLESS_ENV_BLOCK}"
   emit_section "yt-dlp runtime maintenance" "${YTDLP_ENV_BLOCK}"
+  emit_section "Optional HDMI-CEC control" "${CEC_ENV_BLOCK}"
   emit_section "Host render group id for container group_add mapping" "${RENDER_ENV_BLOCK}"
   emit_section "Audio device override (blank means runtime auto-detect)" "${AUDIO_ENV_BLOCK}"
 } > .env
@@ -1017,6 +1051,8 @@ say "  RELAYTV_HOST_ARCH: ${HOST_ARCH}"
 say "  RELAYTV_HOST_PROFILE: ${HOST_PROFILE}"
 say "  RELAYTV_PI_VIDEO_DEVICES_ENABLED: ${PI_VIDEO_DEVICES_ENABLED_VAL}"
 say "  RELAYTV_CEC_ENABLED: ${CEC_ENABLED_VAL}"
+say "  RELAYTV_CEC: ${CEC_RUNTIME_VAL}"
+say "  RELAYTV_CEC_MONITOR: ${CEC_MONITOR_VAL}"
 say "  CEC devices detected: ${CEC_NODES_DETECTED:-<none>}"
 if [ "$PI_VIDEO_DEVICES_ENABLED_VAL" = "1" ] || { [ "$CEC_ENABLED_VAL" = "1" ] && [ -n "$CEC_NODES_DETECTED" ]; }; then
   say "  compose override: $ROOT/docker-compose.override.yml (host device passthrough)"

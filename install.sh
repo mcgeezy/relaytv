@@ -31,7 +31,8 @@ Options:
       Non-interactive defaults. Currently disables optional CEC unless
       --enable-cec is also supplied.
   --enable-cec
-      Enable HDMI-CEC device passthrough when a /dev/cec* device is present.
+      Enable HDMI-CEC runtime control and device passthrough when a /dev/cec*
+      device is present.
   --no-cec
       Do not enable HDMI-CEC passthrough.
   --no-pull
@@ -250,7 +251,7 @@ prompt_enable_cec() {
     say ""
     say "HDMI-CEC hardware was detected: $summary"
     say "Enable optional TV controls?"
-    say "This lets RelayTV turn the TV on, switch inputs, and send basic HDMI playback/navigation commands."
+    say "This lets RelayTV turn the TV on, switch inputs, and monitor standby/source changes."
     say "Choose no if this device shares HDMI with equipment you do not want RelayTV to control."
     printf "Enable HDMI-CEC passthrough? [y/N] "
   } > /dev/tty
