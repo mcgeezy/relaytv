@@ -233,6 +233,10 @@ Published images still require the same Linux media-host integration as local bu
 
 - `/dev/dri` passthrough for GPU acceleration
 - `/dev/snd` passthrough for audio
+- NVIDIA decode acceleration requires host NVIDIA drivers plus Docker NVIDIA
+  Container Toolkit. When both an NVIDIA device and toolkit are detected,
+  `scripts/install.sh` writes a generated compose override with `gpus: all` and
+  NVIDIA driver capabilities for decode/playback.
 - host display/session env such as `DISPLAY`, `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR`
 - host networking
 - `/run/user/<uid>` and X11 socket mounts for desktop session access

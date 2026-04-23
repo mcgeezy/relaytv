@@ -151,6 +151,21 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "sort -u" in text
 
 
+def test_repo_installer_generates_nvidia_passthrough_when_supported() -> None:
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+    install_doc = (ROOT_DIR / "docs/INSTALL.md").read_text()
+
+    assert "detect_nvidia_device" in text
+    assert "detect_nvidia_docker_toolkit" in text
+    assert "NVIDIA_PASSTHROUGH_ENABLED" in text
+    assert "gpus: all" in text
+    assert "NVIDIA_VISIBLE_DEVICES=all" in text
+    assert "NVIDIA_DRIVER_CAPABILITIES=compute,video,graphics,utility" in text
+    assert "NVIDIA decoder passthrough disabled" in text
+    assert "Docker NVIDIA toolkit" in text
+    assert "Container Toolkit" in install_doc
+
+
 def test_repo_installer_does_not_print_runtime_test_next_steps() -> None:
     text = (ROOT_DIR / "scripts/install.sh").read_text()
 
@@ -709,6 +724,10 @@ def test_overlay_playback_visibility_prefers_session_and_transition_signals() ->
     assert "j.native_qt_mpv_runtime_stream_loaded === true" in response.text
     assert "j.transition_in_progress === true" in response.text
     assert "return qtRuntimeActive || sessionActive;" in response.text
+    assert "function updateOverlayToastScale()" in response.text
+    assert "Math.min(vw / 1920, vh / 1080)" in response.text
+    assert "--toast-width" in response.text
+    assert "root.style.setProperty(name, `${Math.round(Number(base) * scale)}px`);" in response.text
 
 
 def test_pwa_brand_banner_png_asset_resolves_with_logo_fallback() -> None:

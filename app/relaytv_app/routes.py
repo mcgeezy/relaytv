@@ -1942,6 +1942,27 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       --err:#ff6f91;
       --shadow:0 22px 44px rgba(0,0,0,.40);
       --radius:20px;
+      --overlay-scale:1;
+      --toast-width:430px;
+      --toast-gap:11px;
+      --toast-edge:22px;
+      --toast-edge-center:20px;
+      --toast-pad-y:13px;
+      --toast-pad-x:14px;
+      --toast-radius:15px;
+      --toast-shadow-y:16px;
+      --toast-shadow-blur:36px;
+      --toast-accent-width:4px;
+      --toast-accent-glow:16px;
+      --toast-top-gap:10px;
+      --toast-icon-size:24px;
+      --toast-icon-font:13px;
+      --toast-text-font:14px;
+      --toast-link-font:14px;
+      --toast-link-gap:6px;
+      --toast-image-gap:10px;
+      --toast-image-height:124px;
+      --toast-image-radius:11px;
     }
     html,body{height:100%;margin:0;overflow:hidden;background:var(--overlay-debug-bg);color:var(--txt);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;cursor:none!important;}
     body *{cursor:none!important;}
@@ -1950,22 +1971,22 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     body.idle .stage{opacity:1;visibility:visible;}
     .idleFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;}
 
-    .toasts{position:fixed;width:min(430px,70vw);display:flex;flex-direction:column;gap:11px;pointer-events:none;}
-    .toasts.top-left{top:22px;left:22px;right:auto;bottom:auto;transform:none;}
-    .toasts.top-right{top:22px;right:22px;left:auto;bottom:auto;transform:none;}
-    .toasts.bottom-right{bottom:22px;right:22px;left:auto;top:auto;transform:none;}
-    .toasts.bottom-left{bottom:22px;left:22px;right:auto;top:auto;transform:none;}
-    .toasts.top-center{top:20px;left:50%;right:auto;bottom:auto;transform:translateX(-50%);}
-    .toast{position:relative;overflow:hidden;padding:13px 14px;border-radius:15px;background:rgba(9,16,28,.82);border:1px solid rgba(42,168,255,.26);box-shadow:0 16px 36px rgba(0,0,0,.44);
+    .toasts{position:fixed;width:min(var(--toast-width),70vw);display:flex;flex-direction:column;gap:var(--toast-gap);pointer-events:none;}
+    .toasts.top-left{top:var(--toast-edge);left:var(--toast-edge);right:auto;bottom:auto;transform:none;}
+    .toasts.top-right{top:var(--toast-edge);right:var(--toast-edge);left:auto;bottom:auto;transform:none;}
+    .toasts.bottom-right{bottom:var(--toast-edge);right:var(--toast-edge);left:auto;top:auto;transform:none;}
+    .toasts.bottom-left{bottom:var(--toast-edge);left:var(--toast-edge);right:auto;top:auto;transform:none;}
+    .toasts.top-center{top:var(--toast-edge-center);left:50%;right:auto;bottom:auto;transform:translateX(-50%);}
+    .toast{position:relative;overflow:hidden;padding:var(--toast-pad-y) var(--toast-pad-x);border-radius:var(--toast-radius);background:rgba(9,16,28,.82);border:1px solid rgba(42,168,255,.26);box-shadow:0 var(--toast-shadow-y) var(--toast-shadow-blur) rgba(0,0,0,.44);
       opacity:0;transform:translateY(-8px) scale(.98);transition:opacity __PLAYBACK_NOTIFY_FADE_MS__ms ease,transform __PLAYBACK_NOTIFY_FADE_MS__ms ease,border-color __PLAYBACK_NOTIFY_FADE_MS__ms ease;pointer-events:auto;}
     .toast.show{opacity:1;transform:translateY(0) scale(1);}
-    .toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent);box-shadow:0 0 16px var(--accent);}
+    .toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--toast-accent-width);background:var(--accent);box-shadow:0 0 var(--toast-accent-glow) var(--accent);}
     .toast.success{--accent:var(--ok)} .toast.warn{--accent:var(--warn)} .toast.error{--accent:var(--err)}
-    .toastTop{display:flex;align-items:center;gap:10px;}
-    .ico{width:24px;height:24px;border-radius:999px;background:rgba(255,255,255,.08);display:grid;place-items:center;font-size:13px;}
-    .tTxt{font-size:14px;line-height:1.28;}
-    .toast a{color:inherit;text-decoration:underline;font-weight:600;display:inline-block;margin-top:6px;pointer-events:auto;}
-    .toast .img{margin-top:10px;width:100%;height:124px;display:none;object-fit:cover;border-radius:11px;border:1px solid rgba(130,170,220,.25);background:rgba(255,255,255,.04)}
+    .toastTop{display:flex;align-items:center;gap:var(--toast-top-gap);}
+    .ico{width:var(--toast-icon-size);height:var(--toast-icon-size);border-radius:999px;background:rgba(255,255,255,.08);display:grid;place-items:center;font-size:var(--toast-icon-font);}
+    .tTxt{font-size:var(--toast-text-font);line-height:1.28;}
+    .toast a{color:inherit;text-decoration:underline;font-weight:600;font-size:var(--toast-link-font);display:inline-block;margin-top:var(--toast-link-gap);pointer-events:auto;}
+    .toast .img{margin-top:var(--toast-image-gap);width:100%;height:var(--toast-image-height);display:none;object-fit:cover;border-radius:var(--toast-image-radius);border:1px solid rgba(130,170,220,.25);background:rgba(255,255,255,.04)}
     .toast .img.ready{display:block;}
 
   </style>
@@ -1985,6 +2006,44 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     let _overlayEventSource = null;
     let _overlayLastEventTs = Date.now();
     let _overlayReportedState = '';
+    const overlayToastMetrics = [
+      ['--toast-width', 430],
+      ['--toast-gap', 11],
+      ['--toast-edge', 22],
+      ['--toast-edge-center', 20],
+      ['--toast-pad-y', 13],
+      ['--toast-pad-x', 14],
+      ['--toast-radius', 15],
+      ['--toast-shadow-y', 16],
+      ['--toast-shadow-blur', 36],
+      ['--toast-accent-width', 4],
+      ['--toast-accent-glow', 16],
+      ['--toast-top-gap', 10],
+      ['--toast-icon-size', 24],
+      ['--toast-icon-font', 13],
+      ['--toast-text-font', 14],
+      ['--toast-link-font', 14],
+      ['--toast-link-gap', 6],
+      ['--toast-image-gap', 10],
+      ['--toast-image-height', 124],
+      ['--toast-image-radius', 11],
+    ];
+
+    function updateOverlayToastScale(){
+      try{
+        const vw = Math.max(1, Number(window.innerWidth || 1920));
+        const vh = Math.max(1, Number(window.innerHeight || 1080));
+        const scale = Math.min(4, Math.max(0.75, Math.min(vw / 1920, vh / 1080)));
+        const root = document.documentElement;
+        root.style.setProperty('--overlay-scale', scale.toFixed(3));
+        for(const [name, base] of overlayToastMetrics){
+          root.style.setProperty(name, `${Math.round(Number(base) * scale)}px`);
+        }
+      }catch(_e){}
+    }
+
+    updateOverlayToastScale();
+    window.addEventListener('resize', updateOverlayToastScale, {passive:true});
 
     function overlayPlaybackVisible(state){
       const j = state || {};
