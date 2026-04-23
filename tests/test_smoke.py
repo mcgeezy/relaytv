@@ -48,6 +48,19 @@ def test_ui_smoke() -> None:
     assert 'https://buymeacoffee.com/relaytv' in response.text
     assert 'img.buymeacoffee.com/button-api' in response.text
     assert 'function openAbout' in response.text
+    assert 'id="notifySection"' in response.text
+    assert 'id="notifyTextInput"' in response.text
+    assert 'id="notifyImageInput"' in response.text
+    assert 'accept="image/*"' in response.text
+    assert 'id="notifyImageUrlInput"' in response.text
+    assert 'placeholder="Or paste image URL…"' in response.text
+    assert 'id="notifyPositionSelect"' in response.text
+    assert '<option value="top-left" selected>Top left</option>' in response.text
+    assert 'id="notifyDurationInput"' in response.text
+    assert 'id="notifySendBtn"' in response.text
+    assert "async function submitNotificationToast()" in response.text
+    assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in response.text
+    assert "await _fetchWithTimeout('/overlay'" in response.text
     assert 'bindAboutUi();' in response.text
     assert 'class="nowSubRow"' in response.text
     assert 'id="langBackdrop"' in response.text

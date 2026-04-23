@@ -8306,11 +8306,78 @@ def ui():
       outline: none;
     }
     @media (prefers-color-scheme: light){
-      .urlInput{ background: rgba(255,255,255,.92); }
+      .urlInput,
+      .notifyInput{ background: rgba(255,255,255,.92); }
     }
     .helperTxt{ font-size: 12px; color: var(--muted2); margin-top: 8px; min-height: 16px; }
     .helperTxt.err{ color: #ff9aa8; }
     .helperTxt.ok{ color: #9df6b7; }
+    .addDivider{
+      height: 1px;
+      margin: 16px 0 14px;
+      background: linear-gradient(90deg, transparent, rgba(125,211,252,.42), transparent);
+    }
+    .notifySection{
+      display: grid;
+      gap: 10px;
+    }
+    .notifyTitle{
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .notifyGrid{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px 120px;
+      gap: 10px;
+      align-items: end;
+    }
+    @media (max-width: 720px){
+      .notifyGrid{ grid-template-columns: 1fr; }
+    }
+    .notifyField{
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .notifyField label{
+      font-size: 12px;
+      color: var(--muted2);
+      font-weight: 700;
+    }
+    .notifyInput{
+      width: 100%;
+      padding: 11px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--stroke);
+      background: rgba(0,0,0,.12);
+      color: var(--text);
+      outline: none;
+    }
+    textarea.notifyInput{
+      min-height: 78px;
+      resize: vertical;
+      line-height: 1.35;
+      font-family: inherit;
+    }
+    .notifyFile{
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .notifyActions{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .notifyActions button{
+      min-height: 42px;
+      padding: 10px 14px;
+      border-radius: 14px;
+    }
 
     .hidden{ display:none !important; }
 
@@ -10126,6 +10193,41 @@ def ui():
         </div>
 
         <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
+
+        <div class="addDivider" aria-hidden="true"></div>
+
+        <div id="notifySection" class="notifySection">
+          <div class="notifyTitle">Send Toast Notification</div>
+          <div class="notifyField">
+            <label for="notifyTextInput">Text</label>
+            <textarea id="notifyTextInput" class="notifyInput" maxlength="500" placeholder="Notification text…"></textarea>
+          </div>
+          <div class="notifyGrid">
+            <div class="notifyField">
+              <label for="notifyImageInput">Image (optional)</label>
+              <input id="notifyImageInput" class="notifyFile" type="file" accept="image/*" />
+              <input id="notifyImageUrlInput" class="notifyInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Or paste image URL…" />
+            </div>
+            <div class="notifyField">
+              <label for="notifyPositionSelect">Screen location</label>
+              <select id="notifyPositionSelect" class="notifyInput">
+                <option value="top-left" selected>Top left</option>
+                <option value="top-right">Top right</option>
+                <option value="top-center">Top center</option>
+                <option value="bottom-left">Bottom left</option>
+                <option value="bottom-right">Bottom right</option>
+              </select>
+            </div>
+            <div class="notifyField">
+              <label for="notifyDurationInput">Seconds</label>
+              <input id="notifyDurationInput" class="notifyInput" type="number" inputmode="decimal" min="0.8" max="30" step="0.5" value="5" />
+            </div>
+          </div>
+          <div class="notifyActions">
+            <div id="notifyHelperTxt" class="helperTxt" aria-live="polite"></div>
+            <button id="notifySendBtn" class="good" title="Send notification">Send</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -10412,6 +10514,84 @@ async function submitAddUrl(mode){
     await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
   }
   closeAddUrl();
+}
+
+function _setNotifyHelper(msg, kind){
+  const el = document.getElementById('notifyHelperTxt');
+  if (!el) return;
+  el.classList.remove('err', 'ok');
+  if (kind === 'err' || kind === 'ok') el.classList.add(kind);
+  el.textContent = String(msg || '').trim();
+}
+
+function readNotifyImageDataUrl(file){
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve('');
+      return;
+    }
+    if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+      reject(new Error('Please choose an image file.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read selected image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function submitNotificationToast(){
+  const textEl = document.getElementById('notifyTextInput');
+  const imageEl = document.getElementById('notifyImageInput');
+  const imageUrlEl = document.getElementById('notifyImageUrlInput');
+  const posEl = document.getElementById('notifyPositionSelect');
+  const durEl = document.getElementById('notifyDurationInput');
+  const sendBtn = document.getElementById('notifySendBtn');
+  const text = String(textEl?.value || '').trim();
+  if (!text) {
+    _setNotifyHelper('Enter notification text first.', 'err');
+    if (textEl) textEl.focus();
+    return;
+  }
+  const position = String(posEl?.value || 'top-left').trim() || 'top-left';
+  let duration = Number(durEl?.value || 5);
+  if (!Number.isFinite(duration)) duration = 5;
+  duration = Math.min(30, Math.max(0.8, duration));
+  const payload = {text, position, duration, level:'info', icon:'info'};
+  try {
+    if (sendBtn) sendBtn.disabled = true;
+    _setNotifyHelper('Sending…', '');
+    const file = imageEl && imageEl.files && imageEl.files.length ? imageEl.files[0] : null;
+    const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();
+    if (imageUrl) {
+      const normalizedImageUrl = normalizeUrl(imageUrl);
+      if (!/^(https?:\/\/|\/|data:image\/)/i.test(normalizedImageUrl)) {
+        throw new Error('Image URL must start with http(s)://, www., /, or data:image/.');
+      }
+      payload.image_url = normalizedImageUrl;
+    }
+    const r = await _fetchWithTimeout('/overlay', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    }, 5000);
+    if (!r.ok) {
+      let detail = '';
+      try {
+        const body = await r.json();
+        detail = body && body.detail ? (typeof body.detail === 'string' ? body.detail : (body.detail.message || body.detail.error || '')) : '';
+      } catch(_e) {}
+      throw new Error(detail || `Notification failed (${r.status})`);
+    }
+    _setNotifyHelper('Notification sent.', 'ok');
+    if (imageEl) imageEl.value = '';
+    if (imageUrlEl) imageUrlEl.value = '';
+  } catch (e) {
+    _setNotifyHelper(e && e.message ? e.message : 'Notification failed.', 'err');
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+  }
 }
 
 function fmtTime(s){
@@ -14267,12 +14447,14 @@ function bindAddUrlUi(){
   const playBtn  = document.getElementById('addPlayBtn');
   const queueBtn = document.getElementById('addQueueBtn');
   const inp      = document.getElementById('addUrlInput');
+  const notifyBtn = document.getElementById('notifySendBtn');
 
   if (btn) btn.onclick = openAddUrl;
   if (closeBtn) closeBtn.onclick = closeAddUrl;
   if (pasteBtn) pasteBtn.onclick = pasteIntoAddUrl;
   if (playBtn) playBtn.onclick = ()=>submitAddUrl('play');
   if (queueBtn) queueBtn.onclick = ()=>submitAddUrl('queue');
+  if (notifyBtn) notifyBtn.onclick = submitNotificationToast;
 
   if (bd) bd.addEventListener('click', (e) => {
     if (e.target === bd) closeAddUrl();
@@ -14289,7 +14471,8 @@ function bindAddUrlUi(){
     if (e.key === 'Escape') closeAddUrl();
     // When the modal is open, Enter defaults to Play
     const open = bd && !bd.classList.contains('hidden');
-    if (open && e.key === 'Enter') submitAddUrl('play');
+    const target = e.target;
+    if (open && e.key === 'Enter' && !(target && target.closest && target.closest('#notifySection'))) submitAddUrl('play');
   });
 }
 
