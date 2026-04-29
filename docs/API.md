@@ -441,6 +441,9 @@ Native Jellyfin browse/detail endpoints:
 - `GET /jellyfin/audio/options`
 - `POST /jellyfin/audio/select`
   - body: `{"index": int}`
+- `GET /jellyfin/subtitle/options`
+- `POST /jellyfin/subtitle/select`
+  - body: `{"index": int}` where `-1` turns subtitles off
 - `POST /jellyfin/action`
   - item play command wrapper (`play_now`, `play_next`, `play_last`, `resume`)
 

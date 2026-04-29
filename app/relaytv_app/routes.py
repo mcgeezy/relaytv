@@ -352,6 +352,10 @@ class JellyfinAudioSelectReq(BaseModel):
     index: int
 
 
+class JellyfinSubtitleSelectReq(BaseModel):
+    index: int
+
+
 
 def _overlay_osd_debug_enabled() -> bool:
     v = (os.getenv("RELAYTV_OVERLAY_OSD_DEBUG") or os.getenv("OVERLAY_OSD_DEBUG") or "").strip().lower()
@@ -3196,6 +3200,113 @@ def jellyfin_audio_options(refresh: bool = False):
     }
 
 
+@router.get("/jellyfin/subtitle/options")
+def jellyfin_subtitle_options(refresh: bool = False):
+    _require_jellyfin_catalog_ready()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not isinstance(now, dict) or not now:
+        raise HTTPException(status_code=409, detail="no active now_playing item")
+    provider = str(now.get("provider") or "").strip().lower()
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        item_id = _extract_jellyfin_item_id_from_url_raw(str(now.get("url") or ""))
+    if provider != "jellyfin" and not item_id:
+        raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    if not item_id:
+        raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+    try:
+        detail = jellyfin_receiver.get_item_detail(item_id, refresh=bool(refresh))
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin subtitle options")
+
+    subtitle_streams = detail.get("subtitle_streams") if isinstance(detail, dict) and isinstance(detail.get("subtitle_streams"), list) else []
+    current_idx = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_subtitle_stream_index") or "").strip(),
+            _extract_jellyfin_subtitle_stream_index_from_url(str(now.get("url") or "")),
+        ]
+    )
+    runtime_idx, runtime_lang, runtime_off = _jellyfin_runtime_selected_subtitle_stream(subtitle_streams)
+    if runtime_off:
+        current_idx = "-1"
+    elif runtime_idx is not None:
+        current_idx = str(runtime_idx)
+    current_is_off = current_idx == "-1"
+    selected_numeric: int | None = None
+    try:
+        if not current_is_off and current_idx != "":
+            selected_numeric = int(current_idx)
+    except Exception:
+        selected_numeric = None
+
+    options: list[dict[str, object]] = [{
+        "index": -1,
+        "language": "",
+        "display": "Off",
+        "is_default": False,
+        "is_current": current_is_off,
+        "is_off": True,
+    }]
+    current_opt: dict[str, object] | None = options[0] if current_is_off else None
+    fallback_default: dict[str, object] | None = None
+    fallback_first: dict[str, object] | None = None
+    for row in subtitle_streams:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx_int = int(row.get("index"))
+        except Exception:
+            continue
+        opt = {
+            "index": idx_int,
+            "language": str(row.get("language") or "").strip(),
+            "display": str(row.get("display") or "").strip(),
+            "is_default": bool(row.get("is_default")),
+            "is_current": False,
+            "is_off": False,
+        }
+        if fallback_first is None:
+            fallback_first = opt
+        if bool(opt["is_default"]) and fallback_default is None:
+            fallback_default = opt
+        if selected_numeric is not None and idx_int == selected_numeric:
+            opt["is_current"] = True
+            current_opt = opt
+        options.append(opt)
+
+    if current_opt is None and fallback_default is not None:
+        for opt in options:
+            if int(opt.get("index")) == int(fallback_default.get("index")):
+                opt["is_current"] = True
+                current_opt = opt
+                break
+    if current_opt is None and fallback_first is not None:
+        for opt in options:
+            if int(opt.get("index")) == int(fallback_first.get("index")):
+                opt["is_current"] = True
+                current_opt = opt
+                break
+
+    current_lang = "off" if current_is_off else _first_nonempty_str(
+        [
+            str((current_opt or {}).get("language") or "").strip(),
+            runtime_lang,
+            str(now.get("jellyfin_subtitle_language") or "").strip(),
+            str(now.get("subtitle_language") or "").strip(),
+            str(detail.get("subtitle_language") if isinstance(detail, dict) else "").strip(),
+        ]
+    )
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "current_subtitle_stream_index": -1 if current_is_off else (current_opt or {}).get("index"),
+        "current_subtitle_language": current_lang,
+        "current_subtitle_off": current_is_off,
+        "options": options,
+    }
+
+
 @router.post("/jellyfin/audio/select")
 def jellyfin_audio_select(req: JellyfinAudioSelectReq):
     st = _require_jellyfin_catalog_ready()
@@ -3408,6 +3519,231 @@ def jellyfin_audio_select(req: JellyfinAudioSelectReq):
         "item_id": item_id,
         "current_audio_stream_index": requested_idx,
         "current_audio_language": str(now_out.get("jellyfin_audio_language") or now_out.get("audio_language") or "").strip(),
+        "queued_items_retargeted": queue_retargeted,
+        "now_playing": now_out,
+    }
+
+
+@router.post("/jellyfin/subtitle/select")
+def jellyfin_subtitle_select(req: JellyfinSubtitleSelectReq):
+    st = _require_jellyfin_catalog_ready()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not isinstance(now, dict) or not now:
+        raise HTTPException(status_code=409, detail="no active now_playing item")
+    provider = str(now.get("provider") or "").strip().lower()
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        item_id = _extract_jellyfin_item_id_from_url_raw(str(now.get("url") or ""))
+    if provider != "jellyfin" and not item_id:
+        raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    if not item_id:
+        raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+
+    try:
+        detail = jellyfin_receiver.get_item_detail(item_id)
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin item detail")
+
+    subtitle_streams = detail.get("subtitle_streams") if isinstance(detail, dict) and isinstance(detail.get("subtitle_streams"), list) else []
+    try:
+        requested_idx = int(req.index)
+    except Exception:
+        raise HTTPException(status_code=400, detail="subtitle index must be an integer")
+    if requested_idx < -1:
+        raise HTTPException(status_code=400, detail="subtitle index must be -1 or non-negative")
+    requested_subtitle_language = ""
+    requested_subtitle_display = ""
+    if requested_idx >= 0 and subtitle_streams:
+        valid = False
+        for row in subtitle_streams:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("index")) == requested_idx:
+                    valid = True
+                    requested_subtitle_language = str(row.get("language") or "").strip()
+                    requested_subtitle_display = str(row.get("display") or "").strip()
+                    break
+            except Exception:
+                continue
+        if not valid:
+            raise HTTPException(status_code=400, detail="requested subtitle stream index is unavailable")
+    preferred_subtitle_lang = "off" if requested_idx < 0 else _normalize_lang_pref(requested_subtitle_language)
+    queue_retargeted = 0
+    try:
+        state.update_settings({"jellyfin_sub_lang": preferred_subtitle_lang})
+    except Exception:
+        pass
+    try:
+        os.environ["RELAYTV_JELLYFIN_SUB_LANG"] = preferred_subtitle_lang
+    except Exception:
+        pass
+    try:
+        queue_retargeted = int(_retarget_jellyfin_queue_stream_preferences())
+    except Exception:
+        queue_retargeted = 0
+
+    was_playing = bool(player.is_playing())
+    try:
+        props = player.mpv_get_many(["time-pos", "pause"]) if was_playing else {}
+    except Exception:
+        props = {}
+    start_pos: float | None = None
+    if isinstance(props, dict):
+        try:
+            raw_pos = props.get("time-pos")
+            if raw_pos is not None:
+                start_pos = float(raw_pos)
+        except Exception:
+            start_pos = None
+    if start_pos is None:
+        try:
+            raw_resume = now.get("resume_pos")
+            if raw_resume is not None:
+                start_pos = float(raw_resume)
+        except Exception:
+            start_pos = None
+    was_paused = bool((props or {}).get("pause")) or str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
+    pause_reason = state.get_pause_reason() if hasattr(state, "get_pause_reason") else None
+
+    media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            _extract_jellyfin_media_source_id_from_url(str(now.get("url") or "")),
+            str(detail.get("media_source_id") if isinstance(detail, dict) else "").strip(),
+        ]
+    )
+    audio_stream_index = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_audio_stream_index") or "").strip(),
+            _extract_jellyfin_audio_stream_index_from_url(str(now.get("url") or "")),
+        ]
+    )
+    subtitle_stream_index = "-1" if requested_idx < 0 else str(requested_idx)
+
+    if _jellyfin_try_set_mpv_subtitle_track(
+        language=requested_subtitle_language,
+        display=requested_subtitle_display,
+        preferred_stream_index=(requested_idx if requested_idx >= 0 else None),
+        off=(requested_idx < 0),
+    ):
+        now_out = _jellyfin_enrich_now_stream_metadata(
+            dict(now),
+            detail=detail if isinstance(detail, dict) else {},
+            audio_stream_index=audio_stream_index,
+            subtitle_stream_index=subtitle_stream_index,
+        )
+        state.set_now_playing(now_out)
+        _jellyfin_emit_progress_hint()
+        return {
+            "ok": True,
+            "method": "mpv_runtime_sid",
+            "item_id": item_id,
+            "current_subtitle_stream_index": requested_idx,
+            "current_subtitle_language": str(now_out.get("jellyfin_subtitle_language") or now_out.get("subtitle_language") or "").strip(),
+            "current_subtitle_off": requested_idx < 0,
+            "queued_items_retargeted": queue_retargeted,
+            "now_playing": now_out,
+        }
+
+    try:
+        settings_snapshot = state.get_settings()
+    except Exception:
+        settings_snapshot = {}
+    auth_token = _jellyfin_access_token()
+
+    source_url = _build_jellyfin_item_stream_url(
+        item_id,
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    selected_stream = _select_jellyfin_playback_url(
+        item_id=item_id,
+        source_url=source_url,
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+        settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
+    )
+    source_url = _normalize_jellyfin_source_url(
+        str(selected_stream.get("url") or source_url),
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+    )
+    source_url = _apply_jellyfin_stream_params(
+        source_url,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    media_source_id = _first_nonempty_str(
+        [
+            str(selected_stream.get("media_source_id") or "").strip(),
+            _extract_jellyfin_media_source_id_from_url(source_url),
+            media_source_id,
+        ]
+    )
+    if not source_url:
+        raise HTTPException(status_code=502, detail="unable to build jellyfin stream url")
+
+    play_payload = {
+        "url": source_url,
+        "provider": "jellyfin",
+        "title": str(now.get("title") or "").strip() or f"Jellyfin item {item_id}",
+        **({"channel": now.get("channel")} if now.get("channel") else {}),
+        **({"thumbnail": now.get("thumbnail")} if now.get("thumbnail") else {}),
+        **({"thumbnail_local": now.get("thumbnail_local")} if now.get("thumbnail_local") else {}),
+        "jellyfin_item_id": item_id,
+        **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+    }
+
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    switched = player.play_item(
+        play_payload,
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="jellyfin_subtitle_switch",
+        start_pos=start_pos,
+    )
+    now_out = switched if isinstance(switched, dict) else dict(play_payload)
+    now_out["jellyfin_item_id"] = item_id
+    if media_source_id:
+        now_out["jellyfin_media_source_id"] = media_source_id
+    now_out["jellyfin_stream_mode"] = str(selected_stream.get("mode") or "direct")
+    now_out["jellyfin_stream_reason"] = str(selected_stream.get("reason") or "")
+    now_out = _jellyfin_enrich_now_stream_metadata(
+        now_out,
+        detail=detail if isinstance(detail, dict) else {},
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    _jellyfin_try_set_mpv_subtitle_track(
+        language=requested_subtitle_language,
+        display=requested_subtitle_display,
+        preferred_stream_index=(requested_idx if requested_idx >= 0 else None),
+        off=(requested_idx < 0),
+    )
+    state.set_now_playing(now_out)
+    if was_paused:
+        try:
+            player.mpv_set("pause", True)
+        except Exception:
+            pass
+        state.set_session_state("paused")
+        state.set_pause_reason(pause_reason if pause_reason is not None else "user")
+    _jellyfin_emit_progress_hint()
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "current_subtitle_stream_index": requested_idx,
+        "current_subtitle_language": str(now_out.get("jellyfin_subtitle_language") or now_out.get("subtitle_language") or "").strip(),
+        "current_subtitle_off": requested_idx < 0,
         "queued_items_retargeted": queue_retargeted,
         "now_playing": now_out,
     }
@@ -4849,8 +5185,8 @@ def _jellyfin_enrich_now_stream_metadata(
                     selected_audio_lang = str(row.get("language") or "").strip()
                     break
 
-    selected_sub_lang = ""
-    if isinstance(subtitle_streams, list):
+    selected_sub_lang = "off" if selected_sub == "-1" else ""
+    if isinstance(subtitle_streams, list) and selected_sub != "-1":
         target_sub_idx = None
         try:
             target_sub_idx = int(selected_sub) if selected_sub != "" else None
@@ -4882,6 +5218,10 @@ def _jellyfin_enrich_now_stream_metadata(
     out["jellyfin_audio_language"] = str(out.get("audio_language") or "").strip()
     out["jellyfin_subtitle_language"] = str(out.get("subtitle_language") or "").strip()
     return out
+
+
+def _jellyfin_track_type_is_subtitle(raw_type: object) -> bool:
+    return str(raw_type or "").strip().lower() in {"sub", "subtitle", "subtitles"}
 
 
 def _jellyfin_try_set_mpv_audio_track(
@@ -4989,6 +5329,125 @@ def _jellyfin_try_set_mpv_audio_track(
     return False
 
 
+def _jellyfin_try_set_mpv_subtitle_track(
+    *,
+    language: str = "",
+    display: str = "",
+    preferred_stream_index: int | None = None,
+    off: bool = False,
+) -> bool:
+    if off:
+        try:
+            player.mpv_set("sid", "no")
+            try:
+                player.mpv_set("sub-visibility", False)
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
+    target_lang = _normalize_lang_pref(str(language or ""))
+    target_display = str(display or "").strip().lower()
+    target_display_tokens = [tok for tok in re.split(r"[^a-z0-9]+", target_display) if len(tok) >= 3]
+    try:
+        track_list = player.mpv_get("track-list")
+    except Exception:
+        track_list = None
+    if not isinstance(track_list, list):
+        return False
+
+    candidates: list[tuple[int, int]] = []
+    for idx, row in enumerate(track_list):
+        if not isinstance(row, dict):
+            continue
+        if not _jellyfin_track_type_is_subtitle(row.get("type")):
+            continue
+        try:
+            tid = int(row.get("id"))
+        except Exception:
+            continue
+        if tid <= 0:
+            continue
+        src_id = None
+        ff_index = None
+        try:
+            src_id = int(row.get("src-id"))
+        except Exception:
+            src_id = None
+        try:
+            ff_index = int(row.get("ff-index"))
+        except Exception:
+            ff_index = None
+        lang = _normalize_lang_pref(str(row.get("lang") or row.get("language") or ""))
+        title = str(row.get("title") or row.get("name") or "").strip().lower()
+        score = 0
+        if preferred_stream_index is not None:
+            if ff_index is not None and ff_index == preferred_stream_index:
+                score += 20
+            if src_id is not None and (src_id - 1) == preferred_stream_index:
+                score += 18
+        if target_lang and _language_matches(target_lang, lang):
+            score += 6
+        if target_display and title:
+            if target_display in title or title in target_display:
+                score += 4
+            elif target_display_tokens:
+                token_hits = sum(1 for tok in target_display_tokens if tok in title)
+                score += min(3, token_hits)
+        if score <= 0:
+            continue
+        candidates.append((score * 1000 - idx, tid))
+    if not candidates:
+        return False
+    candidates.sort(reverse=True)
+    selected_tid = int(candidates[0][1])
+
+    try:
+        player.mpv_set("sid", selected_tid)
+        try:
+            player.mpv_set("sub-visibility", True)
+        except Exception:
+            pass
+    except Exception:
+        return False
+
+    try:
+        updated = player.mpv_get("track-list")
+    except Exception:
+        updated = None
+    if isinstance(updated, list):
+        for row in updated:
+            if not isinstance(row, dict):
+                continue
+            if not _jellyfin_track_type_is_subtitle(row.get("type")):
+                continue
+            if not bool(row.get("selected")):
+                continue
+            src_id = None
+            ff_index = None
+            try:
+                src_id = int(row.get("src-id"))
+            except Exception:
+                src_id = None
+            try:
+                ff_index = int(row.get("ff-index"))
+            except Exception:
+                ff_index = None
+            if preferred_stream_index is not None:
+                if ff_index is not None and ff_index == preferred_stream_index:
+                    return True
+                if src_id is not None and (src_id - 1) == preferred_stream_index:
+                    return True
+            lang = _normalize_lang_pref(str(row.get("lang") or row.get("language") or ""))
+            title = str(row.get("title") or row.get("name") or "").strip().lower()
+            if target_lang and _language_matches(target_lang, lang):
+                return True
+            if target_display and target_display in title:
+                return True
+    return False
+
+
 def _jellyfin_runtime_selected_audio_stream(audio_streams: list[dict[str, object]]) -> tuple[int | None, str]:
     """Resolve selected Jellyfin audio stream index from mpv runtime track data."""
     try:
@@ -5066,8 +5525,94 @@ def _jellyfin_runtime_selected_audio_stream(audio_streams: list[dict[str, object
         if score > best_score:
             best_score = score
             best_idx = idx
-    if best_score > 0:
-        return best_idx, selected_lang
+    return best_idx, selected_lang
+
+
+def _jellyfin_runtime_selected_subtitle_stream(subtitle_streams: list[dict[str, object]]) -> tuple[int | None, str, bool]:
+    """Resolve selected Jellyfin subtitle stream index from mpv runtime track data."""
+    try:
+        props = player.mpv_get_many(["track-list", "sid", "sub-visibility"])
+    except Exception:
+        props = {}
+    track_list = props.get("track-list") if isinstance(props, dict) else None
+    sid_raw = props.get("sid") if isinstance(props, dict) else None
+    sub_visible = props.get("sub-visibility") if isinstance(props, dict) else None
+    sid_text = str(sid_raw or "").strip().lower()
+    sid_off = sid_text in {"no", "0", "-1", "false"}
+    if sub_visible is False or sid_off:
+        return None, "off", True
+    if not isinstance(track_list, list):
+        return None, "", False
+
+    selected: dict[str, object] | None = None
+    for row in track_list:
+        if not isinstance(row, dict):
+            continue
+        if not _jellyfin_track_type_is_subtitle(row.get("type")):
+            continue
+        if bool(row.get("selected")):
+            selected = row
+            break
+    if not isinstance(selected, dict):
+        return None, "", False
+
+    selected_lang = _normalize_lang_pref(str(selected.get("lang") or selected.get("language") or ""))
+    selected_title = str(selected.get("title") or selected.get("name") or "").strip().lower()
+    selected_title_tokens = [tok for tok in re.split(r"[^a-z0-9]+", selected_title) if len(tok) >= 3]
+
+    try:
+        ff_index = int(selected.get("ff-index"))
+    except Exception:
+        ff_index = None
+    try:
+        src_id = int(selected.get("src-id"))
+    except Exception:
+        src_id = None
+
+    if ff_index is not None:
+        for row in subtitle_streams:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("index")) == ff_index:
+                    return ff_index, selected_lang, False
+            except Exception:
+                continue
+    if src_id is not None:
+        candidate = int(src_id) - 1
+        for row in subtitle_streams:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("index")) == candidate:
+                    return candidate, selected_lang, False
+            except Exception:
+                continue
+
+    best_idx: int | None = None
+    best_score = 0
+    for row in subtitle_streams:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx = int(row.get("index"))
+        except Exception:
+            continue
+        score = 0
+        row_lang = _normalize_lang_pref(str(row.get("language") or ""))
+        if selected_lang and _language_matches(selected_lang, row_lang):
+            score += 3
+        row_display = str(row.get("display") or "").strip().lower()
+        if selected_title and row_display:
+            if selected_title in row_display or row_display in selected_title:
+                score += 2
+            elif selected_title_tokens:
+                token_hits = sum(1 for tok in selected_title_tokens if tok in row_display)
+                score += min(2, token_hits)
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx, selected_lang, False
     return None, selected_lang
 
 
@@ -10259,6 +10804,20 @@ def ui():
       </div>
     </div>
 
+    <div id="subLangBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal langModal">
+        <div class="modalTop">
+          <div class="modalTitle">Subtitle Language</div>
+          <div class="modalBtns">
+            <button id="subLangCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <div id="subLangCurrent" class="hint">Loading subtitle tracks…</div>
+        <div id="subLangList" class="langList"></div>
+        <div id="subLangMsg" class="helperTxt"></div>
+      </div>
+    </div>
+
     <div id="aboutBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
       <div class="modal">
         <div class="modalTop">
@@ -10308,6 +10867,7 @@ def ui():
           <div class="nowMetaActions">
             <span class="chip" title="Queue length">📥 <span id="qlen">0</span> queued</span>
             <button id="nowLangBtn" class="nowLangBtn hidden" title="Audio language" aria-label="Audio language">Audio</button>
+            <button id="nowSubLangBtn" class="nowLangBtn hidden" title="Subtitle language" aria-label="Subtitle language">Subs</button>
           </div>
         </div>
       </section>
@@ -10974,6 +11534,16 @@ function _labelNowAudioLanguage(np){
   return `Audio: ${lang.toUpperCase()}`;
 }
 
+function _labelNowSubtitleLanguage(np){
+  const idx = String((np && np.jellyfin_subtitle_stream_index) || '').trim();
+  const lang = String(
+    (np && (np.jellyfin_subtitle_language || np.subtitle_language)) || ''
+  ).trim();
+  if (idx === '-1' || lang.toLowerCase() === 'off') return 'Subs: Off';
+  if (!lang) return 'Subs';
+  return `Subs: ${lang.toUpperCase()}`;
+}
+
 function _renderNowLanguageButton(st, np, hasNow){
   const btn = document.getElementById('nowLangBtn');
   if (!btn) return;
@@ -10983,6 +11553,16 @@ function _renderNowLanguageButton(st, np, hasNow){
   btn.classList.toggle('hidden', !show);
   btn.disabled = !show;
   btn.textContent = _labelNowAudioLanguage(np);
+}
+
+function _renderNowSubtitleButton(st, np, hasNow){
+  const btn = document.getElementById('nowSubLangBtn');
+  if (!btn) return;
+  const streamCount = Array.isArray(np && np.subtitle_streams) ? np.subtitle_streams.length : 0;
+  const show = !!(hasNow && _isNowPlayingJellyfin(np) && streamCount > 0);
+  btn.classList.toggle('hidden', !show);
+  btn.disabled = !show;
+  btn.textContent = _labelNowSubtitleLanguage(np);
 }
 
 function youtubeIdFromUrl(u){
@@ -13242,6 +13822,7 @@ function renderStatus(st) {
   document.getElementById('nowSub').textContent = hasNow ? (displaySub(np) || '') : '';
   if (picon) picon.classList.toggle('hidden', !hasNow);
   _renderNowLanguageButton(st, np, hasNow);
+  _renderNowSubtitleButton(st, np, hasNow);
   const nowSkipBtn = document.getElementById('nowSkipBtn');
   if (nowSkipBtn) {
     const canSkipNow = !!hasNow;
@@ -13860,6 +14441,151 @@ function bindNowLanguageUi(){
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeNowLanguageModal();
+  });
+}
+
+function closeNowSubtitleModal(opts){
+  const bd = document.getElementById('subLangBackdrop');
+  if (!bd) return;
+  const fromNav = !!(opts && opts.fromNav);
+  if (!fromNav && !bd.classList.contains('hidden') && __uiNavDepth > 0) {
+    try { history.back(); } catch (_e) {}
+    return;
+  }
+  bd.classList.add('hidden');
+}
+
+async function _fetchNowSubtitleOptions(refresh){
+  const url = `/jellyfin/subtitle/options${refresh ? '?refresh=1' : ''}`;
+  const r = await fetch(url, {cache:'no-store'});
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = String((body && (body.detail || body.reason || body.error)) || `HTTP ${r.status}`);
+    throw new Error(msg);
+  }
+  return body;
+}
+
+function _renderNowSubtitleOptions(optionsBody){
+  const list = document.getElementById('subLangList');
+  const cur = document.getElementById('subLangCurrent');
+  const msg = document.getElementById('subLangMsg');
+  if (!list || !cur || !msg) return;
+  msg.classList.remove('ok', 'err');
+  msg.textContent = '';
+  list.innerHTML = '';
+
+  const currentOff = !!(optionsBody && optionsBody.current_subtitle_off);
+  const currentLang = String(optionsBody.current_subtitle_language || '').trim();
+  const currentIdx = optionsBody.current_subtitle_stream_index;
+  const currentIdxText = currentOff
+    ? 'Off'
+    : ((currentIdx === 0 || Number.isInteger(currentIdx)) ? String(currentIdx) : '--');
+  cur.textContent = currentOff
+    ? 'Current: Off'
+    : (currentLang ? `Current: ${currentLang.toUpperCase()} (#${currentIdxText})` : `Current subtitle track: #${currentIdxText}`);
+
+  const rows = Array.isArray(optionsBody.options) ? optionsBody.options : [];
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = 'No subtitle streams were reported for this item.';
+    list.appendChild(empty);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const idx = Number(row && row.index);
+    if (!Number.isInteger(idx)) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `langOpt${row && row.is_current ? ' active' : ''}`;
+    const isOff = !!(row && row.is_off);
+    const lang = String((row && row.language) || '').trim();
+    const display = String((row && row.display) || '').trim();
+    const suffix = [];
+    if (row && row.is_default) suffix.push('default');
+    if (row && row.is_current) suffix.push('active');
+    btn.innerHTML = `
+      <span class="langOptIdx">${isOff ? 'OFF' : `#${idx}`}</span>
+      <span>${isOff ? 'Off' : (lang ? lang.toUpperCase() : 'Unknown language')}${display && !isOff ? ` — ${display}` : ''}</span>
+      <span class="langOptMeta">${suffix.join(' · ')}</span>
+    `;
+    btn.disabled = !!(row && row.is_current);
+    btn.onclick = async () => {
+      const oldText = btn.textContent || '';
+      btn.disabled = true;
+      btn.textContent = isOff ? 'Turning subtitles off…' : `Switching to #${idx}…`;
+      try {
+        const r = await fetch('/jellyfin/subtitle/select', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({index: idx})
+        });
+        const b = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          throw new Error(String((b && (b.detail || b.reason || b.error)) || `HTTP ${r.status}`));
+        }
+        msg.classList.remove('err');
+        msg.classList.add('ok');
+        const switchedOff = !!(b && b.current_subtitle_off);
+        const switchedLang = String((b && b.current_subtitle_language) || '').trim();
+        msg.textContent = switchedOff
+          ? 'Subtitles turned off.'
+          : (switchedLang ? `Subtitles switched to ${switchedLang.toUpperCase()}.` : `Subtitles switched to track #${idx}.`);
+        await refresh();
+        const latest = await _fetchNowSubtitleOptions(false);
+        _renderNowSubtitleOptions(latest);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = oldText;
+        msg.classList.remove('ok');
+        msg.classList.add('err');
+        msg.textContent = `Subtitle switch failed: ${e && e.message ? e.message : e}`;
+      }
+    };
+    list.appendChild(btn);
+  });
+}
+
+async function openNowSubtitleModal(){
+  closeHeaderMenu();
+  const bd = document.getElementById('subLangBackdrop');
+  const msg = document.getElementById('subLangMsg');
+  const cur = document.getElementById('subLangCurrent');
+  const list = document.getElementById('subLangList');
+  if (!bd || !cur || !list) return;
+  if (!bd.classList.contains('hidden')) return;
+  bd.classList.remove('hidden');
+  _uiPushLayer();
+  if (msg) {
+    msg.classList.remove('ok', 'err');
+    msg.textContent = '';
+  }
+  cur.textContent = 'Loading subtitle tracks…';
+  list.innerHTML = '';
+  try {
+    const optionsBody = await _fetchNowSubtitleOptions(false);
+    _renderNowSubtitleOptions(optionsBody);
+  } catch (e) {
+    if (msg) {
+      msg.classList.add('err');
+      msg.textContent = `Subtitle tracks unavailable: ${e && e.message ? e.message : e}`;
+    }
+  }
+}
+
+function bindNowSubtitleUi(){
+  const btn = document.getElementById('nowSubLangBtn');
+  const closeBtn = document.getElementById('subLangCloseBtn');
+  const bd = document.getElementById('subLangBackdrop');
+  if (btn) btn.onclick = openNowSubtitleModal;
+  if (closeBtn) closeBtn.onclick = () => closeNowSubtitleModal();
+  if (bd) bd.addEventListener('click', (e) => {
+    if (e.target === bd) closeNowSubtitleModal();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeNowSubtitleModal();
   });
 }
 
@@ -14486,6 +15212,7 @@ window.addEventListener('DOMContentLoaded', () => {
   bindHistoryUi();
   bindAboutUi();
   bindNowLanguageUi();
+  bindNowSubtitleUi();
   bindSettingsUi();
   bindAddUrlUi();
   bindJellyfinUi();

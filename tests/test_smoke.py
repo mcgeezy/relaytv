@@ -40,6 +40,7 @@ def test_ui_smoke() -> None:
     assert 'id="jellyfinShell"' in response.text
     assert 'id="jfSearchInput"' in response.text
     assert 'id="nowLangBtn"' in response.text
+    assert 'id="nowSubLangBtn"' in response.text
     assert 'id="aboutBtn"' in response.text
     assert 'id="aboutBackdrop"' in response.text
     assert 'id="aboutGithubLink"' in response.text
@@ -64,6 +65,7 @@ def test_ui_smoke() -> None:
     assert 'bindAboutUi();' in response.text
     assert 'class="nowSubRow"' in response.text
     assert 'id="langBackdrop"' in response.text
+    assert 'id="subLangBackdrop"' in response.text
     assert 'role="tablist"' in response.text
     assert 'role="tab"' in response.text
     assert 'id="jfDetailBackdrop"' in response.text
@@ -86,6 +88,12 @@ def test_ui_smoke() -> None:
     assert 'function _jfSetActionStatus' in response.text
     assert 'function _jfSetLaunchVisible' in response.text
     assert 'function _jfCloseDetailPanel' in response.text
+    assert 'function _labelNowSubtitleLanguage' in response.text
+    assert 'function _renderNowSubtitleButton' in response.text
+    assert 'function _fetchNowSubtitleOptions' in response.text
+    assert 'function _renderNowSubtitleOptions' in response.text
+    assert 'function openNowSubtitleModal' in response.text
+    assert 'function bindNowSubtitleUi' in response.text
     assert 'const shellRect = shell.getBoundingClientRect();' in response.text
     assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in response.text
     assert 'function loadJellyfinMovies' in response.text
@@ -102,6 +110,7 @@ def test_ui_smoke() -> None:
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in response.text
     assert "play.disabled = !available;" in response.text
     assert "queue.disabled = !available;" in response.text
+    assert "await fetch('/jellyfin/subtitle/select'" in response.text
     assert 'id="setAboutGithubLink"' not in response.text
     assert 'id="setAboutSupportLink"' not in response.text
 
@@ -763,6 +772,99 @@ def test_jellyfin_plugin_ingress_is_deprecated() -> None:
     assert response.json() == {
         'detail': 'jellyfin plugin ingress deprecated; use RelayTV native Jellyfin client or /integrations/jellyfin/command'
     }
+
+
+def test_jellyfin_subtitle_options_include_off_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: {"server_url": "http://jf.local"})
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {
+            "provider": "jellyfin",
+            "jellyfin_item_id": "item-1",
+            "url": "http://jf.local/Videos/item-1/master.m3u8",
+            "jellyfin_subtitle_stream_index": "-1",
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id, refresh=False: {
+            "subtitle_streams": [
+                {"index": 0, "language": "en", "display": "English", "is_default": True},
+                {"index": 1, "language": "es", "display": "Spanish", "is_default": False},
+            ],
+            "subtitle_language": "en",
+        },
+    )
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {"track-list": [], "sid": "no", "sub-visibility": False})
+
+    app = create_app(testing=True)
+    client = TestClient(app)
+
+    response = client.get("/jellyfin/subtitle/options")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["current_subtitle_off"] is True
+    assert body["current_subtitle_stream_index"] == -1
+    assert body["current_subtitle_language"] == "off"
+    assert body["options"][0]["is_off"] is True
+    assert body["options"][0]["is_current"] is True
+    assert body["options"][1]["language"] == "en"
+
+
+def test_jellyfin_subtitle_select_can_turn_subtitles_off_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: {"server_url": "http://jf.local"})
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {
+            "provider": "jellyfin",
+            "jellyfin_item_id": "item-1",
+            "url": "http://jf.local/Videos/item-1/master.m3u8?audioStreamIndex=1&subtitleStreamIndex=0",
+            "jellyfin_audio_stream_index": "1",
+            "jellyfin_subtitle_stream_index": "0",
+            "title": "Sample Item",
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id: {
+            "subtitle_streams": [
+                {"index": 0, "language": "en", "display": "English", "is_default": True},
+            ],
+            "audio_streams": [
+                {"index": 1, "language": "en", "display": "English", "is_default": True},
+            ],
+        },
+    )
+    monkeypatch.setattr(routes.state, "update_settings", lambda patch: patch)
+    monkeypatch.setattr(routes, "_retarget_jellyfin_queue_stream_preferences", lambda: 0)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {})
+    monkeypatch.setattr(routes, "_jellyfin_try_set_mpv_subtitle_track", lambda **kwargs: True)
+    captured_now: dict[str, object] = {}
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda now: captured_now.update(now))
+    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: None)
+
+    app = create_app(testing=True)
+    client = TestClient(app)
+
+    response = client.post("/jellyfin/subtitle/select", json={"index": -1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["method"] == "mpv_runtime_sid"
+    assert body["current_subtitle_stream_index"] == -1
+    assert body["current_subtitle_off"] is True
+    assert body["current_subtitle_language"] == "off"
+    assert captured_now["jellyfin_subtitle_stream_index"] == "-1"
+    assert captured_now["jellyfin_subtitle_language"] == "off"
 
 
 def test_native_idle_weather_layout_normalizes_to_supported_values() -> None:
