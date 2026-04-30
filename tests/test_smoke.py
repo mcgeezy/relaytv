@@ -75,6 +75,9 @@ def test_ui_smoke() -> None:
     assert 'id="remoteVolValue"' in response.text
     assert 'id="setUploadMaxSize"' in response.text
     assert 'id="setUploadRetentionHours"' in response.text
+    assert 'id="setIdleDashboardEnabled"' in response.text
+    assert 'class="toggleSwitch"' in response.text
+    assert 'Show idle dashboard between plays' in response.text
     assert 'function _uploadBadge(item)' in response.text
     assert 'function _uploadSummary(item)' in response.text
     assert 'function _formatUploadSize(bytes)' in response.text
@@ -747,6 +750,10 @@ def test_overlay_playback_visibility_prefers_session_and_transition_signals() ->
     assert "j.transition_in_progress === true" in response.text
     assert "return qtRuntimeActive || sessionActive;" in response.text
     assert "function updateOverlayToastScale()" in response.text
+    assert "function idleDashboardEnabled(state)" in response.text
+    assert "state.idle_dashboard_enabled === false" in response.text
+    assert "const idleEnabled = idleDashboardEnabled(j);" in response.text
+    assert '<iframe class="idleFrame" src="about:blank"' in response.text
     assert "Math.min(vw / 1920, vh / 1080)" in response.text
     assert "--toast-width" in response.text
     assert "root.style.setProperty(name, `${Math.round(Number(base) * scale)}px`);" in response.text
@@ -907,6 +914,16 @@ def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatc
     assert _libmpv_enabled() is False
 
 
+def test_qt_libmpv_initial_stream_waits_for_render_context() -> None:
+    text = (ROOT_DIR / 'app/relaytv_app/qt_shell_app.py').read_text()
+
+    assert 'Initial media is loaded after QOpenGLWidget.initializeGL() creates the' in text
+    assert 'def render_context_ready(self) -> bool:' in text
+    assert 'if not libmpv_player.render_context_ready():' in text
+    assert 'QTimer.singleShot(50, _load_initial_libmpv_stream)' in text
+    assert 'self.load_stream((stream or "").strip()' not in text
+
+
 def test_resolver_playback_transition_window_sec_defaults_and_clamps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('RELAYTV_RESOLVE_PLAYBACK_TRANSITION_SEC', raising=False)
     assert player._resolver_playback_transition_window_sec() == 20.0
@@ -1030,6 +1047,7 @@ def test_natural_queue_end_keeps_qt_shell_alive_before_idle_overlay(monkeypatch:
     monkeypatch.setenv("RELAYTV_NATURAL_IDLE_ENSURE_DELAY_SEC", "0.2")
     monkeypatch.setattr(player.time, "time", lambda: 1000.0)
     monkeypatch.setattr(player, "_NATURAL_IDLE_ENSURE_TIMER", None, raising=False)
+    monkeypatch.setattr(player, "_idle_dashboard_enabled", lambda: True)
     monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
     monkeypatch.setattr(player.state, "NOW_PLAYING", {"title": "Ended"}, raising=False)
     monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
@@ -1049,6 +1067,30 @@ def test_natural_queue_end_keeps_qt_shell_alive_before_idle_overlay(monkeypatch:
     assert stop_calls == []
     assert ensure_calls == [False]
     assert player._NATURAL_IDLE_RESET_UNTIL == 1002.0
+
+
+def test_natural_queue_end_stops_qt_shell_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop_calls: list[bool] = []
+    ensure_calls: list[bool] = []
+
+    monkeypatch.setenv("RELAYTV_NATURAL_IDLE_SETTLE_SEC", "2")
+    monkeypatch.setattr(player.time, "time", lambda: 1500.0)
+    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
+    monkeypatch.setattr(player.state, "NOW_PLAYING", {"title": "Ended"}, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "set_now_playing", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_state", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: True)
+    monkeypatch.setattr(player, "_idle_dashboard_enabled", lambda: False)
+    monkeypatch.setattr(player, "stop_mpv", lambda restart_splash=True: stop_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(player, "ensure_qt_shell_idle", lambda force=False: ensure_calls.append(bool(force)))
+
+    player._handle_playback_idle_no_queue()
+
+    assert stop_calls == [False]
+    assert ensure_calls == []
+    assert player._NATURAL_IDLE_RESET_UNTIL == 1502.0
 
 
 def test_natural_queue_end_starts_splash_for_non_qt_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1608,6 +1650,32 @@ def test_idle_qt_shell_can_be_reused_for_video_only_stream_load(monkeypatch: pyt
         'audio': None,
     }
     assert observed['reset'] is True
+
+
+def test_idle_qt_shell_is_not_reused_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_MPV_SEAMLESS_REPLACE', '1')
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_idle_dashboard_enabled', lambda: False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'idle', raising=False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        '_qt_shell_runtime_snapshot',
+        lambda max_age_sec=3.0: {
+            'alive': True,
+            'control_file': '/tmp/relaytv-qt-runtime-control.json',
+            'mpv_runtime_core_idle': True,
+            'mpv_runtime_playback_active': False,
+            'mpv_runtime_stream_loaded': False,
+            'mpv_runtime_playback_started': False,
+            'mpv_runtime_error': '',
+            'mpv_runtime_sample_detail': '',
+        },
+    )
+
+    assert player._load_stream_in_existing_mpv('https://example.com/stream.m3u8') is False
 
 
 def test_idle_qt_shell_can_be_reused_without_fresh_snapshot_control_file(monkeypatch: pytest.MonkeyPatch) -> None:

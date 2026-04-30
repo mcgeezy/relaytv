@@ -1112,8 +1112,9 @@ class _QtLibMpvPlayer:
         if rc < 0:
             raise RuntimeError(f"mpv_initialize failed: {self._err(rc)}")
 
-        if (stream or "").strip():
-            self.load_stream((stream or "").strip(), (audio or "").strip() if isinstance(audio, str) else None)
+        # Initial media is loaded after QOpenGLWidget.initializeGL() creates the
+        # render context. Loading before that can leave libmpv playing audio
+        # without selecting/painting the video track on some Qt/OpenGL stacks.
 
     def init_render_context(self, get_proc_address) -> None:
         if self._have_render:
@@ -1156,6 +1157,9 @@ class _QtLibMpvPlayer:
             self._update_cb = cb_type(lambda _ctx: None)
             self._lib.mpv_render_context_set_update_callback(self._render_ctx, self._update_cb, ctypes.c_void_p())
         self._have_render = True
+
+    def render_context_ready(self) -> bool:
+        return bool(self._have_render and self._render_ctx)
 
     def render(self, *, fbo: int, width: int, height: int) -> None:
         if not self._have_render or self._lib is None or not self._render_ctx:
@@ -2682,6 +2686,29 @@ def main(argv: list[str] | None = None) -> int:
 
     wid = int(video_widget.winId())
     mpv_proc: subprocess.Popen | None = None
+
+    if use_libmpv and libmpv_player is not None and stream:
+        initial_stream = stream
+        initial_audio = (args.audio or None)
+        initial_load_attempts = {"n": 0}
+
+        def _load_initial_libmpv_stream() -> None:
+            if libmpv_player is None:
+                return
+            initial_load_attempts["n"] += 1
+            try:
+                if not libmpv_player.render_context_ready():
+                    if initial_load_attempts["n"] < 80:
+                        QTimer.singleShot(50, _load_initial_libmpv_stream)
+                        return
+                    raise RuntimeError("libmpv render context not ready")
+                libmpv_player.load_stream(initial_stream, initial_audio)
+                _sync_idle_visibility()
+                _nudge_overlay_stack()
+            except Exception as exc:
+                _eprint(f"qt-shell libmpv initial load failed: {exc}")
+
+        QTimer.singleShot(0, _load_initial_libmpv_stream)
 
     def _subprocess_mpv_running() -> bool:
         try:

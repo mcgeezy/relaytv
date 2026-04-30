@@ -865,6 +865,7 @@ def _default_settings() -> dict:
         "tv_pause_on_input_change": "1",
         "tv_auto_resume_on_return": "0",
         "volume": default_volume,
+        "idle_dashboard_enabled": _env_bool("RELAYTV_IDLE_DASHBOARD_ENABLED", True),
         "idle_qr_enabled": _env_bool("RELAYTV_IDLE_QR_ENABLED", True),
         "idle_qr_size": _normalize_idle_qr_size(os.getenv("RELAYTV_IDLE_QR_SIZE", "168"), 168),
         "idle_panels": _default_idle_panels(),
@@ -901,6 +902,7 @@ def load_settings() -> None:
     defaults["youtube_use_invidious"] = bool(defaults.get("youtube_use_invidious"))
     defaults["youtube_invidious_base"] = _normalize_invidious_base(defaults.get("youtube_invidious_base"))
     defaults["volume"] = _normalize_volume(defaults.get("volume"), defaults.get("volume", 100.0))
+    defaults["idle_dashboard_enabled"] = bool(defaults.get("idle_dashboard_enabled"))
     defaults["idle_qr_size"] = _normalize_idle_qr_size(defaults.get("idle_qr_size"), 168)
     defaults["idle_panels"] = _normalize_idle_panels(defaults.get("idle_panels"))
     defaults["weather"] = _normalize_weather_settings(defaults.get("weather"))
@@ -937,6 +939,7 @@ def update_settings(patch: dict) -> dict:
         "tv_pause_on_input_change",
         "tv_auto_resume_on_return",
         "volume",
+        "idle_dashboard_enabled",
         "idle_qr_enabled",
         "idle_qr_size",
         "idle_panels",
@@ -973,6 +976,8 @@ def update_settings(patch: dict) -> dict:
         clean["youtube_invidious_base"] = _normalize_invidious_base(clean.get("youtube_invidious_base"))
     if "volume" in clean:
         clean["volume"] = _normalize_volume(clean.get("volume"), 100.0)
+    if "idle_dashboard_enabled" in clean:
+        clean["idle_dashboard_enabled"] = bool(clean.get("idle_dashboard_enabled"))
     if "idle_qr_enabled" in clean:
         clean["idle_qr_enabled"] = bool(clean.get("idle_qr_enabled"))
     if "idle_qr_size" in clean:

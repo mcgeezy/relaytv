@@ -30,6 +30,19 @@ _NATURAL_IDLE_RESET_UNTIL = 0.0
 _NATURAL_IDLE_ENSURE_TIMER: threading.Timer | None = None
 
 
+def _idle_dashboard_enabled() -> bool:
+    try:
+        settings = state.get_settings() if hasattr(state, "get_settings") else {}
+    except Exception:
+        settings = {}
+    if isinstance(settings, dict) and settings.get("idle_dashboard_enabled") is False:
+        return False
+    raw = (os.getenv("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
 def _native_sidecar_health_snapshot(require_qt_shell: bool = False):
     """Legacy compatibility shim retained for dev-branch tests.
 
@@ -1017,6 +1030,8 @@ def ensure_qt_shell_idle(*, force: bool = False) -> None:
     """Ensure Qt shell is running in idle-overlay mode for qt backend."""
     if not _qt_shell_backend_enabled():
         return
+    if not _idle_dashboard_enabled():
+        return
     qpa_platform = (os.getenv("QT_QPA_PLATFORM") or "").strip().lower()
     headless_qpa = qpa_platform in ("offscreen", "vnc", "minimal")
     if not (_has_x11_display() or _has_wayland_display() or headless_qpa):
@@ -1143,6 +1158,8 @@ def start_splash_screen() -> None:
     global SPLASH_PROC
 
     if not splash_enabled():
+        return
+    if not _idle_dashboard_enabled():
         return
 
     # Prefer NO splash in desktop X11 sessions by default.
@@ -2388,6 +2405,15 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None) 
     """Try seamless in-process stream replacement on an already-running mpv."""
     if not _env_bool("RELAYTV_MPV_SEAMLESS_REPLACE", True):
         return False
+    if (
+        _qt_shell_backend_enabled()
+        and (not _qt_runtime_uses_external_mpv())
+        and (not _idle_dashboard_enabled())
+    ):
+        sess = str(getattr(state, "SESSION_STATE", "") or "").strip().lower()
+        has_now = isinstance(getattr(state, "NOW_PLAYING", None), dict)
+        if not (has_now or sess in ("playing", "paused")):
+            return False
     # Qt startup transitions can temporarily report "playing" while only the
     # idle shell is alive. Gate seamless replace on a real media runtime.
     runtime_alive = False
@@ -3996,6 +4022,12 @@ def _handle_playback_idle_no_queue() -> None:
     settle_sec = max(1.0, min(30.0, settle_sec))
     _NATURAL_IDLE_RESET_UNTIL = time.time() + settle_sec
     if _qt_shell_backend_enabled():
+        if not _idle_dashboard_enabled():
+            try:
+                stop_mpv(restart_splash=False)
+            except Exception:
+                pass
+            return
         if _NATURAL_IDLE_ENSURE_TIMER is not None:
             try:
                 _NATURAL_IDLE_ENSURE_TIMER.cancel()

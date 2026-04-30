@@ -1997,7 +1997,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
 </head>
 <body class="playing">
   <div class="stage">
-    <iframe class="idleFrame" src="/idle?ts=__IDLE_CACHE_BUSTER__" title="RelayTV Idle" aria-label="RelayTV Idle"></iframe>
+    <iframe class="idleFrame" src="about:blank" title="RelayTV Idle" aria-label="RelayTV Idle"></iframe>
   </div>
 
   <div class="toasts top-left" id="toasts"></div>
@@ -2107,6 +2107,10 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       frame.src = `/idle?ts=${Date.now()}`;
     }
 
+    function idleDashboardEnabled(state){
+      return !(state && state.idle_dashboard_enabled === false);
+    }
+
     let _statusPollTimer = null;
     let _statusPollInFlight = false;
 
@@ -2134,15 +2138,21 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
           j = await r.json();
         }
         const isPlaying = overlayPlaybackVisible(j);
+        const idleEnabled = idleDashboardEnabled(j);
         if (isPlaying){
           document.body.classList.add('playing');
           document.body.classList.remove('idle');
           _wasPlaying = true;
           nextDelay = 450;
-        } else {
+        } else if (idleEnabled) {
           document.body.classList.remove('playing');
           document.body.classList.add('idle');
           if (_wasPlaying) refreshIdleFrame(true);
+          _wasPlaying = false;
+          nextDelay = 900;
+        } else {
+          document.body.classList.remove('playing');
+          document.body.classList.remove('idle');
           _wasPlaying = false;
           nextDelay = 900;
         }
@@ -2287,6 +2297,7 @@ class SettingsReq(BaseModel):
     tv_pause_on_input_change: str | None = None
     tv_auto_resume_on_return: str | None = None
     volume: float | None = None
+    idle_dashboard_enabled: bool | None = None
     idle_qr_enabled: bool | None = None
     idle_qr_size: int | None = None
     idle_panels: dict[str, dict] | None = None
@@ -7525,6 +7536,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     natural_idle_clear_hold = natural_idle_hold and queue_length <= 0 and (not has_now_playing) and sess in ("idle", "closed")
     payload: dict[str, object] = {
         "state": sess,
+        "idle_dashboard_enabled": bool((state.get_settings() if hasattr(state, "get_settings") else {}).get("idle_dashboard_enabled", True)),
         "playing": bool(playing),
         "paused": bool(paused),
         "has_now_playing": has_now_playing,
@@ -7830,6 +7842,7 @@ def _status_payload() -> dict[str, object]:
     return {
         "state": sess,
         "device_name": str(settings_snapshot.get("device_name") or "RelayTV"),
+        "idle_dashboard_enabled": bool(settings_snapshot.get("idle_dashboard_enabled", True)),
         "mdns_advertising": bool(mdns.get("active")),
         "mdns_service_type": str(mdns.get("service_type") or ""),
         "jellyfin_enabled": jf_enabled,
@@ -8013,6 +8026,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["youtube_cookies_configured"] = has_yt_cookies
     out["youtube_use_invidious"] = bool(out.get("youtube_use_invidious"))
     out["youtube_invidious_base"] = str(out.get("youtube_invidious_base") or "").strip()
+    out["idle_dashboard_enabled"] = bool(out.get("idle_dashboard_enabled", True))
     return out
 
 
@@ -8470,6 +8484,8 @@ def update_settings(req: SettingsReq):
         os.environ["RELAYTV_DRM_CONNECTOR"] = str(updated.get("drm_connector") or "")
     if "sub_lang" in requested_keys and updated.get("sub_lang") is not None:
         os.environ["RELAYTV_SUB_LANG"] = str(updated.get("sub_lang") or "")
+    if "idle_dashboard_enabled" in requested_keys and updated.get("idle_dashboard_enabled") is not None:
+        os.environ["RELAYTV_IDLE_DASHBOARD_ENABLED"] = "1" if bool(updated.get("idle_dashboard_enabled")) else "0"
     if "idle_qr_enabled" in requested_keys and updated.get("idle_qr_enabled") is not None:
         os.environ["RELAYTV_IDLE_QR_ENABLED"] = "1" if bool(updated.get("idle_qr_enabled")) else "0"
     if "idle_qr_size" in requested_keys and updated.get("idle_qr_size") is not None:
@@ -9795,6 +9811,54 @@ def ui():
     }
 .hint { font-size: 12px; opacity: 0.75; margin-top: 6px; }
 .chk { display:flex; align-items:center; gap:8px; font-size: 14px; }
+.toggleRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  margin-top:10px;
+  padding:12px 0 10px;
+}
+.toggleCopy{min-width:0;}
+.toggleTitle{font-size:14px;font-weight:700;color:var(--txt);}
+.toggleHint{margin-top:4px;font-size:12px;line-height:1.35;color:var(--muted);}
+.toggleSwitch{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  flex:0 0 auto;
+  width:54px;
+  height:30px;
+}
+.toggleSwitch input{position:absolute;opacity:0;width:1px;height:1px;}
+.toggleTrack{
+  position:absolute;
+  inset:0;
+  border-radius:999px;
+  background:rgba(255,255,255,.13);
+  border:1px solid rgba(255,255,255,.18);
+  box-shadow:inset 0 1px 4px rgba(0,0,0,.25);
+  transition:background .18s ease,border-color .18s ease,box-shadow .18s ease;
+}
+.toggleTrack::after{
+  content:"";
+  position:absolute;
+  top:3px;
+  left:3px;
+  width:22px;
+  height:22px;
+  border-radius:999px;
+  background:rgba(245,250,255,.96);
+  box-shadow:0 4px 12px rgba(0,0,0,.35);
+  transition:transform .18s ease,background .18s ease;
+}
+.toggleSwitch input:checked + .toggleTrack{
+  background:linear-gradient(135deg, rgba(45,212,191,.92), rgba(56,189,248,.90));
+  border-color:rgba(125,211,252,.70);
+  box-shadow:0 0 0 3px rgba(56,189,248,.12), inset 0 1px 4px rgba(0,0,0,.18);
+}
+.toggleSwitch input:checked + .toggleTrack::after{transform:translateX(24px);background:#fff;}
+.toggleSwitch input:focus-visible + .toggleTrack{outline:2px solid rgba(125,211,252,.90);outline-offset:3px;}
 .modalBottom { display:flex; justify-content:flex-end; margin-top: 14px; }
 .fieldLbl { display:block; font-size: 13px; opacity: 0.8; margin-bottom: 6px; }
 .settingsGroup{
@@ -14722,6 +14786,7 @@ async function loadSettingsUi(){
   const ytCookiesFile = document.getElementById('setYtCookiesFile');
   const ytCookiesState = document.getElementById('setYtCookiesState');
   const subs = document.getElementById('setSubs');
+  const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled');
   const idleQrEnabled = document.getElementById('setIdleQrEnabled');
   const idleQrSize = document.getElementById('setIdleQrSize');
   const idleQrSizeVal = document.getElementById('setIdleQrSizeVal');
@@ -14838,6 +14903,7 @@ async function loadSettingsUi(){
   if (subs){
     subs.value = (cur.sub_lang || '');
   }
+  if (idleDashboardEnabled) idleDashboardEnabled.checked = (cur.idle_dashboard_enabled !== false);
   if (idleQrEnabled) idleQrEnabled.checked = (cur.idle_qr_enabled !== false);
   if (idleQrSize) {
     const size = Number(cur.idle_qr_size);
@@ -15090,6 +15156,7 @@ function bindSettingsUi(){
     const ytUseInvidious = !!document.getElementById('setYtUseInvidious')?.checked;
     const ytInvidiousBase = (document.getElementById('setYtInvidiousBase')?.value || '').trim();
     const subs = document.getElementById('setSubs')?.value || '';
+    const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled')?.checked !== false;
     const idleQrEnabled = !!document.getElementById('setIdleQrEnabled')?.checked;
     const idleQrSize = Number(document.getElementById('setIdleQrSize')?.value || '168');
     const idleQrSizeSafe = Number.isFinite(idleQrSize) ? Math.max(96, Math.min(280, Math.round(idleQrSize))) : 168;
@@ -15132,6 +15199,7 @@ function bindSettingsUi(){
       youtube_use_invidious: ytUseInvidious,
       youtube_invidious_base: ytInvidiousBase,
       sub_lang: subs,
+      idle_dashboard_enabled: idleDashboardEnabled,
       idle_qr_enabled: idleQrEnabled,
       idle_qr_size: idleQrSizeSafe,
       idle_panels: collectIdlePanelSettings(),
@@ -15322,6 +15390,16 @@ window.addEventListener('DOMContentLoaded', () => {
     <details class="settingsGroup">
       <summary>Idle Dashboard</summary>
       <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Show idle dashboard between plays</div>
+            <div class="toggleHint">Turn off to return to the desktop while RelayTV stays ready for the next play.</div>
+          </div>
+          <label class="toggleSwitch" for="setIdleDashboardEnabled" title="Show idle dashboard between plays">
+            <input type="checkbox" id="setIdleDashboardEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
         <details class="settingsGroup">
           <summary>Show QR in Idle</summary>
           <div class="settingsBody">
