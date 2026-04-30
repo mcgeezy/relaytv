@@ -2471,6 +2471,40 @@ def next_track():
     return result
 
 
+def _stop_current_for_idle_or_desktop() -> bool:
+    keep_qt_shell = bool(
+        _idle_dashboard_enabled_for_player()
+        and getattr(player, "_qt_shell_backend_enabled", lambda: False)()
+    )
+    if keep_qt_shell:
+        stopped_in_place = bool(getattr(player, "stop_playback_keep_qt_shell", lambda: False)())
+        if stopped_in_place:
+            return True
+    player.stop_mpv(restart_splash=_idle_dashboard_enabled_for_player())
+    return False
+
+
+@router.post("/now_playing/clear")
+def clear_now_playing():
+    """Discard current now-playing item; advance queue or return to idle/desktop."""
+    with state.QUEUE_LOCK:
+        has_queue = bool(state.QUEUE)
+    if has_queue:
+        return next_track()
+
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    with player.MPV_LOCK:
+        stopped_in_place = _stop_current_for_idle_or_desktop()
+    state.set_now_playing(None)
+    state.set_session_position(None)
+    state.set_session_state("idle")
+    try:
+        state.persist_queue()
+    except Exception:
+        pass
+    return {"status": "cleared", "resume_available": False, "kept_player_shell": bool(stopped_in_place)}
+
+
 @router.post("/clear")
 def clear():
     with state.QUEUE_LOCK:
@@ -13928,11 +13962,7 @@ function renderStatus(st) {
     nowSkipBtn.classList.toggle('hidden', !canSkipNow);
     nowSkipBtn.onclick = async (e) => {
       try { if (e) e.preventDefault(); } catch(_){}
-      if (Number(st.queue_length || 0) > 0) {
-        await post('/next');
-      } else {
-        await post('/close');
-      }
+      await post('/now_playing/clear');
     };
   }
 

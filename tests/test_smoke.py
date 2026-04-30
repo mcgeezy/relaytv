@@ -85,7 +85,7 @@ def test_ui_smoke() -> None:
     assert 'isUnavailable' in response.text
     assert 'Playback unavailable: stored upload was removed' in response.text
     assert 'onclick="post(\'/close\')"' in response.text
-    assert "await post('/close');" in response.text
+    assert "await post('/now_playing/clear');" in response.text
     assert 'id="jfSearchBtn"' not in response.text
     assert 'id="jfRefreshBtn"' not in response.text
     assert 'id="jfReconnectBtn"' not in response.text
@@ -1262,6 +1262,76 @@ def test_close_tears_down_qt_shell_when_idle_dashboard_disabled(monkeypatch: pyt
 
     assert out['status'] == 'closed'
     assert out['kept_player_shell'] is False
+    assert stop_shell_calls == []
+    assert stop_mpv_calls == [False]
+
+
+def test_clear_now_playing_advances_queue_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(routes.state, 'QUEUE', [{'url': 'https://example.com/next.mp4'}], raising=False)
+    monkeypatch.setattr(
+        routes.player,
+        'advance_queue_playback',
+        lambda mode, prefer_playlist_next=True, poll_sleep=None: calls.append((mode, bool(prefer_playlist_next))) or {
+            'status': 'playing_next',
+            'now_playing': {'title': 'Next'},
+            'method': 'dequeue_play_item',
+        },
+    )
+
+    out = routes.clear_now_playing()
+
+    assert out['status'] == 'playing_next'
+    assert out['now_playing']['title'] == 'Next'
+    assert 'method' not in out
+    assert calls == [('next', True)]
+
+
+def test_clear_now_playing_returns_to_idle_without_preserving_current(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_values: list[object] = []
+    session_values: list[str] = []
+    stop_shell_calls: list[bool] = []
+    stop_mpv_calls: list[bool] = []
+
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Current'}, raising=False)
+    monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: now_values.append(value))
+    monkeypatch.setattr(routes.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda value: session_values.append(value))
+    monkeypatch.setattr(routes.state, 'persist_queue', lambda: None)
+    monkeypatch.setattr(routes.player, '_idle_dashboard_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or True)
+    monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
+
+    out = routes.clear_now_playing()
+
+    assert out == {'status': 'cleared', 'resume_available': False, 'kept_player_shell': True}
+    assert now_values == [None]
+    assert session_values == ['idle']
+    assert stop_shell_calls == [True]
+    assert stop_mpv_calls == []
+
+
+def test_clear_now_playing_tears_down_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop_shell_calls: list[bool] = []
+    stop_mpv_calls: list[bool] = []
+
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Current'}, raising=False)
+    monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: None)
+    monkeypatch.setattr(routes.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(routes.state, 'persist_queue', lambda: None)
+    monkeypatch.setattr(routes.player, '_idle_dashboard_enabled', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or True)
+    monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
+
+    out = routes.clear_now_playing()
+
+    assert out == {'status': 'cleared', 'resume_available': False, 'kept_player_shell': False}
     assert stop_shell_calls == []
     assert stop_mpv_calls == [False]
 
