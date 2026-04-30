@@ -1006,6 +1006,74 @@ def test_repair_orphan_runtime_playback_ignores_natural_idle_hold(monkeypatch: p
     ) is False
 
 
+def test_natural_queue_end_keeps_qt_shell_alive_before_idle_overlay(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop_calls: list[bool] = []
+    ensure_calls: list[bool] = []
+    now_values: list[object] = []
+    session_values: list[str] = []
+    pos_values: list[object] = []
+
+    class ImmediateTimer:
+        daemon = False
+
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+
+        def cancel(self):
+            pass
+
+        def start(self):
+            self.callback()
+
+    monkeypatch.setenv("RELAYTV_NATURAL_IDLE_SETTLE_SEC", "2")
+    monkeypatch.setenv("RELAYTV_NATURAL_IDLE_ENSURE_DELAY_SEC", "0.2")
+    monkeypatch.setattr(player.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(player, "_NATURAL_IDLE_ENSURE_TIMER", None, raising=False)
+    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
+    monkeypatch.setattr(player.state, "NOW_PLAYING", {"title": "Ended"}, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "set_now_playing", lambda value: now_values.append(value))
+    monkeypatch.setattr(player.state, "set_session_state", lambda value: session_values.append(value))
+    monkeypatch.setattr(player.state, "set_session_position", lambda value: pos_values.append(value))
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: True)
+    monkeypatch.setattr(player, "stop_mpv", lambda restart_splash=True: stop_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(player, "ensure_qt_shell_idle", lambda force=False: ensure_calls.append(bool(force)))
+    monkeypatch.setattr(player.threading, "Timer", ImmediateTimer)
+
+    player._handle_playback_idle_no_queue()
+
+    assert now_values == [None]
+    assert session_values == ["idle"]
+    assert pos_values == [None]
+    assert stop_calls == []
+    assert ensure_calls == [False]
+    assert player._NATURAL_IDLE_RESET_UNTIL == 1002.0
+
+
+def test_natural_queue_end_starts_splash_for_non_qt_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    splash_calls: list[bool] = []
+    stop_calls: list[bool] = []
+
+    monkeypatch.setenv("RELAYTV_NATURAL_IDLE_SETTLE_SEC", "2")
+    monkeypatch.setattr(player.time, "time", lambda: 2000.0)
+    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
+    monkeypatch.setattr(player.state, "NOW_PLAYING", {"title": "Ended"}, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "set_now_playing", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_state", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: False)
+    monkeypatch.setattr(player, "stop_mpv", lambda restart_splash=True: stop_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(player, "start_splash_screen", lambda: splash_calls.append(True))
+
+    player._handle_playback_idle_no_queue()
+
+    assert stop_calls == []
+    assert splash_calls == [True]
+    assert player._NATURAL_IDLE_RESET_UNTIL == 2002.0
+
+
 def test_playback_runtime_idle_or_ended_ignores_active_play_transition(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player, '_is_playing', lambda: False)
     monkeypatch.setattr(player, 'playback_transitioning', lambda: True)

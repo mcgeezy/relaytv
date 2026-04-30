@@ -27,6 +27,7 @@ from .resolver import enrich_item_metadata, is_youtube_url, make_item, provider_
 logger = get_logger("player")
 
 _NATURAL_IDLE_RESET_UNTIL = 0.0
+_NATURAL_IDLE_ENSURE_TIMER: threading.Timer | None = None
 
 
 def _native_sidecar_health_snapshot(require_qt_shell: bool = False):
@@ -3977,7 +3978,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 
 def _handle_playback_idle_no_queue() -> None:
     """Transition app/UI state when playback has ended and queue is empty."""
-    global _NATURAL_IDLE_RESET_UNTIL
+    global _NATURAL_IDLE_RESET_UNTIL, _NATURAL_IDLE_ENSURE_TIMER
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     _emit_jellyfin_stopped_from_now(now)
     # Only clear now-playing when not in a user-closed resumable session.
@@ -3986,11 +3987,8 @@ def _handle_playback_idle_no_queue() -> None:
         state.set_session_state("idle")
         state.set_session_position(None)
 
-    # When queue ends naturally, restore idle visuals.
-    # In qt backend always force the same stop/restart idle reset used by
-    # manual close. The automatic queue-end worker can observe NOW_PLAYING
-    # after other state has already been cleared, and a plain ensure_qt_shell_idle()
-    # is too weak when the embedded overlay/browser has dropped out overnight.
+    # Keep a short hold so status/orphan repair treats the idle Qt runtime as
+    # intentional while the overlay dashboard reclaims the screen.
     try:
         settle_sec = float(os.getenv("RELAYTV_NATURAL_IDLE_SETTLE_SEC", "10.0"))
     except Exception:
@@ -3998,10 +3996,28 @@ def _handle_playback_idle_no_queue() -> None:
     settle_sec = max(1.0, min(30.0, settle_sec))
     _NATURAL_IDLE_RESET_UNTIL = time.time() + settle_sec
     if _qt_shell_backend_enabled():
+        if _NATURAL_IDLE_ENSURE_TIMER is not None:
+            try:
+                _NATURAL_IDLE_ENSURE_TIMER.cancel()
+            except Exception:
+                pass
         try:
-            stop_mpv(restart_splash=True)
+            delay_sec = float(os.getenv("RELAYTV_NATURAL_IDLE_ENSURE_DELAY_SEC", "1.0"))
         except Exception:
-            ensure_qt_shell_idle()
+            delay_sec = 1.0
+        delay_sec = max(0.2, min(5.0, delay_sec))
+
+        def _ensure_idle_after_natural_end() -> None:
+            try:
+                ensure_qt_shell_idle()
+            except Exception:
+                pass
+
+        # Do not tear down the Qt shell on natural EOF. Leaving the idle player
+        # surface alive avoids exposing the desktop before the overlay paints.
+        _NATURAL_IDLE_ENSURE_TIMER = threading.Timer(delay_sec, _ensure_idle_after_natural_end)
+        _NATURAL_IDLE_ENSURE_TIMER.daemon = True
+        _NATURAL_IDLE_ENSURE_TIMER.start()
     else:
         start_splash_screen()
 
