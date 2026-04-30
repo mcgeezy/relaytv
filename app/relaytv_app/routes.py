@@ -5807,6 +5807,13 @@ def _can_preserve_closed_session() -> bool:
         return False
 
 
+def _idle_dashboard_enabled_for_player() -> bool:
+    try:
+        return bool(getattr(player, "_idle_dashboard_enabled", lambda: True)())
+    except Exception:
+        return True
+
+
 def _jellyfin_progress_snapshot() -> dict | None:
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     if not now:
@@ -7256,14 +7263,27 @@ def close():
 
     pos = None
     dur = None
-    preserve_resume = _can_preserve_closed_session()
+    preserve_resume = _can_preserve_closed_session() or isinstance(state.NOW_PLAYING, dict)
+    try:
+        if bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)()):
+            preserve_resume = False
+    except Exception:
+        pass
     if preserve_resume:
         # Lock before reading time-pos to avoid race with stop
 
         with player.MPV_LOCK:
 
-            pos = player.mpv_get("time-pos")
-            dur = player.mpv_get("duration")
+            try:
+                pos = player.mpv_get("time-pos")
+            except Exception:
+                pos = None
+            try:
+                dur = player.mpv_get("duration")
+            except Exception:
+                dur = None
+        if pos is None and isinstance(state.NOW_PLAYING, dict):
+            pos = state.NOW_PLAYING.get("resume_pos")
         try:
             state.set_session_position(float(pos) if pos is not None else None)
         except Exception:
@@ -7290,12 +7310,27 @@ def close():
             pass
 
     state.set_session_state("closed" if preserve_resume else "idle")
-    with player.MPV_LOCK:
-        player.stop_mpv()
+    keep_qt_shell = bool(
+        preserve_resume
+        and _idle_dashboard_enabled_for_player()
+        and getattr(player, "_qt_shell_backend_enabled", lambda: False)()
+    )
+    stopped_in_place = False
+    if keep_qt_shell:
+        with player.MPV_LOCK:
+            stopped_in_place = bool(getattr(player, "stop_playback_keep_qt_shell", lambda: False)())
+    if not stopped_in_place:
+        with player.MPV_LOCK:
+            player.stop_mpv(restart_splash=_idle_dashboard_enabled_for_player())
 
     if preserve_resume:
         _jellyfin_emit_stopped_hint(pos, dur)
-    return {"status": ("closed" if preserve_resume else "idle"), "resume_available": bool(preserve_resume and state.NOW_PLAYING), "position": pos}
+    return {
+        "status": ("closed" if preserve_resume else "idle"),
+        "resume_available": bool(preserve_resume and state.NOW_PLAYING),
+        "position": pos,
+        "kept_player_shell": bool(stopped_in_place),
+    }
 
 
 @router.post("/resume/clear")
@@ -10943,7 +10978,7 @@ def ui():
           <button onclick="post('/playback/toggle')"><span class="bIcon">⏯️</span><span>Play/Pause</span></button>
           <button onclick="post('/next')"><span class="bIcon">⏭️</span><span>Next</span></button>
           <button onclick="post('/mute')" id="muteBtn"><span class="bIcon">🔇</span><span>Mute</span></button>
-          <button class="danger" onclick="post('/resume/clear')" id="closeBtn"><span class="bIcon">✖️</span><span>Close</span></button>
+          <button class="danger" onclick="post('/close')" id="closeBtn"><span class="bIcon">✖️</span><span>Close</span></button>
         </div>
 
         <div class="controls2">
@@ -13896,7 +13931,7 @@ function renderStatus(st) {
       if (Number(st.queue_length || 0) > 0) {
         await post('/next');
       } else {
-        await post('/resume/clear');
+        await post('/close');
       }
     };
   }

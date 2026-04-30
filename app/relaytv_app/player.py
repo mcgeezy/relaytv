@@ -2055,6 +2055,35 @@ def stop_mpv(*, restart_splash: bool = True):
         start_splash_screen()
 
 
+def stop_playback_keep_qt_shell() -> bool:
+    """Stop current media while keeping the Qt shell alive for idle overlay."""
+    if not _qt_shell_backend_enabled():
+        return False
+    if not _idle_dashboard_enabled():
+        return False
+    _persist_runtime_volume_before_stop()
+    try:
+        result = mpv_command(["stop"])
+    except Exception:
+        return False
+    if not isinstance(result, dict) or result.get("error") != "success":
+        return False
+    _reset_mpv_up_next_state()
+    _mpv_cache_update(
+        {
+            "path": "",
+            "pause": False,
+            "time-pos": None,
+            "duration": None,
+            "core-idle": True,
+            "eof-reached": False,
+            "playlist-pos": None,
+            "playlist-count": 0,
+        }
+    )
+    return True
+
+
 def _has_x11_display() -> bool:
     """Best-effort check for an X11 display inside the container."""
     disp = (os.getenv("DISPLAY") or "").strip()

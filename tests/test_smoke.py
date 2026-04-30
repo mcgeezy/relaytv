@@ -84,7 +84,8 @@ def test_ui_smoke() -> None:
     assert 'mediaBadge' in response.text
     assert 'isUnavailable' in response.text
     assert 'Playback unavailable: stored upload was removed' in response.text
-    assert 'onclick="post(\'/resume/clear\')"' in response.text
+    assert 'onclick="post(\'/close\')"' in response.text
+    assert "await post('/close');" in response.text
     assert 'id="jfSearchBtn"' not in response.text
     assert 'id="jfRefreshBtn"' not in response.text
     assert 'id="jfReconnectBtn"' not in response.text
@@ -1207,6 +1208,62 @@ def test_playback_state_keeps_closed_session_non_playing_during_explicit_stop_ho
     assert payload['state'] == 'closed'
     assert payload['playing'] is False
     assert payload['has_now_playing'] is True
+
+
+def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_values: list[object] = []
+    session_values: list[str] = []
+    stop_shell_calls: list[bool] = []
+    stop_mpv_calls: list[bool] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(routes.player, '_idle_dashboard_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 12.5 if prop == 'time-pos' else 99.0)
+    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or True)
+    monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(routes, '_jellyfin_emit_stopped_hint', lambda pos, dur: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Clip', 'url': 'https://example.com/video.mp4'}, raising=False)
+    monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: now_values.append(value))
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda value: session_values.append(value))
+    monkeypatch.setattr(routes.state, 'set_session_position', lambda value: None)
+
+    out = routes.close()
+
+    assert out['status'] == 'closed'
+    assert out['resume_available'] is True
+    assert out['kept_player_shell'] is True
+    assert stop_shell_calls == [True]
+    assert stop_mpv_calls == []
+    assert session_values == ['closed']
+    assert now_values[-1]['closed'] is True
+    assert now_values[-1]['resume_pos'] == 12.5
+
+
+def test_close_tears_down_qt_shell_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop_shell_calls: list[bool] = []
+    stop_mpv_calls: list[bool] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(routes.player, '_idle_dashboard_enabled', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 12.5 if prop == 'time-pos' else 99.0)
+    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or True)
+    monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(routes, '_jellyfin_emit_stopped_hint', lambda pos, dur: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Clip', 'url': 'https://example.com/video.mp4'}, raising=False)
+    monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: None)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(routes.state, 'set_session_position', lambda value: None)
+
+    out = routes.close()
+
+    assert out['status'] == 'closed'
+    assert out['kept_player_shell'] is False
+    assert stop_shell_calls == []
+    assert stop_mpv_calls == [False]
 
 
 def test_status_keeps_idle_non_playing_during_natural_idle_hold(monkeypatch: pytest.MonkeyPatch) -> None:
