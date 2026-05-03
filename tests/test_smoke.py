@@ -590,6 +590,48 @@ def test_play_now_accepts_uploaded_audio_url(monkeypatch: pytest.MonkeyPatch, tm
     assert response.json()["now_playing"]["provider"] == "upload"
 
 
+def test_play_now_accepts_malformed_json_share_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: None)
+    captured: dict[str, object] = {}
+
+    def fake_play_item(url, use_resolver=True, cec=False, clear_queue=False, mode="play_now"):
+        captured["url"] = url
+        return {"url": url, "provider": "famelack", "title": "LiveNOW from FOX"}
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    app = create_app(testing=True)
+    client = TestClient(app)
+    raw = 'https://famelock.com/\n"LiveNOW from FOX"\nhttps://famelack.com/tv/us/kcakyT2as7MH2V'
+
+    response = client.post("/play_now", data=raw, headers={"Content-Type": "application/json"})
+
+    assert response.status_code == 200
+    assert captured["url"] == raw
+    assert response.json()["now_playing"]["provider"] == "famelack"
+
+
+def test_play_now_accepts_form_url_share(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: None)
+    captured: dict[str, object] = {}
+
+    def fake_play_item(url, use_resolver=True, cec=False, clear_queue=False, mode="play_now"):
+        captured["url"] = url
+        return {"url": url, "provider": "famelack", "title": "LiveNOW from FOX"}
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    app = create_app(testing=True)
+    client = TestClient(app)
+    url = "https://famelack.com/tv/us/kcakyT2as7MH2V"
+
+    response = client.post("/play_now", data={"url": url, "preserve_current": "false"})
+
+    assert response.status_code == 200
+    assert captured["url"] == url
+    assert response.json()["now_playing"]["provider"] == "famelack"
+
+
 def test_upload_items_mark_unavailable_after_removal(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     uploads_dir = tmp_path / "uploads"
     monkeypatch.setenv("RELAYTV_UPLOADS_DIR", str(uploads_dir))
@@ -972,6 +1014,101 @@ def test_youtube_strategies_prefer_quality_retries_before_plain_default(monkeypa
     assert '--remote-components' in strategies[0][0]
     assert strategies[0][1] == ['', 'best']
     assert (['yt-dlp', '--no-playlist'], ['fmt1', 'best']) in strategies
+
+
+def test_famelack_provider_item_and_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    sample = {
+        'nanoid': 'kcakyT2as7MH2V',
+        'name': 'LiveNOW from FOX',
+        'stream_urls': [
+            'https://pb-k5p02dtnr2162.akamaized.net/LiveNOW_from_FOX.m3u8',
+            'https://backup.example/playlist.m3u8',
+        ],
+        'country': 'us',
+    }
+    monkeypatch.setattr(resolver, '_famelack_country_items', lambda mode, country: [sample])
+
+    url = 'https://famelack.com/tv/us/kcakyT2as7MH2V'
+    item = resolver.make_item(url, lightweight=True)
+    stream, audio = resolver.resolve_streams(url)
+
+    assert resolver.provider_from_url(url) == 'famelack'
+    assert item['provider'] == 'famelack'
+    assert item['title'] == 'LiveNOW from FOX'
+    assert item['channel'] == 'US'
+    assert item['is_live'] is True
+    assert '_metadata_lightweight' not in item
+    assert stream == 'https://pb-k5p02dtnr2162.akamaized.net/LiveNOW_from_FOX.m3u8'
+    assert audio is None
+
+
+def test_shared_text_prefers_famelack_deep_link_over_homepage() -> None:
+    raw = '\n'.join(
+        [
+            'https://famelock.com/',
+            '"LiveNOW from FOX"',
+            'https://famelack.com/tv/us/kcakyT2as7MH2V',
+        ]
+    )
+
+    assert resolver.extract_first_url(raw) == 'https://famelack.com/tv/us/kcakyT2as7MH2V'
+    assert resolver.validate_user_url(raw) == 'https://famelack.com/tv/us/kcakyT2as7MH2V'
+
+
+def test_famelack_youtube_embed_fallback_normalizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    sample = {
+        'nanoid': 'abc123def456',
+        'name': 'Fallback Channel',
+        'stream_urls': [],
+        'youtube_urls': ['https://www.youtube-nocookie.com/embed/C96oohpWBGw'],
+    }
+    monkeypatch.setattr(resolver, '_famelack_country_items', lambda mode, country: [sample])
+    monkeypatch.setattr(resolver, 'resolve_streams_ytdlp', lambda url: (url, None))
+
+    stream, audio = resolver.resolve_streams('https://famelack.com/tv/us/abc123def456')
+
+    assert stream == 'https://www.youtube.com/watch?v=C96oohpWBGw'
+    assert audio is None
+
+
+def test_play_item_forces_famelack_resolution_even_when_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_FORCE_RESOLVE_PROVIDERS', raising=False)
+    monkeypatch.setattr(player, '_mark_playback_transition', lambda window_sec=None: None)
+    monkeypatch.setattr(player, 'validate_user_url', lambda raw: raw)
+    monkeypatch.setattr(player, 'provider_from_url', lambda url: 'famelack')
+    monkeypatch.setattr(player, 'cec_auto_on_switch', lambda cec: False)
+    monkeypatch.setattr(player, 'cec_available', lambda: False)
+    monkeypatch.setattr(player.state, 'get_tv_state', lambda: {})
+    monkeypatch.setattr(player.state, 'set_now_playing', lambda now: None)
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(player.state, 'history_add', lambda entry: None)
+    monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda force=True: True)
+    monkeypatch.setattr(player, 'debug_log', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_load_stream_in_existing_mpv', lambda stream, audio_url=None: False)
+    monkeypatch.setattr(player, 'start_mpv', lambda stream, audio_url=None: None)
+
+    captured: dict[str, object] = {}
+
+    def fake_resolve(url):
+        captured['resolved_url'] = url
+        return 'https://cdn.example/live.m3u8', None
+
+    monkeypatch.setattr(player, 'resolve_streams', fake_resolve)
+
+    item = {
+        'url': 'https://famelack.com/tv/us/kcakyT2as7MH2V',
+        'provider': 'famelack',
+        'title': 'LiveNOW from FOX',
+        'is_live': True,
+    }
+
+    now = player.play_item(item, use_resolver=True, cec=False, clear_queue=False, mode='play')
+
+    assert captured['resolved_url'] == 'https://famelack.com/tv/us/kcakyT2as7MH2V'
+    assert now['url'] == 'https://famelack.com/tv/us/kcakyT2as7MH2V'
+    assert now['stream'] == 'https://cdn.example/live.m3u8'
 
 
 def test_repair_orphan_runtime_playback_ignores_idle_core_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:

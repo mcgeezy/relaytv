@@ -4,6 +4,7 @@ import re
 import shlex
 import subprocess
 import json
+import gzip
 import time
 import urllib.request
 import shutil
@@ -80,13 +81,48 @@ def _categorize_resolver_error(error_text: str) -> str:
 # URL helpers
 # =========================
 
+def _shared_url_score(url: str) -> int:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return -100
+    scheme = (p.scheme or "").lower()
+    host = (p.netloc or "").lower()
+    path = str(p.path or "").strip()
+    if scheme not in ("http", "https") or not host:
+        return -100
+    rootish = path in ("", "/")
+    if host.endswith("famelack.com"):
+        parts = [seg for seg in path.split("/") if seg]
+        if len(parts) >= 3 and parts[0].lower() in {"tv", "radio"}:
+            return 120
+        return -20 if rootish else 40
+    if is_youtube_url(url):
+        return 100 if youtube_id_from_url(url) else (10 if not rootish else -10)
+    if upload_store.is_upload_url(url):
+        return 100
+    if ".m3u8" in url.lower():
+        return 95
+    if rootish:
+        return -10
+    return 20
+
+
 def extract_first_url(text: str) -> str:
-    """Extract the first http(s) URL from a blob of shared text."""
+    """Extract the best http(s) URL from a blob of shared text."""
     if not text:
         return text
     text = text.strip()
-    m = re.search(r"https?://\S+", text)
-    return m.group(0) if m else text
+    urls = [normalize_shared_url(m.group(0)) for m in re.finditer(r"https?://\S+", text)]
+    urls = [u for u in urls if u]
+    if not urls:
+        return text
+    if len(urls) == 1:
+        return urls[0]
+    # Android/browser shares may include a site home URL before the actual
+    # playable link. Prefer the strongest deep/playable URL; ties choose the
+    # later URL because share sheets often append the canonical link last.
+    return max(enumerate(urls), key=lambda pair: (_shared_url_score(pair[1]), pair[0]))[1]
 
 
 def normalize_shared_url(url: str) -> str:
@@ -135,6 +171,7 @@ def is_youtube_url(u: str) -> bool:
             host.endswith("youtube.com")
             or host.endswith("www.youtube.com")
             or host.endswith("m.youtube.com")
+            or host.endswith("youtube-nocookie.com")
             or host.endswith("youtu.be")
             or "youtube.com" in host
         )
@@ -152,7 +189,7 @@ def youtube_id_from_url(u: str) -> str | None:
             vid = p.path.strip("/").split("/")[0]
             return vid or None
 
-        if "youtube.com" in host:
+        if "youtube.com" in host or host.endswith("youtube-nocookie.com"):
             q = parse_qs(p.query)
             if "v" in q and q["v"]:
                 return q["v"][0]
@@ -195,6 +232,8 @@ def provider_from_url(u: str) -> str:
         return "odysee"
     if host.endswith("vimeo.com") or "vimeo.com" in host:
         return "vimeo"
+    if host.endswith("famelack.com") or "famelack.com" in host:
+        return "famelack"
     return "other"
 
 
@@ -202,6 +241,165 @@ def provider_from_url(u: str) -> str:
 # =========================
 # Stream + metadata resolution
 # =========================
+
+_FAMELACK_DATA_ROOT = "https://raw.githubusercontent.com/famelack/famelack-data/main"
+_FAMELACK_COUNTRY_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, object]]]] = {}
+_FAMELACK_CACHE_LOCK = threading.Lock()
+
+
+def _famelack_cache_ttl_sec() -> float:
+    raw = (os.getenv("RELAYTV_FAMELACK_CACHE_TTL_SEC") or "3600").strip()
+    try:
+        return max(60.0, min(float(raw), 86400.0))
+    except Exception:
+        return 3600.0
+
+
+def _famelack_ref_from_url(url: str) -> tuple[str, str, str] | None:
+    try:
+        p = urlparse(url or "")
+    except Exception:
+        return None
+    host = (p.netloc or "").lower()
+    if not (host.endswith("famelack.com") or "famelack.com" in host):
+        return None
+    parts = [seg.strip() for seg in str(p.path or "").split("/") if seg.strip()]
+    if len(parts) >= 3 and parts[0].lower() in {"tv", "radio"}:
+        mode, country, nanoid = parts[0].lower(), parts[1].lower(), parts[2]
+    elif len(parts) >= 2:
+        mode, country, nanoid = "tv", parts[0].lower(), parts[1]
+    else:
+        return None
+    if not re.match(r"^[a-z]{2,3}$", country, re.I):
+        return None
+    if not re.match(r"^[A-Za-z0-9_-]{6,64}$", nanoid):
+        return None
+    return mode, country, nanoid
+
+
+def _fetch_famelack_json(path: str) -> object:
+    url = f"{_FAMELACK_DATA_ROOT.rstrip('/')}/{path.lstrip('/')}"
+    req = urllib.request.Request(url, headers={"User-Agent": "RelayTV/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as response:
+        raw = response.read()
+    try:
+        text = gzip.decompress(raw).decode("utf-8", "replace")
+    except Exception:
+        text = raw.decode("utf-8", "replace")
+    return json.loads(text)
+
+
+def _famelack_country_items(mode: str, country: str) -> list[dict[str, object]]:
+    mode = str(mode or "tv").strip().lower()
+    country = str(country or "").strip().lower()
+    key = (mode, country)
+    now = time.time()
+    with _FAMELACK_CACHE_LOCK:
+        cached = _FAMELACK_COUNTRY_CACHE.get(key)
+        if cached and (now - cached[0]) < _famelack_cache_ttl_sec():
+            return list(cached[1])
+
+    data = _fetch_famelack_json(f"{mode}/compressed/countries/{country}.json")
+    if isinstance(data, list):
+        items = [item for item in data if isinstance(item, dict)]
+    elif isinstance(data, dict):
+        raw_items = data.get("items") or data.get("channels") or data.get("stations") or []
+        items = [item for item in raw_items if isinstance(item, dict)]
+    else:
+        items = []
+
+    with _FAMELACK_CACHE_LOCK:
+        _FAMELACK_COUNTRY_CACHE[key] = (now, list(items))
+    return items
+
+
+def famelack_item_from_url(url: str) -> dict[str, object] | None:
+    ref = _famelack_ref_from_url(url)
+    if not ref:
+        return None
+    mode, country, nanoid = ref
+    for item in _famelack_country_items(mode, country):
+        item_id = str(item.get("nanoid") or item.get("id") or "").strip()
+        if item_id == nanoid:
+            out = dict(item)
+            out["_famelack_mode"] = mode
+            out["_famelack_country"] = country
+            return out
+    return None
+
+
+def _normalize_famelack_youtube_url(url: str) -> str:
+    vid = youtube_id_from_url(url)
+    if vid:
+        return f"https://www.youtube.com/watch?v={vid}"
+    return url
+
+
+def _select_famelack_stream_url(info: dict[str, object]) -> str:
+    raw_urls = info.get("stream_urls") or info.get("streamUrls") or []
+    if isinstance(raw_urls, str):
+        candidates = [raw_urls]
+    elif isinstance(raw_urls, list):
+        candidates = [str(u or "").strip() for u in raw_urls]
+    else:
+        candidates = []
+    candidates = [
+        u for u in candidates
+        if u and urlparse(u).scheme.lower() in {"http", "https"}
+    ]
+    for candidate in candidates:
+        if ".m3u8" in candidate.lower():
+            return candidate
+    if candidates:
+        return candidates[0]
+    youtube_urls = info.get("youtube_urls") or info.get("youtubeUrls") or []
+    if isinstance(youtube_urls, str):
+        youtube_candidates = [youtube_urls]
+    elif isinstance(youtube_urls, list):
+        youtube_candidates = [str(u or "").strip() for u in youtube_urls]
+    else:
+        youtube_candidates = []
+    for candidate in youtube_candidates:
+        if candidate and urlparse(candidate).scheme.lower() in {"http", "https"}:
+            return _normalize_famelack_youtube_url(candidate)
+    return ""
+
+
+def resolve_streams_famelack(url: str) -> tuple[str, str | None]:
+    info = famelack_item_from_url(url)
+    if not isinstance(info, dict):
+        msg = "Famelack: channel not found"
+        _update_resolver_runtime_state(
+            provider="famelack",
+            effective_format="direct_hls",
+            transport="famelack_data",
+            outcome_category="resolve_error",
+            error=msg,
+            success=False,
+        )
+        raise HTTPException(status_code=400, detail=msg)
+    stream = _select_famelack_stream_url(info)
+    if not stream:
+        msg = "Famelack: no playable stream URL found"
+        _update_resolver_runtime_state(
+            provider="famelack",
+            effective_format="direct_hls",
+            transport="famelack_data",
+            outcome_category="format_unavailable",
+            error=msg,
+            success=False,
+        )
+        raise HTTPException(status_code=400, detail=msg)
+    if is_youtube_url(stream):
+        return resolve_streams(stream)
+    _update_resolver_runtime_state(
+        provider="famelack",
+        effective_format="direct_hls",
+        transport="famelack_data",
+        outcome_category="success",
+        success=True,
+    )
+    return stream, None
 
 def run(argv: list[str], check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess:
     try:
@@ -678,13 +876,17 @@ def resolve_streams(url: str):
     """
     Hybrid resolver:
       - YouTube -> Invidious if enabled (avoids bot checks)
+      - Famelack -> public data feed direct stream URL
       - Others -> yt-dlp
     """
+    url = validate_user_url(url)
     settings = _runtime_settings()
     use_invid = _invidious_enabled(settings)
     invid_base = _invidious_base(settings)
     provider = provider_from_url(url)
     debug_log("resolver", f"Resolving streams for provider={provider} use_invidious={use_invid}")
+    if provider == "famelack":
+        return resolve_streams_famelack(url)
     if use_invid and is_youtube_url(url):
         try:
             stream, audio = resolve_streams_invidious(url, base=invid_base)
@@ -838,6 +1040,7 @@ def _provider_display_name(provider: str) -> str:
         "twitch": "Twitch",
         "tiktok": "TikTok",
         "jellyfin": "Jellyfin",
+        "famelack": "Famelack",
     }
     return labels.get(prov, prov.title() if prov else "Video")
 
@@ -933,6 +1136,27 @@ def enrich_item_metadata(item: dict[str, object]) -> bool:
             changed = True
         return changed
 
+    if prov == "famelack":
+        info = famelack_item_from_url(u)
+        if isinstance(info, dict):
+            t = info.get("name") or info.get("title")
+            if isinstance(t, str) and t.strip() and t.strip() != title:
+                item["title"] = t.strip()
+                title = t.strip()
+                changed = True
+            country = str(info.get("_famelack_country") or info.get("country") or "").strip().upper()
+            if country and country != channel:
+                item["channel"] = country
+                channel = country
+                changed = True
+            if item.get("is_live") is not True:
+                item["is_live"] = True
+                changed = True
+        if "_metadata_lightweight" in item:
+            item.pop("_metadata_lightweight", None)
+            changed = True
+        return changed
+
     info = ytdlp_info(u)
     if isinstance(info, dict):
         t = info.get("title")
@@ -1012,6 +1236,15 @@ def make_item(input_text: str, *, lightweight: bool = False) -> dict:
             a = oembed.get("author_name")
             if isinstance(a, str) and a.strip():
                 channel = a.strip()
+    elif prov == "famelack":
+        info = famelack_item_from_url(u)
+        if isinstance(info, dict):
+            t = info.get("name") or info.get("title")
+            if isinstance(t, str) and t.strip():
+                title = t.strip()
+            country = str(info.get("_famelack_country") or info.get("country") or "").strip().upper()
+            if country:
+                channel = country
     elif not lightweight:
         info = ytdlp_info(u)
         if isinstance(info, dict):
@@ -1043,8 +1276,15 @@ def make_item(input_text: str, *, lightweight: bool = False) -> dict:
     if thumb:
         item["thumbnail"] = thumb
     if isinstance(info, dict):
-        _apply_live_metadata(item, info)
-    if lightweight:
+        if prov == "famelack":
+            item["is_live"] = True
+            if info.get("_famelack_mode"):
+                item["_famelack_mode"] = str(info.get("_famelack_mode") or "")
+            if info.get("_famelack_country"):
+                item["_famelack_country"] = str(info.get("_famelack_country") or "")
+        else:
+            _apply_live_metadata(item, info)
+    if lightweight and prov != "famelack":
         item["_metadata_lightweight"] = True
 
     attach_local_thumbnail(item)

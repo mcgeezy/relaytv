@@ -298,6 +298,69 @@ class PlayNowReq(BaseModel):
     thumbnail: str | None = None
 
 
+def _truthy_request_value(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _play_now_req_from_mapping(data: dict[str, object]) -> PlayNowReq:
+    url = str(
+        data.get("url")
+        or data.get("link")
+        or data.get("text")
+        or data.get("share")
+        or data.get("shared_text")
+        or data.get("payload")
+        or ""
+    ).strip()
+    return PlayNowReq(
+        url=url,
+        preserve_current=_truthy_request_value(data.get("preserve_current"), True),
+        preserve_to=str(data.get("preserve_to") or "queue_front"),
+        resume_current=_truthy_request_value(data.get("resume_current"), True),
+        reason=(str(data.get("reason")).strip() if data.get("reason") is not None else None),
+        title=(str(data.get("title")).strip() if data.get("title") is not None else None),
+        thumbnail=(str(data.get("thumbnail")).strip() if data.get("thumbnail") is not None else None),
+    )
+
+
+async def _play_now_req_from_http_request(request: Request) -> PlayNowReq:
+    body = await request.body()
+    raw = body.decode("utf-8", "replace").strip() if body else ""
+    content_type = str(request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+
+    if content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        form_data = {k: v for k, v in parse_qsl(raw, keep_blank_values=True)}
+        if form_data:
+            return _play_now_req_from_mapping(form_data)
+
+    if raw and (content_type == "application/json" or raw[:1] in ("{", "[")):
+        try:
+            parsed = _json.loads(raw)
+            if isinstance(parsed, dict):
+                return _play_now_req_from_mapping(parsed)
+            if isinstance(parsed, str):
+                return PlayNowReq(url=parsed)
+        except Exception:
+            # Some Android/share clients build JSON manually and leave raw
+            # newlines/quotes unescaped. Fall through and treat the body as
+            # share text so the common URL extractor can still recover a link.
+            pass
+
+    query_url = str(request.query_params.get("url") or request.query_params.get("link") or "").strip()
+    if query_url:
+        return PlayNowReq(
+            url=query_url,
+            preserve_current=_truthy_request_value(request.query_params.get("preserve_current"), True),
+            reason=request.query_params.get("reason"),
+        )
+
+    return PlayNowReq(url=raw)
+
+
 class PlayTemporaryReq(BaseModel):
     url: str
     resume: bool = True
@@ -2568,7 +2631,7 @@ def history_play(req: HistoryPlayReq):
     if not isinstance(url, str) or not url.strip():
         raise HTTPException(status_code=400, detail="history item missing url")
 
-    return play_now(PlayNowReq(url=url.strip(), preserve_current=True, reason="history"))
+    return _play_now_impl(PlayNowReq(url=url.strip(), preserve_current=True, reason="history"))
 
 
 def _preserve_current_to_queue_front() -> dict | None:
@@ -2625,7 +2688,12 @@ def _preserve_current_to_queue_front() -> dict | None:
 
 
 @router.post("/play_now")
-def play_now(req: PlayNowReq):
+async def play_now(request: Request):
+    req = await _play_now_req_from_http_request(request)
+    return _play_now_impl(req)
+
+
+def _play_now_impl(req: PlayNowReq):
     """Play immediately, optionally preserving the currently playing item.
 
     If `preserve_current` is true and something is playing, the current item is
@@ -6816,7 +6884,7 @@ def previous():
     except Exception:
         pass
 
-    return play_now(PlayNowReq(url=chosen.get("url"), preserve_current=True, reason="previous"))
+    return _play_now_impl(PlayNowReq(url=chosen.get("url"), preserve_current=True, reason="previous"))
 
 
 @router.post("/queue/remove")

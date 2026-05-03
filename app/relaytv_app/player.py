@@ -3835,7 +3835,7 @@ def _consume_mpv_queued_next_if_started(
 
 def _providers_forced_to_resolve() -> set[str]:
     """Providers that should bypass mpv's yt-dlp hook and use server-side resolving."""
-    raw = (os.getenv("RELAYTV_FORCE_RESOLVE_PROVIDERS") or "rumble,bitchute").strip().lower()
+    raw = (os.getenv("RELAYTV_FORCE_RESOLVE_PROVIDERS") or "rumble,bitchute,famelack").strip().lower()
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
@@ -3876,7 +3876,9 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         if local_candidate and os.path.exists(local_candidate):
             trusted_local_stream = local_candidate
     item_is_live = _provider_item_is_live_stream(item, raw, provider)
-    force_resolve_provider = provider in _providers_forced_to_resolve() and (not item_is_live)
+    # Famelack pages must resolve before playback even when the channel is live;
+    # mpv/yt-dlp cannot consume the Famelack HTML URL directly.
+    force_resolve_provider = provider in _providers_forced_to_resolve() and ((not item_is_live) or provider == "famelack")
     prefetched = _fresh_prefetched_stream(item)
     should_resolve = use_resolver and (not trusted_local_stream) and (not prefer_mpv_ytdl or is_youtube_url(raw) or force_resolve_provider or prefetched is not None)
     if force_resolve_provider:
