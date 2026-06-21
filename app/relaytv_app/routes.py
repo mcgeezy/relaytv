@@ -296,6 +296,8 @@ class PlayNowReq(BaseModel):
     reason: str | None = None
     title: str | None = None
     thumbnail: str | None = None
+    resume_pos: float | None = None
+    history_id: str | None = None
 
 
 class PlayTemporaryReq(BaseModel):
@@ -2568,7 +2570,21 @@ def history_play(req: HistoryPlayReq):
     if not isinstance(url, str) or not url.strip():
         raise HTTPException(status_code=400, detail="history item missing url")
 
-    return play_now(PlayNowReq(url=url.strip(), preserve_current=True, reason="history"))
+    resume_pos = None
+    try:
+        raw_resume = it.get("resume_pos")
+        resume_pos = float(raw_resume) if raw_resume is not None else None
+    except Exception:
+        resume_pos = None
+    return play_now(PlayNowReq(
+        url=url.strip(),
+        preserve_current=True,
+        reason="history",
+        title=str(it.get("title") or "").strip() or None,
+        thumbnail=str(it.get("thumbnail") or "").strip() or None,
+        resume_pos=resume_pos,
+        history_id=str(it.get("history_id") or "").strip() or None,
+    ))
 
 
 def _preserve_current_to_queue_front() -> dict | None:
@@ -2581,11 +2597,16 @@ def _preserve_current_to_queue_front() -> dict | None:
 
     # Capture current position safely.
     pos = None
+    dur = None
     with player.MPV_LOCK:
         try:
             pos = player.mpv_get("time-pos")
         except Exception:
             pos = None
+        try:
+            dur = player.mpv_get("duration")
+        except Exception:
+            dur = None
     try:
         pos_f = float(pos) if pos is not None else None
     except Exception:
@@ -2611,8 +2632,11 @@ def _preserve_current_to_queue_front() -> dict | None:
         preserved["jellyfin_item_id"] = now.get("jellyfin_item_id")
     if isinstance(now.get("jellyfin_media_source_id"), str) and now.get("jellyfin_media_source_id"):
         preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
+    if isinstance(now.get("history_id"), str) and now.get("history_id"):
+        preserved["history_id"] = now.get("history_id")
     if pos_f is not None:
         preserved["resume_pos"] = pos_f
+    player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
 
     with state.QUEUE_LOCK:
         state.QUEUE.insert(0, preserved)
@@ -2638,7 +2662,24 @@ def play_now(req: PlayNowReq):
     if req.preserve_current and req.preserve_to == "queue_front" and req.resume_current:
         preserved = _preserve_current_to_queue_front()
 
-    now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
+    if req.title or req.thumbnail or req.resume_pos is not None or req.history_id:
+        item = {"url": req.url}
+        if req.title:
+            item["title"] = req.title
+        if req.thumbnail:
+            item["thumbnail"] = req.thumbnail
+        if req.history_id:
+            item["history_id"] = req.history_id
+        now = player.play_item(
+            item,
+            use_resolver=True,
+            cec=False,
+            clear_queue=False,
+            mode=(req.reason or "play_now"),
+            start_pos=req.resume_pos,
+        )
+    else:
+        now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
     try:
         title = now.get("title") if isinstance(now, dict) else None
         _push_overlay_toast(
@@ -7358,6 +7399,12 @@ def close():
             player.stop_mpv(restart_splash=_idle_dashboard_enabled_for_player())
 
     if preserve_resume:
+        player.update_history_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+            position_sec=pos,
+            duration_sec=dur,
+            force=True,
+        )
         _jellyfin_emit_stopped_hint(pos, dur)
     return {
         "status": ("closed" if preserve_resume else "idle"),
@@ -7488,6 +7535,12 @@ def stop():
         state.set_session_state("closed")
         with player.MPV_LOCK:
             player.stop_mpv()
+        player.update_history_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+            position_sec=pos,
+            duration_sec=dur,
+            force=True,
+        )
         _jellyfin_emit_stopped_hint(pos, dur)
         return {"status": "stopped", "resume_available": bool(state.NOW_PLAYING), "position": pos}
 
@@ -9068,6 +9121,23 @@ def ui():
       border-radius: 22px;
       border: 1px solid rgba(255,255,255,.10);
     }
+    .histProgress{
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 5px;
+      z-index: 3;
+      overflow: hidden;
+      background: rgba(15,23,42,.68);
+      pointer-events: none;
+    }
+    .histProgress > span{
+      display: block;
+      height: 100%;
+      background: #38bdf8;
+      box-shadow: 0 0 10px rgba(56,189,248,.80);
+    }
     .histMeta{
       min-width:0;
       flex: 1 1 auto;
@@ -10341,6 +10411,41 @@ def ui():
 .jfRowsPad{ padding-right: 0; }
 .jfRow{ display:grid; gap: 6px; }
 .jfRowTitle{ font-size: 13px; color: var(--muted2); letter-spacing: .02em; text-transform: uppercase; }
+.jfTvSelectionRow{ gap: 0; }
+.jfTvSelectionBar{
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(120,180,255,.48);
+  background: linear-gradient(180deg, rgba(30, 64, 175, .46), rgba(15, 23, 42, .58));
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.jfTvSelectionBar:hover{ border-color: rgba(147,197,253,.84); }
+.jfTvSelectionBar:focus-visible{
+  outline: 2px solid rgba(147,197,253,.95);
+  outline-offset: 2px;
+}
+.jfTvSelectionLabel{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+}
+.jfTvSelectionHint{
+  flex: 0 0 auto;
+  color: var(--muted2);
+  font-size: 12px;
+  font-weight: 650;
+}
 .jfScroller{
   display:flex;
   gap:10px;
@@ -10702,6 +10807,12 @@ def ui():
     border-color: rgba(37, 99, 235, .48);
     box-shadow: 0 0 0 2px rgba(59, 130, 246, .16), 0 16px 36px rgba(15, 23, 42, .14);
   }
+  .jfTvSelectionBar{
+    border-color: rgba(37,99,235,.32);
+    background: linear-gradient(180deg, rgba(239,246,255,.98), rgba(219,234,254,.88));
+    color: #0f172a;
+  }
+  .jfTvSelectionBar:hover{ border-color: rgba(37,99,235,.56); }
   .jfThumb{
     background: linear-gradient(180deg, rgba(226, 232, 240, .90), rgba(241, 245, 249, .98));
   }
@@ -11968,6 +12079,7 @@ let __jfTvSeriesId = '';
 let __jfTvSeriesTitle = '';
 let __jfTvSeriesThumb = '';
 let __jfTvSeasonNumber = null;
+let __jfTvSeasonChooserExpanded = false;
 let __jfTvViewMode = 'series';
 let __jfLastFocus = null;
 let __jfAlphaIndicatorTimer = 0;
@@ -12288,11 +12400,13 @@ function _jfOpenSeriesDetailFromRich(rich){
   if (!rich) return;
   const rType = String(rich.type || '').trim().toLowerCase();
   if (rType === 'nav_back') {
+    __jfTvSeasonChooserExpanded = false;
     loadJellyfinTvSeries(false);
     return;
   }
   if (rType === 'season') {
     __jfTvSeasonNumber = Number.isFinite(Number(rich.season_number)) ? Number(rich.season_number) : null;
+    __jfTvSeasonChooserExpanded = false;
     loadJellyfinTvSeriesDetail(rich.series_id || __jfTvSeriesId, {
       title: __jfTvSeriesTitle,
       thumbnail: __jfTvSeriesThumb || rich.thumbnail_local || rich.thumbnail || '',
@@ -12301,6 +12415,7 @@ function _jfOpenSeriesDetailFromRich(rich){
     return;
   }
   if (rType === 'series') {
+    __jfTvSeasonChooserExpanded = true;
     loadJellyfinTvSeriesDetail(rich.item_id, {
       title: rich.title,
       thumbnail: rich.thumbnail_local || rich.thumbnail || '',
@@ -12310,6 +12425,18 @@ function _jfOpenSeriesDetailFromRich(rich){
   }
   // Episodes (and any future non-series entries) should open item detail panel.
   loadJellyfinDetail(rich.item_id);
+}
+
+function _jfToggleTvSeasonChooser(){
+  if (__jfBusy || !__jfTvSeriesId) return;
+  __jfTvSeasonChooserExpanded = !__jfTvSeasonChooserExpanded;
+  loadJellyfinTvSeriesDetail(__jfTvSeriesId, {
+    title: __jfTvSeriesTitle,
+    thumbnail: __jfTvSeriesThumb,
+    thumbnail_local: __jfTvSeriesThumb,
+    chooserExpanded: __jfTvSeasonChooserExpanded,
+    focusChooser: true,
+  });
 }
 
 function _jfIsSeriesNavType(rich){
@@ -12811,6 +12938,27 @@ function _jfRenderRows(rows){
     if (hideRowTitle) wrap.classList.add('catalogNoTitle');
     wrap.dataset.rowId = rowId;
 
+    if (rowId === 'tv_selection') {
+      wrap.classList.add('jfTvSelectionRow');
+      const selection = document.createElement('button');
+      selection.type = 'button';
+      selection.className = 'jfTvSelectionBar';
+      selection.setAttribute('data-jf-action', 'toggle_tv_season_chooser');
+      selection.setAttribute('aria-expanded', row.expanded ? 'true' : 'false');
+      selection.setAttribute('aria-label', `${row.title || 'Selected series and season'}. ${row.expanded ? 'Hide' : 'Show'} series and season options.`);
+      const label = document.createElement('span');
+      label.className = 'jfTvSelectionLabel';
+      label.textContent = row.title || 'Selected series and season';
+      const hint = document.createElement('span');
+      hint.className = 'jfTvSelectionHint';
+      hint.textContent = row.expanded ? 'Hide options ▴' : 'Change ▾';
+      selection.appendChild(label);
+      selection.appendChild(hint);
+      wrap.appendChild(selection);
+      hostFrag.appendChild(wrap);
+      return;
+    }
+
     const title = document.createElement('div');
     title.className = 'jfRowTitle';
     title.textContent = row.title || 'Results';
@@ -13065,6 +13213,7 @@ async function loadJellyfinTvSeries(force){
     __jfTvSeriesTitle = '';
     __jfTvSeriesThumb = '';
     __jfTvSeasonNumber = null;
+    __jfTvSeasonChooserExpanded = false;
     __jfTvViewMode = 'series';
     const up = !!(j.connected);
     const reason = String(j.last_error || '').trim();
@@ -13139,6 +13288,7 @@ function _jfLoadActiveTabDefault(force){
   __jfTvSeriesTitle = '';
   __jfTvSeriesThumb = '';
   __jfTvSeasonNumber = null;
+  __jfTvSeasonChooserExpanded = false;
   loadJellyfinTvSeries(!!force);
 }
 
@@ -13152,6 +13302,10 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
     ''
   ).trim();
   const refresh = !!(opts && opts.refresh);
+  const chooserExpanded = (opts && typeof opts.chooserExpanded === 'boolean')
+    ? opts.chooserExpanded
+    : __jfTvSeasonChooserExpanded;
+  const focusChooser = !!(opts && opts.focusChooser);
   if (__jfBusy) return;
   __jfBusy = true;
   try {
@@ -13184,19 +13338,32 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
       thumbnail: String((s && (s.thumbnail_local || s.thumbnail)) || '').trim(),
       thumbnail_local: String((s && s.thumbnail_local) || '').trim(),
     }));
+    const seasonLabel = Number.isFinite(Number(seasonNum)) ? `Season ${Number(seasonNum)}` : 'No season selected';
     const rows = [
-      {id:'tv_back', title:`${title}`, items:[{item_id:'tv_back', title:'← Back to Series', subtitle:'Return to all series', type:'nav_back', thumbnail: thumb, thumbnail_local: thumb}]},
-      {id:'tv_seasons', title:'Seasons', items: seasonItems},
-      {id:'tv_episodes', title:`Episodes${Number.isFinite(Number(seasonNum)) ? ` · Season ${Number(seasonNum)}` : ''}`, items: episodes},
+      {id:'tv_selection', title:`${title} · ${seasonLabel}`, expanded: chooserExpanded},
     ];
+    if (chooserExpanded) {
+      rows.push(
+        {id:'tv_back', title:`${title}`, items:[{item_id:'tv_back', title:'← Back to Series', subtitle:'Return to all series', type:'nav_back', thumbnail: thumb, thumbnail_local: thumb}]},
+        {id:'tv_seasons', title:'Seasons', items: seasonItems},
+      );
+    }
+    rows.push({id:'tv_episodes', title:`Episodes${Number.isFinite(Number(seasonNum)) ? ` · Season ${Number(seasonNum)}` : ''}`, items: episodes});
     __jfTvSeriesId = sid;
     __jfTvSeriesTitle = title;
     __jfTvSeriesThumb = thumb;
     __jfTvSeasonNumber = Number.isFinite(Number(seasonNum)) ? Number(seasonNum) : null;
+    __jfTvSeasonChooserExpanded = chooserExpanded;
     __jfTvViewMode = 'detail';
     __jfSelectedItemId = Number.isFinite(Number(seasonNum)) ? `season:${sid}:${Number(seasonNum)}` : '';
     _jfRenderRows(rows);
     _jfApplySelectionUi();
+    if (focusChooser) {
+      requestAnimationFrame(() => {
+        const chooser = document.querySelector('#jfRows .jfTvSelectionBar');
+        if (chooser && typeof chooser.focus === 'function') chooser.focus();
+      });
+    }
     _jfSetStatus(`TV · ${title}`, 'ok');
     _jfSyncTabControls();
   } catch (e) {
@@ -13639,6 +13806,13 @@ function bindJellyfinUi(){
       const reconnect = e.target && e.target.closest ? e.target.closest('.jfReconnectInline') : null;
       if (reconnect) {
         reconnectJellyfin();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const chooserToggle = e.target && e.target.closest ? e.target.closest('[data-jf-action="toggle_tv_season_chooser"]') : null;
+      if (chooserToggle) {
+        _jfToggleTvSeasonChooser();
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -14310,6 +14484,18 @@ async function renderHistory(){
       row.appendChild(bg);
     }
 
+    const resumePos = Number(it.resume_pos);
+    const duration = Number(it.duration_sec);
+    const progressRatio = (it.completed === true) ? 0 : (resumePos / duration);
+    if (Number.isFinite(progressRatio) && progressRatio > 0 && progressRatio < 1) {
+      const bar = document.createElement('div');
+      bar.className = 'histProgress';
+      const fill = document.createElement('span');
+      fill.style.width = `${Math.max(0, Math.min(100, progressRatio * 100))}%`;
+      bar.appendChild(fill);
+      row.appendChild(bar);
+    }
+
     const meta = document.createElement('div');
     meta.className = 'histMeta';
 
@@ -14340,6 +14526,17 @@ async function renderHistory(){
     const sub = document.createElement('div');
     sub.className = 'histSub';
     sub.textContent = `${_fmtTs(it.ts)}  •  ${it.mode || ''}`.trim();
+
+    const progress = document.createElement('div');
+    progress.className = 'histSub';
+    if (it.completed === true) {
+      progress.textContent = 'Completed · 00:00';
+    } else {
+      const resumePos = Number(it.resume_pos);
+      progress.textContent = Number.isFinite(resumePos) && resumePos > 0
+        ? `Resume · ${fmtTime(resumePos)}`
+        : 'Resume · 00:00';
+    }
 
     const url = document.createElement('div');
     url.className = 'histSub';
@@ -14374,6 +14571,7 @@ async function renderHistory(){
     meta.appendChild(title);
     meta.appendChild(channel);
     meta.appendChild(sub);
+    meta.appendChild(progress);
     meta.appendChild(url);
     meta.appendChild(btns);
 
