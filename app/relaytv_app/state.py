@@ -245,6 +245,7 @@ def _persistable_queue_item(item: dict) -> dict | None:
     for key in (
         "channel",
         "subtitle",
+        "history_id",
         "jellyfin_item_id",
         "jellyfin_media_source_id",
         "series_name",
@@ -308,6 +309,21 @@ def _persistable_history_item(item: dict) -> dict | None:
     mode = item.get("mode")
     if isinstance(mode, str) and mode.strip():
         out["mode"] = mode.strip()
+    history_id = item.get("history_id")
+    if isinstance(history_id, str) and history_id.strip():
+        out["history_id"] = history_id.strip()
+    for key in ("duration_sec",):
+        value = item.get(key)
+        if value is None:
+            continue
+        try:
+            parsed = float(value)
+            if parsed > 0:
+                out[key] = parsed
+        except Exception:
+            pass
+    if item.get("completed") is True:
+        out["completed"] = True
     return out
 
 
@@ -447,6 +463,37 @@ def _history_add(entry: dict) -> None:
         if HISTORY_LIMIT > 0 and len(HISTORY) > HISTORY_LIMIT:
             del HISTORY[HISTORY_LIMIT:]
     _persist_history()
+
+
+def _history_update(history_id: str, updates: dict) -> bool:
+    """Update one persisted history entry by its playback instance id."""
+    key = str(history_id or "").strip()
+    if not key or not isinstance(updates, dict):
+        return False
+    changed = False
+    with HISTORY_LOCK:
+        for entry in HISTORY:
+            if str(entry.get("history_id") or "").strip() != key:
+                continue
+            # A completed entry intentionally retains its 00:00 position.
+            if entry.get("completed") is True and updates.get("completed") is not False:
+                updates = {k: v for k, v in updates.items() if k not in ("resume_pos", "duration_sec")}
+            for field, value in updates.items():
+                if entry.get(field) != value:
+                    entry[field] = value
+                    changed = True
+            break
+    if changed:
+        _persist_history()
+    return changed
+
+
+def _history_contains(history_id: str) -> bool:
+    key = str(history_id or "").strip()
+    if not key:
+        return False
+    with HISTORY_LOCK:
+        return any(str(entry.get("history_id") or "").strip() == key for entry in HISTORY)
 
 
 def _load_persisted_state() -> None:
@@ -727,6 +774,14 @@ def get_tv_state() -> dict:
 
 def history_add(entry: dict) -> None:
     _history_add(entry)
+
+
+def history_update(history_id: str, updates: dict) -> bool:
+    return _history_update(history_id, updates)
+
+
+def history_contains(history_id: str) -> bool:
+    return _history_contains(history_id)
 
 
 

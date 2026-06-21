@@ -10,6 +10,7 @@ import threading
 import tempfile
 import time
 import re
+import uuid
 import platform
 import shutil
 import sys
@@ -28,6 +29,7 @@ logger = get_logger("player")
 
 _NATURAL_IDLE_RESET_UNTIL = 0.0
 _NATURAL_IDLE_ENSURE_TIMER: threading.Timer | None = None
+_HISTORY_PROGRESS_LAST_PERSIST: dict[str, float] = {}
 
 
 def _idle_dashboard_enabled() -> bool:
@@ -3577,6 +3579,11 @@ def advance_queue_playback(
                     logger.warning("queue_rollback_persist_failed source=auto_next_suppressed error=%s", exc)
                 raise QueueAdvanceSuppressedError("auto-next suppressed after dequeue")
 
+            update_history_progress(
+                prev_now,
+                completed=_history_item_completed(prev_now),
+                force=True,
+            )
             _emit_jellyfin_stopped_from_now(prev_now)
             start_pos = next_item.get("resume_pos") if isinstance(next_item, dict) else None
             try:
@@ -3786,6 +3793,7 @@ def _consume_mpv_queued_next_if_started(
             pass
         return False
 
+    update_history_progress(prev_now, completed=_history_item_completed(prev_now), force=True)
     _emit_jellyfin_stopped_from_now(prev_now)
 
     url = _queue_item_play_url(consumed)
@@ -3816,6 +3824,8 @@ def _consume_mpv_queued_next_if_started(
             now_item["jellyfin_item_id"] = consumed.get("jellyfin_item_id")
         if consumed.get("jellyfin_media_source_id"):
             now_item["jellyfin_media_source_id"] = consumed.get("jellyfin_media_source_id")
+        if consumed.get("history_id"):
+            now_item["history_id"] = consumed.get("history_id")
 
     try:
         pos = props.get("time-pos")
@@ -3825,6 +3835,7 @@ def _consume_mpv_queued_next_if_started(
     except Exception:
         pass
 
+    _add_history_entry(now_item)
     state.set_now_playing(now_item)
     state.set_session_state("playing")
     state.set_pause_reason(None)
@@ -3839,8 +3850,91 @@ def _providers_forced_to_resolve() -> set[str]:
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
+def _add_history_entry(now: dict) -> None:
+    """Attach one durable history record to a playback instance."""
+    history_id = str(now.get("history_id") or "").strip() or uuid.uuid4().hex
+    now["history_id"] = history_id
+    # Resume paths retain the same history record instead of creating a duplicate.
+    if state.history_contains(history_id):
+        state.history_update(history_id, {"completed": False})
+        return
+    entry = {
+        "history_id": history_id,
+        "ts": int(time.time()),
+        "mode": now.get("mode"),
+        "url": now.get("url"),
+        "title": now.get("title"),
+        "provider": now.get("provider"),
+        "resume_pos": max(0.0, float(now.get("resume_pos") or 0.0)),
+    }
+    for key in ("channel", "jellyfin_item_id", "jellyfin_media_source_id", "thumbnail", "thumbnail_local"):
+        if now.get(key):
+            entry[key] = now[key]
+    state.history_add(entry)
+
+
+def update_history_progress(
+    now: dict | None,
+    *,
+    position_sec: float | None = None,
+    duration_sec: float | None = None,
+    completed: bool | None = None,
+    force: bool = False,
+) -> None:
+    """Persist the last resume position for the active playback history entry."""
+    if not isinstance(now, dict):
+        return
+    history_id = str(now.get("history_id") or "").strip()
+    if not history_id:
+        return
+    now_ts = time.monotonic()
+    if not force and completed is None:
+        last_saved = _HISTORY_PROGRESS_LAST_PERSIST.get(history_id, 0.0)
+        if (now_ts - last_saved) < 5.0:
+            return
+    updates: dict[str, object] = {}
+    if completed is True:
+        updates["resume_pos"] = 0.0
+        updates["completed"] = True
+    elif completed is False:
+        updates["completed"] = False
+    else:
+        raw_pos = position_sec if position_sec is not None else now.get("resume_pos")
+        try:
+            pos = float(raw_pos) if raw_pos is not None else None
+            if pos is not None and pos >= 0:
+                updates["resume_pos"] = pos
+        except Exception:
+            pass
+    raw_duration = duration_sec if duration_sec is not None else now.get("duration_sec")
+    try:
+        duration = float(raw_duration) if raw_duration is not None else None
+        if duration is not None and duration > 0:
+            updates["duration_sec"] = duration
+    except Exception:
+        pass
+    if updates:
+        if state.history_update(history_id, updates):
+            _HISTORY_PROGRESS_LAST_PERSIST[history_id] = now_ts
+
+
+def _history_item_completed(now: dict | None) -> bool:
+    """Return true only when playback reached the actual end of a finite item."""
+    if not isinstance(now, dict):
+        return False
+    try:
+        position = float(now.get("resume_pos"))
+        duration = float(now.get("duration_sec"))
+    except Exception:
+        return False
+    if duration <= 0 or position < 0:
+        return False
+    return position >= (duration * 0.98) or (duration - position) <= 10.0
+
+
 def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mode: str, start_pos: float | None = None):
     """Play a queue item dict or a raw shared URL/text."""
+    update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
     _mark_playback_transition()
     if isinstance(item_or_text, dict):
         item = item_or_text
@@ -3983,6 +4077,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         "thumbnail": item.get("thumbnail"),
         "thumbnail_local": item.get("thumbnail_local"),
         "channel": item.get("channel"),
+        **({"history_id": item.get("history_id")} if item.get("history_id") else {}),
         **({"jellyfin_item_id": item.get("jellyfin_item_id")} if item.get("jellyfin_item_id") else {}),
         **({"jellyfin_media_source_id": item.get("jellyfin_media_source_id")} if item.get("jellyfin_media_source_id") else {}),
         **({"jellyfin_stream_mode": item.get("jellyfin_stream_mode")} if item.get("jellyfin_stream_mode") else {}),
@@ -3995,28 +4090,12 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         except Exception:
             pass
 
-
+    _add_history_entry(now)
     state.set_now_playing(now)
     state.set_session_state("playing")
     state.set_pause_reason(None)
     state.set_session_position(float(start_pos) if start_pos is not None else 0.0)
 
-
-    # Record play history
-    state.history_add({
-        "ts": int(time.time()),
-        "mode": mode,
-        "url": raw,
-        "title": title,
-        "provider": provider,
-        **({"channel": item.get("channel")} if item.get("channel") else {}),
-        **({"jellyfin_item_id": item.get("jellyfin_item_id")} if item.get("jellyfin_item_id") else {}),
-        **({"jellyfin_media_source_id": item.get("jellyfin_media_source_id")} if item.get("jellyfin_media_source_id") else {}),
-        **({
-            "thumbnail": item.get("thumbnail"),
-            "thumbnail_local": item.get("thumbnail_local"),
-        } if item.get("thumbnail") else {}),
-    })
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.
@@ -4035,6 +4114,7 @@ def _handle_playback_idle_no_queue() -> None:
     """Transition app/UI state when playback has ended and queue is empty."""
     global _NATURAL_IDLE_RESET_UNTIL, _NATURAL_IDLE_ENSURE_TIMER
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    update_history_progress(now, completed=_history_item_completed(now), force=True)
     _emit_jellyfin_stopped_from_now(now)
     # Only clear now-playing when not in a user-closed resumable session.
     if getattr(state, "SESSION_STATE", "idle") != "closed":
@@ -4694,7 +4774,7 @@ def _session_tracker_worker() -> None:
         if not _is_playing():
             continue
         try:
-            props = mpv_get_many(["time-pos", "pause", "playlist-pos", "playlist-count", "path", "core-idle", "eof-reached"])
+            props = mpv_get_many(["time-pos", "duration", "pause", "playlist-pos", "playlist-count", "path", "core-idle", "eof-reached"])
             _consume_mpv_queued_next_if_started(props)
             now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
             if not now:
@@ -4708,9 +4788,16 @@ def _session_tracker_worker() -> None:
                 pos_f = float(pos)
                 updated = dict(now)
                 updated["resume_pos"] = pos_f
+                try:
+                    duration_f = float(props.get("duration"))
+                    if duration_f > 0:
+                        updated["duration_sec"] = duration_f
+                except Exception:
+                    pass
                 state.set_now_playing(updated)
                 state.set_session_position(pos_f)
                 state.set_session_state("paused" if paused else "playing")
+                update_history_progress(updated)
             if not paused:
                 state.set_pause_reason(None)
             _prime_mpv_up_next_from_queue()

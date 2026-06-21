@@ -84,7 +84,7 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /sys:/sys:ro
       - /run/udev:/run/udev:ro
-      # Needed only when running with a host X11 display.
+      # Host desktop sockets required by Wayland and Xwayland Qt runtimes.
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${RELAYTV_XAUTHORITY_HOST_PATH:-/dev/null}:/tmp/.Xauthority:ro
       - /run/user/${PUID:-1000}:/run/user/${PUID:-1000}:rw
