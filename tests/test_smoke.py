@@ -45,6 +45,7 @@ def test_ui_smoke() -> None:
     assert 'id="nowSubLangBtn"' in response.text
     assert 'id="aboutBtn"' in response.text
     assert 'id="aboutBackdrop"' in response.text
+    assert 'id="setIdleNotificationsEnabled"' in response.text
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text
@@ -852,6 +853,107 @@ def test_overlay_playback_visibility_prefers_session_and_transition_signals() ->
     assert "root.style.setProperty(name, `${Math.round(Number(base) * scale)}px`);" in response.text
 
 
+def test_x11_overlay_enabled_by_idle_notifications_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import x11_overlay
+
+    monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
+    monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+
+    assert x11_overlay.overlay_enabled() is True
+
+
+def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import x11_overlay
+
+    monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
+    monkeypatch.setenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "0")
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+
+    assert x11_overlay.overlay_enabled() is False
+
+
+def test_x11_overlay_click_through_defaults_on() -> None:
+    text = (ROOT_DIR / "app/relaytv_app/overlay_app.py").read_text()
+    assert 'os.getenv("RELAYTV_OVERLAY_CLICKTHROUGH", "1")' in text
+
+
+def test_x11_overlay_uses_qt_fallback_when_gtk_unavailable() -> None:
+    text = (ROOT_DIR / "app/relaytv_app/overlay_app.py").read_text()
+    assert "GTK/WebKitGTK overlay backend unavailable; trying Qt WebEngine fallback." in text
+    assert "from PySide6.QtWebEngineWidgets import QWebEngineView" in text
+    assert "Qt.WA_TransparentForMouseEvents" in text
+    assert "view.page().setBackgroundColor(Qt.transparent)" in text
+    assert "RELAYTV_QT_OVERLAY_SOFTWARE" in text
+    assert "--disable-gpu-compositing" in text
+
+
+def test_x11_overlay_launch_forces_xcb_with_clickthrough(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from relaytv_app import x11_overlay
+
+    calls: list[dict] = []
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    def fake_popen(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return DummyProc()
+
+    monkeypatch.setattr(x11_overlay, "_OVERLAY_PROC", None)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "wayland")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("RELAYTV_OVERLAY_LOG", str(tmp_path / "overlay.log"))
+
+    x11_overlay.start_overlay()
+
+    assert len(calls) == 1
+    env = calls[0]["kwargs"]["env"]
+    assert env["QT_QPA_PLATFORM"] == "xcb"
+    assert env["XDG_SESSION_TYPE"] == "x11"
+    assert env["RELAYTV_OVERLAY_CLICKTHROUGH"] == "1"
+    assert "WAYLAND_DISPLAY" not in env
+
+    x11_overlay._OVERLAY_PROC = None
+
+
+def test_x11_overlay_launch_repairs_stale_xauthority(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from relaytv_app import x11_overlay
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    stale_xauthority = tmp_path / ".Xauthority"
+    stale_xauthority.mkdir()
+    valid_xauthority = runtime_dir / ".mutter-Xwaylandauth.TEST"
+    valid_xauthority.write_text("auth")
+    calls: list[dict] = []
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    def fake_popen(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return DummyProc()
+
+    monkeypatch.setattr(x11_overlay, "_OVERLAY_PROC", None)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setenv("XAUTHORITY", str(stale_xauthority))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("RELAYTV_OVERLAY_LOG", str(tmp_path / "overlay.log"))
+
+    x11_overlay.start_overlay()
+
+    assert calls[0]["kwargs"]["env"]["XAUTHORITY"] == str(valid_xauthority)
+
+    x11_overlay._OVERLAY_PROC = None
+
+
 def test_pwa_brand_banner_png_asset_resolves_with_logo_fallback() -> None:
     app = create_app(testing=True)
     client = TestClient(app)
@@ -1162,12 +1264,26 @@ def test_natural_queue_end_keeps_qt_shell_alive_before_idle_overlay(monkeypatch:
     assert player._NATURAL_IDLE_RESET_UNTIL == 1002.0
 
 
-def test_natural_queue_end_stops_qt_shell_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_natural_queue_end_keeps_qt_shell_for_idle_notifications_without_x11(monkeypatch: pytest.MonkeyPatch) -> None:
     stop_calls: list[bool] = []
     ensure_calls: list[bool] = []
 
+    class ImmediateTimer:
+        daemon = False
+
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+
+        def cancel(self):
+            pass
+
+        def start(self):
+            self.callback()
+
     monkeypatch.setenv("RELAYTV_NATURAL_IDLE_SETTLE_SEC", "2")
     monkeypatch.setattr(player.time, "time", lambda: 1500.0)
+    monkeypatch.setattr(player, "_NATURAL_IDLE_ENSURE_TIMER", None, raising=False)
     monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
     monkeypatch.setattr(player.state, "NOW_PLAYING", {"title": "Ended"}, raising=False)
     monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
@@ -1176,14 +1292,39 @@ def test_natural_queue_end_stops_qt_shell_when_idle_dashboard_disabled(monkeypat
     monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
     monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: True)
     monkeypatch.setattr(player, "_idle_dashboard_enabled", lambda: False)
+    monkeypatch.setattr(player, "_idle_notifications_enabled", lambda: True)
+    monkeypatch.setattr(player, "_x11_idle_notifications_available", lambda: False)
     monkeypatch.setattr(player, "stop_mpv", lambda restart_splash=True: stop_calls.append(bool(restart_splash)))
     monkeypatch.setattr(player, "ensure_qt_shell_idle", lambda force=False: ensure_calls.append(bool(force)))
+    monkeypatch.setattr(player.threading, "Timer", ImmediateTimer)
+
+    player._handle_playback_idle_no_queue()
+
+    assert stop_calls == []
+    assert ensure_calls == [False]
+    assert player._NATURAL_IDLE_RESET_UNTIL == 1502.0
+
+
+def test_natural_queue_end_stops_qt_shell_when_idle_visual_surface_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop_calls: list[bool] = []
+
+    monkeypatch.setenv("RELAYTV_NATURAL_IDLE_SETTLE_SEC", "2")
+    monkeypatch.setattr(player.time, "time", lambda: 1600.0)
+    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
+    monkeypatch.setattr(player.state, "NOW_PLAYING", {"title": "Ended"}, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "set_now_playing", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_state", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: True)
+    monkeypatch.setattr(player, "_idle_dashboard_enabled", lambda: False)
+    monkeypatch.setattr(player, "_idle_notifications_enabled", lambda: False)
+    monkeypatch.setattr(player, "stop_mpv", lambda restart_splash=True: stop_calls.append(bool(restart_splash)))
 
     player._handle_playback_idle_no_queue()
 
     assert stop_calls == [False]
-    assert ensure_calls == []
-    assert player._NATURAL_IDLE_RESET_UNTIL == 1502.0
+    assert player._NATURAL_IDLE_RESET_UNTIL == 1602.0
 
 
 def test_natural_queue_end_starts_splash_for_non_qt_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1367,17 +1508,21 @@ def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkey
     assert now_values[-1]['resume_pos'] == 12.5
 
 
-def test_close_tears_down_qt_shell_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_close_uses_overlay_not_qt_shell_for_idle_notifications_on_x11(monkeypatch: pytest.MonkeyPatch) -> None:
     stop_shell_calls: list[bool] = []
     stop_mpv_calls: list[bool] = []
+    ensure_surface_calls: list[bool] = []
 
     monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
     monkeypatch.setattr(routes.player, 'native_qt_playback_explicitly_ended', lambda: False)
     monkeypatch.setattr(routes.player, '_idle_dashboard_enabled', lambda: False)
+    monkeypatch.setattr(routes.player, 'idle_notifications_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'idle_visual_surface_enabled', lambda: True)
     monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 12.5 if prop == 'time-pos' else 99.0)
-    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or True)
+    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or False)
     monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(routes, '_ensure_notification_surface', lambda wait_for_subscriber=False: ensure_surface_calls.append(bool(wait_for_subscriber)))
     monkeypatch.setattr(routes, '_jellyfin_emit_stopped_hint', lambda pos, dur: None)
     monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Clip', 'url': 'https://example.com/video.mp4'}, raising=False)
     monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: None)
@@ -1388,8 +1533,9 @@ def test_close_tears_down_qt_shell_when_idle_dashboard_disabled(monkeypatch: pyt
 
     assert out['status'] == 'closed'
     assert out['kept_player_shell'] is False
-    assert stop_shell_calls == []
-    assert stop_mpv_calls == [False]
+    assert stop_shell_calls == [True]
+    assert stop_mpv_calls == [True]
+    assert ensure_surface_calls == [False]
 
 
 def test_clear_now_playing_advances_queue_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1440,9 +1586,10 @@ def test_clear_now_playing_returns_to_idle_without_preserving_current(monkeypatc
     assert stop_mpv_calls == []
 
 
-def test_clear_now_playing_tears_down_when_idle_dashboard_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_clear_now_playing_uses_overlay_not_qt_shell_for_idle_notifications_on_x11(monkeypatch: pytest.MonkeyPatch) -> None:
     stop_shell_calls: list[bool] = []
     stop_mpv_calls: list[bool] = []
+    ensure_surface_calls: list[bool] = []
 
     monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
     monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Current'}, raising=False)
@@ -1451,15 +1598,19 @@ def test_clear_now_playing_tears_down_when_idle_dashboard_disabled(monkeypatch: 
     monkeypatch.setattr(routes.state, 'set_session_state', lambda value: None)
     monkeypatch.setattr(routes.state, 'persist_queue', lambda: None)
     monkeypatch.setattr(routes.player, '_idle_dashboard_enabled', lambda: False)
+    monkeypatch.setattr(routes.player, 'idle_notifications_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'idle_visual_surface_enabled', lambda: True)
     monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
-    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or True)
+    monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: stop_shell_calls.append(True) or False)
     monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
+    monkeypatch.setattr(routes, '_ensure_notification_surface', lambda wait_for_subscriber=False: ensure_surface_calls.append(bool(wait_for_subscriber)))
 
     out = routes.clear_now_playing()
 
     assert out == {'status': 'cleared', 'resume_available': False, 'kept_player_shell': False}
-    assert stop_shell_calls == []
-    assert stop_mpv_calls == [False]
+    assert stop_shell_calls == [True]
+    assert stop_mpv_calls == [True]
+    assert ensure_surface_calls == [False]
 
 
 def test_status_keeps_idle_non_playing_during_natural_idle_hold(monkeypatch: pytest.MonkeyPatch) -> None:
