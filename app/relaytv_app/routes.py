@@ -7802,7 +7802,47 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         qt_runtime = dict(getattr(player, "qt_shell_runtime_telemetry", lambda **_: {})() or {})
     except Exception:
         qt_runtime = {}
+
+    field_map = (
+        ("position", "mpv_runtime_time_pos"),
+        ("duration", "mpv_runtime_duration"),
+        ("volume", "mpv_runtime_volume"),
+        ("mute", "mpv_runtime_mute"),
+    )
+
+    def fill_from_mpv_ipc() -> bool:
+        if not (bool(payload.get("playing")) or bool(payload.get("paused"))):
+            return False
+        try:
+            props = player.mpv_get_many(["pause", "volume", "mute", "time-pos", "duration"])
+        except Exception:
+            props = {}
+        if not isinstance(props, dict):
+            return False
+        filled = False
+        fallback_map = {
+            "position": "time-pos",
+            "duration": "duration",
+            "volume": "volume",
+            "mute": "mute",
+        }
+        for field, key in fallback_map.items():
+            value = props.get(key)
+            if value is not None:
+                payload[field] = value
+                filled = True
+        fallback_paused = props.get("pause")
+        if isinstance(fallback_paused, bool):
+            payload["paused"] = fallback_paused
+            filled = True
+        if filled:
+            payload["playback_telemetry_source"] = "mpv_ipc"
+            payload["playback_telemetry_freshness"] = "unknown"
+            payload["backend_ready"] = True
+        return filled
+
     if not bool(qt_runtime.get("selected")):
+        fill_from_mpv_ipc()
         runtime_state, runtime_reason = _derive_playback_runtime_state(
             sess=sess,
             playing=bool(payload.get("playing")),
@@ -7810,8 +7850,8 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
             has_now_playing=has_now_playing,
             queue_length=queue_length,
             transition_active=transition_active,
-            telemetry_source="none",
-            telemetry_freshness="unknown",
+            telemetry_source=str(payload.get("playback_telemetry_source") or "none"),
+            telemetry_freshness=str(payload.get("playback_telemetry_freshness") or "unknown"),
         )
         payload.update(state.update_playback_runtime_state(runtime_state, runtime_reason))
         return payload
@@ -7831,12 +7871,6 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     payload["native_qt_mpv_runtime_playback_started"] = qt_runtime.get("mpv_runtime_playback_started")
     payload["backend_ready"] = bool(qt_runtime.get("available")) if qt_runtime.get("selected") is not None else None
 
-    field_map = (
-        ("position", "mpv_runtime_time_pos"),
-        ("duration", "mpv_runtime_duration"),
-        ("volume", "mpv_runtime_volume"),
-        ("mute", "mpv_runtime_mute"),
-    )
     for field, key in field_map:
         value = qt_runtime.get(key)
         if value is not None:
@@ -7853,24 +7887,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     sample_detail = str(qt_runtime.get("mpv_runtime_sample_detail") or "").strip().lower()
     missing_runtime_fields = [field for field, _key in field_map if payload.get(field) is None]
     if (bool(payload.get("playing")) or runtime_playing) and (missing_runtime_fields or sample_detail.startswith("subprocess_runtime")):
-        try:
-            props = player.mpv_get_many(["pause", "volume", "mute", "time-pos", "duration"])
-        except Exception:
-            props = {}
-        if isinstance(props, dict):
-            fallback_map = {
-                "position": "time-pos",
-                "duration": "duration",
-                "volume": "volume",
-                "mute": "mute",
-            }
-            for field, key in fallback_map.items():
-                value = props.get(key)
-                if value is not None:
-                    payload[field] = value
-            fallback_paused = props.get("pause")
-            if isinstance(fallback_paused, bool):
-                payload["paused"] = fallback_paused
+        fill_from_mpv_ipc()
     if runtime_playing and not closed_stop_hold and not natural_idle_clear_hold:
         payload["playing"] = True
         payload["state"] = "paused" if bool(payload.get("paused")) else "playing"
@@ -11604,12 +11621,13 @@ function _mergePlaybackStateIntoStatus(base, fast){
     'queue_length',
     'playback_telemetry_source',
     'playback_telemetry_freshness',
-    'position',
-    'duration',
-    'volume',
-    'mute',
   ].forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(src, key)) out[key] = src[key];
+  });
+  ['position', 'duration', 'volume', 'mute'].forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(src, key)) return;
+    const value = src[key];
+    if (value != null || !src.playing || !out.playing) out[key] = value;
   });
   if (Object.prototype.hasOwnProperty.call(src, 'has_now_playing')) {
     out.has_now_playing = !!src.has_now_playing;

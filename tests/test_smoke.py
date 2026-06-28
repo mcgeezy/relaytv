@@ -1298,6 +1298,40 @@ def test_playback_state_keeps_closed_session_non_playing_during_explicit_stop_ho
     assert payload['has_now_playing'] is True
 
 
+def test_playback_state_uses_mpv_ipc_when_qt_telemetry_is_unselected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'sample'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'natural_idle_reset_holding', lambda: False)
+    monkeypatch.setattr(routes.player, 'qt_shell_runtime_telemetry', lambda **_: {'selected': False})
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_get_many',
+        lambda props: {'pause': False, 'time-pos': 42.5, 'duration': 120.0, 'volume': 80.0, 'mute': False},
+    )
+    monkeypatch.setattr(
+        routes.state,
+        'update_playback_runtime_state',
+        lambda next_state, reason='': {
+            'playback_runtime_state': next_state,
+            'playback_runtime_state_reason': reason,
+        },
+    )
+
+    payload = routes.playback_state()
+
+    assert payload['playing'] is True
+    assert payload['position'] == 42.5
+    assert payload['duration'] == 120.0
+    assert payload['volume'] == 80.0
+    assert payload['mute'] is False
+    assert payload['playback_telemetry_source'] == 'mpv_ipc'
+    assert payload['playback_runtime_state'] == 'playing'
+
+
 def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     now_values: list[object] = []
     session_values: list[str] = []
