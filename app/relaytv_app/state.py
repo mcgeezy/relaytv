@@ -275,6 +275,21 @@ def _persistable_queue_item(item: dict) -> dict | None:
         except Exception:
             pass
 
+    resolved_source = str(item.get("_resolved_source_url") or "").strip()
+    resolved_stream = str(item.get("_resolved_stream") or "").strip()
+    if resolved_source == url and resolved_stream:
+        out["_resolved_source_url"] = resolved_source
+        out["_resolved_stream"] = resolved_stream
+        resolved_audio = str(item.get("_resolved_audio") or "").strip()
+        if resolved_audio:
+            out["_resolved_audio"] = resolved_audio
+        try:
+            resolved_at = float(item.get("_resolved_at") or 0.0)
+        except Exception:
+            resolved_at = 0.0
+        if resolved_at > 0.0:
+            out["_resolved_at"] = resolved_at
+
     thumb = _sanitize_thumb_for_persist(item)
     if thumb:
         out["thumbnail"] = thumb

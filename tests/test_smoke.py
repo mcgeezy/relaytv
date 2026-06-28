@@ -1571,6 +1571,137 @@ def test_playback_toggle_resumes_paused_session_without_reloading(monkeypatch: p
     assert calls == [('pause', False)]
 
 
+def test_mpv_start_args_include_resume_start_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'get_settings', lambda: {'volume': 75})
+    monkeypatch.setattr(player, '_effective_audio_device', lambda settings=None: '')
+    monkeypatch.setattr(player, '_x11_mode_active', lambda selected_mode=None: False)
+    monkeypatch.setattr(player, '_x11_overlay_enabled', lambda: False)
+    monkeypatch.setattr(player, '_provider_hint_for_stream', lambda *_a, **_k: 'generic')
+    monkeypatch.setattr(player, '_should_force_ytdl_off', lambda *_a, **_k: False)
+    monkeypatch.setattr(player, '_effective_ytdl_format', lambda *_a, **_k: '')
+
+    args = player._build_mpv_args('https://example.com/video.mp4', None, 'x11', start_pos=42.5)
+
+    assert '--start=42.5' in args
+    assert args[-1] == 'https://example.com/video.mp4'
+
+
+def test_resume_session_starts_resolved_stream_at_resume_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    load_calls: list[dict[str, object]] = []
+    start_calls: list[dict[str, object]] = []
+    seek_calls: list[object] = []
+
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'closed', raising=False)
+    monkeypatch.setattr(
+        routes.state,
+        'NOW_PLAYING',
+        {
+            'url': 'https://youtube.com/watch?v=abc',
+            'stream': 'https://video.example/resolved.mp4',
+            'audio': 'https://audio.example/resolved.m4a',
+            'resume_pos': 42.5,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(routes.state, 'SESSION_POSITION', 42.5, raising=False)
+    monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: setattr(routes.state, 'NOW_PLAYING', value))
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda value: setattr(routes.state, 'SESSION_STATE', value))
+    monkeypatch.setattr(
+        routes.player,
+        '_load_stream_in_existing_mpv',
+        lambda stream_url, audio_url=None, start_pos=None: load_calls.append(
+            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos}
+        ) or False,
+    )
+    monkeypatch.setattr(
+        routes.player,
+        'start_mpv',
+        lambda stream_url, audio_url=None, start_pos=None: start_calls.append(
+            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos}
+        ),
+    )
+    monkeypatch.setattr(routes.player, 'mpv_seek_absolute_with_retry', lambda *a, **k: seek_calls.append((a, k)))
+    monkeypatch.setattr(routes.player, 'mpv_set_result', lambda prop, value: {'error': 'success'})
+
+    out = routes.resume_session()
+
+    assert out['status'] == 'resumed'
+    assert load_calls == [{'stream': 'https://video.example/resolved.mp4', 'audio': 'https://audio.example/resolved.m4a', 'start_pos': 42.5}]
+    assert start_calls == [{'stream': 'https://video.example/resolved.mp4', 'audio': 'https://audio.example/resolved.m4a', 'start_pos': 42.5}]
+    assert seek_calls == []
+
+
+def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytest.MonkeyPatch) -> None:
+    start_calls: list[dict[str, object]] = []
+    now_values: list[dict] = []
+
+    monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
+    monkeypatch.setattr(player, 'cec_auto_on_switch', lambda cec: False)
+    monkeypatch.setattr(player, '_load_stream_in_existing_mpv', lambda *a, **k: False)
+    monkeypatch.setattr(
+        player,
+        'start_mpv',
+        lambda stream_url, audio_url=None, start_pos=None: start_calls.append(
+            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos}
+        ),
+    )
+    monkeypatch.setattr(player, 'mpv_set', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_add_history_entry', lambda now: None)
+    monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda force=False: False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'get_tv_state', lambda: {})
+    monkeypatch.setattr(player.state, 'set_now_playing', lambda value: now_values.append(value))
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(player, 'resolve_streams', lambda url: (_ for _ in ()).throw(AssertionError('yt-dlp should not run')))
+    monkeypatch.setattr(player.time, 'time', lambda: 1000.0)
+
+    now = player.play_item(
+        {
+            'url': 'https://youtube.com/watch?v=abc',
+            'title': 'Cached clip',
+            'provider': 'youtube',
+            'resume_pos': 42.5,
+            '_resolved_source_url': 'https://youtube.com/watch?v=abc',
+            '_resolved_stream': 'https://video.example/resolved.mp4',
+            '_resolved_audio': 'https://audio.example/resolved.m4a',
+            '_resolved_at': 999.0,
+        },
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode='resume',
+        start_pos=42.5,
+    )
+
+    assert start_calls == [{'stream': 'https://video.example/resolved.mp4', 'audio': 'https://audio.example/resolved.m4a', 'start_pos': 42.5}]
+    assert now['stream'] == 'https://video.example/resolved.mp4'
+    assert now['_resolved_stream'] == 'https://video.example/resolved.mp4'
+    assert now_values[-1]['_resolved_at'] == 999.0
+
+
+def test_persistable_history_item_keeps_resolved_stream_hint() -> None:
+    item = {
+        'url': 'https://youtube.com/watch?v=abc',
+        'title': 'Cached clip',
+        'provider': 'youtube',
+        'resume_pos': 42.5,
+        '_resolved_source_url': 'https://youtube.com/watch?v=abc',
+        '_resolved_stream': 'https://video.example/resolved.mp4',
+        '_resolved_audio': 'https://audio.example/resolved.m4a',
+        '_resolved_at': 999.0,
+    }
+
+    out = routes.state._persistable_history_item(item)
+
+    assert out['_resolved_source_url'] == item['_resolved_source_url']
+    assert out['_resolved_stream'] == item['_resolved_stream']
+    assert out['_resolved_audio'] == item['_resolved_audio']
+    assert out['_resolved_at'] == 999.0
+
+
 def test_playback_state_keeps_idle_non_playing_during_natural_idle_hold(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(routes.state, 'SESSION_STATE', 'idle', raising=False)
     monkeypatch.setattr(routes.state, 'NOW_PLAYING', None, raising=False)

@@ -761,7 +761,7 @@ def _stop_qt_shell() -> None:
         QT_SHELL_PROC = None
 
 
-def _start_qt_shell(stream_url: str | None = None, audio_url: str | None = None) -> bool:
+def _start_qt_shell(stream_url: str | None = None, audio_url: str | None = None, start_pos: float | None = None) -> bool:
     global QT_SHELL_PROC
     settings = getattr(state, "get_settings", lambda: {})()
     shell_module = (os.getenv("RELAYTV_QT_SHELL_MODULE") or "relaytv_app.qt_shell_app").strip()
@@ -806,6 +806,9 @@ def _start_qt_shell(stream_url: str | None = None, audio_url: str | None = None)
     stream = (stream_url or "").strip()
     if stream:
         args += ["--stream", stream]
+    start_value = _mpv_start_option_value(start_pos)
+    if start_value:
+        args += ["--start", start_value]
     if ytdl_format:
         args += ["--ytdl-format", ytdl_format]
     if ytdl_raw_options:
@@ -971,10 +974,11 @@ def _build_qt_external_mpv_args(
     audio_url: str | None,
     *,
     fallback_to_x11: bool = False,
+    start_pos: float | None = None,
 ) -> list[str]:
     # Start from the standard app-managed args, then append external runtime
     # renderer hints. Keep first-wins semantics for singleton options.
-    args = _build_mpv_args(stream_url, audio_url, "x11")
+    args = _build_mpv_args(stream_url, audio_url, "x11", start_pos=start_pos)
     base = _strip_mpv_renderer_args(args[:-1])
     extra = _qt_external_mpv_mode_args(fallback_to_x11=fallback_to_x11)
     out = base + extra + [stream_url]
@@ -1005,9 +1009,10 @@ def _start_qt_external_mpv(
     *,
     fallback_to_x11: bool = False,
     fallback_reason: str = "",
+    start_pos: float | None = None,
 ) -> subprocess.Popen:
     _stop_qt_shell()
-    args = _build_qt_external_mpv_args(stream_url, audio_url, fallback_to_x11=fallback_to_x11)
+    args = _build_qt_external_mpv_args(stream_url, audio_url, fallback_to_x11=fallback_to_x11, start_pos=start_pos)
     mode_args = _qt_external_mpv_mode_args(fallback_to_x11=fallback_to_x11)
     _set_qt_external_runtime_state(
         fallback_to_x11=fallback_to_x11,
@@ -1282,6 +1287,7 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--osd-playing-msg",
         "--term-playing-msg",
         "--ytdl-format",
+        "--start",
     )
     seen: set[str] = set()
     out: list[str] = []
@@ -1299,6 +1305,23 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         seen.add(key)
         out.append(a)
     return out
+
+
+def _normalize_start_pos(start_pos: float | None) -> float | None:
+    try:
+        pos = float(start_pos) if start_pos is not None else None
+    except Exception:
+        return None
+    if pos is None or pos <= 0.0:
+        return None
+    return pos
+
+
+def _mpv_start_option_value(start_pos: float | None) -> str | None:
+    pos = _normalize_start_pos(start_pos)
+    if pos is None:
+        return None
+    return f"{pos:.3f}".rstrip("0").rstrip(".")
 
 
 def _effective_ytdl_format(settings: dict | None = None, provider: str | None = None) -> str:
@@ -1699,7 +1722,7 @@ def _qt_shell_runtime_write_control(payload: dict[str, Any]) -> dict[str, Any]:
     return {"error": "success", "request_id": request_id}
 
 
-def _qt_shell_runtime_load_stream(stream_url: str, audio_url: str | None = None) -> dict[str, Any]:
+def _qt_shell_runtime_load_stream(stream_url: str, audio_url: str | None = None, start_pos: float | None = None) -> dict[str, Any]:
     stream = str(stream_url or "").strip()
     if not stream:
         return {"error": "invalid_command"}
@@ -1711,6 +1734,9 @@ def _qt_shell_runtime_load_stream(stream_url: str, audio_url: str | None = None)
     audio = str(audio_url or "").strip() if isinstance(audio_url, str) else ""
     if audio:
         payload["audio"] = audio
+    pos = _normalize_start_pos(start_pos)
+    if pos is not None:
+        payload["start_pos"] = pos
     return _qt_shell_runtime_finalize_control_result(
         _qt_shell_runtime_write_control(payload),
         timeout_sec=max(1.5, _qt_shell_runtime_control_wait_sec()),
@@ -2175,7 +2201,7 @@ def _x11_mode_active(selected_mode: str | None = None) -> bool:
     return _has_x11_display()
 
 
-def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str) -> list[str]:
+def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str, start_pos: float | None = None) -> list[str]:
     """Build mpv command line with minimal app-managed options.
 
     Keep mpv mostly default-driven and only set options required for RelayTV
@@ -2225,6 +2251,10 @@ def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str) -> list[s
 
     if audio_url:
         mpv_args.append(f"--audio-file={audio_url}")
+
+    start_value = _mpv_start_option_value(start_pos)
+    if start_value:
+        mpv_args.append(f"--start={start_value}")
 
     # In X11 sessions, route notifications through RelayTV's overlay and
     # suppress mpv playback banners/messages that can appear on every file start.
@@ -2432,7 +2462,7 @@ def _apply_startup_mpv_runtime_settings() -> None:
         pass
 
 
-def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None) -> bool:
+def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None) -> bool:
     """Try seamless in-process stream replacement on an already-running mpv."""
     if not _env_bool("RELAYTV_MPV_SEAMLESS_REPLACE", True):
         return False
@@ -2505,13 +2535,22 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None) 
 
     if _qt_shell_runtime_accepts_mpv_commands():
         try:
-            resp = _qt_shell_runtime_load_stream(stream_url, audio_url)
+            if _normalize_start_pos(start_pos) is not None:
+                resp = _qt_shell_runtime_load_stream(stream_url, audio_url, start_pos=start_pos)
+            else:
+                resp = _qt_shell_runtime_load_stream(stream_url, audio_url)
         except Exception:
             return False
     else:
         cmd: list[object] = ["loadfile", str(stream_url), "replace"]
+        start_value = _mpv_start_option_value(start_pos)
         if audio_url:
-            cmd.extend(["-1", f"audio-files-append={str(audio_url)}"])
+            option_value = f"audio-files-append={str(audio_url)}"
+            if start_value and "," not in option_value:
+                option_value = f"start={start_value},{option_value}"
+            cmd.extend(["-1", option_value])
+        elif start_value:
+            cmd.extend(["-1", f"start={start_value}"])
         try:
             resp = mpv_command(cmd)
         except Exception:
@@ -2524,7 +2563,7 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None) 
     return True
 
 
-def start_mpv(stream_url: str, audio_url: str | None = None):
+def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None):
     """Start mpv fullscreen with an IPC socket so we can control it.
 
     Video mode:
@@ -2559,6 +2598,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None):
                 audio_url=audio_url,
                 fallback_to_x11=False,
                 fallback_reason="",
+                start_pos=start_pos,
             )
             if not wait_for_ipc_ready(timeout=startup_timeout):
                 raise HTTPException(status_code=500, detail="qt external mpv started but IPC not ready")
@@ -2574,6 +2614,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None):
                         audio_url=audio_url,
                         fallback_to_x11=True,
                         fallback_reason="video_unhealthy",
+                        start_pos=start_pos,
                     )
                     if not wait_for_ipc_ready(timeout=startup_timeout):
                         raise HTTPException(status_code=500, detail="qt external mpv x11 fallback started but IPC not ready")
@@ -2583,7 +2624,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None):
             _recover_audio_output_if_needed(settings)
             return
 
-        _start_qt_shell(stream_url, audio_url=audio_url)
+        _start_qt_shell(stream_url, audio_url=audio_url, start_pos=start_pos)
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="qt shell started but mpv IPC not ready")
         _apply_startup_mpv_runtime_settings()
@@ -2591,7 +2632,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None):
         return
 
     def _spawn(mode_to_use: str) -> subprocess.Popen:
-        args = _build_mpv_args(stream_url, audio_url, mode_to_use)
+        args = _build_mpv_args(stream_url, audio_url, mode_to_use, start_pos=start_pos)
         if debug:
             logger.info("starting_mpv mode=%s args=%s", mode_to_use, " ".join(shlex.quote(a) for a in args))
         return subprocess.Popen(args)
@@ -3826,6 +3867,11 @@ def _consume_mpv_queued_next_if_started(
             now_item["jellyfin_media_source_id"] = consumed.get("jellyfin_media_source_id")
         if consumed.get("history_id"):
             now_item["history_id"] = consumed.get("history_id")
+        if consumed.get("_resolved_source_url") == url and consumed.get("_resolved_stream"):
+            now_item["_resolved_source_url"] = consumed.get("_resolved_source_url")
+            now_item["_resolved_stream"] = consumed.get("_resolved_stream")
+            now_item["_resolved_audio"] = consumed.get("_resolved_audio") or ""
+            now_item["_resolved_at"] = consumed.get("_resolved_at") or time.time()
 
     try:
         pos = props.get("time-pos")
@@ -3870,6 +3916,16 @@ def _add_history_entry(now: dict) -> None:
     for key in ("channel", "jellyfin_item_id", "jellyfin_media_source_id", "thumbnail", "thumbnail_local"):
         if now.get(key):
             entry[key] = now[key]
+    if now.get("_resolved_source_url") == now.get("url") and now.get("_resolved_stream"):
+        entry["_resolved_source_url"] = now.get("_resolved_source_url")
+        entry["_resolved_stream"] = now.get("_resolved_stream")
+        entry["_resolved_audio"] = now.get("_resolved_audio") or ""
+        try:
+            resolved_at = float(now.get("_resolved_at") or 0.0)
+        except Exception:
+            resolved_at = 0.0
+        if resolved_at > 0.0:
+            entry["_resolved_at"] = resolved_at
     state.history_add(entry)
 
 
@@ -4020,13 +4076,14 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 
     debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
 
+    resume_start_pos = _normalize_start_pos(start_pos)
     with MPV_LOCK:
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
         # immediately before the playback handoff so background idle workers do
         # not collapse the session while the reused runtime is loading media.
         _mark_playback_transition()
-        reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio)
+        reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
         if (not reused_runtime) and _qt_shell_backend_enabled():
             # ARM hosts can expose a brief control-gap at EOF; retry a couple
             # of times before escalating to full player restart.
@@ -4042,7 +4099,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             delay_sec = max(0.01, min(1.0, delay_sec))
             for _ in range(retries):
                 time.sleep(delay_sec)
-                reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio)
+                reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
                 if reused_runtime:
                     break
         if reused_runtime:
@@ -4050,16 +4107,14 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             # transitions from idle surface to the newly loaded stream.
             _mark_playback_transition()
         if not reused_runtime:
-            start_mpv(stream, audio_url=audio)
+            start_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
         debug_log(
             "player",
             f"{'seamless_replace' if reused_runtime else 'start_mpv'} finished in "
             f"{int((time.monotonic() - t_mpv) * 1000)}ms",
         )
 
-    # If resuming, seek after mpv starts (IPC can take a moment).
-    if start_pos is not None:
-        mpv_seek_absolute_with_retry(start_pos)
+    if resume_start_pos is not None:
         try:
             mpv_set("pause", False)
         except Exception:
@@ -4083,6 +4138,15 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         **({"jellyfin_stream_mode": item.get("jellyfin_stream_mode")} if item.get("jellyfin_stream_mode") else {}),
         **({"jellyfin_stream_reason": item.get("jellyfin_stream_reason")} if item.get("jellyfin_stream_reason") else {}),
     }
+    if stream and stream != raw:
+        now["_resolved_source_url"] = raw
+        now["_resolved_stream"] = stream
+        now["_resolved_audio"] = audio or ""
+        try:
+            resolved_at = float(item.get("_resolved_at") or time.time()) if isinstance(item, dict) else time.time()
+        except Exception:
+            resolved_at = time.time()
+        now["_resolved_at"] = resolved_at
     # Keep last resume position on the now_playing dict for close/resume UX.
     if start_pos is not None:
         try:

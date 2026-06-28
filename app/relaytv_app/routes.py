@@ -418,6 +418,10 @@ class PlayNowReq(BaseModel):
     thumbnail: str | None = None
     resume_pos: float | None = None
     history_id: str | None = None
+    resolved_source_url: str | None = None
+    resolved_stream: str | None = None
+    resolved_audio: str | None = None
+    resolved_at: float | None = None
 
 
 class PlayTemporaryReq(BaseModel):
@@ -2696,6 +2700,10 @@ def history_play(req: HistoryPlayReq):
         resume_pos = float(raw_resume) if raw_resume is not None else None
     except Exception:
         resume_pos = None
+    try:
+        resolved_at = float(it.get("_resolved_at")) if it.get("_resolved_at") is not None else None
+    except Exception:
+        resolved_at = None
     return play_now(PlayNowReq(
         url=url.strip(),
         preserve_current=True,
@@ -2704,6 +2712,10 @@ def history_play(req: HistoryPlayReq):
         thumbnail=str(it.get("thumbnail") or "").strip() or None,
         resume_pos=resume_pos,
         history_id=str(it.get("history_id") or "").strip() or None,
+        resolved_source_url=str(it.get("_resolved_source_url") or "").strip() or None,
+        resolved_stream=str(it.get("_resolved_stream") or "").strip() or None,
+        resolved_audio=str(it.get("_resolved_audio") or "").strip() or None,
+        resolved_at=resolved_at,
     ))
 
 
@@ -2754,6 +2766,21 @@ def _preserve_current_to_queue_front() -> dict | None:
         preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
     if isinstance(now.get("history_id"), str) and now.get("history_id"):
         preserved["history_id"] = now.get("history_id")
+    resolved_stream = str(now.get("_resolved_stream") or "").strip()
+    if not resolved_stream:
+        now_stream = str(now.get("stream") or "").strip()
+        if now_stream and now_stream != url.strip():
+            resolved_stream = now_stream
+    if resolved_stream:
+        preserved["_resolved_source_url"] = url.strip()
+        preserved["_resolved_stream"] = resolved_stream
+        resolved_audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip()
+        if resolved_audio:
+            preserved["_resolved_audio"] = resolved_audio
+        try:
+            preserved["_resolved_at"] = float(now.get("_resolved_at") or time.time())
+        except Exception:
+            preserved["_resolved_at"] = time.time()
     if pos_f is not None:
         preserved["resume_pos"] = pos_f
     player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
@@ -2782,7 +2809,13 @@ def play_now(req: PlayNowReq):
     if req.preserve_current and req.preserve_to == "queue_front" and req.resume_current:
         preserved = _preserve_current_to_queue_front()
 
-    if req.title or req.thumbnail or req.resume_pos is not None or req.history_id:
+    if (
+        req.title
+        or req.thumbnail
+        or req.resume_pos is not None
+        or req.history_id
+        or req.resolved_stream
+    ):
         item = {"url": req.url}
         if req.title:
             item["title"] = req.title
@@ -2790,6 +2823,13 @@ def play_now(req: PlayNowReq):
             item["thumbnail"] = req.thumbnail
         if req.history_id:
             item["history_id"] = req.history_id
+        if req.resolved_stream:
+            item["_resolved_source_url"] = (req.resolved_source_url or req.url or "").strip()
+            item["_resolved_stream"] = req.resolved_stream.strip()
+            if req.resolved_audio:
+                item["_resolved_audio"] = req.resolved_audio.strip()
+            if req.resolved_at is not None:
+                item["_resolved_at"] = req.resolved_at
         now = player.play_item(
             item,
             use_resolver=True,
@@ -7326,6 +7366,11 @@ def playback_play():
         pos = now.get("resume_pos")
         if pos is None:
             pos = getattr(state, "SESSION_POSITION", None)
+        start_pos = None
+        try:
+            start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
+        except Exception:
+            start_pos = None
         state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
 
         if isinstance(stream, str) and stream.strip():
@@ -7333,14 +7378,8 @@ def playback_play():
             with player.MPV_LOCK:
                 stream_url = stream.strip()
                 audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
-                if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url):
-                    player.start_mpv(stream_url, audio_url=audio_url)
-            # Seek after start
-            if pos is not None:
-                try:
-                    player.mpv_seek_absolute_with_retry(float(pos), tries=25, delay=0.12)
-                except Exception:
-                    pass
+                if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url, start_pos=start_pos):
+                    player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
             try:
                 resume_result = _control_result_or_raise(player.mpv_set_result("pause", False), action="resume_session")
             except Exception:
@@ -7566,6 +7605,14 @@ def resume_session():
     # Reuse resolved stream/audio from NOW_PLAYING to avoid re-resolving.
     stream = now.get("stream")
     audio = now.get("audio")
+    pos = now.get("resume_pos")
+    if pos is None:
+        pos = getattr(state, "SESSION_POSITION", None)
+    start_pos = None
+    try:
+        start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
+    except Exception:
+        start_pos = None
 
     if not isinstance(stream, str) or not stream.strip():
         # Fallback: re-resolve if missing
@@ -7575,14 +7622,14 @@ def resume_session():
             cec=False,
             clear_queue=False,
             mode="resume",
-            start_pos=(float(now.get("resume_pos")) if now.get("resume_pos") is not None else getattr(state, "SESSION_POSITION", None)),
+            start_pos=start_pos,
         )
     else:
         with player.MPV_LOCK:
             stream_url = stream.strip()
             audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
-            if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url):
-                player.start_mpv(stream_url, audio_url=audio_url)
+            if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url, start_pos=start_pos):
+                player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
         resumed = dict(now)
         resumed["started"] = int(time.time())
         resumed["mode"] = "resume"
@@ -7591,16 +7638,7 @@ def resume_session():
         state.set_session_state("playing")
 
     resume_result: dict[str, object] | None = None
-    # Seek to last known position
-    pos = now.get("resume_pos")
-    if pos is None:
-        pos = getattr(state, "SESSION_POSITION", None)
-    if pos is not None:
-        try:
-            player.mpv_seek_absolute_with_retry(float(pos), tries=25, delay=0.12)
-        except Exception:
-            pass
-
+    if start_pos is not None:
         try:
             resume_result = _control_result_or_raise(player.mpv_set_result("pause", False), action="resume_session")
         except Exception:

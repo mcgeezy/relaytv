@@ -453,6 +453,7 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--script-opts",
         "--ytdl-format",
         "--ytdl-raw-options",
+        "--start",
     )
     seen: set[str] = set()
     out: list[str] = []
@@ -476,6 +477,7 @@ def _build_mpv_args(
     stream: str,
     wid: int,
     audio: str | None = None,
+    start_pos: float | None = None,
     ipc_path: str | None = None,
     audio_device: str | None = None,
     sub_lang: str | None = None,
@@ -517,6 +519,13 @@ def _build_mpv_args(
         args.append(f"--input-ipc-server={ipc_path}")
     if audio:
         args.append(f"--audio-file={audio}")
+    try:
+        pos = float(start_pos) if start_pos is not None else None
+    except Exception:
+        pos = None
+    if pos is not None and pos > 0.0:
+        start_value = f"{pos:.3f}".rstrip("0").rstrip(".")
+        args.append(f"--start={start_value}")
     if audio_device:
         args.append(f"--audio-device={audio_device}")
     if sub_lang:
@@ -768,13 +777,22 @@ class _QtLibMpvPlayer:
             raise RuntimeError("command list empty")
         self._command(*items)
 
-    def load_stream(self, stream: str, audio: str | None = None) -> None:
+    def load_stream(self, stream: str, audio: str | None = None, start_pos: float | None = None) -> None:
         s = str(stream or "").strip()
         if not s:
             raise RuntimeError("stream required")
         a = str(audio or "").strip() if isinstance(audio, str) else ""
+        try:
+            pos = float(start_pos) if start_pos is not None else None
+        except Exception:
+            pos = None
+        options: list[str] = []
+        if pos is not None and pos > 0.0:
+            options.append(f"start={f'{pos:.3f}'.rstrip('0').rstrip('.')}")
         if a:
-            self._command("loadfile", s, "replace", "-1", f"audio-files-append={a}")
+            options.append(f"audio-files-append={a}")
+        if options:
+            self._command("loadfile", s, "replace", "-1", ",".join(options))
             return
         self._command("loadfile", s, "replace")
 
@@ -1007,6 +1025,7 @@ class _QtLibMpvPlayer:
         *,
         stream: str,
         audio: str | None,
+        start_pos: float | None,
         ipc_path: str | None,
         audio_device: str | None,
         sub_lang: str | None,
@@ -1212,6 +1231,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="RelayTV Qt shell (experimental)")
     ap.add_argument("--stream", default="")
     ap.add_argument("--audio", default="")
+    ap.add_argument("--start", type=float, default=None)
     ap.add_argument("--ipc-path", default=os.getenv("MPV_IPC_PATH", "/tmp/mpv.sock"))
     ap.add_argument("--audio-device", default="")
     ap.add_argument("--sub-lang", default="")
@@ -2060,6 +2080,7 @@ def main(argv: list[str] | None = None) -> int:
             libmpv_player.start(
                 stream=stream,
                 audio=((args.audio or "").strip() or None),
+                start_pos=args.start,
                 ipc_path=(ipc_path or None),
                 audio_device=((args.audio_device or "").strip() or None),
                 sub_lang=((args.sub_lang or "").strip() or None),
@@ -2690,6 +2711,7 @@ def main(argv: list[str] | None = None) -> int:
     if use_libmpv and libmpv_player is not None and stream:
         initial_stream = stream
         initial_audio = (args.audio or None)
+        initial_start = args.start
         initial_load_attempts = {"n": 0}
 
         def _load_initial_libmpv_stream() -> None:
@@ -2702,7 +2724,7 @@ def main(argv: list[str] | None = None) -> int:
                         QTimer.singleShot(50, _load_initial_libmpv_stream)
                         return
                     raise RuntimeError("libmpv render context not ready")
-                libmpv_player.load_stream(initial_stream, initial_audio)
+                libmpv_player.load_stream(initial_stream, initial_audio, initial_start)
                 _sync_idle_visibility()
                 _nudge_overlay_stack()
             except Exception as exc:
@@ -2766,7 +2788,7 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
 
-    def _spawn_subprocess_mpv(stream_url: str, audio_url: str | None = None) -> None:
+    def _spawn_subprocess_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None) -> None:
         nonlocal mpv_proc
         if not stream_url:
             raise RuntimeError("stream_empty")
@@ -2785,6 +2807,7 @@ def main(argv: list[str] | None = None) -> int:
                 stream_url,
                 wid=wid,
                 audio=(audio_url or None),
+                start_pos=start_pos,
                 ipc_path=(ipc_path or None),
                 audio_device=((args.audio_device or "").strip() or None),
                 sub_lang=((args.sub_lang or "").strip() or None),
@@ -2804,7 +2827,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if (not use_libmpv) and stream:
         try:
-            _spawn_subprocess_mpv(stream, (args.audio or None))
+            _spawn_subprocess_mpv(stream, (args.audio or None), args.start)
         except Exception as e:
             _eprint("Failed to start embedded mpv:", e)
             return 3
@@ -2877,17 +2900,23 @@ def main(argv: list[str] | None = None) -> int:
             elif action == "load_stream":
                 stream_url = str(payload.get("stream") or "").strip()
                 audio_url = (str(payload.get("audio") or "").strip() or None)
+                start_pos = _optional_float(payload.get("start_pos"))
                 if libmpv_player is not None:
-                    libmpv_player.load_stream(stream_url, audio_url)
+                    libmpv_player.load_stream(stream_url, audio_url, start_pos)
                 else:
                     if not _subprocess_mpv_running():
-                        _spawn_subprocess_mpv(stream_url, audio_url)
+                        _spawn_subprocess_mpv(stream_url, audio_url, start_pos)
                         if not _wait_for_subprocess_mpv_ipc():
                             raise RuntimeError("mpv_ipc_unavailable")
                     else:
                         command: list[object] = ["loadfile", stream_url, "replace"]
+                        options: list[str] = []
+                        if start_pos is not None and start_pos > 0.0:
+                            options.append(f"start={f'{start_pos:.3f}'.rstrip('0').rstrip('.')}")
                         if audio_url:
-                            command.extend(["-1", f"audio-files-append={audio_url}"])
+                            options.append(f"audio-files-append={audio_url}")
+                        if options:
+                            command.extend(["-1", ",".join(options)])
                         result = _subprocess_mpv_ipc_request(command)
                         if result.get("error") != "success":
                             raise RuntimeError(str(result.get("error") or "mpv_loadfile_failed"))
