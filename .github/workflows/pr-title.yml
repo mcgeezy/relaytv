@@ -1,0 +1,30 @@
+name: pr-title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Conventional Commit PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -eu
+          pattern='^(feat|fix|docs|deps|chore|refactor|test|build|ci|perf|style|revert)(\([A-Za-z0-9._/-]+\))?!?: .+'
+          if ! printf '%s' "$PR_TITLE" | grep -Eq "$pattern"; then
+            cat <<'EOF'
+          Pull request title must use Conventional Commit format.
+
+          Examples:
+            feat: add Jellyfin pairing status
+            fix(player): handle missing media duration
+            docs!: remove deprecated install path
+          EOF
+            exit 1
+          fi

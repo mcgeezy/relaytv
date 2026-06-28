@@ -44,11 +44,18 @@ def test_ui_smoke() -> None:
     assert 'id="aboutBtn"' in response.text
     assert 'id="aboutBackdrop"' in response.text
     assert 'id="aboutGithubLink"' in response.text
+    assert 'id="aboutVersionValue"' in response.text
+    assert 'id="aboutRevisionValue"' in response.text
+    assert 'id="aboutUpdateValue"' in response.text
+    assert 'id="aboutChangelogLink"' in response.text
+    assert 'id="aboutReleaseLink"' in response.text
     assert 'https://github.com/mcgeezy/relaytv' in response.text
     assert 'id="aboutSupportLink"' in response.text
     assert 'https://buymeacoffee.com/relaytv' in response.text
     assert 'img.buymeacoffee.com/button-api' in response.text
     assert 'function openAbout' in response.text
+    assert "async function loadAboutInfo" in response.text
+    assert "fetch('/app/info'" in response.text
     assert 'id="notifySection"' in response.text
     assert 'id="notifyTextInput"' in response.text
     assert 'id="notifyImageInput"' in response.text
@@ -127,6 +134,42 @@ def test_health_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json() == {'ok': True}
+
+
+def test_app_info_endpoint_reports_version_and_update_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RELAYTV_IMAGE_VERSION", "v0.1.0")
+    monkeypatch.setenv("RELAYTV_IMAGE_REVISION", "abcdef1234567890")
+    monkeypatch.setenv("RELAYTV_IMAGE_CREATED", "2026-06-28T00:00:00Z")
+    monkeypatch.setenv("RELAYTV_IMAGE_SOURCE", "https://github.com/mcgeezy/relaytv")
+    monkeypatch.setattr(
+        routes,
+        "_latest_release_from_github",
+        lambda: (
+            {
+                "tag_name": "v0.2.0",
+                "name": "v0.2.0",
+                "html_url": "https://github.com/mcgeezy/relaytv/releases/tag/v0.2.0",
+                "published_at": "2026-06-28T01:00:00Z",
+            },
+            "",
+            123.0,
+        ),
+    )
+    app = create_app(testing=True)
+    client = TestClient(app)
+
+    response = client.get('/app/info')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "RelayTV"
+    assert payload["version"] == "v0.1.0"
+    assert payload["revision_short"] == "abcdef123456"
+    assert payload["image_created"] == "2026-06-28T00:00:00Z"
+    assert payload["changelog_url"] == "https://github.com/mcgeezy/relaytv/blob/main/CHANGELOG.md"
+    assert payload["current_release_url"] == "https://github.com/mcgeezy/relaytv/releases/tag/v0.1.0"
+    assert payload["latest_release"]["tag_name"] == "v0.2.0"
+    assert payload["update_available"] is True
 
 
 def test_release_compose_uses_published_image_without_source_build() -> None:
@@ -256,12 +299,11 @@ def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.
     assert calls[0]["input"] == "pow 0\n"
 
 
-def test_public_image_docs_and_ci_only_offer_latest() -> None:
+def test_public_install_docs_offer_latest_without_full_image_variant() -> None:
     text = "\n".join(
         [
             (ROOT_DIR / "README.md").read_text(),
             (ROOT_DIR / "docs/INSTALL.md").read_text(),
-            (ROOT_DIR / ".github/workflows/ci.yml").read_text(),
         ]
     )
 
@@ -269,6 +311,13 @@ def test_public_image_docs_and_ci_only_offer_latest() -> None:
     assert ":full" not in text
     assert "docker-image-full" not in text
     assert "suffix=-full" not in text
+
+
+def test_main_ci_build_publishes_main_tag_not_release_latest() -> None:
+    text = (ROOT_DIR / ".github/workflows/ci.yml").read_text()
+
+    assert "ghcr.io/${{ github.repository }}:main" in text
+    assert "ghcr.io/${{ github.repository }}:latest" not in text
 
 
 def test_release_image_traceability_metadata_is_documented() -> None:
@@ -282,6 +331,8 @@ def test_release_image_traceability_metadata_is_documented() -> None:
     assert 'org.opencontainers.image.source="${RELAYTV_IMAGE_SOURCE}"' in dockerfile
     assert 'org.opencontainers.image.revision="${RELAYTV_IMAGE_REVISION}"' in dockerfile
     assert 'org.opencontainers.image.licenses="GPL-3.0-only"' in dockerfile
+    assert 'ENV RELAYTV_IMAGE_SOURCE="${RELAYTV_IMAGE_SOURCE}"' in dockerfile
+    assert 'RELAYTV_IMAGE_VERSION="${RELAYTV_IMAGE_VERSION}"' in dockerfile
     assert "COPY LICENSE COPYING THIRD_PARTY_LICENSES.md ASSETS.md /usr/share/doc/relaytv/" in dockerfile
     assert "context: ." in compose
     assert "dockerfile: app/Dockerfile" in compose
@@ -290,6 +341,43 @@ def test_release_image_traceability_metadata_is_documented() -> None:
     assert "RELAYTV_IMAGE_REVISION=${{ github.sha }}" in workflow
     assert "RELAYTV_YTDLP_AUTO_UPDATE=0" in release_doc
     assert "GPL-3.0-only" in pyproject
+
+
+def test_release_please_automation_is_configured() -> None:
+    config = (ROOT_DIR / "release-please-config.json").read_text()
+    manifest = (ROOT_DIR / ".release-please-manifest.json").read_text()
+    workflow = (ROOT_DIR / ".github/workflows/release-please.yml").read_text()
+    pr_title = (ROOT_DIR / ".github/workflows/pr-title.yml").read_text()
+    pr_template = (ROOT_DIR / ".github/pull_request_template.md").read_text()
+    agents = (ROOT_DIR / "AGENTS.md").read_text()
+    changelog = (ROOT_DIR / "CHANGELOG.md").read_text()
+    release_doc = (ROOT_DIR / "docs/RELEASE.md").read_text()
+
+    assert '"release-type": "python"' in config
+    assert '"package-name": "relaytv"' in config
+    assert '"bootstrap-sha": "0c270faaccf1361416538a6230758b6bbe69bc17"' in config
+    assert '".": "0.1.0"' in manifest
+    assert "googleapis/release-please-action@v4" in workflow
+    assert "contents: write" in workflow
+    assert "pull-requests: write" in workflow
+    assert "packages: write" in workflow
+    assert "secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN" in workflow
+    assert "ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}" in workflow
+    assert "Conventional Commit PR title" in pr_title
+    assert "User impact:" in pr_template
+    assert "Operator/deployment impact:" in pr_template
+    assert "Release Please owns version bumps" in agents
+    assert "Release notes are maintained by Release Please." in changelog
+    assert "Automated Release Flow" in release_doc
+    assert "RELEASE_PLEASE_TOKEN" in release_doc
+
+
+def test_api_docs_include_app_info_endpoint() -> None:
+    text = (ROOT_DIR / "docs/API.md").read_text()
+    release_doc = (ROOT_DIR / "docs/RELEASE.md").read_text()
+
+    assert "GET /app/info" in text
+    assert "RELAYTV_UPDATE_CHECK_DISABLED=1" in release_doc
 
 
 def test_first_party_source_files_have_spdx_headers() -> None:

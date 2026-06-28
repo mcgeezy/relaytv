@@ -14,6 +14,8 @@ This file is the active endpoint reference for the native Qt runtime. Historical
 - `GET /idle`: idle dashboard HTML
 - `GET /`: redirects to `/ui`
 - `GET /health`: `{"ok": true}`
+- `GET /app/info`: returns RelayTV version, image revision, changelog/release
+  links, and a cached GitHub latest-release update check for the About UI.
 - `GET /manifest.json`: PWA manifest
 - `GET /sw.js`: service worker
 - `GET /thumbs/{filename}`: cached thumbnail image
