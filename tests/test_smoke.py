@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from pathlib import Path
+import json
 import shutil
 import subprocess
+import tomllib
 
 import pytest
 
@@ -346,6 +348,7 @@ def test_release_image_traceability_metadata_is_documented() -> None:
 def test_release_please_automation_is_configured() -> None:
     config = (ROOT_DIR / "release-please-config.json").read_text()
     manifest = (ROOT_DIR / ".release-please-manifest.json").read_text()
+    pyproject = (ROOT_DIR / "pyproject.toml").read_text()
     workflow = (ROOT_DIR / ".github/workflows/release-please.yml").read_text()
     pr_title = (ROOT_DIR / ".github/workflows/pr-title.yml").read_text()
     pr_template = (ROOT_DIR / ".github/pull_request_template.md").read_text()
@@ -356,7 +359,7 @@ def test_release_please_automation_is_configured() -> None:
     assert '"release-type": "python"' in config
     assert '"package-name": "relaytv"' in config
     assert '"bootstrap-sha": "0c270faaccf1361416538a6230758b6bbe69bc17"' in config
-    assert '".": "0.1.0"' in manifest
+    assert json.loads(manifest)["."] == tomllib.loads(pyproject)["project"]["version"]
     assert "googleapis/release-please-action@v4" in workflow
     assert "contents: write" in workflow
     assert "pull-requests: write" in workflow
