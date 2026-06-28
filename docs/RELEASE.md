@@ -113,10 +113,8 @@ normal releases. Use a `Release-As: X.Y.Z` commit footer only when intentionally
 overriding Release Please's next version.
 
 Repository administrators must allow GitHub Actions to create pull requests for
-the Release Please workflow. If CI checks must run on Release Please-generated
-pull requests, create a repository secret named `RELEASE_PLEASE_TOKEN` containing
-a fine-grained personal access token or GitHub App token with permission to
-write contents and pull requests.
+the Release Please workflow. The workflow uses the built-in `GITHUB_TOKEN` with
+repository write permissions.
 
 ## License and Notice Files
 
