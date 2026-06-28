@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "0c270faaccf1361416538a6230758b6bbe69bc17",
+  "packages": {
+    ".": {
+      "release-type": "python",
+      "package-name": "relaytv",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true
+    }
+  }
+}

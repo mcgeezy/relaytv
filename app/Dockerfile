@@ -19,6 +19,11 @@ LABEL org.opencontainers.image.title="RelayTV" \
       org.opencontainers.image.created="${RELAYTV_IMAGE_CREATED}" \
       org.opencontainers.image.licenses="GPL-3.0-only"
 
+ENV RELAYTV_IMAGE_SOURCE="${RELAYTV_IMAGE_SOURCE}" \
+    RELAYTV_IMAGE_REVISION="${RELAYTV_IMAGE_REVISION}" \
+    RELAYTV_IMAGE_VERSION="${RELAYTV_IMAGE_VERSION}" \
+    RELAYTV_IMAGE_CREATED="${RELAYTV_IMAGE_CREATED}"
+
 RUN set -eux; \
     apt-get update; \
     pkg_is_installable() { \

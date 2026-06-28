@@ -39,6 +39,9 @@ _JELLYFIN_COMMAND_DEDUPE_LOCK = threading.Lock()
 _JELLYFIN_RECENT_COMMAND_IDS: dict[str, float] = {}
 _JELLYFIN_UI_ACTION_DEDUPE_LOCK = threading.Lock()
 _JELLYFIN_LAST_UI_ACTION: dict[str, object] = {"ts": 0.0, "command": "", "item_id": "", "resume_pos": None}
+_APP_INFO_REPO = "mcgeezy/relaytv"
+_APP_INFO_CACHE_LOCK = threading.Lock()
+_APP_INFO_CACHE: dict[str, object] = {"checked_at": 0.0, "latest": None, "error": ""}
 
 
 def _env_choice(name: str) -> bool | None:
@@ -51,6 +54,123 @@ def _env_choice(name: str) -> bool | None:
     if text in ("0", "false", "no", "off", "disable", "disabled"):
         return False
     return None
+
+
+def _pyproject_version() -> str:
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml"))
+    try:
+        text = open(path, encoding="utf-8").read()
+    except Exception:
+        return ""
+    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', text)
+    return match.group(1).strip() if match else ""
+
+
+def _release_tag_url(tag: str) -> str:
+    safe = str(tag or "").strip()
+    if not safe:
+        return ""
+    return f"https://github.com/{_APP_INFO_REPO}/releases/tag/{safe}"
+
+
+def _release_version_parts(value: object) -> tuple[int, int, int] | None:
+    text = str(value or "").strip()
+    match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", text)
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _update_check_disabled() -> bool:
+    return _env_choice("RELAYTV_UPDATE_CHECK_DISABLED") is True
+
+
+def _latest_release_from_github() -> tuple[dict[str, object] | None, str, float]:
+    now = time.time()
+    try:
+        ttl = max(60, int(float(os.getenv("RELAYTV_UPDATE_CHECK_TTL_SEC", "21600") or "21600")))
+    except Exception:
+        ttl = 21600
+    with _APP_INFO_CACHE_LOCK:
+        cached_at = float(_APP_INFO_CACHE.get("checked_at") or 0.0)
+        if cached_at and (now - cached_at) < ttl:
+            latest = _APP_INFO_CACHE.get("latest")
+            return (latest if isinstance(latest, dict) else None, str(_APP_INFO_CACHE.get("error") or ""), cached_at)
+
+    latest: dict[str, object] | None = None
+    error = ""
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{_APP_INFO_REPO}/releases/latest",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "RelayTV update check",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            raw = resp.read(65536)
+        data = _json.loads(raw.decode("utf-8"))
+        if isinstance(data, dict):
+            latest = {
+                "tag_name": str(data.get("tag_name") or ""),
+                "name": str(data.get("name") or data.get("tag_name") or ""),
+                "html_url": str(data.get("html_url") or ""),
+                "published_at": str(data.get("published_at") or ""),
+            }
+    except Exception as exc:
+        error = exc.__class__.__name__
+
+    checked_at = time.time()
+    with _APP_INFO_CACHE_LOCK:
+        _APP_INFO_CACHE["checked_at"] = checked_at
+        _APP_INFO_CACHE["latest"] = latest
+        _APP_INFO_CACHE["error"] = error
+    return latest, error, checked_at
+
+
+def _app_info_payload() -> dict[str, object]:
+    image_version = str(os.getenv("RELAYTV_IMAGE_VERSION") or "").strip()
+    package_version = _pyproject_version()
+    release_version = image_version if _release_version_parts(image_version) else package_version
+    display_version = image_version if image_version and image_version != "local" else (package_version or "local")
+    revision = str(os.getenv("RELAYTV_IMAGE_REVISION") or "").strip()
+    created = str(os.getenv("RELAYTV_IMAGE_CREATED") or "").strip()
+    source_url = str(os.getenv("RELAYTV_IMAGE_SOURCE") or f"https://github.com/{_APP_INFO_REPO}").strip()
+    if not source_url:
+        source_url = f"https://github.com/{_APP_INFO_REPO}"
+    release_tag = release_version if str(release_version or "").startswith("v") else f"v{release_version}" if release_version else ""
+
+    latest: dict[str, object] | None = None
+    update_error = ""
+    checked_at = 0.0
+    update_available: bool | None = None
+    if _update_check_disabled():
+        update_error = "disabled"
+    else:
+        latest, update_error, checked_at = _latest_release_from_github()
+        current_parts = _release_version_parts(release_version)
+        latest_parts = _release_version_parts((latest or {}).get("tag_name") if latest else "")
+        if current_parts and latest_parts:
+            update_available = latest_parts > current_parts
+
+    return {
+        "name": "RelayTV",
+        "version": display_version,
+        "release_version": release_version or "",
+        "package_version": package_version,
+        "image_version": image_version,
+        "revision": revision,
+        "revision_short": revision[:12] if revision else "",
+        "image_created": created,
+        "source_url": source_url,
+        "changelog_url": f"https://github.com/{_APP_INFO_REPO}/blob/main/CHANGELOG.md",
+        "releases_url": f"https://github.com/{_APP_INFO_REPO}/releases",
+        "current_release_url": _release_tag_url(release_tag),
+        "latest_release": latest,
+        "update_available": update_available,
+        "update_check_error": update_error,
+        "update_checked_at": checked_at,
+    }
 
 
 def _static_root_candidates() -> list[str]:
@@ -10065,6 +10185,37 @@ def ui():
 .weatherLocRow .input{flex:1 1 260px}
 .weatherLocMeta{font-size:12px;opacity:.82;margin-top:6px;min-height:16px}
 .aboutLinks{display:grid;gap:12px;margin-top:10px}
+.aboutMeta{
+  margin-top:12px;
+  display:grid;
+  gap:8px;
+  padding:12px 14px;
+  border-radius:14px;
+  border:1px solid var(--stroke);
+  background:rgba(255,255,255,.045);
+}
+.aboutMetaRow{
+  display:grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap:10px;
+  align-items:start;
+  font-size:13px;
+}
+.aboutMetaKey{
+  color:var(--muted2);
+  font-weight:700;
+}
+.aboutMetaVal{
+  color:var(--text);
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+.aboutUpdate{
+  color:#e3ecff;
+}
+.aboutUpdate.ok{color:#9df6b7}
+.aboutUpdate.warn{color:#ffe9bf}
+.aboutUpdate.err{color:#ffd6db}
 .aboutLink{
   display:flex;
   align-items:center;
@@ -11072,11 +11223,39 @@ def ui():
         </div>
         <div class="settingsBody">
           <div class="hint">RelayTV is a local-first TV playback and automation endpoint.</div>
+          <div class="aboutMeta" aria-live="polite">
+            <div class="aboutMetaRow">
+              <div class="aboutMetaKey">Version</div>
+              <div id="aboutVersionValue" class="aboutMetaVal">Loading…</div>
+            </div>
+            <div class="aboutMetaRow">
+              <div class="aboutMetaKey">Revision</div>
+              <div id="aboutRevisionValue" class="aboutMetaVal">Loading…</div>
+            </div>
+            <div class="aboutMetaRow">
+              <div class="aboutMetaKey">Updated</div>
+              <div id="aboutUpdateValue" class="aboutMetaVal aboutUpdate">Checking…</div>
+            </div>
+          </div>
           <div class="aboutLinks">
             <a id="aboutGithubLink" class="aboutLink" href="https://github.com/mcgeezy/relaytv" target="_blank" rel="noopener noreferrer">
               <span>
                 <strong>GitHub Repository</strong>
                 <small>Source code, issues, releases, and documentation.</small>
+              </span>
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a id="aboutChangelogLink" class="aboutLink" href="https://github.com/mcgeezy/relaytv/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">
+              <span>
+                <strong>Changelog</strong>
+                <small>Release notes generated from merged pull requests.</small>
+              </span>
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a id="aboutReleaseLink" class="aboutLink" href="https://github.com/mcgeezy/relaytv/releases" target="_blank" rel="noopener noreferrer">
+              <span>
+                <strong>Latest Release</strong>
+                <small id="aboutReleaseLinkSub">Tags, release notes, and container image history.</small>
               </span>
               <span aria-hidden="true">↗</span>
             </a>
@@ -14600,11 +14779,73 @@ function bindHistoryUi(){
   });
 }
 
+let __aboutInfoLoadedAt = 0;
+
+function _aboutSetText(id, text){
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function _aboutSetHref(id, href){
+  const el = document.getElementById(id);
+  if (el && href) el.href = href;
+}
+
+function _aboutSetUpdateState(text, cls){
+  const el = document.getElementById('aboutUpdateValue');
+  if (!el) return;
+  el.classList.remove('ok', 'warn', 'err');
+  if (cls) el.classList.add(cls);
+  el.textContent = text;
+}
+
+async function loadAboutInfo(force){
+  const now = Date.now();
+  if (!force && __aboutInfoLoadedAt && (now - __aboutInfoLoadedAt) < 300000) return;
+  __aboutInfoLoadedAt = now;
+  _aboutSetText('aboutVersionValue', 'Loading…');
+  _aboutSetText('aboutRevisionValue', 'Loading…');
+  _aboutSetUpdateState('Checking…', '');
+  try {
+    const r = await fetch('/app/info', {cache:'no-store'});
+    if (!r.ok) throw new Error('status ' + r.status);
+    const info = await r.json();
+    const version = String(info.version || info.release_version || 'unknown');
+    const imageVersion = String(info.image_version || '').trim();
+    const suffix = imageVersion && imageVersion !== version ? ` (${imageVersion})` : '';
+    _aboutSetText('aboutVersionValue', `${version}${suffix}`);
+    const rev = String(info.revision_short || info.revision || '').trim();
+    const created = String(info.image_created || '').trim();
+    _aboutSetText('aboutRevisionValue', rev ? `${rev}${created ? ` · ${created}` : ''}` : 'Not available');
+    _aboutSetHref('aboutGithubLink', String(info.source_url || 'https://github.com/mcgeezy/relaytv'));
+    _aboutSetHref('aboutChangelogLink', String(info.changelog_url || 'https://github.com/mcgeezy/relaytv/blob/main/CHANGELOG.md'));
+    const latest = info.latest_release || {};
+    const latestTag = String(latest.tag_name || '').trim();
+    const latestUrl = String(latest.html_url || info.releases_url || '').trim();
+    _aboutSetHref('aboutReleaseLink', latestUrl || String(info.releases_url || 'https://github.com/mcgeezy/relaytv/releases'));
+    const releaseSub = document.getElementById('aboutReleaseLinkSub');
+    if (releaseSub && latestTag) releaseSub.textContent = `Latest published release: ${latestTag}`;
+    if (info.update_available === true) {
+      _aboutSetUpdateState(`Update available${latestTag ? `: ${latestTag}` : ''}`, 'warn');
+    } else if (info.update_available === false) {
+      _aboutSetUpdateState(`Up to date${latestTag ? ` (${latestTag})` : ''}`, 'ok');
+    } else {
+      const reason = String(info.update_check_error || '').trim();
+      _aboutSetUpdateState(reason === 'disabled' ? 'Update check disabled' : 'Update status unavailable', reason === 'disabled' ? '' : 'err');
+    }
+  } catch (_e) {
+    _aboutSetText('aboutVersionValue', 'Unavailable');
+    _aboutSetText('aboutRevisionValue', 'Unavailable');
+    _aboutSetUpdateState('Update status unavailable', 'err');
+  }
+}
+
 function openAbout(){
   closeHeaderMenu();
   const bd = document.getElementById('aboutBackdrop');
   if (!bd || !bd.classList.contains('hidden')) return;
   bd.classList.remove('hidden');
+  loadAboutInfo(false);
   _uiPushLayer();
 }
 
@@ -15935,3 +16176,8 @@ def health() -> dict[str, bool]:
     # Keep the health payload intentionally minimal so basic liveness checks and
     # smoke tests can rely on a stable response contract.
     return {"ok": True}
+
+
+@router.get("/app/info")
+def app_info() -> dict[str, object]:
+    return _app_info_payload()
