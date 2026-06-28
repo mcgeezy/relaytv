@@ -361,7 +361,8 @@ def test_release_please_automation_is_configured() -> None:
     assert "contents: write" in workflow
     assert "pull-requests: write" in workflow
     assert "packages: write" in workflow
-    assert "secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN" in workflow
+    assert "token: ${{ secrets.GITHUB_TOKEN }}" in workflow
+    assert "RELEASE_PLEASE_TOKEN" not in workflow
     assert "ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}" in workflow
     assert "Conventional Commit PR title" in pr_title
     assert "User impact:" in pr_template
@@ -369,7 +370,7 @@ def test_release_please_automation_is_configured() -> None:
     assert "Release Please owns version bumps" in agents
     assert "Release notes are maintained by Release Please." in changelog
     assert "Automated Release Flow" in release_doc
-    assert "RELEASE_PLEASE_TOKEN" in release_doc
+    assert "built-in `GITHUB_TOKEN`" in release_doc
 
 
 def test_api_docs_include_app_info_endpoint() -> None:
