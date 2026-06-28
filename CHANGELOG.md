@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/mcgeezy/relaytv/compare/v0.2.0...v0.3.0) (2026-06-28)
+
+
+### Features
+
+* start resumed playback at saved position ([#8](https://github.com/mcgeezy/relaytv/issues/8)) ([50a7e2e](https://github.com/mcgeezy/relaytv/commit/50a7e2e45166b475dd21263c0d9a9de064671c72))
+
+
+### Bug Fixes
+
+* keep idle toasts available without dashboard ([#10](https://github.com/mcgeezy/relaytv/issues/10)) ([985b6cc](https://github.com/mcgeezy/relaytv/commit/985b6ccfa7af32b9819010966923605fe1a72dd4))
+
 ## [0.2.0](https://github.com/mcgeezy/relaytv/compare/v0.1.0...v0.2.0) (2026-06-28)
 
 
