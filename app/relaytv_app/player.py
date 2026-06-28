@@ -45,6 +45,51 @@ def _idle_dashboard_enabled() -> bool:
     return True
 
 
+def _idle_notifications_enabled() -> bool:
+    try:
+        settings = state.get_settings() if hasattr(state, "get_settings") else {}
+    except Exception:
+        settings = {}
+    if isinstance(settings, dict) and settings.get("idle_notifications_enabled") is False:
+        return False
+    raw = (os.getenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def idle_notifications_enabled() -> bool:
+    return _idle_notifications_enabled()
+
+
+def _x11_idle_notifications_available() -> bool:
+    if not _idle_notifications_enabled():
+        return False
+    try:
+        from . import x11_overlay
+        return bool(x11_overlay.overlay_enabled() and x11_overlay.x11_session())
+    except Exception:
+        return False
+
+
+def _idle_qt_shell_enabled(*, allow_notification_fallback: bool = False) -> bool:
+    if _idle_dashboard_enabled():
+        return True
+    if not _idle_notifications_enabled():
+        return False
+    if allow_notification_fallback:
+        return True
+    return not _x11_idle_notifications_available()
+
+
+def _idle_visual_surface_enabled() -> bool:
+    return bool(_idle_dashboard_enabled() or _idle_notifications_enabled())
+
+
+def idle_visual_surface_enabled() -> bool:
+    return _idle_visual_surface_enabled()
+
+
 def _native_sidecar_health_snapshot(require_qt_shell: bool = False):
     """Legacy compatibility shim retained for dev-branch tests.
 
@@ -1033,11 +1078,11 @@ def _start_qt_external_mpv(
     return subprocess.Popen(args)
 
 
-def ensure_qt_shell_idle(*, force: bool = False) -> None:
+def ensure_qt_shell_idle(*, force: bool = False, allow_notification_fallback: bool = False) -> None:
     """Ensure Qt shell is running in idle-overlay mode for qt backend."""
     if not _qt_shell_backend_enabled():
         return
-    if not _idle_dashboard_enabled():
+    if not _idle_qt_shell_enabled(allow_notification_fallback=allow_notification_fallback):
         return
     qpa_platform = (os.getenv("QT_QPA_PLATFORM") or "").strip().lower()
     headless_qpa = qpa_platform in ("offscreen", "vnc", "minimal")
@@ -2084,10 +2129,10 @@ def stop_mpv(*, restart_splash: bool = True):
 
 
 def stop_playback_keep_qt_shell() -> bool:
-    """Stop current media while keeping the Qt shell alive for idle overlay."""
+    """Stop current media while keeping Qt shell alive for idle UI/toasts."""
     if not _qt_shell_backend_enabled():
         return False
-    if not _idle_dashboard_enabled():
+    if not _idle_qt_shell_enabled():
         return False
     _persist_runtime_volume_before_stop()
     try:
@@ -4195,7 +4240,7 @@ def _handle_playback_idle_no_queue() -> None:
     settle_sec = max(1.0, min(30.0, settle_sec))
     _NATURAL_IDLE_RESET_UNTIL = time.time() + settle_sec
     if _qt_shell_backend_enabled():
-        if not _idle_dashboard_enabled():
+        if not _idle_qt_shell_enabled():
             try:
                 stop_mpv(restart_splash=False)
             except Exception:

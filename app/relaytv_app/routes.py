@@ -26,7 +26,7 @@ import tempfile
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from . import state, resolver, player, devices, discovery_mdns, video_profile, upload_store
+from . import state, resolver, player, devices, discovery_mdns, video_profile, upload_store, x11_overlay
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
 from .thumb_cache import THUMB_DIR, ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
@@ -739,6 +739,7 @@ def _notification_capabilities() -> dict:
     return {
         "visual_runtime_mode": visual_runtime_mode,
         "notification_strategy": strategy,
+        "idle_notifications_enabled": _idle_notifications_enabled_for_player(),
         "notifications_available": available,
         "notifications_reason": reason,
         "overlay_subscribers": max(0, int(subscribers)),
@@ -2424,6 +2425,7 @@ class SettingsReq(BaseModel):
     tv_auto_resume_on_return: str | None = None
     volume: float | None = None
     idle_dashboard_enabled: bool | None = None
+    idle_notifications_enabled: bool | None = None
     idle_qr_enabled: bool | None = None
     idle_qr_size: int | None = None
     idle_panels: dict[str, dict] | None = None
@@ -2599,14 +2601,15 @@ def next_track():
 
 def _stop_current_for_idle_or_desktop() -> bool:
     keep_qt_shell = bool(
-        _idle_dashboard_enabled_for_player()
+        _idle_visual_surface_enabled_for_player()
         and getattr(player, "_qt_shell_backend_enabled", lambda: False)()
     )
     if keep_qt_shell:
         stopped_in_place = bool(getattr(player, "stop_playback_keep_qt_shell", lambda: False)())
         if stopped_in_place:
             return True
-    player.stop_mpv(restart_splash=_idle_dashboard_enabled_for_player())
+    player.stop_mpv(restart_splash=_idle_visual_surface_enabled_for_player())
+    _ensure_notification_surface(wait_for_subscriber=False)
     return False
 
 
@@ -2915,6 +2918,7 @@ def overlay(req: OverlayReq):
     if not text:
         raise HTTPException(status_code=400, detail="text or image_url is required")
     duration_ms = max(250, int(float(req.duration) * 1000.0))
+    _ensure_notification_surface(wait_for_subscriber=True)
     # In visual runtimes we use overlay toasts only.
     # In headless runtime, notifications are unavailable.
     x11_overlay_mode = _x11_mode_notifications()
@@ -6049,6 +6053,70 @@ def _idle_dashboard_enabled_for_player() -> bool:
         return True
 
 
+def _idle_notifications_enabled_for_player() -> bool:
+    try:
+        return bool(getattr(player, "idle_notifications_enabled", lambda: True)())
+    except Exception:
+        return True
+
+
+def _idle_visual_surface_enabled_for_player() -> bool:
+    try:
+        return bool(getattr(player, "idle_visual_surface_enabled", lambda: True)())
+    except Exception:
+        return _idle_dashboard_enabled_for_player() or _idle_notifications_enabled_for_player()
+
+
+def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
+    if not _idle_notifications_enabled_for_player():
+        return
+    try:
+        x11_overlay.start_overlay()
+    except Exception:
+        pass
+    try:
+        if not x11_overlay.overlay_running() and bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)()):
+            player.ensure_qt_shell_idle(force=True, allow_notification_fallback=True)
+    except Exception:
+        pass
+    if not wait_for_subscriber:
+        return
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            if len(_X11_OVERLAY_SUBS) > 0:
+                return
+        except Exception:
+            pass
+        try:
+            if bool(getattr(player, "_qt_shell_running", lambda: False)()):
+                return
+        except Exception:
+            pass
+        time.sleep(0.05)
+
+
+def _sync_idle_visual_surfaces_after_settings() -> None:
+    try:
+        playing = bool(player.is_playing())
+    except Exception:
+        playing = False
+    if playing:
+        return
+    if not _idle_notifications_enabled_for_player():
+        try:
+            x11_overlay.stop_overlay()
+        except Exception:
+            pass
+    if _idle_visual_surface_enabled_for_player():
+        _ensure_notification_surface(wait_for_subscriber=False)
+    else:
+        try:
+            player.stop_mpv(restart_splash=False)
+        except Exception:
+            pass
+
+
 def _jellyfin_progress_snapshot() -> dict | None:
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     if not now:
@@ -7546,7 +7614,7 @@ def close():
     state.set_session_state("closed" if preserve_resume else "idle")
     keep_qt_shell = bool(
         preserve_resume
-        and _idle_dashboard_enabled_for_player()
+        and _idle_visual_surface_enabled_for_player()
         and getattr(player, "_qt_shell_backend_enabled", lambda: False)()
     )
     stopped_in_place = False
@@ -7555,7 +7623,8 @@ def close():
             stopped_in_place = bool(getattr(player, "stop_playback_keep_qt_shell", lambda: False)())
     if not stopped_in_place:
         with player.MPV_LOCK:
-            player.stop_mpv(restart_splash=_idle_dashboard_enabled_for_player())
+            player.stop_mpv(restart_splash=_idle_visual_surface_enabled_for_player())
+        _ensure_notification_surface(wait_for_subscriber=False)
 
     if preserve_resume:
         player.update_history_progress(
@@ -7817,6 +7886,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     payload: dict[str, object] = {
         "state": sess,
         "idle_dashboard_enabled": bool((state.get_settings() if hasattr(state, "get_settings") else {}).get("idle_dashboard_enabled", True)),
+        "idle_notifications_enabled": bool((state.get_settings() if hasattr(state, "get_settings") else {}).get("idle_notifications_enabled", True)),
         "playing": bool(playing),
         "paused": bool(paused),
         "has_now_playing": has_now_playing,
@@ -8140,6 +8210,7 @@ def _status_payload() -> dict[str, object]:
         "state": sess,
         "device_name": str(settings_snapshot.get("device_name") or "RelayTV"),
         "idle_dashboard_enabled": bool(settings_snapshot.get("idle_dashboard_enabled", True)),
+        "idle_notifications_enabled": bool(settings_snapshot.get("idle_notifications_enabled", True)),
         "mdns_advertising": bool(mdns.get("active")),
         "mdns_service_type": str(mdns.get("service_type") or ""),
         "jellyfin_enabled": jf_enabled,
@@ -8324,6 +8395,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["youtube_use_invidious"] = bool(out.get("youtube_use_invidious"))
     out["youtube_invidious_base"] = str(out.get("youtube_invidious_base") or "").strip()
     out["idle_dashboard_enabled"] = bool(out.get("idle_dashboard_enabled", True))
+    out["idle_notifications_enabled"] = bool(out.get("idle_notifications_enabled", True))
     return out
 
 
@@ -8783,6 +8855,8 @@ def update_settings(req: SettingsReq):
         os.environ["RELAYTV_SUB_LANG"] = str(updated.get("sub_lang") or "")
     if "idle_dashboard_enabled" in requested_keys and updated.get("idle_dashboard_enabled") is not None:
         os.environ["RELAYTV_IDLE_DASHBOARD_ENABLED"] = "1" if bool(updated.get("idle_dashboard_enabled")) else "0"
+    if "idle_notifications_enabled" in requested_keys and updated.get("idle_notifications_enabled") is not None:
+        os.environ["RELAYTV_IDLE_NOTIFICATIONS_ENABLED"] = "1" if bool(updated.get("idle_notifications_enabled")) else "0"
     if "idle_qr_enabled" in requested_keys and updated.get("idle_qr_enabled") is not None:
         os.environ["RELAYTV_IDLE_QR_ENABLED"] = "1" if bool(updated.get("idle_qr_enabled")) else "0"
     if "idle_qr_size" in requested_keys and updated.get("idle_qr_size") is not None:
@@ -8909,6 +8983,13 @@ def update_settings(req: SettingsReq):
                 live_apply_failed.append("jellyfin_user_id")
     if "jellyfin_playback_mode" in requested_keys and "jellyfin_playback_mode" not in live_applied:
         live_applied.append("jellyfin_playback_mode")
+    if requested_keys.intersection({"idle_dashboard_enabled", "idle_notifications_enabled"}):
+        idle_keys = sorted(requested_keys.intersection({"idle_dashboard_enabled", "idle_notifications_enabled"}))
+        try:
+            _sync_idle_visual_surfaces_after_settings()
+            live_applied.extend(k for k in idle_keys if k not in live_applied)
+        except Exception:
+            live_apply_failed.extend(k for k in idle_keys if k not in live_apply_failed)
 
     now = None
     apply_performed = False
@@ -15347,6 +15428,7 @@ async function loadSettingsUi(){
   const ytCookiesState = document.getElementById('setYtCookiesState');
   const subs = document.getElementById('setSubs');
   const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled');
+  const idleNotificationsEnabled = document.getElementById('setIdleNotificationsEnabled');
   const idleQrEnabled = document.getElementById('setIdleQrEnabled');
   const idleQrSize = document.getElementById('setIdleQrSize');
   const idleQrSizeVal = document.getElementById('setIdleQrSizeVal');
@@ -15464,6 +15546,7 @@ async function loadSettingsUi(){
     subs.value = (cur.sub_lang || '');
   }
   if (idleDashboardEnabled) idleDashboardEnabled.checked = (cur.idle_dashboard_enabled !== false);
+  if (idleNotificationsEnabled) idleNotificationsEnabled.checked = (cur.idle_notifications_enabled !== false);
   if (idleQrEnabled) idleQrEnabled.checked = (cur.idle_qr_enabled !== false);
   if (idleQrSize) {
     const size = Number(cur.idle_qr_size);
@@ -15717,6 +15800,7 @@ function bindSettingsUi(){
     const ytInvidiousBase = (document.getElementById('setYtInvidiousBase')?.value || '').trim();
     const subs = document.getElementById('setSubs')?.value || '';
     const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled')?.checked !== false;
+    const idleNotificationsEnabled = document.getElementById('setIdleNotificationsEnabled')?.checked !== false;
     const idleQrEnabled = !!document.getElementById('setIdleQrEnabled')?.checked;
     const idleQrSize = Number(document.getElementById('setIdleQrSize')?.value || '168');
     const idleQrSizeSafe = Number.isFinite(idleQrSize) ? Math.max(96, Math.min(280, Math.round(idleQrSize))) : 168;
@@ -15760,6 +15844,7 @@ function bindSettingsUi(){
       youtube_invidious_base: ytInvidiousBase,
       sub_lang: subs,
       idle_dashboard_enabled: idleDashboardEnabled,
+      idle_notifications_enabled: idleNotificationsEnabled,
       idle_qr_enabled: idleQrEnabled,
       idle_qr_size: idleQrSizeSafe,
       idle_panels: collectIdlePanelSettings(),
@@ -15957,6 +16042,16 @@ window.addEventListener('DOMContentLoaded', () => {
           </div>
           <label class="toggleSwitch" for="setIdleDashboardEnabled" title="Show idle dashboard between plays">
             <input type="checkbox" id="setIdleDashboardEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Show toast notifications while idle</div>
+            <div class="toggleHint">Keep a lightweight notification surface available when nothing is playing.</div>
+          </div>
+          <label class="toggleSwitch" for="setIdleNotificationsEnabled" title="Show toast notifications while idle">
+            <input type="checkbox" id="setIdleNotificationsEnabled" />
             <span class="toggleTrack" aria-hidden="true"></span>
           </label>
         </div>

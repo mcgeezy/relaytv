@@ -16,18 +16,56 @@ import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import Optional
 
 _OVERLAY_LOCK = threading.Lock()
 _OVERLAY_PROC: Optional[subprocess.Popen] = None
 
+def _xauthority_file(env: dict[str, str]) -> str | None:
+    path = env.get("XAUTHORITY")
+    if path and Path(path).is_file():
+        return path
+    runtime_dir = env.get("XDG_RUNTIME_DIR")
+    if not runtime_dir:
+        return None
+    try:
+        candidates = sorted(
+            Path(runtime_dir).glob(".mutter-Xwaylandauth.*"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception:
+        return None
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except Exception:
+            continue
+    return None
+
 def x11_session() -> bool:
-    if os.getenv("XDG_SESSION_TYPE", "").strip().lower() == "wayland":
-        return False
+    # DISPLAY is the useful signal here: on Wayland hosts the container may
+    # still have Xwayland available, which gives us the click-through overlay
+    # semantics we need without keeping the Qt shell's black window alive.
     return bool(os.getenv("DISPLAY"))
 
 def overlay_enabled() -> bool:
-    return os.getenv("RELAYTV_X11_OVERLAY", "0").strip().lower() in ("1", "true", "yes", "on")
+    explicit = os.getenv("RELAYTV_X11_OVERLAY")
+    if explicit is not None and explicit.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    raw = (os.getenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    try:
+        from . import state
+        settings = state.get_settings() if hasattr(state, "get_settings") else {}
+        if isinstance(settings, dict) and settings.get("idle_notifications_enabled") is False:
+            return False
+    except Exception:
+        pass
+    return True
 
 def overlay_running() -> bool:
     global _OVERLAY_PROC
@@ -42,11 +80,28 @@ def start_overlay() -> None:
         if overlay_running():
             return
         try:
+            env = os.environ.copy()
+            env.setdefault("RELAYTV_OVERLAY_CLICKTHROUGH", "1")
+            # The main Qt shell may run on Wayland, but this overlay relies on
+            # X11/Xwayland semantics for transparent, click-through desktop use.
+            if env.get("DISPLAY"):
+                env["QT_QPA_PLATFORM"] = "xcb"
+                env["XDG_SESSION_TYPE"] = "x11"
+                env.pop("WAYLAND_DISPLAY", None)
+                xauthority = _xauthority_file(env)
+                if xauthority:
+                    env["XAUTHORITY"] = xauthority
+            log_path = Path(env.get("RELAYTV_OVERLAY_LOG", "/tmp/relaytv-overlay.log"))
+            try:
+                log_handle = log_path.open("ab")
+            except Exception:
+                log_handle = subprocess.DEVNULL
             # Prefer module execution so it works in editable installs and within the package.
             _OVERLAY_PROC = subprocess.Popen(
                 [sys.executable, "-m", "relaytv_app.overlay_app"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=log_handle,
+                env=env,
             )
         except Exception:
             _OVERLAY_PROC = None
