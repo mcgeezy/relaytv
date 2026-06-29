@@ -1935,6 +1935,31 @@ def test_process_wide_resume_start_disables_mpv_up_next_priming() -> None:
         player._set_mpv_process_start_option_active(False)
 
 
+def test_reused_mpv_process_keeps_resume_start_up_next_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[object]] = []
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    monkeypatch.setenv('RELAYTV_MPV_SEAMLESS_REPLACE', '1')
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: False)
+    monkeypatch.setattr(player, 'MPV_PROC', DummyProc())
+    monkeypatch.setattr(player.os.path, 'exists', lambda path: True)
+    monkeypatch.setattr(player, '_qt_shell_runtime_accepts_mpv_commands', lambda: False)
+    monkeypatch.setattr(player, 'mpv_command', lambda cmd: commands.append(list(cmd)) or {'error': 'success'})
+
+    try:
+        player._set_mpv_process_start_option_active(True)
+
+        assert player._load_stream_in_existing_mpv('https://example.com/replacement.mp4') is True
+
+        assert commands == [['loadfile', 'https://example.com/replacement.mp4', 'replace']]
+        assert player._mpv_up_next_load_target({'url': 'https://example.com/next.mp4'}) is None
+    finally:
+        player._set_mpv_process_start_option_active(False)
+
+
 def test_resume_session_starts_resolved_stream_at_resume_position(monkeypatch: pytest.MonkeyPatch) -> None:
     load_calls: list[dict[str, object]] = []
     start_calls: list[dict[str, object]] = []

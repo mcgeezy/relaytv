@@ -2616,7 +2616,6 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, 
 
     # Existing "up-next armed" state points at the old timeline.
     _reset_mpv_up_next_state()
-    _set_mpv_process_start_option_active(False)
     return True
 
 
