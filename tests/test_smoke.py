@@ -55,6 +55,8 @@ def test_ui_smoke() -> None:
     assert 'id="setTvPauseOnInputChange"' in response.text
     assert 'id="setTvAutoResumeOnReturn"' in response.text
     assert "fetch('/tv/status')" in response.text
+    assert "SETTINGS_TV_CONTROL_BASELINE" in response.text
+    assert "Object.entries(tvControl).forEach" in response.text
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text

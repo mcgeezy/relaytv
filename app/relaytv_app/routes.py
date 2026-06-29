@@ -15417,6 +15417,7 @@ function collectIdlePanelSettings(){
 }
 
 const WEATHER_LOCATION_STATE = { latitude: null, longitude: null, location_name: '' };
+let SETTINGS_TV_CONTROL_BASELINE = null;
 
 function setWeatherLocationMeta(msg){
   const el = document.getElementById('setWeatherLocationMeta');
@@ -15610,6 +15611,12 @@ async function loadSettingsUi(){
   if (tvTakeoverEnabled) tvTakeoverEnabled.checked = String(cur.tv_takeover_enabled ?? '1').trim() !== '0';
   if (tvPauseOnInputChange) tvPauseOnInputChange.checked = String(cur.tv_pause_on_input_change ?? '1').trim() !== '0';
   if (tvAutoResumeOnReturn) tvAutoResumeOnReturn.checked = ['1', 'true', 'yes', 'on'].includes(String(cur.tv_auto_resume_on_return || '').trim().toLowerCase());
+  SETTINGS_TV_CONTROL_BASELINE = {
+    cec_enabled: cecEnabled ? (cecEnabled.checked ? '1' : '0') : undefined,
+    tv_takeover_enabled: tvTakeoverEnabled ? (tvTakeoverEnabled.checked ? '1' : '0') : undefined,
+    tv_pause_on_input_change: tvPauseOnInputChange ? (tvPauseOnInputChange.checked ? '1' : '0') : undefined,
+    tv_auto_resume_on_return: tvAutoResumeOnReturn ? (tvAutoResumeOnReturn.checked ? '1' : '0') : undefined,
+  };
   {
     const availability = tvStatus?.cec_controller?.availability || {};
     const cecAvailable = availability.available === true;
@@ -15939,10 +15946,6 @@ function bindSettingsUi(){
       youtube_use_invidious: ytUseInvidious,
       youtube_invidious_base: ytInvidiousBase,
       sub_lang: subs,
-      cec_enabled: cecEnabled ? '1' : '0',
-      tv_takeover_enabled: tvTakeoverEnabled ? '1' : '0',
-      tv_pause_on_input_change: tvPauseOnInputChange ? '1' : '0',
-      tv_auto_resume_on_return: tvAutoResumeOnReturn ? '1' : '0',
       idle_dashboard_enabled: idleDashboardEnabled,
       idle_notifications_enabled: idleNotificationsEnabled,
       idle_qr_enabled: idleQrEnabled,
@@ -15967,6 +15970,16 @@ function bindSettingsUi(){
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
       apply_now: true
     };
+    const tvControl = {
+      cec_enabled: cecEnabled ? '1' : '0',
+      tv_takeover_enabled: tvTakeoverEnabled ? '1' : '0',
+      tv_pause_on_input_change: tvPauseOnInputChange ? '1' : '0',
+      tv_auto_resume_on_return: tvAutoResumeOnReturn ? '1' : '0',
+    };
+    const tvBaseline = SETTINGS_TV_CONTROL_BASELINE || {};
+    Object.entries(tvControl).forEach(([key, value]) => {
+      if (tvBaseline[key] !== undefined && value !== tvBaseline[key]) payload[key] = value;
+    });
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
     const r = await fetch('/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     if (!r.ok) {
