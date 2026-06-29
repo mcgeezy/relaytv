@@ -7214,7 +7214,7 @@ def queue_move(req: QueueMoveReq):
 
 
 @router.get("/share")
-def share(url: str | None = None, link: str | None = None, cec: bool = False):
+def share(url: str | None = None, link: str | None = None, cec: bool = True):
     shared = (url or link or "").strip()
     if not shared:
         raise HTTPException(status_code=400, detail="Missing url or link query parameter")
@@ -8892,6 +8892,7 @@ def update_settings(req: SettingsReq):
     if "cec_enabled" in requested_keys and updated.get("cec_enabled") is not None:
         cec_on = _settings_flag(updated.get("cec_enabled"))
         os.environ["RELAYTV_CEC"] = "1" if cec_on else "0"
+        os.environ["RELAYTV_CEC_ENABLED"] = "1" if cec_on else "0"
         try:
             if cec_on:
                 player.start_cec_monitor()

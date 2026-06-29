@@ -388,7 +388,7 @@ def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.
     assert status["last_command_state"] == "completed"
 
 
-def test_share_does_not_request_cec_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_share_requests_cec_takeover_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     observed: dict[str, object] = {}
 
     monkeypatch.setattr(routes, "_smart_item_from_url", lambda url: {"url": url})
@@ -411,7 +411,7 @@ def test_share_does_not_request_cec_by_default(monkeypatch: pytest.MonkeyPatch) 
     response = routes.share(url="https://example.test/video")
 
     assert response["status"] == "playing"
-    assert observed["cec"] is False
+    assert observed["cec"] is True
 
 
 def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,6 +439,14 @@ def test_cec_setting_controls_runtime_policy(monkeypatch: pytest.MonkeyPatch) ->
 
     assert player.cec_enabled(False) is True
     assert player.cec_monitor_enabled() is True
+
+
+def test_cec_legacy_enabled_env_is_runtime_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.setenv("RELAYTV_CEC_ENABLED", "1")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {})
+
+    assert player.cec_enabled(False) is True
 
 
 def test_cec_controller_status_includes_availability(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -470,8 +478,50 @@ def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.Mon
     response = routes.update_settings(routes.SettingsReq(cec_enabled="0"))
 
     assert os.environ["RELAYTV_CEC"] == "0"
+    assert os.environ["RELAYTV_CEC_ENABLED"] == "0"
     assert stopped == [True]
     assert "cec_enabled" in response["live_applied"]
+
+
+def test_play_item_attempts_cec_takeover_without_probe_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    takeover_calls: list[bool] = []
+    now_values: list[dict] = []
+
+    monkeypatch.setattr(player, "update_history_progress", lambda *a, **k: None)
+    monkeypatch.setattr(player, "_mark_playback_transition", lambda *a, **k: None)
+    monkeypatch.setattr(player, "cec_auto_on_switch", lambda cec: True)
+    monkeypatch.setattr(player, "cec_available", lambda: False)
+    monkeypatch.setattr(player, "tv_on_and_switch", lambda: takeover_calls.append(True))
+    monkeypatch.setattr(player, "validate_user_url", lambda url: url)
+    monkeypatch.setattr(player, "provider_from_url", lambda url: "generic")
+    monkeypatch.setattr(player, "_env_bool", lambda name, default=False: False if name == "RELAYTV_MPV_YTDL" else default)
+    monkeypatch.setattr(player, "_providers_forced_to_resolve", lambda: set())
+    monkeypatch.setattr(player, "_fresh_prefetched_stream", lambda item: None)
+    monkeypatch.setattr(player, "_normalize_start_pos", lambda value: value)
+    monkeypatch.setattr(player, "_load_stream_in_existing_mpv", lambda *a, **k: False)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: False)
+    monkeypatch.setattr(player, "start_mpv", lambda *a, **k: None)
+    monkeypatch.setattr(player, "_add_history_entry", lambda now: None)
+    monkeypatch.setattr(player, "_prime_mpv_up_next_from_queue", lambda force=False: False)
+    monkeypatch.setattr(player.state, "get_tv_state", lambda: {"active_source_phys_addr": "2000"})
+    monkeypatch.setattr(player, "_our_phys_addr", lambda: "1000")
+    monkeypatch.setattr(player.state, "persist_queue", lambda: None)
+    monkeypatch.setattr(player.state, "set_now_playing", lambda value: now_values.append(value))
+    monkeypatch.setattr(player.state, "set_session_state", lambda value: None)
+    monkeypatch.setattr(player.state, "set_pause_reason", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
+
+    result = player.play_item(
+        {"url": "https://example.test/video", "title": "Example"},
+        use_resolver=False,
+        cec=True,
+        clear_queue=False,
+        mode="share",
+    )
+
+    assert takeover_calls == [True]
+    assert result["url"] == "https://example.test/video"
+    assert now_values
 
 
 def test_public_install_docs_offer_latest_without_full_image_variant() -> None:

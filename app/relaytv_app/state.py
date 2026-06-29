@@ -939,7 +939,7 @@ def _default_settings() -> dict:
         "youtube_use_invidious": _env_bool("USE_INVIDIOUS", False),
         "youtube_invidious_base": _normalize_invidious_base(os.getenv("INVIDIOUS_BASE")),
         "sub_lang": (os.getenv("RELAYTV_SUB_LANG") or "").strip(),
-        "cec_enabled": (os.getenv("RELAYTV_CEC", "0") or "0").strip(),
+        "cec_enabled": (os.getenv("RELAYTV_CEC") or os.getenv("RELAYTV_CEC_ENABLED") or "0").strip(),
         "tv_takeover_enabled": "1",
         "tv_pause_on_input_change": "1",
         "tv_auto_resume_on_return": "0",

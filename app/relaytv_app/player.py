@@ -162,12 +162,21 @@ def _env_enabled(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _setting_or_env_enabled(setting_name: str, env_name: str, default: bool = False) -> bool:
+def _env_any_enabled(names: tuple[str, ...], default: bool = False) -> bool:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is not None and str(raw).strip() != "":
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+    return bool(default)
+
+
+def _setting_or_env_enabled(setting_name: str, env_name: str | tuple[str, ...], default: bool = False) -> bool:
     settings = getattr(state, "get_settings", lambda: {})()
     raw = str(settings.get(setting_name, "")).strip().lower() if isinstance(settings, dict) else ""
     if raw:
         return raw in ("1", "true", "yes", "on")
-    return _env_enabled(env_name, default)
+    names = (env_name,) if isinstance(env_name, str) else env_name
+    return _env_any_enabled(names, default)
 
 
 def _our_phys_addr() -> str | None:
@@ -194,7 +203,7 @@ def _normalize_phys_addr(a: str, b: str) -> str:
 
 
 def cec_enabled(request_flag: bool | None = None) -> bool:
-    enabled = _setting_or_env_enabled("cec_enabled", "RELAYTV_CEC", False)
+    enabled = _setting_or_env_enabled("cec_enabled", ("RELAYTV_CEC", "RELAYTV_CEC_ENABLED"), False)
     if enabled:
         return True
     if request_flag and _env_enabled("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", False):
@@ -4192,7 +4201,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     active_src = str(tv_state.get("active_source_phys_addr") or "")
     ours = _our_phys_addr() or ""
     should_take_over = _setting_enabled("tv_takeover_enabled", True) and (not ours or active_src != ours)
-    if cec_auto_on_switch(cec) and should_take_over and cec_available():
+    if cec_auto_on_switch(cec) and should_take_over:
         tv_on_and_switch()
 
     if clear_queue:
