@@ -23,20 +23,27 @@ _OVERLAY_LOCK = threading.Lock()
 _OVERLAY_PROC: Optional[subprocess.Popen] = None
 
 def _xauthority_file(env: dict[str, str]) -> str | None:
+    candidates: list[Path] = []
     path = env.get("XAUTHORITY")
-    if path and Path(path).is_file():
-        return path
+    if path:
+        try:
+            env_candidate = Path(path)
+            if env_candidate.is_file():
+                candidates.append(env_candidate)
+        except Exception:
+            pass
     runtime_dir = env.get("XDG_RUNTIME_DIR")
-    if not runtime_dir:
+    if runtime_dir:
+        try:
+            candidates.extend(Path(runtime_dir).glob(".mutter-Xwaylandauth.*"))
+        except Exception:
+            pass
+    if not candidates:
         return None
     try:
-        candidates = sorted(
-            Path(runtime_dir).glob(".mutter-Xwaylandauth.*"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
     except Exception:
-        return None
+        pass
     for candidate in candidates:
         try:
             if candidate.is_file():
@@ -53,8 +60,12 @@ def x11_session() -> bool:
 
 def overlay_enabled() -> bool:
     explicit = os.getenv("RELAYTV_X11_OVERLAY")
-    if explicit is not None and explicit.strip().lower() in ("1", "true", "yes", "on"):
-        return True
+    if explicit is not None:
+        value = explicit.strip().lower()
+        if value in ("1", "true", "yes", "on"):
+            return True
+        if value in ("0", "false", "no", "off"):
+            return False
     raw = (os.getenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
