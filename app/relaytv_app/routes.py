@@ -2179,6 +2179,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     function overlayPlaybackVisible(state){
       const j = state || {};
       const sessionState = String(j.state || '').trim().toLowerCase();
+      if (sessionState === 'closed') return false;
       const runtimeState = String(j.playback_runtime_state || '').trim().toLowerCase();
       const qtRuntimeActive = (
         j.native_qt_mpv_runtime_playback_active === true
@@ -2451,6 +2452,23 @@ _TEMP_PLAYBACK_LOCK = threading.Lock()
 _TEMP_PLAYBACK_STACK: list[dict] = []
 
 
+def _discard_temporary_playback(reason: str) -> int:
+    """Discard temporary restore frames after an explicit user stop/close."""
+    with _TEMP_PLAYBACK_LOCK:
+        count = len(_TEMP_PLAYBACK_STACK)
+        _TEMP_PLAYBACK_STACK.clear()
+    if count:
+        try:
+            logger.info("temporary_playback_discarded reason=%s count=%s", reason, count)
+        except Exception:
+            pass
+    return count
+
+
+def _discard_interrupted_playback_state(reason: str) -> None:
+    _discard_temporary_playback(reason)
+
+
 def _capture_current_playback_state() -> dict | None:
     if not player.is_playing() or not isinstance(state.NOW_PLAYING, dict):
         return None
@@ -2622,6 +2640,7 @@ def clear_now_playing():
         return next_track()
 
     state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    _discard_interrupted_playback_state("now_playing_clear")
     with player.MPV_LOCK:
         stopped_in_place = _stop_current_for_idle_or_desktop()
     state.set_now_playing(None)
@@ -2755,6 +2774,8 @@ def _preserve_current_to_queue_front() -> dict | None:
         "url": url.strip(),
         "title": now.get("title") or url.strip(),
         "provider": now.get("provider"),
+        "_relaytv_interrupt_preserved": True,
+        "_relaytv_interrupt_preserved_at": int(time.time()),
     }
     if isinstance(now.get("channel"), str) and now.get("channel"):
         preserved["channel"] = now.get("channel")
@@ -7562,6 +7583,7 @@ def close():
     """Close the player but keep session resumable (queue preserved)."""
     # Prevent the autoplay worker from immediately advancing.
     state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24  # 24h (reset on resume/play)
+    _discard_interrupted_playback_state("close")
 
     pos = None
     dur = None
@@ -7646,6 +7668,7 @@ def close():
 def clear_resumable_session():
     """Clear retained now-playing/resume state and return to idle."""
     state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    _discard_interrupted_playback_state("resume_clear")
     with player.MPV_LOCK:
         player.stop_mpv()
     state.set_now_playing(None)
@@ -7721,6 +7744,7 @@ def stop():
     """User stop with resume support; always return to idle visuals."""
     # Suppress autoplay after an explicit user stop until user starts playback again.
     state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    _discard_interrupted_playback_state("stop")
 
     pos = None
     dur = None
@@ -7800,7 +7824,7 @@ def _session_playing_fast() -> tuple[str, bool, bool]:
     has_now_playing = isinstance(getattr(state, "NOW_PLAYING", None), dict)
     queue_length = len(getattr(state, "QUEUE", []) or [])
     natural_idle_hold = bool(getattr(player, "natural_idle_reset_holding", lambda: False)())
-    if explicit_stop_hold and queue_length <= 0 and sess == "closed":
+    if explicit_stop_hold and sess == "closed":
         return sess, False, False
     if explicit_stop_hold and (not has_now_playing) and queue_length <= 0 and sess in ("idle", "closed"):
         return sess, False, False
@@ -7881,7 +7905,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     except Exception:
         explicit_stop_hold = False
     natural_idle_hold = bool(getattr(player, "natural_idle_reset_holding", lambda: False)())
-    closed_stop_hold = explicit_stop_hold and queue_length <= 0 and sess == "closed"
+    closed_stop_hold = explicit_stop_hold and sess == "closed"
     natural_idle_clear_hold = natural_idle_hold and queue_length <= 0 and (not has_now_playing) and sess in ("idle", "closed")
     payload: dict[str, object] = {
         "state": sess,
@@ -8000,9 +8024,13 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         payload["playing"] = True
         payload["state"] = "paused" if bool(payload.get("paused")) else "playing"
     elif closed_stop_hold:
+        transition_active = False
         payload["playing"] = False
         payload["paused"] = False
         payload["state"] = "closed"
+        payload["native_qt_mpv_runtime_playback_active"] = False
+        payload["native_qt_mpv_runtime_stream_loaded"] = False
+        payload["native_qt_mpv_runtime_playback_started"] = False
     elif natural_idle_clear_hold:
         payload["playing"] = False
         payload["paused"] = False
@@ -8069,7 +8097,7 @@ def _status_payload() -> dict[str, object]:
             transitioning_between_items = True
     except Exception:
         transitioning_between_items = False
-    if explicit_stop_hold and (not q) and str(sess or "idle").strip().lower() == "closed":
+    if explicit_stop_hold and str(sess or "idle").strip().lower() == "closed":
         playing = False
         transitioning_between_items = False
     elif explicit_stop_hold and (not has_now_playing) and (not q) and str(sess or "idle").strip().lower() in ("idle", "closed"):
@@ -8991,10 +9019,12 @@ def update_settings(req: SettingsReq):
         except Exception:
             live_apply_failed.extend(k for k in idle_keys if k not in live_apply_failed)
 
+    sess_for_apply = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
+    apply_restart_allowed = bool(apply_now and sess_for_apply in ("playing", "paused") and isinstance(state.NOW_PLAYING, dict))
     now = None
     apply_performed = False
     apply_succeeded = False
-    if apply_now:
+    if apply_restart_allowed:
         if hasattr(player, "restart_current"):
             apply_performed = True
             now = player.restart_current()

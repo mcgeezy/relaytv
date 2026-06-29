@@ -2136,6 +2136,15 @@ def stop_playback_keep_qt_shell() -> bool:
         return False
     _persist_runtime_volume_before_stop()
     try:
+        mpv_command(["playlist-clear"])
+    except Exception:
+        pass
+    try:
+        _clear_mpv_playlist_before_current()
+        _clear_mpv_playlist_after_current()
+    except Exception:
+        pass
+    try:
         result = mpv_command(["stop"])
     except Exception:
         return False
@@ -3412,6 +3421,8 @@ def _reset_mpv_up_next_state() -> None:
 
 def _mpv_up_next_load_target(item: object) -> tuple[list[object], str] | None:
     """Return the mpv loadfile command and armed media URL for queue head."""
+    if isinstance(item, dict) and item.get("_relaytv_interrupt_preserved") is True:
+        return None
     head_url = _queue_item_play_url(item)
     if not head_url:
         return None
@@ -4985,6 +4996,9 @@ def start_session_tracker_worker() -> None:
 def restart_current(apply_mode: str | None = None) -> dict | None:
     """Restart current playback to apply settings. Best-effort."""
     try:
+        sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
+        if sess not in ("playing", "paused"):
+            return None
         if not state.NOW_PLAYING:
             return None
         inp = (state.NOW_PLAYING.get("input") or state.NOW_PLAYING.get("url") or "").strip()
