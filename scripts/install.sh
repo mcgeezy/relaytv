@@ -989,7 +989,7 @@ if [ "${PLAYER_BACKEND_VAL}" != "qt" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_PLAYER_BACKEND" "${PLAYER_BACKEND_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
 fi
-if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ] && [ "${QT_RUNTIME_MODE_VAL}" != "auto" ]; then
+if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_QT_RUNTIME_MODE" "${QT_RUNTIME_MODE_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
 fi
