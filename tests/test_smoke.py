@@ -1662,6 +1662,12 @@ def test_close_uses_overlay_not_qt_shell_for_idle_notifications_on_x11(monkeypat
 
 def test_clear_now_playing_advances_queue_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, bool]] = []
+    routes._TEMP_PLAYBACK_STACK.clear()
+    routes._TEMP_PLAYBACK_STACK.append({
+        'id': 'frame-1',
+        'resume': True,
+        'snapshot': {'now_playing': {'url': 'https://example.com/interrupted.mp4'}},
+    })
 
     monkeypatch.setattr(routes.state, 'QUEUE', [{'url': 'https://example.com/next.mp4'}], raising=False)
     monkeypatch.setattr(
@@ -1674,12 +1680,16 @@ def test_clear_now_playing_advances_queue_when_available(monkeypatch: pytest.Mon
         },
     )
 
-    out = routes.clear_now_playing()
+    try:
+        out = routes.clear_now_playing()
 
-    assert out['status'] == 'playing_next'
-    assert out['now_playing']['title'] == 'Next'
-    assert 'method' not in out
-    assert calls == [('next', True)]
+        assert out['status'] == 'playing_next'
+        assert out['now_playing']['title'] == 'Next'
+        assert 'method' not in out
+        assert calls == [('next', True)]
+        assert routes._TEMP_PLAYBACK_STACK == []
+    finally:
+        routes._TEMP_PLAYBACK_STACK.clear()
 
 
 def test_clear_now_playing_returns_to_idle_without_preserving_current(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1923,6 +1933,26 @@ def test_preserve_current_marks_interrupt_queue_entry(monkeypatch: pytest.Monkey
     assert preserved['resume_pos'] == 37.0
     assert routes.state.QUEUE == [preserved]
     assert persisted[-1]['queue'] == [preserved]
+
+
+def test_persisted_queue_item_keeps_interrupt_preserved_marker() -> None:
+    item = {
+        'url': 'https://example.com/interrupted.mp4',
+        'title': 'Interrupted',
+        'resume_pos': 37.0,
+        '_relaytv_interrupt_preserved': True,
+        '_relaytv_interrupt_preserved_at': 1234,
+    }
+
+    persisted = routes.state._persistable_queue_item(item)
+    loaded = routes.state._load_persisted_queue_item(item)
+
+    assert persisted is not None
+    assert persisted['_relaytv_interrupt_preserved'] is True
+    assert persisted['_relaytv_interrupt_preserved_at'] == 1234
+    assert loaded is not None
+    assert loaded['_relaytv_interrupt_preserved'] is True
+    assert loaded['_relaytv_interrupt_preserved_at'] == 1234
 
 
 def test_interrupt_preserved_queue_item_is_not_mpv_primed() -> None:
