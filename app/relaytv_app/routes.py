@@ -7214,7 +7214,7 @@ def queue_move(req: QueueMoveReq):
 
 
 @router.get("/share")
-def share(url: str | None = None, link: str | None = None, cec: bool = True):
+def share(url: str | None = None, link: str | None = None, cec: bool = False):
     shared = (url or link or "").strip()
     if not shared:
         raise HTTPException(status_code=400, detail="Missing url or link query parameter")
@@ -8427,6 +8427,14 @@ def _settings_for_client(raw: dict | None) -> dict:
     return out
 
 
+def _settings_flag(value: object, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _sync_upload_env_from_settings(updated: dict | None) -> None:
     payload = updated if isinstance(updated, dict) else {}
     uploads = payload.get("uploads") if isinstance(payload.get("uploads"), dict) else {}
@@ -8881,6 +8889,16 @@ def update_settings(req: SettingsReq):
         os.environ["RELAYTV_DRM_CONNECTOR"] = str(updated.get("drm_connector") or "")
     if "sub_lang" in requested_keys and updated.get("sub_lang") is not None:
         os.environ["RELAYTV_SUB_LANG"] = str(updated.get("sub_lang") or "")
+    if "cec_enabled" in requested_keys and updated.get("cec_enabled") is not None:
+        cec_on = _settings_flag(updated.get("cec_enabled"))
+        os.environ["RELAYTV_CEC"] = "1" if cec_on else "0"
+        try:
+            if cec_on:
+                player.start_cec_monitor()
+            else:
+                player.stop_cec_monitor()
+        except Exception as exc:
+            logger.warning("cec_monitor_settings_apply_failed error=%s", exc)
     if "idle_dashboard_enabled" in requested_keys and updated.get("idle_dashboard_enabled") is not None:
         os.environ["RELAYTV_IDLE_DASHBOARD_ENABLED"] = "1" if bool(updated.get("idle_dashboard_enabled")) else "0"
     if "idle_notifications_enabled" in requested_keys and updated.get("idle_notifications_enabled") is not None:
@@ -9018,6 +9036,8 @@ def update_settings(req: SettingsReq):
             live_applied.extend(k for k in idle_keys if k not in live_applied)
         except Exception:
             live_apply_failed.extend(k for k in idle_keys if k not in live_apply_failed)
+    if "cec_enabled" in requested_keys and "cec_enabled" not in live_apply_failed and "cec_enabled" not in live_applied:
+        live_applied.append("cec_enabled")
 
     sess_for_apply = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
     apply_restart_allowed = bool(apply_now and sess_for_apply in ("playing", "paused") and isinstance(state.NOW_PLAYING, dict))

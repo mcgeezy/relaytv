@@ -345,8 +345,10 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
     def fail_run(*args, **kwargs):
         raise AssertionError("one-shot cec-client should not run when controller is alive")
 
-    monkeypatch.setattr(player, "CEC_MONITOR_ENV", "1")
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setenv("RELAYTV_CEC_MONITOR", "1")
     monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", FakeProc())
+    monkeypatch.setattr(player, "cec_probe_status", lambda force=False: {"available": True})
     monkeypatch.setattr(player.subprocess, "run", fail_run)
 
     player.cec_send("on 0\nas\n")
@@ -355,6 +357,8 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
     status = player.cec_controller_status()
     assert status["last_command"] == "on 0\nas"
     assert status["last_command_ok"] is True
+    assert status["last_command_state"] == "sent"
+    assert status["availability"]["available"] is True
 
 
 def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -369,15 +373,105 @@ def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.
         calls.append({"args": args, **kwargs})
         return Result()
 
-    monkeypatch.setattr(player, "CEC_MONITOR_ENV", "0")
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setenv("RELAYTV_CEC_MONITOR", "0")
     monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", None)
     monkeypatch.setattr(player.subprocess, "run", fake_run)
+    monkeypatch.setattr(player, "cec_probe_status", lambda force=False: {"available": False})
 
     player.cec_send("pow 0\n")
 
     assert calls
     assert calls[0]["args"] == ["cec-client", "-s", "-d", "1"]
     assert calls[0]["input"] == "pow 0\n"
+    status = player.cec_controller_status()
+    assert status["last_command_state"] == "completed"
+
+
+def test_share_does_not_request_cec_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url: {"url": url})
+
+    def fake_play_item(item, use_resolver, cec, clear_queue, mode, start_pos=None):
+        observed.update(
+            {
+                "item": item,
+                "use_resolver": use_resolver,
+                "cec": cec,
+                "clear_queue": clear_queue,
+                "mode": mode,
+                "start_pos": start_pos,
+            }
+        )
+        return {"url": item["url"]}
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    response = routes.share(url="https://example.test/video")
+
+    assert response["status"] == "playing"
+    assert observed["cec"] is False
+
+
+def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.delenv("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", raising=False)
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
+
+    assert player.cec_enabled(True) is False
+    assert player.cec_auto_on_switch(True) is False
+
+    monkeypatch.setenv("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", "1")
+
+    assert player.cec_enabled(True) is True
+    assert player.cec_auto_on_switch(True) is True
+
+
+def test_cec_setting_controls_runtime_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
+
+    assert player.cec_enabled(False) is False
+    assert player.cec_monitor_enabled() is False
+
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "1"})
+
+    assert player.cec_enabled(False) is True
+    assert player.cec_monitor_enabled() is True
+
+
+def test_cec_controller_status_includes_availability(monkeypatch: pytest.MonkeyPatch) -> None:
+    availability = {
+        "available": False,
+        "cec_client_available": True,
+        "devices": ["/dev/cec0"],
+        "adapters_reported": [],
+        "permission_ok": False,
+    }
+    monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", None)
+    monkeypatch.setattr(player, "cec_probe_status", lambda force=False: availability)
+
+    status = player.cec_controller_status()
+
+    assert status["availability"] == availability
+
+
+def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped: list[bool] = []
+
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"cec_enabled": "1"})
+    monkeypatch.setattr(routes.state, "update_settings", lambda patch: {**{"cec_enabled": "1"}, **patch})
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(routes.player, "stop_cec_monitor", lambda: stopped.append(True))
+    monkeypatch.setattr(routes.player, "start_cec_monitor", lambda: None)
+
+    response = routes.update_settings(routes.SettingsReq(cec_enabled="0"))
+
+    assert os.environ["RELAYTV_CEC"] == "0"
+    assert stopped == [True]
+    assert "cec_enabled" in response["live_applied"]
 
 
 def test_public_install_docs_offer_latest_without_full_image_variant() -> None:
