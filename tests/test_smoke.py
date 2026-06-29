@@ -236,9 +236,12 @@ def test_installer_leaves_app_policy_defaults_to_entrypoint() -> None:
 
     assert 'QT_RUNTIME_MODE_FROM_ENV="0"' in text
     assert 'QT_SHELL_MPV_ARGS_FROM_ENV="0"' in text
+    assert '[ "${RELAYTV_QT_RUNTIME_MODE+x}" = "x" ]' in text
+    assert '[ "${RELAYTV_QT_SHELL_MPV_ARGS+x}" = "x" ]' in text
     assert 'if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ]' in text
     assert '[ "${QT_RUNTIME_MODE_VAL}" != "auto" ]' not in text
     assert 'if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ]' in text
+    assert 'if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ] && [ -n "${QT_SHELL_MPV_ARGS_VAL}" ]' not in text
     assert "RELAYTV_PLAYER_BACKEND=${RELAYTV_PLAYER_BACKEND:-qt}" not in compose
     assert "RELAYTV_QT_RUNTIME_MODE=${RELAYTV_QT_RUNTIME_MODE:-auto}" not in compose
     assert "RELAYTV_HEADLESS_REMOTE_ENABLED=${RELAYTV_HEADLESS_REMOTE_ENABLED:-0}" not in compose
