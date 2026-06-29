@@ -2056,6 +2056,58 @@ def test_interrupt_preserved_queue_item_is_not_mpv_primed() -> None:
     ) is None
 
 
+def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'QUEUE',
+        [{'url': 'https://www.youtube.com/watch?v=queued', 'title': 'Queued'}],
+        raising=False,
+    )
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'mpv_command',
+        lambda command: (_ for _ in ()).throw(AssertionError(f'closed session must not prime mpv queue: {command!r}')),
+    )
+
+    assert player._prime_mpv_up_next_from_queue(force=True) is False
+
+
+def test_session_tracker_does_not_reopen_closed_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    reset_calls: list[bool] = []
+
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/jellyfin.mp4', 'title': 'Closed Jellyfin', 'closed': True},
+        raising=False,
+    )
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_reset_mpv_up_next_state', lambda: reset_calls.append(True))
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: (_ for _ in ()).throw(AssertionError('closed session tracker must not sample runtime')),
+    )
+    monkeypatch.setattr(
+        player.state,
+        'set_session_state',
+        lambda value: (_ for _ in ()).throw(AssertionError(f'closed session must not become {value!r}')),
+    )
+    monkeypatch.setattr(
+        player,
+        '_prime_mpv_up_next_from_queue',
+        lambda force=False: (_ for _ in ()).throw(AssertionError('closed session must not prime up-next')),
+    )
+
+    player._session_tracker_tick()
+
+    assert reset_calls == [True]
+    assert player.state.SESSION_STATE == 'closed'
+
+
 def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytest.MonkeyPatch) -> None:
     start_calls: list[dict[str, object]] = []
     now_values: list[dict] = []
