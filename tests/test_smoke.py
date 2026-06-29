@@ -435,6 +435,7 @@ def test_share_requests_cec_takeover_by_default(monkeypatch: pytest.MonkeyPatch)
 
 def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.delenv("RELAYTV_CEC_ENABLED", raising=False)
     monkeypatch.delenv("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", raising=False)
     monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
 
@@ -447,8 +448,23 @@ def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.Mo
     assert player.cec_auto_on_switch(True) is True
 
 
-def test_cec_setting_controls_runtime_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cec_env_controls_runtime_policy_over_stale_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
+
+    assert player.cec_enabled(False) is True
+    assert player.cec_monitor_enabled() is True
+
+    monkeypatch.setenv("RELAYTV_CEC", "0")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "1"})
+
+    assert player.cec_enabled(False) is False
+    assert player.cec_monitor_enabled() is False
+
+
+def test_cec_setting_controls_runtime_policy_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.delenv("RELAYTV_CEC_ENABLED", raising=False)
     monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
 
     assert player.cec_enabled(False) is False

@@ -162,21 +162,24 @@ def _env_enabled(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _env_any_enabled(names: tuple[str, ...], default: bool = False) -> bool:
+def _env_any_flag(names: tuple[str, ...]) -> bool | None:
     for name in names:
         raw = os.getenv(name)
         if raw is not None and str(raw).strip() != "":
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
-    return bool(default)
+    return None
 
 
 def _setting_or_env_enabled(setting_name: str, env_name: str | tuple[str, ...], default: bool = False) -> bool:
+    names = (env_name,) if isinstance(env_name, str) else env_name
+    env_value = _env_any_flag(names)
+    if env_value is not None:
+        return env_value
     settings = getattr(state, "get_settings", lambda: {})()
     raw = str(settings.get(setting_name, "")).strip().lower() if isinstance(settings, dict) else ""
     if raw:
         return raw in ("1", "true", "yes", "on")
-    names = (env_name,) if isinstance(env_name, str) else env_name
-    return _env_any_enabled(names, default)
+    return bool(default)
 
 
 def _our_phys_addr() -> str | None:
