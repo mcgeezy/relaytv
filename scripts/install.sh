@@ -39,9 +39,9 @@ Environment:
   RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:<tag>
       Optional published image reference written to .env for the
       `docker compose pull && docker compose up -d` flow.
-  RELAYTV_CEC_ENABLED=1|0
-      Enables optional HDMI-CEC runtime control and device passthrough when
-      /dev/cec* exists.
+  RELAYTV_CEC_ENABLED=auto|1|0
+      Controls optional HDMI-CEC runtime control and device passthrough.
+      Default auto detects CEC hardware and prompts when run interactively.
 EOF
 }
 
@@ -217,7 +217,7 @@ YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL="${RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS
 YTDLP_AUTO_UPDATE_TIMEOUT_SEC_VAL="${RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC:-}"
 YTDLP_AUTO_UPDATE_STATE_FILE_VAL="${RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE:-}"
 PI_VIDEO_DEVICES_ENABLED_VAL="${RELAYTV_PI_VIDEO_DEVICES_ENABLED:-}"
-CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-0}"
+CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-auto}"
 CEC_RUNTIME_VAL="${RELAYTV_CEC:-}"
 CEC_MONITOR_VAL="${RELAYTV_CEC_MONITOR:-}"
 
@@ -240,30 +240,10 @@ case "$PI_VIDEO_DEVICES_ENABLED_VAL" in
     ;;
 esac
 case "$CEC_ENABLED_VAL" in
-  0|1) ;;
+  auto|0|1) ;;
   *)
-    say "WARN: RELAYTV_CEC_ENABLED must be 0 or 1. Disabling HDMI-CEC support."
-    CEC_ENABLED_VAL="0"
-    ;;
-esac
-if [ -z "$CEC_RUNTIME_VAL" ]; then
-  CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
-fi
-if [ -z "$CEC_MONITOR_VAL" ]; then
-  CEC_MONITOR_VAL="$CEC_ENABLED_VAL"
-fi
-case "$CEC_RUNTIME_VAL" in
-  0|1) ;;
-  *)
-    say "WARN: RELAYTV_CEC must be 0 or 1. Falling back to RELAYTV_CEC_ENABLED=${CEC_ENABLED_VAL}."
-    CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
-    ;;
-esac
-case "$CEC_MONITOR_VAL" in
-  0|1) ;;
-  *)
-    say "WARN: RELAYTV_CEC_MONITOR must be 0 or 1. Falling back to RELAYTV_CEC=${CEC_RUNTIME_VAL}."
-    CEC_MONITOR_VAL="$CEC_RUNTIME_VAL"
+    say "WARN: RELAYTV_CEC_ENABLED must be auto, 0, or 1. Falling back to auto."
+    CEC_ENABLED_VAL="auto"
     ;;
 esac
 
@@ -730,6 +710,38 @@ detect_cec_device_group_ids() {
   done < <(detect_cec_device_nodes | sort -u)
 }
 
+resolve_cec_enabled() {
+  local requested="$1"
+  local summary="$2"
+  if [ "$requested" = "0" ] || [ -z "$summary" ]; then
+    printf "0"
+    return 0
+  fi
+  if [ "$requested" = "1" ]; then
+    printf "1"
+    return 0
+  fi
+  if [ "${RELAYTV_INSTALL_YES:-0}" = "1" ] || [ ! -r /dev/tty ]; then
+    printf "0"
+    return 0
+  fi
+
+  {
+    say ""
+    say "HDMI-CEC hardware was detected: $summary"
+    say "Enable optional TV controls?"
+    say "This lets RelayTV turn the TV on, switch inputs, and monitor standby/source changes."
+    say "Choose no if this device shares HDMI with equipment you do not want RelayTV to control."
+    printf "Enable HDMI-CEC passthrough? [y/N] "
+  } > /dev/tty
+  local answer=""
+  read -r answer < /dev/tty || true
+  case "${answer,,}" in
+    y|yes) printf "1" ;;
+    *) printf "0" ;;
+  esac
+}
+
 detect_nvidia_device() {
   if [ -e /dev/nvidiactl ] || [ -e /proc/driver/nvidia/version ]; then
     printf "1"
@@ -849,12 +861,34 @@ if [ "$NVIDIA_DEVICE_DETECTED" = "1" ] && [ "$NVIDIA_DOCKER_TOOLKIT_AVAILABLE" =
   NVIDIA_PASSTHROUGH_ENABLED="1"
 fi
 
+CEC_NODES_DETECTED="$(detect_cec_device_nodes | sort -u | paste -sd, - 2>/dev/null || true)"
+CEC_ENABLED_VAL="$(resolve_cec_enabled "$CEC_ENABLED_VAL" "$CEC_NODES_DETECTED")"
+if [ -z "$CEC_RUNTIME_VAL" ]; then
+  CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
+fi
+if [ -z "$CEC_MONITOR_VAL" ]; then
+  CEC_MONITOR_VAL="$CEC_ENABLED_VAL"
+fi
+case "$CEC_RUNTIME_VAL" in
+  0|1) ;;
+  *)
+    say "WARN: RELAYTV_CEC must be 0 or 1. Falling back to RELAYTV_CEC_ENABLED=${CEC_ENABLED_VAL}."
+    CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
+    ;;
+esac
+case "$CEC_MONITOR_VAL" in
+  0|1) ;;
+  *)
+    say "WARN: RELAYTV_CEC_MONITOR must be 0 or 1. Falling back to RELAYTV_CEC=${CEC_RUNTIME_VAL}."
+    CEC_MONITOR_VAL="$CEC_RUNTIME_VAL"
+    ;;
+esac
+
 ensure_host_device_override "$PI_VIDEO_DEVICES_ENABLED_VAL" "$CEC_ENABLED_VAL" "$NVIDIA_PASSTHROUGH_ENABLED"
 PI_VIDEO_NODES_MISSING=""
 if [ "$PI_VIDEO_DEVICES_ENABLED_VAL" = "1" ]; then
   PI_VIDEO_NODES_MISSING="$(check_pi_video_nodes)"
 fi
-CEC_NODES_DETECTED="$(detect_cec_device_nodes | sort -u | paste -sd, - 2>/dev/null || true)"
 CEC_NODES_MISSING="0"
 if [ "$CEC_ENABLED_VAL" = "1" ] && [ -z "$CEC_NODES_DETECTED" ]; then
   CEC_NODES_MISSING="1"

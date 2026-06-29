@@ -205,7 +205,10 @@ def test_root_bootstrap_installer_downloads_release_bundle() -> None:
     assert "docker compose up -d" in text
     assert "RELAYTV_CEC_ENABLED" in text
     assert "--enable-cec" in text
-    assert "monitor standby/source changes" in text
+    assert 'RELAYTV_CEC_ENABLED="$CEC_CHOICE"' in text
+    assert 'RELAYTV_INSTALL_YES="$ASSUME_YES"' in text
+    assert "detect_cec_devices" not in text
+    assert "prompt_enable_cec" not in text
     assert "--force" in text
     assert "INSTALL_DIR=\"$(default_install_dir)\"" in text
     assert "confirm_current_directory_install" in text
@@ -299,6 +302,10 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "RELAYTV_CEC" in text
     assert "Optional HDMI-CEC control" in text
     assert "detect_cec_device_nodes" in text
+    assert "resolve_cec_enabled" in text
+    assert "HDMI-CEC hardware was detected" in text
+    assert "Enable HDMI-CEC passthrough? [y/N]" in text
+    assert 'CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-auto}"' in text
     assert "host-device-overrides" in text
     assert "/dev/cec*" in text
     assert "cec-client -l" in text
