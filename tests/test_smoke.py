@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app.main import create_app
+from relaytv_app import container_entrypoint
 from relaytv_app import player
 from relaytv_app import resolver
 from relaytv_app import routes
@@ -47,6 +48,15 @@ def test_ui_smoke() -> None:
     assert 'id="aboutBtn"' in response.text
     assert 'id="aboutBackdrop"' in response.text
     assert 'id="setIdleNotificationsEnabled"' in response.text
+    assert 'id="setCecEnabled"' in response.text
+    assert 'id="setCecStatus"' in response.text
+    assert 'id="setCecAvailabilityHint"' in response.text
+    assert 'id="setTvTakeoverEnabled"' in response.text
+    assert 'id="setTvPauseOnInputChange"' in response.text
+    assert 'id="setTvAutoResumeOnReturn"' in response.text
+    assert "fetch('/tv/status')" in response.text
+    assert "SETTINGS_TV_CONTROL_BASELINE" in response.text
+    assert "Object.entries(tvControl).forEach" in response.text
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text
@@ -183,6 +193,8 @@ def test_release_compose_uses_published_image_without_source_build() -> None:
     assert "build:" not in text
     assert "context: ./app" not in text
     assert "./data:/data" in text
+    assert "XDG_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in text
+    assert "RELAYTV_HOST_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in text
 
 
 def test_root_bootstrap_installer_downloads_release_bundle() -> None:
@@ -195,7 +207,10 @@ def test_root_bootstrap_installer_downloads_release_bundle() -> None:
     assert "docker compose up -d" in text
     assert "RELAYTV_CEC_ENABLED" in text
     assert "--enable-cec" in text
-    assert "monitor standby/source changes" in text
+    assert 'RELAYTV_CEC_ENABLED="$CEC_CHOICE"' in text
+    assert 'RELAYTV_INSTALL_YES="$ASSUME_YES"' in text
+    assert "detect_cec_devices" not in text
+    assert "prompt_enable_cec" not in text
     assert "--force" in text
     assert "INSTALL_DIR=\"$(default_install_dir)\"" in text
     assert "confirm_current_directory_install" in text
@@ -207,6 +222,84 @@ def test_install_scripts_have_valid_bash_syntax() -> None:
     subprocess.run(["bash", "-n", str(ROOT_DIR / "scripts/install.sh")], check=True)
 
 
+def test_repo_installer_persists_detected_host_session_type_for_ssh_installs() -> None:
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+
+    assert 'emit_env_line "RELAYTV_HOST_SESSION_TYPE" "${XDG_SESSION_TYPE_VAL}"' in text
+    assert 'emit_env_line "RELAYTV_HOST_PROFILE" "${HOST_PROFILE}"' in text
+    assert "XDG_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in compose
+    assert "RELAYTV_HOST_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in compose
+
+
+def test_installer_leaves_app_policy_defaults_to_entrypoint() -> None:
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+
+    assert 'QT_RUNTIME_MODE_FROM_ENV="0"' in text
+    assert 'QT_SHELL_MPV_ARGS_FROM_ENV="0"' in text
+    assert '[ "${RELAYTV_QT_RUNTIME_MODE+x}" = "x" ]' in text
+    assert '[ "${RELAYTV_QT_SHELL_MPV_ARGS+x}" = "x" ]' in text
+    assert 'if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ]' in text
+    assert '[ "${QT_RUNTIME_MODE_VAL}" != "auto" ]' not in text
+    assert 'if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ]' in text
+    assert 'if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ] && [ -n "${QT_SHELL_MPV_ARGS_VAL}" ]' not in text
+    assert "RELAYTV_PLAYER_BACKEND=${RELAYTV_PLAYER_BACKEND:-qt}" not in compose
+    assert "RELAYTV_QT_RUNTIME_MODE=${RELAYTV_QT_RUNTIME_MODE:-auto}" not in compose
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=${RELAYTV_HEADLESS_REMOTE_ENABLED:-0}" not in compose
+    assert "RELAYTV_YTDLP_AUTO_UPDATE=${RELAYTV_YTDLP_AUTO_UPDATE:-0}" not in compose
+
+
+def test_entrypoint_fills_runtime_policy_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(container_entrypoint, "_host_profile", lambda env: "raspi")
+    monkeypatch.setattr(container_entrypoint, "_has_dri", lambda: True)
+    env = {
+        "RELAYTV_MODE": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
+    }
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_QT_RUNTIME_MODE"] == "embed"
+    assert env["RELAYTV_QT_SHELL_MPV_ARGS"] == "--gpu-api=opengl --opengl-es=yes"
+
+
+def test_entrypoint_skips_pi_mpv_args_without_dri(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(container_entrypoint, "_host_profile", lambda env: "raspi")
+    monkeypatch.setattr(container_entrypoint, "_has_dri", lambda: False)
+    env = {
+        "RELAYTV_MODE": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
+    }
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_QT_RUNTIME_MODE"] == "embed"
+    assert "RELAYTV_QT_SHELL_MPV_ARGS" not in env
+
+
+def test_entrypoint_preserves_explicit_pi_mpv_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(container_entrypoint, "_host_profile", lambda env: "raspi")
+    monkeypatch.setattr(container_entrypoint, "_has_dri", lambda: True)
+    env = {
+        "RELAYTV_MODE": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
+        "RELAYTV_QT_SHELL_MPV_ARGS": "",
+    }
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_QT_SHELL_MPV_ARGS"] == ""
+
+
+def test_entrypoint_enables_headless_remote_from_mode() -> None:
+    env = {"RELAYTV_MODE": "headless"}
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_HEADLESS_REMOTE_ENABLED"] == "1"
+
+
 def test_repo_installer_generates_host_device_override_for_cec() -> None:
     text = (ROOT_DIR / "scripts/install.sh").read_text()
 
@@ -215,6 +308,11 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "RELAYTV_CEC" in text
     assert "Optional HDMI-CEC control" in text
     assert "detect_cec_device_nodes" in text
+    assert "resolve_cec_enabled" in text
+    assert "HDMI-CEC hardware was detected" in text
+    assert "Enable HDMI-CEC passthrough? [y/N]" in text
+    assert 'CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-auto}"' in text
+    assert text.index('if [ "$requested" = "1" ]') < text.index('if [ -z "$summary" ]')
     assert "host-device-overrides" in text
     assert "/dev/cec*" in text
     assert "cec-client -l" in text
@@ -268,8 +366,10 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
     def fail_run(*args, **kwargs):
         raise AssertionError("one-shot cec-client should not run when controller is alive")
 
-    monkeypatch.setattr(player, "CEC_MONITOR_ENV", "1")
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setenv("RELAYTV_CEC_MONITOR", "1")
     monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", FakeProc())
+    monkeypatch.setattr(player, "cec_probe_status", lambda force=False: {"available": True})
     monkeypatch.setattr(player.subprocess, "run", fail_run)
 
     player.cec_send("on 0\nas\n")
@@ -278,6 +378,8 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
     status = player.cec_controller_status()
     assert status["last_command"] == "on 0\nas"
     assert status["last_command_ok"] is True
+    assert status["last_command_state"] == "sent"
+    assert status["availability"]["available"] is True
 
 
 def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,15 +394,171 @@ def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.
         calls.append({"args": args, **kwargs})
         return Result()
 
-    monkeypatch.setattr(player, "CEC_MONITOR_ENV", "0")
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setenv("RELAYTV_CEC_MONITOR", "0")
     monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", None)
     monkeypatch.setattr(player.subprocess, "run", fake_run)
+    monkeypatch.setattr(player, "cec_probe_status", lambda force=False: {"available": False})
 
     player.cec_send("pow 0\n")
 
     assert calls
     assert calls[0]["args"] == ["cec-client", "-s", "-d", "1"]
     assert calls[0]["input"] == "pow 0\n"
+    status = player.cec_controller_status()
+    assert status["last_command_state"] == "completed"
+
+
+def test_share_requests_cec_takeover_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url: {"url": url})
+
+    def fake_play_item(item, use_resolver, cec, clear_queue, mode, start_pos=None):
+        observed.update(
+            {
+                "item": item,
+                "use_resolver": use_resolver,
+                "cec": cec,
+                "clear_queue": clear_queue,
+                "mode": mode,
+                "start_pos": start_pos,
+            }
+        )
+        return {"url": item["url"]}
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    response = routes.share(url="https://example.test/video")
+
+    assert response["status"] == "playing"
+    assert observed["cec"] is True
+
+
+def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.delenv("RELAYTV_CEC_ENABLED", raising=False)
+    monkeypatch.delenv("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", raising=False)
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
+
+    assert player.cec_enabled(True) is False
+    assert player.cec_auto_on_switch(True) is False
+
+    monkeypatch.setenv("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", "1")
+
+    assert player.cec_enabled(True) is True
+    assert player.cec_auto_on_switch(True) is True
+
+
+def test_cec_env_controls_runtime_policy_over_stale_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
+
+    assert player.cec_enabled(False) is True
+    assert player.cec_monitor_enabled() is True
+
+    monkeypatch.setenv("RELAYTV_CEC", "0")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "1"})
+
+    assert player.cec_enabled(False) is False
+    assert player.cec_monitor_enabled() is False
+
+
+def test_cec_setting_controls_runtime_policy_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.delenv("RELAYTV_CEC_ENABLED", raising=False)
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
+
+    assert player.cec_enabled(False) is False
+    assert player.cec_monitor_enabled() is False
+
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "1"})
+
+    assert player.cec_enabled(False) is True
+    assert player.cec_monitor_enabled() is True
+
+
+def test_cec_legacy_enabled_env_is_runtime_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RELAYTV_CEC", raising=False)
+    monkeypatch.setenv("RELAYTV_CEC_ENABLED", "1")
+    monkeypatch.setattr(player.state, "get_settings", lambda: {})
+
+    assert player.cec_enabled(False) is True
+
+
+def test_cec_controller_status_includes_availability(monkeypatch: pytest.MonkeyPatch) -> None:
+    availability = {
+        "available": False,
+        "cec_client_available": True,
+        "devices": ["/dev/cec0"],
+        "adapters_reported": [],
+        "permission_ok": False,
+    }
+    monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", None)
+    monkeypatch.setattr(player, "cec_probe_status", lambda force=False: availability)
+
+    status = player.cec_controller_status()
+
+    assert status["availability"] == availability
+
+
+def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped: list[bool] = []
+
+    monkeypatch.setenv("RELAYTV_CEC", "1")
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"cec_enabled": "1"})
+    monkeypatch.setattr(routes.state, "update_settings", lambda patch: {**{"cec_enabled": "1"}, **patch})
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(routes.player, "stop_cec_monitor", lambda: stopped.append(True))
+    monkeypatch.setattr(routes.player, "start_cec_monitor", lambda: None)
+
+    response = routes.update_settings(routes.SettingsReq(cec_enabled="0"))
+
+    assert os.environ["RELAYTV_CEC"] == "0"
+    assert os.environ["RELAYTV_CEC_ENABLED"] == "0"
+    assert stopped == [True]
+    assert "cec_enabled" in response["live_applied"]
+
+
+def test_play_item_attempts_cec_takeover_without_probe_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    takeover_calls: list[bool] = []
+    now_values: list[dict] = []
+
+    monkeypatch.setattr(player, "update_history_progress", lambda *a, **k: None)
+    monkeypatch.setattr(player, "_mark_playback_transition", lambda *a, **k: None)
+    monkeypatch.setattr(player, "cec_auto_on_switch", lambda cec: True)
+    monkeypatch.setattr(player, "cec_available", lambda: False)
+    monkeypatch.setattr(player, "tv_on_and_switch", lambda: takeover_calls.append(True))
+    monkeypatch.setattr(player, "validate_user_url", lambda url: url)
+    monkeypatch.setattr(player, "provider_from_url", lambda url: "generic")
+    monkeypatch.setattr(player, "_env_bool", lambda name, default=False: False if name == "RELAYTV_MPV_YTDL" else default)
+    monkeypatch.setattr(player, "_providers_forced_to_resolve", lambda: set())
+    monkeypatch.setattr(player, "_fresh_prefetched_stream", lambda item: None)
+    monkeypatch.setattr(player, "_normalize_start_pos", lambda value: value)
+    monkeypatch.setattr(player, "_load_stream_in_existing_mpv", lambda *a, **k: False)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: False)
+    monkeypatch.setattr(player, "start_mpv", lambda *a, **k: None)
+    monkeypatch.setattr(player, "_add_history_entry", lambda now: None)
+    monkeypatch.setattr(player, "_prime_mpv_up_next_from_queue", lambda force=False: False)
+    monkeypatch.setattr(player.state, "get_tv_state", lambda: {"active_source_phys_addr": "2000"})
+    monkeypatch.setattr(player, "_our_phys_addr", lambda: "1000")
+    monkeypatch.setattr(player.state, "persist_queue", lambda: None)
+    monkeypatch.setattr(player.state, "set_now_playing", lambda value: now_values.append(value))
+    monkeypatch.setattr(player.state, "set_session_state", lambda value: None)
+    monkeypatch.setattr(player.state, "set_pause_reason", lambda value: None)
+    monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
+
+    result = player.play_item(
+        {"url": "https://example.test/video", "title": "Example"},
+        use_resolver=False,
+        cec=True,
+        clear_queue=False,
+        mode="share",
+    )
+
+    assert takeover_calls == [True]
+    assert result["url"] == "https://example.test/video"
+    assert now_values
 
 
 def test_public_install_docs_offer_latest_without_full_image_variant() -> None:

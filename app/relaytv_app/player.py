@@ -107,13 +107,9 @@ def _native_sidecar_health_snapshot(require_qt_shell: bool = False):
 #  2) When the TV goes to standby, pause playback and persist a resume position.
 #
 # CEC is notoriously inconsistent across TVs, so everything here is best-effort
-# and fully optional. Enable by setting RELAYTV_CEC=1 (recommended) or by passing
-# cec=true in the /play request payload.
+# and fully optional. Enable by setting RELAYTV_CEC=1 or the cec_enabled setting.
 
 CEC_TV_ADDR = os.getenv("CEC_TV_ADDR", "0")  # logical address for TV is usually 0
-CEC_ENABLED_ENV = os.getenv("RELAYTV_CEC", "0").strip()
-CEC_MONITOR_ENV = os.getenv("RELAYTV_CEC_MONITOR", "").strip()  # default to RELAYTV_CEC
-CEC_AUTO_ON_SWITCH_ENV = os.getenv("RELAYTV_CEC_AUTO_ON_SWITCH", "").strip()  # default to RELAYTV_CEC
 
 _CEC_MONITOR_THREAD: threading.Thread | None = None
 _CEC_MONITOR_STOP = threading.Event()
@@ -127,9 +123,21 @@ _CEC_CONTROLLER_STATUS: dict[str, Any] = {
     "last_error": "",
     "last_command": "",
     "last_command_ok": None,
+    "last_command_state": "",
     "last_command_ts": 0.0,
     "last_event": "",
     "last_event_ts": 0.0,
+    "restart_count": 0,
+    "last_restart_ts": 0.0,
+}
+_CEC_AVAILABILITY_STATUS: dict[str, Any] = {
+    "available": False,
+    "cec_client_available": False,
+    "devices": [],
+    "adapters_reported": [],
+    "permission_ok": False,
+    "last_probe_ts": 0.0,
+    "last_error": "",
 }
 
 CEC_OPCODE_STANDBY = "36"
@@ -145,6 +153,33 @@ def _setting_enabled(name: str, default: bool) -> bool:
     if not v:
         return default
     return v in ("1", "true", "yes", "on")
+
+
+def _env_enabled(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_any_flag(names: tuple[str, ...]) -> bool | None:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is not None and str(raw).strip() != "":
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+    return None
+
+
+def _setting_or_env_enabled(setting_name: str, env_name: str | tuple[str, ...], default: bool = False) -> bool:
+    names = (env_name,) if isinstance(env_name, str) else env_name
+    env_value = _env_any_flag(names)
+    if env_value is not None:
+        return env_value
+    settings = getattr(state, "get_settings", lambda: {})()
+    raw = str(settings.get(setting_name, "")).strip().lower() if isinstance(settings, dict) else ""
+    if raw:
+        return raw in ("1", "true", "yes", "on")
+    return bool(default)
 
 
 def _our_phys_addr() -> str | None:
@@ -171,39 +206,87 @@ def _normalize_phys_addr(a: str, b: str) -> str:
 
 
 def cec_enabled(request_flag: bool | None = None) -> bool:
-    if request_flag:
+    enabled = _setting_or_env_enabled("cec_enabled", ("RELAYTV_CEC", "RELAYTV_CEC_ENABLED"), False)
+    if enabled:
         return True
-    return CEC_ENABLED_ENV in ("1", "true", "yes", "on")
+    if request_flag and _env_enabled("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", False):
+        return True
+    return False
 
 
 def cec_auto_on_switch(request_flag: bool | None = None) -> bool:
-    # If caller explicitly asked for cec, treat that as "auto on + switch".
     if request_flag:
-        return True
-    if CEC_AUTO_ON_SWITCH_ENV:
-        return CEC_AUTO_ON_SWITCH_ENV.lower() in ("1", "true", "yes", "on")
+        return cec_enabled(True)
+    raw = (os.getenv("RELAYTV_CEC_AUTO_ON_SWITCH") or "").strip()
+    if raw:
+        return raw.lower() in ("1", "true", "yes", "on") and cec_enabled(False)
     return cec_enabled(False)
 
 
 def cec_monitor_enabled() -> bool:
-    if CEC_MONITOR_ENV:
-        return CEC_MONITOR_ENV.lower() in ("1", "true", "yes", "on")
+    raw = (os.getenv("RELAYTV_CEC_MONITOR") or "").strip()
+    if raw:
+        return raw.lower() in ("1", "true", "yes", "on") and cec_enabled(False)
     return cec_enabled(False)
 
 
-def cec_available() -> bool:
-    """Best-effort: return True if cec-client is runnable."""
+def _cec_device_nodes() -> list[str]:
+    out: list[str] = []
+    for idx in range(8):
+        p = f"/dev/cec{idx}"
+        if os.path.exists(p):
+            out.append(p)
+    return out
+
+
+def cec_probe_status(force: bool = False) -> dict[str, Any]:
+    now = time.time()
+    with _CEC_CONTROLLER_LOCK:
+        cached = dict(_CEC_AVAILABILITY_STATUS)
+    if not force and cached.get("last_probe_ts") and (now - float(cached.get("last_probe_ts") or 0.0)) < 10.0:
+        return cached
+
+    devices = _cec_device_nodes()
+    permission_ok = any(os.access(p, os.R_OK | os.W_OK) for p in devices)
+    status: dict[str, Any] = {
+        "available": False,
+        "cec_client_available": False,
+        "devices": devices,
+        "adapters_reported": [],
+        "permission_ok": bool(permission_ok),
+        "last_probe_ts": now,
+        "last_error": "",
+    }
     try:
         p = subprocess.run(["cec-client", "-l"], text=True, capture_output=True, timeout=3)
-        if p.returncode != 0:
-            return False
-        out = (p.stdout or "") + "\n" + (p.stderr or "")
-        # Output usually includes 'device:' and/or 'adapter:' lines
-        return ("device:" in out.lower()) or ("adapter:" in out.lower())
     except FileNotFoundError:
-        return False
-    except Exception:
-        return False
+        status["last_error"] = "cec-client_not_installed"
+    except Exception as exc:
+        status["last_error"] = str(exc)
+    else:
+        txt = ((p.stdout or "") + "\n" + (p.stderr or "")).strip()
+        status["cec_client_available"] = p.returncode == 0
+        adapters: list[str] = []
+        for ln in txt.splitlines():
+            if "adapter:" in ln.lower() or "device:" in ln.lower():
+                adapters.append(ln.strip())
+        status["adapters_reported"] = adapters[:20]
+        if p.returncode != 0:
+            status["last_error"] = (p.stderr or p.stdout or f"cec-client -l exited {p.returncode}").strip()[:500]
+
+    status["available"] = bool(
+        status["cec_client_available"]
+        and (status["adapters_reported"] or devices)
+        and (permission_ok or not devices)
+    )
+    with _CEC_CONTROLLER_LOCK:
+        _CEC_AVAILABILITY_STATUS.update(status)
+    return dict(status)
+
+
+def cec_available() -> bool:
+    """Best-effort: return True if cec-client and adapter access look usable."""
+    return bool(cec_probe_status().get("available"))
 
 
 def _update_cec_controller_status(**patch) -> None:
@@ -218,6 +301,7 @@ def cec_controller_status() -> dict[str, Any]:
     if proc is not None:
         status["running"] = proc.poll() is None
         status["pid"] = proc.pid
+    status["availability"] = cec_probe_status()
     return status
 
 
@@ -250,6 +334,7 @@ def _cec_send_via_controller(cmds: str) -> bool:
             _update_cec_controller_status(
                 last_command=cmds.strip(),
                 last_command_ok=True,
+                last_command_state="sent",
                 last_command_ts=time.time(),
                 last_error="",
             )
@@ -258,6 +343,7 @@ def _cec_send_via_controller(cmds: str) -> bool:
             _update_cec_controller_status(
                 last_command=cmds.strip(),
                 last_command_ok=False,
+                last_command_state="failed",
                 last_command_ts=time.time(),
                 last_error=str(exc),
             )
@@ -277,6 +363,7 @@ def _cec_send_one_shot(cmds: str) -> None:
         _update_cec_controller_status(
             last_command=cmds.strip(),
             last_command_ok=(p.returncode == 0),
+            last_command_state=("completed" if p.returncode == 0 else "failed"),
             last_command_ts=time.time(),
         )
         # Some adapters return non-zero even if it worked; be tolerant but log.
@@ -288,10 +375,10 @@ def _cec_send_one_shot(cmds: str) -> None:
                 logger.warning("cec_send_stdout %s", (p.stdout or "").strip())
     except FileNotFoundError:
         logger.info("cec_unavailable cec-client_not_installed")
-        _update_cec_controller_status(last_command=cmds.strip(), last_command_ok=False, last_command_ts=time.time(), last_error="cec-client_not_installed")
+        _update_cec_controller_status(last_command=cmds.strip(), last_command_ok=False, last_command_state="failed", last_command_ts=time.time(), last_error="cec-client_not_installed")
     except Exception as e:
         logger.warning("cec_send_failed error=%s", e)
-        _update_cec_controller_status(last_command=cmds.strip(), last_command_ok=False, last_command_ts=time.time(), last_error=str(e))
+        _update_cec_controller_status(last_command=cmds.strip(), last_command_ok=False, last_command_state="failed", last_command_ts=time.time(), last_error=str(e))
 
 
 def cec_send(cmds: str) -> None:
@@ -371,94 +458,119 @@ def _pause_for_tv_standby() -> None:
 def _cec_monitor_loop() -> None:
     """Own cec-client for both event monitoring and command writes."""
     cmd = ["cec-client", "-d", "1"]
-    logger.info("cec_controller_start cmd=%s", " ".join(cmd))
-    try:
-        with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as proc:
-            global _CEC_CONTROLLER_PROC
-            with _CEC_CONTROLLER_LOCK:
-                _CEC_CONTROLLER_PROC = proc
-                _CEC_CONTROLLER_STATUS.update({"running": True, "pid": proc.pid, "last_error": ""})
-            while not _CEC_MONITOR_STOP.is_set():
-                line = proc.stdout.readline() if proc.stdout else ""
-                if not line:
-                    # process ended or no output
-                    if proc.poll() is not None:
-                        break
-                    time.sleep(0.1)
-                    continue
+    restart_count = 0
+    while not _CEC_MONITOR_STOP.is_set():
+        logger.info("cec_controller_start cmd=%s", " ".join(cmd))
+        try:
+            with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as proc:
+                global _CEC_CONTROLLER_PROC
+                with _CEC_CONTROLLER_LOCK:
+                    _CEC_CONTROLLER_PROC = proc
+                    _CEC_CONTROLLER_STATUS.update({"running": True, "pid": proc.pid, "last_error": ""})
+                while not _CEC_MONITOR_STOP.is_set():
+                    line = proc.stdout.readline() if proc.stdout else ""
+                    if not line:
+                        if proc.poll() is not None:
+                            break
+                        time.sleep(0.1)
+                        continue
 
-                parsed = _parse_cec_traffic(line)
-                if parsed:
-                    opcode, operands = parsed
-                    _update_cec_controller_status(last_event=opcode, last_event_ts=time.time())
-                    if opcode == CEC_OPCODE_STANDBY:
+                    parsed = _parse_cec_traffic(line)
+                    if parsed:
+                        opcode, operands = parsed
+                        _update_cec_controller_status(last_event=opcode, last_event_ts=time.time())
+                        if opcode == CEC_OPCODE_STANDBY:
+                            _pause_for_tv_standby()
+                            continue
+
+                        if opcode == CEC_OPCODE_ACTIVE_SOURCE and len(operands) >= 2:
+                            phys = _normalize_phys_addr(operands[0], operands[1])
+                            state.update_tv_state(active_source_phys_addr=phys, last_event="active_source")
+                            ours = _our_phys_addr()
+                            if _setting_enabled("tv_pause_on_input_change", True) and ours and phys != ours and is_playing():
+                                with MPV_LOCK:
+                                    try:
+                                        pos = mpv_get("time-pos")
+                                    except Exception:
+                                        pos = None
+                                    try:
+                                        mpv_set("pause", True)
+                                        state.set_session_state("paused")
+                                        state.set_pause_reason("input_changed")
+                                        if pos is not None:
+                                            state.set_session_position(float(pos))
+                                    except Exception:
+                                        pass
+                            if (
+                                _setting_enabled("tv_auto_resume_on_return", False)
+                                and ours
+                                and phys == ours
+                                and state.get_pause_reason() == "input_changed"
+                                and is_playing()
+                            ):
+                                with MPV_LOCK:
+                                    try:
+                                        mpv_set("pause", False)
+                                        state.set_session_state("playing")
+                                        state.set_pause_reason(None)
+                                    except Exception:
+                                        pass
+                            continue
+
+                        if opcode in (CEC_OPCODE_ROUTING_CHANGE, CEC_OPCODE_ROUTING_INFORMATION):
+                            state.update_tv_state(last_event="routing_change")
+                            continue
+
+                        if opcode == CEC_OPCODE_REPORT_POWER_STATUS and operands:
+                            status_map = {"00": "on", "01": "standby", "02": "in_transition_standby_to_on", "03": "in_transition_on_to_standby"}
+                            state.update_tv_state(tv_power_status=status_map.get(operands[0], "unknown"), last_event="power_status")
+                            continue
+
+                    low = line.strip().lower()
+                    if "standby" in low and ("broadcast" in low or "received" in low or "traffic" in low):
+                        _update_cec_controller_status(last_event="standby_text", last_event_ts=time.time())
                         _pause_for_tv_standby()
-                        continue
 
-                    if opcode == CEC_OPCODE_ACTIVE_SOURCE and len(operands) >= 2:
-                        phys = _normalize_phys_addr(operands[0], operands[1])
-                        state.update_tv_state(active_source_phys_addr=phys, last_event="active_source")
-                        ours = _our_phys_addr()
-                        if _setting_enabled("tv_pause_on_input_change", True) and ours and phys != ours and is_playing():
-                            with MPV_LOCK:
-                                try:
-                                    pos = mpv_get("time-pos")
-                                except Exception:
-                                    pos = None
-                                try:
-                                    mpv_set("pause", True)
-                                    state.set_session_state("paused")
-                                    state.set_pause_reason("input_changed")
-                                    if pos is not None:
-                                        state.set_session_position(float(pos))
-                                except Exception:
-                                    pass
-                        if (
-                            _setting_enabled("tv_auto_resume_on_return", False)
-                            and ours
-                            and phys == ours
-                            and state.get_pause_reason() == "input_changed"
-                            and is_playing()
-                        ):
-                            with MPV_LOCK:
-                                try:
-                                    mpv_set("pause", False)
-                                    state.set_session_state("playing")
-                                    state.set_pause_reason(None)
-                                except Exception:
-                                    pass
-                        continue
-
-                    if opcode in (CEC_OPCODE_ROUTING_CHANGE, CEC_OPCODE_ROUTING_INFORMATION):
-                        state.update_tv_state(last_event="routing_change")
-                        continue
-
-                    if opcode == CEC_OPCODE_REPORT_POWER_STATUS and operands:
-                        status_map = {"00": "on", "01": "standby", "02": "in_transition_standby_to_on", "03": "in_transition_on_to_standby"}
-                        state.update_tv_state(tv_power_status=status_map.get(operands[0], "unknown"), last_event="power_status")
-                        continue
-
-                low = line.strip().lower()
-                if "standby" in low and ("broadcast" in low or "received" in low or "traffic" in low):
-                    _update_cec_controller_status(last_event="standby_text", last_event_ts=time.time())
-                    _pause_for_tv_standby()
-
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-    except FileNotFoundError:
-        logger.info("cec_controller_unavailable cec-client_not_installed")
-        _update_cec_controller_status(running=False, pid=None, last_error="cec-client_not_installed")
-    except Exception as e:
-        logger.warning("cec_controller_crashed error=%s", e)
-        _update_cec_controller_status(running=False, pid=None, last_error=str(e))
-    finally:
-        with _CEC_CONTROLLER_LOCK:
-            if _CEC_CONTROLLER_PROC is not None and _CEC_CONTROLLER_PROC.poll() is not None:
-                _CEC_CONTROLLER_PROC = None
-            _CEC_CONTROLLER_STATUS.update({"running": False, "pid": None})
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+        except FileNotFoundError:
+            logger.info("cec_controller_unavailable cec-client_not_installed")
+            _update_cec_controller_status(running=False, pid=None, last_error="cec-client_not_installed")
+            break
+        except Exception as e:
+            logger.warning("cec_controller_crashed error=%s", e)
+            _update_cec_controller_status(running=False, pid=None, last_error=str(e))
+        finally:
+            with _CEC_CONTROLLER_LOCK:
+                if _CEC_CONTROLLER_PROC is not None and _CEC_CONTROLLER_PROC.poll() is not None:
+                    _CEC_CONTROLLER_PROC = None
+                _CEC_CONTROLLER_STATUS.update({"running": False, "pid": None})
+        if _CEC_MONITOR_STOP.is_set():
+            break
+        restart_count += 1
+        delay = min(30.0, 1.0 + (restart_count * 2.0))
+        _update_cec_controller_status(restart_count=restart_count, last_restart_ts=time.time(), last_error="controller_exited")
+        _CEC_MONITOR_STOP.wait(delay)
     logger.info("cec_controller_stopped")
+
+
+def stop_cec_monitor() -> None:
+    global _CEC_MONITOR_THREAD
+    _CEC_MONITOR_STOP.set()
+    with _CEC_CONTROLLER_LOCK:
+        proc = _CEC_CONTROLLER_PROC
+    if proc is not None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    thread = _CEC_MONITOR_THREAD
+    if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+        thread.join(timeout=2.0)
+    if _CEC_MONITOR_THREAD is not None and not _CEC_MONITOR_THREAD.is_alive():
+        _CEC_MONITOR_THREAD = None
 
 
 def start_cec_monitor() -> None:
@@ -4092,7 +4204,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     active_src = str(tv_state.get("active_source_phys_addr") or "")
     ours = _our_phys_addr() or ""
     should_take_over = _setting_enabled("tv_takeover_enabled", True) and (not ours or active_src != ours)
-    if cec_auto_on_switch(cec) and should_take_over and cec_available():
+    if cec_auto_on_switch(cec) and should_take_over:
         tv_on_and_switch()
 
     if clear_queue:

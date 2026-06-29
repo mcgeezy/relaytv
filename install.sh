@@ -206,68 +206,6 @@ fetch_to() {
   "${FETCH[@]}" "$url" > "$dest"
 }
 
-detect_cec_devices() {
-  local dev
-  for dev in /dev/cec*; do
-    [ -e "$dev" ] || continue
-    printf "%s\n" "$dev"
-  done
-  if command -v cec-client >/dev/null 2>&1; then
-    cec-client -l 2>/dev/null \
-      | grep -Eo '/dev/(cec[0-9]+|ttyACM[0-9]+)' \
-      || true
-  fi
-}
-
-cec_detected_summary() {
-  local nodes
-  nodes="$(detect_cec_devices | sort -u | paste -sd, - 2>/dev/null || true)"
-  if [ -n "$nodes" ]; then
-    printf "%s" "$nodes"
-    return 0
-  fi
-  if command -v cec-client >/dev/null 2>&1 && cec-client -l 2>/dev/null | grep -qi 'adapter'; then
-    printf "cec-client adapter"
-    return 0
-  fi
-  if command -v lsusb >/dev/null 2>&1 && lsusb 2>/dev/null | grep -qi 'pulse.*eight\|cec'; then
-    printf "USB CEC adapter"
-    return 0
-  fi
-  printf ""
-}
-
-prompt_enable_cec() {
-  local summary="$1"
-  if [ "$CEC_CHOICE" = "0" ] || [ -z "$summary" ]; then
-    printf "0"
-    return 0
-  fi
-  if [ "$CEC_CHOICE" = "1" ]; then
-    printf "1"
-    return 0
-  fi
-  if [ "$ASSUME_YES" = "1" ] || [ ! -r /dev/tty ]; then
-    printf "0"
-    return 0
-  fi
-
-  {
-    say ""
-    say "HDMI-CEC hardware was detected: $summary"
-    say "Enable optional TV controls?"
-    say "This lets RelayTV turn the TV on, switch inputs, and monitor standby/source changes."
-    say "Choose no if this device shares HDMI with equipment you do not want RelayTV to control."
-    printf "Enable HDMI-CEC passthrough? [y/N] "
-  } > /dev/tty
-  local answer=""
-  read -r answer < /dev/tty || true
-  case "${answer,,}" in
-    y|yes) printf "1" ;;
-    *) printf "0" ;;
-  esac
-}
-
 if [ -d "$INSTALL_DIR/.git" ] && [ "$FORCE_INSTALL" != "1" ]; then
   die "$INSTALL_DIR looks like a source checkout. Use scripts/install.sh from that checkout, choose --dir, or rerun with --force."
 fi
@@ -300,14 +238,11 @@ cp "$tmp_dir/doctor.sh" "$INSTALL_DIR/scripts/doctor.sh"
 cp "$tmp_dir/host-ops.sh" "$INSTALL_DIR/scripts/host-ops.sh"
 chmod +x "$INSTALL_DIR/install.sh" "$INSTALL_DIR/scripts/install.sh" "$INSTALL_DIR/scripts/doctor.sh" "$INSTALL_DIR/scripts/host-ops.sh"
 
-cec_summary="$(cec_detected_summary)"
-cec_enabled="$(prompt_enable_cec "$cec_summary")"
-
 say ""
 say "Generating RelayTV runtime configuration..."
 (
   cd "$INSTALL_DIR"
-  RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_CEC_ENABLED="$cec_enabled" ./scripts/install.sh "${INSTALL_ARGS[@]}"
+  RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_CEC_ENABLED="$CEC_CHOICE" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
 )
 
 if [ "$DO_PULL" = "1" ]; then
@@ -325,7 +260,7 @@ fi
 say ""
 say "RelayTV install complete."
 say "  Directory: $INSTALL_DIR"
-say "  CEC enabled: $cec_enabled"
+say "  CEC mode: $CEC_CHOICE"
 say ""
 say "Useful commands:"
 say "  cd $INSTALL_DIR"

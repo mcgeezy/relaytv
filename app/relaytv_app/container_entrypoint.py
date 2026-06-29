@@ -71,6 +71,62 @@ def _normalize_path_env(env: dict[str, str]) -> None:
         env["PATH"] = f"{user_bin}:{cur}" if cur else user_bin
 
 
+def _host_model() -> str:
+    for candidate in (Path("/proc/device-tree/model"), Path("/sys/firmware/devicetree/base/model")):
+        try:
+            if candidate.is_file():
+                return candidate.read_text(encoding="utf-8", errors="ignore").replace("\x00", "").strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _host_profile(env: dict[str, str]) -> str:
+    explicit = (env.get("RELAYTV_HOST_PROFILE") or "").strip().lower()
+    if explicit:
+        return explicit
+    model = _host_model().lower()
+    if "raspberry pi" in model:
+        return "raspi"
+    machine = ""
+    try:
+        machine = os.uname().machine.lower()
+    except Exception:
+        pass
+    if machine in ("aarch64", "arm64") or machine.startswith(("armv6", "armv7", "armv8")):
+        return "arm"
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    return "generic"
+
+
+def _has_dri() -> bool:
+    return Path("/dev/dri").exists()
+
+
+def _normalize_runtime_defaults(env: dict[str, str]) -> None:
+    """Fill app-policy defaults that do not need installer-generated .env rows."""
+    mode = (env.get("RELAYTV_MODE") or "").strip().lower()
+    qpa = (env.get("QT_QPA_PLATFORM") or "").strip().lower()
+    host_profile = _host_profile(env)
+    qt_shell_module = (env.get("RELAYTV_QT_SHELL_MODULE") or "relaytv_app.qt_shell_app").strip()
+
+    if mode == "headless" and not (env.get("RELAYTV_HEADLESS_REMOTE_ENABLED") or "").strip():
+        env["RELAYTV_HEADLESS_REMOTE_ENABLED"] = "1"
+
+    if not (env.get("RELAYTV_QT_RUNTIME_MODE") or "").strip() and mode in ("wayland", "x11"):
+        env["RELAYTV_QT_RUNTIME_MODE"] = "embed"
+
+    if (
+        host_profile == "raspi"
+        and mode == "wayland"
+        and qt_shell_module == "relaytv_app.qt_shell_app"
+        and (qpa in ("xcb", "x11") or qpa.startswith("xcb:"))
+        and _has_dri()
+    ):
+        env.setdefault("RELAYTV_QT_SHELL_MPV_ARGS", "--gpu-api=opengl --opengl-es=yes")
+
+
 def _parse_float_env(env: dict[str, str], name: str, default: float) -> float:
     try:
         return float((env.get(name) or "").strip())
@@ -348,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         _normalize_path_env(env)
+        _normalize_runtime_defaults(env)
         _sync_legacy_brand_assets()
         _yt_dlp_auto_update(env)
         if _is_true(env.get("RELAYTV_HEADLESS_REMOTE_ENABLED"), False):

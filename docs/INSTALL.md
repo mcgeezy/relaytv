@@ -90,7 +90,7 @@ Root `install.sh`:
 - writes a release-only `docker-compose.yml` with no source build dependency
 - downloads `scripts/install.sh`, `scripts/doctor.sh`, and `scripts/host-ops.sh`
 - runs `scripts/install.sh` to generate `.env`
-- optionally prompts for HDMI-CEC support when CEC hardware is detected
+- delegates HDMI-CEC detection and the optional prompt to `scripts/install.sh`
 - pulls and starts the configured published image by default
 
 Published-image defaults:
@@ -269,10 +269,10 @@ See [RELEASE.md](RELEASE.md) for release input details.
 
 ### CEC
 
-The bootstrap installer prompts to enable HDMI-CEC when likely CEC hardware is
-detected. If enabled, `scripts/install.sh` writes the detected CEC device nodes
-into `docker-compose.override.yml`. Linux CEC adapters exposed as `/dev/cec*`
-are included directly. USB libCEC adapters are included only when `cec-client -l`
+`scripts/install.sh` detects likely HDMI-CEC hardware and prompts to enable it
+when run interactively. If enabled, it writes the detected CEC device nodes into
+`docker-compose.override.yml`. Linux CEC adapters exposed as `/dev/cec*` are
+included directly. USB libCEC adapters are included only when `cec-client -l`
 reports an allowlisted device path such as `/dev/ttyACM*`.
 
 Manual override:
