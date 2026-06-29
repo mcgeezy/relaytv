@@ -10305,6 +10305,8 @@ def ui():
 }
 .toggleSwitch input:checked + .toggleTrack::after{transform:translateX(24px);background:#fff;}
 .toggleSwitch input:focus-visible + .toggleTrack{outline:2px solid rgba(125,211,252,.90);outline-offset:3px;}
+.toggleSwitch input:disabled + .toggleTrack{opacity:.45;cursor:not-allowed;filter:saturate(.55);}
+.toggleSwitch:has(input:disabled){cursor:not-allowed;}
 .modalBottom { display:flex; justify-content:flex-end; margin-top: 14px; }
 .fieldLbl { display:block; font-size: 13px; opacity: 0.8; margin-bottom: 6px; }
 .settingsGroup{
@@ -15462,13 +15464,15 @@ function defaultJellyfinServerUrl(){
 }
 
 async function loadSettingsUi(){
-  const [devRes, setRes, jfRes] = await Promise.all([
+  const [devRes, setRes, tvRes, jfRes] = await Promise.all([
     fetch('/devices'),
     fetch('/settings'),
+    fetch('/tv/status').catch(() => null),
     fetch('/integrations/jellyfin/status').catch(() => null)
   ]);
   const dev = await devRes.json();
   const cur = await setRes.json();
+  const tvStatus = (tvRes && tvRes.ok) ? await tvRes.json() : null;
   const jfStatus = (jfRes && jfRes.ok) ? await jfRes.json() : null;
   const deviceName = document.getElementById('setDeviceName');
   const audioDev = document.getElementById('setAudioDev');
@@ -15482,6 +15486,8 @@ async function loadSettingsUi(){
   const tvTakeoverEnabled = document.getElementById('setTvTakeoverEnabled');
   const tvPauseOnInputChange = document.getElementById('setTvPauseOnInputChange');
   const tvAutoResumeOnReturn = document.getElementById('setTvAutoResumeOnReturn');
+  const cecStatus = document.getElementById('setCecStatus');
+  const cecAvailabilityHint = document.getElementById('setCecAvailabilityHint');
   const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled');
   const idleNotificationsEnabled = document.getElementById('setIdleNotificationsEnabled');
   const idleQrEnabled = document.getElementById('setIdleQrEnabled');
@@ -15604,6 +15610,33 @@ async function loadSettingsUi(){
   if (tvTakeoverEnabled) tvTakeoverEnabled.checked = String(cur.tv_takeover_enabled ?? '1').trim() !== '0';
   if (tvPauseOnInputChange) tvPauseOnInputChange.checked = String(cur.tv_pause_on_input_change ?? '1').trim() !== '0';
   if (tvAutoResumeOnReturn) tvAutoResumeOnReturn.checked = ['1', 'true', 'yes', 'on'].includes(String(cur.tv_auto_resume_on_return || '').trim().toLowerCase());
+  {
+    const availability = tvStatus?.cec_controller?.availability || {};
+    const cecAvailable = availability.available === true;
+    const cecKnown = !!tvStatus && typeof tvStatus.cec_controller === 'object';
+    [cecEnabled, tvTakeoverEnabled, tvPauseOnInputChange, tvAutoResumeOnReturn].forEach(el => {
+      if (el) el.disabled = !cecAvailable;
+    });
+    if (cecStatus) {
+      cecStatus.classList.remove('up', 'down', 'warn', 'unknown');
+      cecStatus.classList.add(cecAvailable ? 'up' : (cecKnown ? 'down' : 'unknown'));
+      cecStatus.textContent = cecAvailable ? 'Available' : (cecKnown ? 'Unavailable' : 'Unknown');
+    }
+    if (cecAvailabilityHint) {
+      const devices = Array.isArray(availability.devices) ? availability.devices : [];
+      const adapters = Array.isArray(availability.adapters_reported) ? availability.adapters_reported : [];
+      if (cecAvailable) {
+        cecAvailabilityHint.textContent = devices.length ? `Adapter visible: ${devices.join(', ')}` : 'CEC adapter is visible to RelayTV.';
+      } else if (cecKnown) {
+        const reason = availability.last_error ? ` Last error: ${availability.last_error}` : '';
+        cecAvailabilityHint.textContent = devices.length || adapters.length
+          ? `CEC adapter is detected but not usable by the running container.${reason}`
+          : `No CEC adapter is visible to the running container. Enable CEC passthrough during install and recreate the container.${reason}`;
+      } else {
+        cecAvailabilityHint.textContent = 'CEC status is unavailable.';
+      }
+    }
+  }
   if (idleDashboardEnabled) idleDashboardEnabled.checked = (cur.idle_dashboard_enabled !== false);
   if (idleNotificationsEnabled) idleNotificationsEnabled.checked = (cur.idle_notifications_enabled !== false);
   if (idleQrEnabled) idleQrEnabled.checked = (cur.idle_qr_enabled !== false);
@@ -16078,8 +16111,9 @@ window.addEventListener('DOMContentLoaded', () => {
     </details>
 
     <details class="settingsGroup">
-      <summary>TV Control</summary>
+      <summary>TV Control <span id="setCecStatus" class="sectionStatus unknown">Unknown</span></summary>
       <div class="settingsBody">
+        <div id="setCecAvailabilityHint" class="hint">Checking HDMI-CEC adapter availability.</div>
         <div class="toggleRow">
           <div class="toggleCopy">
             <div class="toggleTitle">Enable HDMI-CEC</div>
