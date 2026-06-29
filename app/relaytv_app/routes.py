@@ -7942,8 +7942,8 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         ("mute", "mpv_runtime_mute"),
     )
 
-    def fill_from_mpv_ipc() -> bool:
-        if not (bool(payload.get("playing")) or bool(payload.get("paused"))):
+    def fill_from_mpv_ipc(*, force: bool = False) -> bool:
+        if not force and not (bool(payload.get("playing")) or bool(payload.get("paused"))):
             return False
         try:
             props = player.mpv_get_many(["pause", "volume", "mute", "time-pos", "duration"])
@@ -8019,7 +8019,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     sample_detail = str(qt_runtime.get("mpv_runtime_sample_detail") or "").strip().lower()
     missing_runtime_fields = [field for field, _key in field_map if payload.get(field) is None]
     if (bool(payload.get("playing")) or runtime_playing) and (missing_runtime_fields or sample_detail.startswith("subprocess_runtime")):
-        fill_from_mpv_ipc()
+        fill_from_mpv_ipc(force=runtime_playing)
     if runtime_playing and not closed_stop_hold and not natural_idle_clear_hold:
         payload["playing"] = True
         payload["state"] = "paused" if bool(payload.get("paused")) else "playing"

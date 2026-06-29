@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from pathlib import Path
 import json
+import os
 import shutil
 import subprocess
 import tomllib
@@ -880,6 +881,16 @@ def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch
     assert x11_overlay.overlay_enabled() is False
 
 
+def test_x11_overlay_honors_explicit_disable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import x11_overlay
+
+    monkeypatch.setenv("RELAYTV_X11_OVERLAY", "0")
+    monkeypatch.setenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "1")
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+
+    assert x11_overlay.overlay_enabled() is False
+
+
 def test_x11_overlay_click_through_defaults_on() -> None:
     text = (ROOT_DIR / "app/relaytv_app/overlay_app.py").read_text()
     assert 'os.getenv("RELAYTV_OVERLAY_CLICKTHROUGH", "1")' in text
@@ -934,9 +945,11 @@ def test_x11_overlay_launch_repairs_stale_xauthority(monkeypatch: pytest.MonkeyP
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir()
     stale_xauthority = tmp_path / ".Xauthority"
-    stale_xauthority.mkdir()
+    stale_xauthority.write_text("stale")
     valid_xauthority = runtime_dir / ".mutter-Xwaylandauth.TEST"
     valid_xauthority.write_text("auth")
+    os.utime(stale_xauthority, (1000, 1000))
+    os.utime(valid_xauthority, (2000, 2000))
     calls: list[dict] = []
 
     class DummyProc:
@@ -1529,6 +1542,50 @@ def test_playback_state_uses_mpv_ipc_when_qt_telemetry_is_unselected(monkeypatch
     assert payload['playback_runtime_state'] == 'playing'
 
 
+def test_playback_state_uses_ipc_when_qt_runtime_first_reports_playing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'idle', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'natural_idle_reset_holding', lambda: False)
+    monkeypatch.setattr(
+        routes.player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {
+            'selected': True,
+            'available': True,
+            'freshness': 'fresh',
+            'mpv_runtime_playback_active': True,
+            'mpv_runtime_sample_detail': 'subprocess_runtime_heartbeat',
+        },
+    )
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_get_many',
+        lambda props: {'pause': False, 'time-pos': 42.5, 'duration': 120.0, 'volume': 80.0, 'mute': False},
+    )
+    monkeypatch.setattr(
+        routes.state,
+        'update_playback_runtime_state',
+        lambda next_state, reason='': {
+            'playback_runtime_state': next_state,
+            'playback_runtime_state_reason': reason,
+        },
+    )
+
+    payload = routes.playback_state()
+
+    assert payload['playing'] is True
+    assert payload['state'] == 'playing'
+    assert payload['position'] == 42.5
+    assert payload['duration'] == 120.0
+    assert payload['volume'] == 80.0
+    assert payload['mute'] is False
+    assert payload['playback_telemetry_source'] == 'mpv_ipc'
+
+
 def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     now_values: list[object] = []
     session_values: list[str] = []
@@ -1867,6 +1924,40 @@ def test_mpv_start_args_include_resume_start_position(monkeypatch: pytest.Monkey
 
     assert '--start=42.5' in args
     assert args[-1] == 'https://example.com/video.mp4'
+
+
+def test_process_wide_resume_start_disables_mpv_up_next_priming() -> None:
+    try:
+        player._set_mpv_process_start_option_active(True)
+
+        assert player._mpv_up_next_load_target({'url': 'https://example.com/next.mp4'}) is None
+    finally:
+        player._set_mpv_process_start_option_active(False)
+
+
+def test_reused_mpv_process_keeps_resume_start_up_next_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[object]] = []
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    monkeypatch.setenv('RELAYTV_MPV_SEAMLESS_REPLACE', '1')
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: False)
+    monkeypatch.setattr(player, 'MPV_PROC', DummyProc())
+    monkeypatch.setattr(player.os.path, 'exists', lambda path: True)
+    monkeypatch.setattr(player, '_qt_shell_runtime_accepts_mpv_commands', lambda: False)
+    monkeypatch.setattr(player, 'mpv_command', lambda cmd: commands.append(list(cmd)) or {'error': 'success'})
+
+    try:
+        player._set_mpv_process_start_option_active(True)
+
+        assert player._load_stream_in_existing_mpv('https://example.com/replacement.mp4') is True
+
+        assert commands == [['loadfile', 'https://example.com/replacement.mp4', 'replace']]
+        assert player._mpv_up_next_load_target({'url': 'https://example.com/next.mp4'}) is None
+    finally:
+        player._set_mpv_process_start_option_active(False)
 
 
 def test_resume_session_starts_resolved_stream_at_resume_position(monkeypatch: pytest.MonkeyPatch) -> None:

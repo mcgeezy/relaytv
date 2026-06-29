@@ -495,6 +495,7 @@ _MPV_UPNEXT_LOCK = threading.Lock()
 _MPV_UPNEXT_ARMED_ID = ""
 _MPV_UPNEXT_ARMED_URL = ""
 _MPV_UPNEXT_ARMED_AT = 0.0
+_MPV_PROCESS_START_OPTION_ACTIVE = False
 _QUEUE_PREFETCH_LOCK = threading.Lock()
 _QUEUE_PREFETCH_INFLIGHT: set[str] = set()
 _QUEUE_METADATA_PREFETCH_LOCK = threading.Lock()
@@ -2113,6 +2114,7 @@ def stop_mpv(*, restart_splash: bool = True):
     _persist_runtime_volume_before_stop()
     _stop_qt_shell()
     _reset_mpv_up_next_state()
+    _set_mpv_process_start_option_active(False)
     if MPV_PROC and MPV_PROC.poll() is None:
         MPV_PROC.terminate()
         try:
@@ -2626,6 +2628,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
       - RELAYTV_VIDEO_MODE=drm: force DRM/KMS mode.
     """
     global MPV_PROC
+    process_start_option_active = _normalize_start_pos(start_pos) is not None
     # Resolve can take longer than the initial transition window. Refresh it
     # here so watchdogs do not relaunch the idle shell while playback startup
     # is tearing down the idle runtime and spawning the media runtime.
@@ -2656,6 +2659,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
             )
             if not wait_for_ipc_ready(timeout=startup_timeout):
                 raise HTTPException(status_code=500, detail="qt external mpv started but IPC not ready")
+            _set_mpv_process_start_option_active(process_start_option_active)
             healthy = _qt_external_video_healthy_with_grace()
             _record_qt_external_video_health(healthy)
             if not healthy:
@@ -2672,6 +2676,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
                     )
                     if not wait_for_ipc_ready(timeout=startup_timeout):
                         raise HTTPException(status_code=500, detail="qt external mpv x11 fallback started but IPC not ready")
+                    _set_mpv_process_start_option_active(process_start_option_active)
                 else:
                     _set_qt_external_runtime_reason("video_unhealthy_no_x11")
             _apply_startup_mpv_runtime_settings()
@@ -2681,6 +2686,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
         _start_qt_shell(stream_url, audio_url=audio_url, start_pos=start_pos)
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="qt shell started but mpv IPC not ready")
+        _set_mpv_process_start_option_active(process_start_option_active)
         _apply_startup_mpv_runtime_settings()
         _recover_audio_output_if_needed(settings)
         return
@@ -2695,12 +2701,14 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
         MPV_PROC = _spawn("x11")
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
+        _set_mpv_process_start_option_active(process_start_option_active)
         return
 
     if mode == "drm":
         MPV_PROC = _spawn("drm")
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
+        _set_mpv_process_start_option_active(process_start_option_active)
         if not _video_output_healthy(timeout=2.0):
             debug_log("player", "DRM mode came up without video output")
             if _drm_no_video_fallback_allowed() and _has_x11_display():
@@ -2709,6 +2717,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
                 MPV_PROC = _spawn("x11")
                 if not wait_for_ipc_ready(timeout=startup_timeout):
                     raise HTTPException(status_code=500, detail="mpv x11 fallback started but IPC not ready")
+                _set_mpv_process_start_option_active(process_start_option_active)
         return
 
     # auto: prefer DRM when possible, but fall back to X11 if DRM fails (e.g., desktop holds DRM master)
@@ -2733,6 +2742,9 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
             MPV_PROC = _spawn("x11")
             if not wait_for_ipc_ready(timeout=startup_timeout):
                 raise HTTPException(status_code=500, detail="mpv x11 fallback started but IPC not ready")
+            _set_mpv_process_start_option_active(process_start_option_active)
+
+    _set_mpv_process_start_option_active(process_start_option_active)
 
 
 def wait_for_ipc_ready(timeout: float = 5.0) -> bool:
@@ -3419,8 +3431,16 @@ def _reset_mpv_up_next_state() -> None:
         _MPV_UPNEXT_ARMED_AT = 0.0
 
 
+def _set_mpv_process_start_option_active(active: bool) -> None:
+    global _MPV_PROCESS_START_OPTION_ACTIVE
+    with _MPV_UPNEXT_LOCK:
+        _MPV_PROCESS_START_OPTION_ACTIVE = bool(active)
+
+
 def _mpv_up_next_load_target(item: object) -> tuple[list[object], str] | None:
     """Return the mpv loadfile command and armed media URL for queue head."""
+    if _MPV_PROCESS_START_OPTION_ACTIVE:
+        return None
     if isinstance(item, dict) and item.get("_relaytv_interrupt_preserved") is True:
         return None
     head_url = _queue_item_play_url(item)
