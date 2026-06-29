@@ -185,7 +185,15 @@ fi
 
 PLAYER_BACKEND_VAL="${RELAYTV_PLAYER_BACKEND:-}"
 QT_RUNTIME_MODE_VAL="${RELAYTV_QT_RUNTIME_MODE:-}"
+QT_RUNTIME_MODE_FROM_ENV="0"
+if [ -n "${RELAYTV_QT_RUNTIME_MODE:-}" ]; then
+  QT_RUNTIME_MODE_FROM_ENV="1"
+fi
 QT_SHELL_MPV_ARGS_VAL="${RELAYTV_QT_SHELL_MPV_ARGS:-}"
+QT_SHELL_MPV_ARGS_FROM_ENV="0"
+if [ -n "${RELAYTV_QT_SHELL_MPV_ARGS:-}" ]; then
+  QT_SHELL_MPV_ARGS_FROM_ENV="1"
+fi
 QT_SHELL_MODULE_VAL="${RELAYTV_QT_SHELL_MODULE:-}"
 VIDEO_MODE_VAL="${RELAYTV_VIDEO_MODE:-}"
 DRM_CONNECTOR_VAL="${RELAYTV_DRM_CONNECTOR:-}"
@@ -562,9 +570,6 @@ if [ "$HOST_PROFILE" = "raspi" ] && [ "$MODE" = "wayland" ] && [ "$QT_SHELL_MODU
   if [ "$QT_QPA_PLATFORM_FROM_ENV" != "1" ]; then
     QT_QPA_PLATFORM_VAL="xcb"
   fi
-  if [ -z "$QT_SHELL_MPV_ARGS_VAL" ]; then
-    QT_SHELL_MPV_ARGS_VAL="--gpu-api=opengl --opengl-es=yes"
-  fi
 fi
 
 if [ -z "$QT_RUNTIME_MODE_VAL" ]; then
@@ -899,6 +904,7 @@ YTDLP_ENV_BLOCK=""
 RENDER_ENV_BLOCK=""
 AUDIO_ENV_BLOCK=""
 IMAGE_ENV_BLOCK=""
+HOST_ENV_BLOCK=""
 
 if [ -n "${DISPLAY_VAL}" ]; then
   DISPLAY_ENV_BLOCK+=$(emit_env_line "DISPLAY" "${DISPLAY_VAL}")
@@ -906,6 +912,8 @@ if [ -n "${DISPLAY_VAL}" ]; then
 fi
 if [ -n "${XDG_SESSION_TYPE_VAL}" ]; then
   DISPLAY_ENV_BLOCK+=$(emit_env_line "XDG_SESSION_TYPE" "${XDG_SESSION_TYPE_VAL}")
+  DISPLAY_ENV_BLOCK+=$'\n'
+  DISPLAY_ENV_BLOCK+=$(emit_env_line "RELAYTV_HOST_SESSION_TYPE" "${XDG_SESSION_TYPE_VAL}")
   DISPLAY_ENV_BLOCK+=$'\n'
 fi
 if [ "${XDG_RUNTIME_DIR_VAL}" != "/run/user/${PUID}" ]; then
@@ -943,11 +951,11 @@ if [ "${PLAYER_BACKEND_VAL}" != "qt" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_PLAYER_BACKEND" "${PLAYER_BACKEND_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
 fi
-if [ "${QT_RUNTIME_MODE_VAL}" != "auto" ]; then
+if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ] && [ "${QT_RUNTIME_MODE_VAL}" != "auto" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_QT_RUNTIME_MODE" "${QT_RUNTIME_MODE_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
 fi
-if [ -n "${QT_SHELL_MPV_ARGS_VAL}" ]; then
+if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ] && [ -n "${QT_SHELL_MPV_ARGS_VAL}" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_QT_SHELL_MPV_ARGS" "${QT_SHELL_MPV_ARGS_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
 fi
@@ -984,6 +992,11 @@ fi
 if [ "${IMAGE_REF_VAL}" != "ghcr.io/mcgeezy/relaytv:latest" ]; then
   IMAGE_ENV_BLOCK+=$(emit_env_line "RELAYTV_IMAGE_REF" "${IMAGE_REF_VAL}")
   IMAGE_ENV_BLOCK+=$'\n'
+fi
+
+if [ -n "${HOST_PROFILE}" ] && [ "${HOST_PROFILE}" != "generic" ]; then
+  HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_HOST_PROFILE" "${HOST_PROFILE}")
+  HOST_ENV_BLOCK+=$'\n'
 fi
 
 if [ "${HEADLESS_REMOTE_ENABLED_VAL}" = "1" ] || [ "${MODE}" = "headless" ]; then
@@ -1064,6 +1077,7 @@ fi
   emit_env_line "PGID" "${PGID}"
   emit_section "Optional display/session passthrough" "${DISPLAY_ENV_BLOCK}"
   emit_section "Runtime mode hints" "${RUNTIME_ENV_BLOCK}"
+  emit_section "Detected host profile" "${HOST_ENV_BLOCK}"
   emit_section "Published image selection" "${IMAGE_ENV_BLOCK}"
   emit_section "Optional Docker build feature bundles" "${BUILD_ENV_BLOCK}"
   emit_section "Headless remote display" "${HEADLESS_ENV_BLOCK}"

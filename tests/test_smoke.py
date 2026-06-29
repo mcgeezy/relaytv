@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app.main import create_app
+from relaytv_app import container_entrypoint
 from relaytv_app import player
 from relaytv_app import resolver
 from relaytv_app import routes
@@ -183,6 +184,8 @@ def test_release_compose_uses_published_image_without_source_build() -> None:
     assert "build:" not in text
     assert "context: ./app" not in text
     assert "./data:/data" in text
+    assert "XDG_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in text
+    assert "RELAYTV_HOST_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in text
 
 
 def test_root_bootstrap_installer_downloads_release_bundle() -> None:
@@ -205,6 +208,80 @@ def test_root_bootstrap_installer_downloads_release_bundle() -> None:
 def test_install_scripts_have_valid_bash_syntax() -> None:
     subprocess.run(["bash", "-n", str(ROOT_DIR / "install.sh")], check=True)
     subprocess.run(["bash", "-n", str(ROOT_DIR / "scripts/install.sh")], check=True)
+
+
+def test_repo_installer_persists_detected_host_session_type_for_ssh_installs() -> None:
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+
+    assert 'emit_env_line "RELAYTV_HOST_SESSION_TYPE" "${XDG_SESSION_TYPE_VAL}"' in text
+    assert 'emit_env_line "RELAYTV_HOST_PROFILE" "${HOST_PROFILE}"' in text
+    assert "XDG_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in compose
+    assert "RELAYTV_HOST_SESSION_TYPE=${RELAYTV_HOST_SESSION_TYPE:-${XDG_SESSION_TYPE-}}" in compose
+
+
+def test_installer_leaves_app_policy_defaults_to_entrypoint() -> None:
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+
+    assert 'QT_RUNTIME_MODE_FROM_ENV="0"' in text
+    assert 'QT_SHELL_MPV_ARGS_FROM_ENV="0"' in text
+    assert 'if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ]' in text
+    assert 'if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ]' in text
+    assert "RELAYTV_PLAYER_BACKEND=${RELAYTV_PLAYER_BACKEND:-qt}" not in compose
+    assert "RELAYTV_QT_RUNTIME_MODE=${RELAYTV_QT_RUNTIME_MODE:-auto}" not in compose
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=${RELAYTV_HEADLESS_REMOTE_ENABLED:-0}" not in compose
+    assert "RELAYTV_YTDLP_AUTO_UPDATE=${RELAYTV_YTDLP_AUTO_UPDATE:-0}" not in compose
+
+
+def test_entrypoint_fills_runtime_policy_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(container_entrypoint, "_host_profile", lambda env: "raspi")
+    monkeypatch.setattr(container_entrypoint, "_has_dri", lambda: True)
+    env = {
+        "RELAYTV_MODE": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
+    }
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_QT_RUNTIME_MODE"] == "embed"
+    assert env["RELAYTV_QT_SHELL_MPV_ARGS"] == "--gpu-api=opengl --opengl-es=yes"
+
+
+def test_entrypoint_skips_pi_mpv_args_without_dri(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(container_entrypoint, "_host_profile", lambda env: "raspi")
+    monkeypatch.setattr(container_entrypoint, "_has_dri", lambda: False)
+    env = {
+        "RELAYTV_MODE": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
+    }
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_QT_RUNTIME_MODE"] == "embed"
+    assert "RELAYTV_QT_SHELL_MPV_ARGS" not in env
+
+
+def test_entrypoint_preserves_explicit_pi_mpv_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(container_entrypoint, "_host_profile", lambda env: "raspi")
+    monkeypatch.setattr(container_entrypoint, "_has_dri", lambda: True)
+    env = {
+        "RELAYTV_MODE": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
+        "RELAYTV_QT_SHELL_MPV_ARGS": "",
+    }
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_QT_SHELL_MPV_ARGS"] == ""
+
+
+def test_entrypoint_enables_headless_remote_from_mode() -> None:
+    env = {"RELAYTV_MODE": "headless"}
+
+    container_entrypoint._normalize_runtime_defaults(env)
+
+    assert env["RELAYTV_HEADLESS_REMOTE_ENABLED"] == "1"
 
 
 def test_repo_installer_generates_host_device_override_for_cec() -> None:
