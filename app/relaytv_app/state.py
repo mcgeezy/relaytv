@@ -290,6 +290,15 @@ def _persistable_queue_item(item: dict) -> dict | None:
         if resolved_at > 0.0:
             out["_resolved_at"] = resolved_at
 
+    if item.get("_relaytv_interrupt_preserved") is True:
+        out["_relaytv_interrupt_preserved"] = True
+        try:
+            preserved_at = int(item.get("_relaytv_interrupt_preserved_at") or 0)
+        except Exception:
+            preserved_at = 0
+        if preserved_at >= 0:
+            out["_relaytv_interrupt_preserved_at"] = preserved_at
+
     thumb = _sanitize_thumb_for_persist(item)
     if thumb:
         out["thumbnail"] = thumb

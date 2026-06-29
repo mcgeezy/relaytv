@@ -2634,13 +2634,13 @@ def _stop_current_for_idle_or_desktop() -> bool:
 @router.post("/now_playing/clear")
 def clear_now_playing():
     """Discard current now-playing item; advance queue or return to idle/desktop."""
+    _discard_interrupted_playback_state("now_playing_clear")
     with state.QUEUE_LOCK:
         has_queue = bool(state.QUEUE)
     if has_queue:
         return next_track()
 
     state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
-    _discard_interrupted_playback_state("now_playing_clear")
     with player.MPV_LOCK:
         stopped_in_place = _stop_current_for_idle_or_desktop()
     state.set_now_playing(None)
