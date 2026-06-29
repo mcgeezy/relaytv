@@ -713,12 +713,16 @@ detect_cec_device_group_ids() {
 resolve_cec_enabled() {
   local requested="$1"
   local summary="$2"
-  if [ "$requested" = "0" ] || [ -z "$summary" ]; then
+  if [ "$requested" = "0" ]; then
     printf "0"
     return 0
   fi
   if [ "$requested" = "1" ]; then
     printf "1"
+    return 0
+  fi
+  if [ -z "$summary" ]; then
+    printf "0"
     return 0
   fi
   if [ "${RELAYTV_INSTALL_YES:-0}" = "1" ] || [ ! -r /dev/tty ]; then

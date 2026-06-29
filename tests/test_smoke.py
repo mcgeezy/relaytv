@@ -306,6 +306,7 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "HDMI-CEC hardware was detected" in text
     assert "Enable HDMI-CEC passthrough? [y/N]" in text
     assert 'CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-auto}"' in text
+    assert text.index('if [ "$requested" = "1" ]') < text.index('if [ -z "$summary" ]')
     assert "host-device-overrides" in text
     assert "/dev/cec*" in text
     assert "cec-client -l" in text
