@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.1](https://github.com/mcgeezy/relaytv/compare/v0.3.0...v0.3.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* address stale codex review findings ([#15](https://github.com/mcgeezy/relaytv/issues/15)) ([4092843](https://github.com/mcgeezy/relaytv/commit/4092843608e748b72a720876979239baa2f7a556))
+* keep close from replaying interrupted streams ([#12](https://github.com/mcgeezy/relaytv/issues/12)) ([9bbec4c](https://github.com/mcgeezy/relaytv/commit/9bbec4cdfcf983142f5d829e0bc955ecb13bb1f2))
+* persist interrupted close state across reloads ([#14](https://github.com/mcgeezy/relaytv/issues/14)) ([c2a2e79](https://github.com/mcgeezy/relaytv/commit/c2a2e79989a49329ec315b0c1fa0ffaf483542ea))
+* prevent closed sessions from priming queued playback ([#16](https://github.com/mcgeezy/relaytv/issues/16)) ([e3eba35](https://github.com/mcgeezy/relaytv/commit/e3eba35bc394c4b386b86ed9625fc32e9831b03d))
+
 ## [0.3.0](https://github.com/mcgeezy/relaytv/compare/v0.2.0...v0.3.0) (2026-06-28)
 
 
