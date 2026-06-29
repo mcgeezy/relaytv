@@ -15478,6 +15478,10 @@ async function loadSettingsUi(){
   const ytCookiesFile = document.getElementById('setYtCookiesFile');
   const ytCookiesState = document.getElementById('setYtCookiesState');
   const subs = document.getElementById('setSubs');
+  const cecEnabled = document.getElementById('setCecEnabled');
+  const tvTakeoverEnabled = document.getElementById('setTvTakeoverEnabled');
+  const tvPauseOnInputChange = document.getElementById('setTvPauseOnInputChange');
+  const tvAutoResumeOnReturn = document.getElementById('setTvAutoResumeOnReturn');
   const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled');
   const idleNotificationsEnabled = document.getElementById('setIdleNotificationsEnabled');
   const idleQrEnabled = document.getElementById('setIdleQrEnabled');
@@ -15596,6 +15600,10 @@ async function loadSettingsUi(){
   if (subs){
     subs.value = (cur.sub_lang || '');
   }
+  if (cecEnabled) cecEnabled.checked = ['1', 'true', 'yes', 'on'].includes(String(cur.cec_enabled || '').trim().toLowerCase());
+  if (tvTakeoverEnabled) tvTakeoverEnabled.checked = String(cur.tv_takeover_enabled ?? '1').trim() !== '0';
+  if (tvPauseOnInputChange) tvPauseOnInputChange.checked = String(cur.tv_pause_on_input_change ?? '1').trim() !== '0';
+  if (tvAutoResumeOnReturn) tvAutoResumeOnReturn.checked = ['1', 'true', 'yes', 'on'].includes(String(cur.tv_auto_resume_on_return || '').trim().toLowerCase());
   if (idleDashboardEnabled) idleDashboardEnabled.checked = (cur.idle_dashboard_enabled !== false);
   if (idleNotificationsEnabled) idleNotificationsEnabled.checked = (cur.idle_notifications_enabled !== false);
   if (idleQrEnabled) idleQrEnabled.checked = (cur.idle_qr_enabled !== false);
@@ -15850,6 +15858,10 @@ function bindSettingsUi(){
     const ytUseInvidious = !!document.getElementById('setYtUseInvidious')?.checked;
     const ytInvidiousBase = (document.getElementById('setYtInvidiousBase')?.value || '').trim();
     const subs = document.getElementById('setSubs')?.value || '';
+    const cecEnabled = !!document.getElementById('setCecEnabled')?.checked;
+    const tvTakeoverEnabled = document.getElementById('setTvTakeoverEnabled')?.checked !== false;
+    const tvPauseOnInputChange = document.getElementById('setTvPauseOnInputChange')?.checked !== false;
+    const tvAutoResumeOnReturn = !!document.getElementById('setTvAutoResumeOnReturn')?.checked;
     const idleDashboardEnabled = document.getElementById('setIdleDashboardEnabled')?.checked !== false;
     const idleNotificationsEnabled = document.getElementById('setIdleNotificationsEnabled')?.checked !== false;
     const idleQrEnabled = !!document.getElementById('setIdleQrEnabled')?.checked;
@@ -15894,6 +15906,10 @@ function bindSettingsUi(){
       youtube_use_invidious: ytUseInvidious,
       youtube_invidious_base: ytInvidiousBase,
       sub_lang: subs,
+      cec_enabled: cecEnabled ? '1' : '0',
+      tv_takeover_enabled: tvTakeoverEnabled ? '1' : '0',
+      tv_pause_on_input_change: tvPauseOnInputChange ? '1' : '0',
+      tv_auto_resume_on_return: tvAutoResumeOnReturn ? '1' : '0',
       idle_dashboard_enabled: idleDashboardEnabled,
       idle_notifications_enabled: idleNotificationsEnabled,
       idle_qr_enabled: idleQrEnabled,
@@ -16057,6 +16073,52 @@ window.addEventListener('DOMContentLoaded', () => {
             <option value="">Off</option>
             <option value="en">English</option>
           </select>
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup">
+      <summary>TV Control</summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable HDMI-CEC</div>
+            <div class="toggleHint">Allow RelayTV to send TV power, input, and source commands through the host CEC adapter.</div>
+          </div>
+          <label class="toggleSwitch" for="setCecEnabled" title="Enable HDMI-CEC">
+            <input type="checkbox" id="setCecEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Switch to this HDMI input on playback</div>
+            <div class="toggleHint">When playback starts from a share or play request, announce RelayTV as the active source.</div>
+          </div>
+          <label class="toggleSwitch" for="setTvTakeoverEnabled" title="Switch to this HDMI input on playback">
+            <input type="checkbox" id="setTvTakeoverEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Pause when TV leaves this input</div>
+            <div class="toggleHint">Pause playback if CEC reports a different active HDMI source.</div>
+          </div>
+          <label class="toggleSwitch" for="setTvPauseOnInputChange" title="Pause when TV leaves this input">
+            <input type="checkbox" id="setTvPauseOnInputChange" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Resume when TV returns</div>
+            <div class="toggleHint">Resume playback when CEC reports this RelayTV input as active again.</div>
+          </div>
+          <label class="toggleSwitch" for="setTvAutoResumeOnReturn" title="Resume when TV returns">
+            <input type="checkbox" id="setTvAutoResumeOnReturn" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
         </div>
       </div>
     </details>

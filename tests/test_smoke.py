@@ -48,6 +48,10 @@ def test_ui_smoke() -> None:
     assert 'id="aboutBtn"' in response.text
     assert 'id="aboutBackdrop"' in response.text
     assert 'id="setIdleNotificationsEnabled"' in response.text
+    assert 'id="setCecEnabled"' in response.text
+    assert 'id="setTvTakeoverEnabled"' in response.text
+    assert 'id="setTvPauseOnInputChange"' in response.text
+    assert 'id="setTvAutoResumeOnReturn"' in response.text
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text
