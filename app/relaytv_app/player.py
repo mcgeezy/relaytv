@@ -3477,6 +3477,9 @@ def _clear_mpv_playlist_before_current() -> None:
 def _prime_mpv_up_next_from_queue(*, force: bool = False) -> bool:
     """Keep exactly one up-next item queued in mpv's internal playlist."""
     global _MPV_UPNEXT_ARMED_ID, _MPV_UPNEXT_ARMED_URL, _MPV_UPNEXT_ARMED_AT
+    if str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() == "closed":
+        _reset_mpv_up_next_state()
+        return False
     if not _is_playing():
         _reset_mpv_up_next_state()
         return False
@@ -3737,6 +3740,10 @@ def _consume_mpv_queued_next_if_started(
     force_playlist_advance: bool = False,
 ) -> bool:
     """When mpv auto-advances to queued item, consume queue head into app state."""
+    if str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() == "closed":
+        _reset_mpv_up_next_state()
+        return False
+
     def _same_media_ref(left: object, right: object) -> bool:
         volatile_query_keys = {
             "api_key",
@@ -4887,40 +4894,48 @@ def natural_idle_reset_holding() -> bool:
         return False
 
 
+def _session_tracker_tick() -> None:
+    """Persist one playback-state sample."""
+    if not _is_playing():
+        return
+    if str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() == "closed":
+        _reset_mpv_up_next_state()
+        return
+    props = mpv_get_many(["time-pos", "duration", "pause", "playlist-pos", "playlist-count", "path", "core-idle", "eof-reached"])
+    _consume_mpv_queued_next_if_started(props)
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not now:
+        if _repair_orphan_runtime_playback(props):
+            return
+        _prime_mpv_up_next_from_queue()
+        return
+    pos = props.get("time-pos")
+    paused = bool(props.get("pause"))
+    if pos is not None:
+        pos_f = float(pos)
+        updated = dict(now)
+        updated["resume_pos"] = pos_f
+        try:
+            duration_f = float(props.get("duration"))
+            if duration_f > 0:
+                updated["duration_sec"] = duration_f
+        except Exception:
+            pass
+        state.set_now_playing(updated)
+        state.set_session_position(pos_f)
+        state.set_session_state("paused" if paused else "playing")
+        update_history_progress(updated)
+    if not paused:
+        state.set_pause_reason(None)
+    _prime_mpv_up_next_from_queue()
+
+
 def _session_tracker_worker() -> None:
     """Continuously persist playback position/state so reboots can resume accurately."""
     while True:
         time.sleep(2)
-        if not _is_playing():
-            continue
         try:
-            props = mpv_get_many(["time-pos", "duration", "pause", "playlist-pos", "playlist-count", "path", "core-idle", "eof-reached"])
-            _consume_mpv_queued_next_if_started(props)
-            now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
-            if not now:
-                if _repair_orphan_runtime_playback(props):
-                    continue
-                _prime_mpv_up_next_from_queue()
-                continue
-            pos = props.get("time-pos")
-            paused = bool(props.get("pause"))
-            if pos is not None:
-                pos_f = float(pos)
-                updated = dict(now)
-                updated["resume_pos"] = pos_f
-                try:
-                    duration_f = float(props.get("duration"))
-                    if duration_f > 0:
-                        updated["duration_sec"] = duration_f
-                except Exception:
-                    pass
-                state.set_now_playing(updated)
-                state.set_session_position(pos_f)
-                state.set_session_state("paused" if paused else "playing")
-                update_history_progress(updated)
-            if not paused:
-                state.set_pause_reason(None)
-            _prime_mpv_up_next_from_queue()
+            _session_tracker_tick()
         except Exception:
             continue
 
