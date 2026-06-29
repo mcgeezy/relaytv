@@ -21,7 +21,7 @@ jobs:
       minor: ${{ steps.release.outputs.minor }}
       sha: ${{ steps.release.outputs.sha }}
     steps:
-      - name: Create or publish release
+      - name: Create or update release pull request, or create draft release
         id: release
         uses: googleapis/release-please-action@v4
         with:
@@ -32,7 +32,7 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v6
@@ -75,3 +75,8 @@ jobs:
             RELAYTV_IMAGE_CREATED=${{ steps.created.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Publish GitHub Release after image push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.release-please.outputs.tag_name }}" --draft=false

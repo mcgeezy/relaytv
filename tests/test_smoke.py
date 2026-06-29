@@ -360,6 +360,8 @@ def test_release_please_automation_is_configured() -> None:
     assert '"release-type": "python"' in config
     assert '"package-name": "relaytv"' in config
     assert '"bootstrap-sha": "0c270faaccf1361416538a6230758b6bbe69bc17"' in config
+    assert '"draft": true' in config
+    assert '"force-tag-creation": true' in config
     assert json.loads(manifest)["."] == tomllib.loads(pyproject)["project"]["version"]
     assert "googleapis/release-please-action@v4" in workflow
     assert "contents: write" in workflow
@@ -368,6 +370,9 @@ def test_release_please_automation_is_configured() -> None:
     assert "token: ${{ secrets.GITHUB_TOKEN }}" in workflow
     assert "RELEASE_PLEASE_TOKEN" not in workflow
     assert "ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}" in workflow
+    assert "Publish GitHub Release after image push" in workflow
+    assert 'gh release edit "${{ needs.release-please.outputs.tag_name }}" --draft=false' in workflow
+    assert workflow.index("Publish release Docker image") < workflow.index("Publish GitHub Release after image push")
     assert "Conventional Commit PR title" in pr_title
     assert "User impact:" in pr_template
     assert "Operator/deployment impact:" in pr_template
@@ -375,6 +380,7 @@ def test_release_please_automation_is_configured() -> None:
     assert "Release notes are maintained by Release Please." in changelog
     assert "Automated Release Flow" in release_doc
     assert "built-in `GITHUB_TOKEN`" in release_doc
+    assert "Only after the image push succeeds" in release_doc
 
 
 def test_api_docs_include_app_info_endpoint() -> None:

@@ -11,8 +11,8 @@ The public image is:
 ghcr.io/mcgeezy/relaytv:latest
 ```
 
-The immutable release image is built by the Release Please workflow after a
-GitHub Release is published. Routine `main` branch CI builds publish the
+The immutable release image is built by the Release Please workflow before a
+GitHub Release is made public. Routine `main` branch CI builds publish the
 `ghcr.io/mcgeezy/relaytv:main` tag for branch validation and do not overwrite
 the release `latest` tag. The Dockerfile pins its base image by digest:
 
@@ -90,7 +90,7 @@ This repository was bootstrapped from the current `0.1.0` source baseline, so
 the first Release Please run starts changelog collection at the configured
 `bootstrap-sha` instead of importing the entire pre-automation history.
 
-When the release pull request is merged, Release Please creates the GitHub
+When the release pull request is merged, Release Please creates a draft GitHub
 Release and source tag, for example `v0.2.0`. The release workflow then builds
 and publishes immutable GHCR image tags:
 
@@ -100,6 +100,10 @@ ghcr.io/mcgeezy/relaytv:0.2.0
 ghcr.io/mcgeezy/relaytv:0.2
 ghcr.io/mcgeezy/relaytv:latest
 ```
+
+Only after the image push succeeds does the workflow publish the draft GitHub
+Release. If the image build or push fails, the release remains a draft so users
+do not see a public GitHub Release before matching GHCR images are available.
 
 The container image also exposes the release build metadata to the running app
 through `RELAYTV_IMAGE_VERSION`, `RELAYTV_IMAGE_REVISION`,
