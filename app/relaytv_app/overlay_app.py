@@ -68,6 +68,7 @@ def _run_qt_overlay(url: str, *, click_through: bool) -> int:
 
     try:
         from PySide6.QtCore import Qt, QTimer, QUrl
+        from PySide6.QtGui import QCursor
         from PySide6.QtWidgets import QApplication, QMainWindow
         from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -97,6 +98,13 @@ def _run_qt_overlay(url: str, *, click_through: bool) -> int:
         view.setAttribute(Qt.WA_TransparentForMouseEvents, True)
     view.setStyleSheet("background: transparent;")
     view.page().setBackgroundColor(Qt.transparent)
+    blank_cursor = QCursor(Qt.BlankCursor)
+    try:
+        app.setOverrideCursor(blank_cursor)
+        win.setCursor(blank_cursor)
+        view.setCursor(blank_cursor)
+    except Exception:
+        pass
     try:
         profile = view.page().profile()
         profile.setHttpCacheType(QWebEngineProfile.NoCache)
@@ -112,6 +120,17 @@ def _run_qt_overlay(url: str, *, click_through: bool) -> int:
         pass
     win.setCentralWidget(view)
 
+    def _hide_cursor() -> None:
+        try:
+            if QApplication.overrideCursor() is None:
+                app.setOverrideCursor(blank_cursor)
+            else:
+                app.changeOverrideCursor(blank_cursor)
+            win.setCursor(blank_cursor)
+            view.setCursor(blank_cursor)
+        except Exception:
+            pass
+
     def _layout() -> None:
         screen = app.primaryScreen()
         if screen is not None:
@@ -125,6 +144,10 @@ def _run_qt_overlay(url: str, *, click_through: bool) -> int:
     keep_above.setInterval(2000)
     keep_above.timeout.connect(_layout)
     keep_above.start()
+    cursor_timer = QTimer()
+    cursor_timer.setInterval(1000)
+    cursor_timer.timeout.connect(_hide_cursor)
+    cursor_timer.start()
 
     view.load(QUrl(url))
     return int(app.exec())
