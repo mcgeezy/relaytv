@@ -26,6 +26,11 @@ from ..integrations import jellyfin_receiver
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
+from .capabilities import (
+    notifications_capabilities as notifications_capabilities,
+    router as capabilities_router,
+    runtime_capabilities as runtime_capabilities,
+)
 from .devices import router as devices_router
 from .health import router as health_router
 from .playback import (
@@ -78,6 +83,7 @@ from .uploads import (
 router = APIRouter()
 router.include_router(app_info_router)
 router.include_router(assets_router)
+router.include_router(capabilities_router)
 router.include_router(devices_router)
 router.include_router(health_router)
 router.include_router(playback_router)
@@ -2393,16 +2399,6 @@ def toast(req: OverlayReq):
 def notify(req: OverlayReq):
     """Alias for /overlay to map cleanly to Home Assistant relaytv.notify services."""
     return overlay(req)
-
-
-@router.get("/notifications/capabilities")
-def notifications_capabilities():
-    return _notification_capabilities()
-
-
-@router.get("/runtime/capabilities")
-def runtime_capabilities():
-    return _runtime_capabilities()
 
 
 def _require_jellyfin_catalog_ready() -> dict[str, object]:

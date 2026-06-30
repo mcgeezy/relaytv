@@ -202,7 +202,7 @@ Exit criteria:
 
 ### M4: Extract Playback Router
 
-Status: in progress
+Status: complete
 
 Candidate domains:
 
@@ -254,6 +254,9 @@ Progress:
 - Added upload-route guardrails for `/ingest/media/enqueue` and
   `/ingest/media/play` before moving upload ingest playback into the uploads
   router.
+- Added capability-route guardrails for `/notifications/capabilities` and
+  `/runtime/capabilities` before moving those endpoints into a capability
+  router.
 - Extracted pause/resume/toggle-pause, seek, volume, mute, and
   `/playback/state` into `app/relaytv_app/routes/playback.py`.
 - Extracted `/playback/play` and `/playback/toggle` into
@@ -270,9 +273,10 @@ Progress:
   into `app/relaytv_app/routes/playback.py`.
 - Extracted `/ingest/media`, `/ingest/media/enqueue`, and
   `/ingest/media/play` into `app/relaytv_app/routes/uploads.py`.
-- Remaining M4 candidates are `/notifications/capabilities` and
-  `/runtime/capabilities`, which share overlay/playback helper state and may
-  fit better in a small capability-router slice.
+- Extracted `/notifications/capabilities` and `/runtime/capabilities` into
+  `app/relaytv_app/routes/capabilities.py`; the shared capability helper
+  functions remain in the aggregate router for now because status, overlay,
+  and playback-state logic still use them.
 
 ### M5: Extract Settings Router
 
