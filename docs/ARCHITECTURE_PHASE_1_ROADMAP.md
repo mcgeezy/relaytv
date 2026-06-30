@@ -252,8 +252,10 @@ Progress:
   `app/relaytv_app/routes/playback.py`.
 - Extracted `/play_now` and its interrupt-preservation helper into
   `app/relaytv_app/routes/playback.py`.
-- Kept close, resume-session, temporary playback, and upload ingest playback in
-  the aggregate router for later M4 slices.
+- Extracted `/now_playing/clear`, `/close`, `/resume/clear`,
+  `/resume_session`, and `/stop` into `app/relaytv_app/routes/playback.py`.
+- Kept temporary playback, next/previous/smart/share, and upload ingest
+  playback in the aggregate router for later M4 slices.
 
 ### M5: Extract Settings Router
 

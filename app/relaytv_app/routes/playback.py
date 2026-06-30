@@ -188,6 +188,56 @@ def _preserve_current_to_queue_front() -> dict | None:
     return preserved
 
 
+def _discard_interrupted_playback_state(reason: str) -> None:
+    from . import _discard_interrupted_playback_state as discard_interrupted_playback_state
+
+    discard_interrupted_playback_state(reason)
+
+
+def _stop_current_for_idle_or_desktop() -> bool:
+    keep_qt_shell = bool(
+        _idle_visual_surface_enabled_for_player()
+        and getattr(player, "_qt_shell_backend_enabled", lambda: False)()
+    )
+    if keep_qt_shell:
+        stopped_in_place = bool(getattr(player, "stop_playback_keep_qt_shell", lambda: False)())
+        if stopped_in_place:
+            return True
+    player.stop_mpv(restart_splash=_idle_visual_surface_enabled_for_player())
+    _ensure_notification_surface(wait_for_subscriber=False)
+    return False
+
+
+def _can_preserve_closed_session() -> bool:
+    from . import _can_preserve_closed_session as can_preserve_closed_session
+
+    return can_preserve_closed_session()
+
+
+def _idle_visual_surface_enabled_for_player() -> bool:
+    from . import _idle_visual_surface_enabled_for_player as idle_visual_surface_enabled_for_player
+
+    return idle_visual_surface_enabled_for_player()
+
+
+def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
+    from . import _ensure_notification_surface as ensure_notification_surface
+
+    ensure_notification_surface(wait_for_subscriber=wait_for_subscriber)
+
+
+def _jellyfin_emit_stopped_hint(position_sec: float | None = None, duration_sec: float | None = None) -> None:
+    from . import _jellyfin_emit_stopped_hint as jellyfin_emit_stopped_hint
+
+    jellyfin_emit_stopped_hint(position_sec, duration_sec)
+
+
+def _next_track() -> dict:
+    from . import next_track
+
+    return next_track()
+
+
 @router.post("/play_now")
 def play_now(req: PlayNowReq):
     """Play immediately, optionally preserving the currently playing item."""
@@ -245,6 +295,253 @@ def play_now(req: PlayNowReq):
     if preserved is not None or qlen:
         _ui_event_push_queue("play_now", queue=queue_snapshot, queue_length=qlen, source="play_now")
     return {"ok": True, "action": "played", "now_playing": now, "preserved": preserved, "queue_length": qlen}
+
+
+@router.post("/now_playing/clear")
+def clear_now_playing():
+    """Discard current now-playing item; advance queue or return to idle/desktop."""
+    _discard_interrupted_playback_state("now_playing_clear")
+    with state.QUEUE_LOCK:
+        has_queue = bool(state.QUEUE)
+    if has_queue:
+        return _next_track()
+
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    with player.MPV_LOCK:
+        stopped_in_place = _stop_current_for_idle_or_desktop()
+    state.set_now_playing(None)
+    state.set_session_position(None)
+    state.set_session_state("idle")
+    try:
+        state.persist_queue()
+    except Exception:
+        pass
+    return {"status": "cleared", "resume_available": False, "kept_player_shell": bool(stopped_in_place)}
+
+
+@router.post("/close")
+def close():
+    """Close the player but keep session resumable (queue preserved)."""
+    # Prevent the autoplay worker from immediately advancing.
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    _discard_interrupted_playback_state("close")
+
+    pos = None
+    dur = None
+    preserve_resume = _can_preserve_closed_session() or isinstance(state.NOW_PLAYING, dict)
+    try:
+        if bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)()):
+            preserve_resume = False
+    except Exception:
+        pass
+    if preserve_resume:
+        with player.MPV_LOCK:
+            try:
+                pos = player.mpv_get("time-pos")
+            except Exception:
+                pos = None
+            try:
+                dur = player.mpv_get("duration")
+            except Exception:
+                dur = None
+        if pos is None and isinstance(state.NOW_PLAYING, dict):
+            pos = state.NOW_PLAYING.get("resume_pos")
+        try:
+            state.set_session_position(float(pos) if pos is not None else None)
+        except Exception:
+            state.set_session_position(None)
+
+        try:
+            if isinstance(state.NOW_PLAYING, dict) and pos is not None:
+                np = dict(state.NOW_PLAYING)
+                np["resume_pos"] = float(pos)
+                np["closed"] = True
+                np["closed_at"] = int(time.time())
+                state.set_now_playing(np)
+        except Exception:
+            pass
+    elif getattr(state, "SESSION_STATE", "idle") != "closed":
+        try:
+            state.set_now_playing(None)
+        except Exception:
+            pass
+        try:
+            state.set_session_position(None)
+        except Exception:
+            pass
+
+    state.set_session_state("closed" if preserve_resume else "idle")
+    keep_qt_shell = bool(
+        preserve_resume
+        and _idle_visual_surface_enabled_for_player()
+        and getattr(player, "_qt_shell_backend_enabled", lambda: False)()
+    )
+    stopped_in_place = False
+    if keep_qt_shell:
+        with player.MPV_LOCK:
+            stopped_in_place = bool(getattr(player, "stop_playback_keep_qt_shell", lambda: False)())
+    if not stopped_in_place:
+        with player.MPV_LOCK:
+            player.stop_mpv(restart_splash=_idle_visual_surface_enabled_for_player())
+        _ensure_notification_surface(wait_for_subscriber=False)
+
+    if preserve_resume:
+        player.update_history_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+            position_sec=pos,
+            duration_sec=dur,
+            force=True,
+        )
+        _jellyfin_emit_stopped_hint(pos, dur)
+    return {
+        "status": ("closed" if preserve_resume else "idle"),
+        "resume_available": bool(preserve_resume and state.NOW_PLAYING),
+        "position": pos,
+        "kept_player_shell": bool(stopped_in_place),
+    }
+
+
+@router.post("/resume/clear")
+def clear_resumable_session():
+    """Clear retained now-playing/resume state and return to idle."""
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    _discard_interrupted_playback_state("resume_clear")
+    with player.MPV_LOCK:
+        player.stop_mpv()
+    state.set_now_playing(None)
+    state.set_session_position(None)
+    state.set_session_state("idle")
+    try:
+        state.persist_queue()
+    except Exception:
+        pass
+    return {"status": "cleared", "resume_available": False}
+
+
+@router.post("/resume_session")
+def resume_session():
+    """Resume a previously closed session (best-effort)."""
+    if getattr(state, "SESSION_STATE", "idle") != "closed":
+        raise HTTPException(status_code=400, detail="No closed session to resume")
+
+    now = state.NOW_PLAYING
+    if not now:
+        raise HTTPException(status_code=400, detail="No item to resume")
+
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+
+    stream = now.get("stream")
+    audio = now.get("audio")
+    pos = now.get("resume_pos")
+    if pos is None:
+        pos = getattr(state, "SESSION_POSITION", None)
+    start_pos = None
+    try:
+        start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
+    except Exception:
+        start_pos = None
+
+    if not isinstance(stream, str) or not stream.strip():
+        resumed = player.play_item(
+            now,
+            use_resolver=True,
+            cec=False,
+            clear_queue=False,
+            mode="resume",
+            start_pos=start_pos,
+        )
+    else:
+        with player.MPV_LOCK:
+            stream_url = stream.strip()
+            audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
+            if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url, start_pos=start_pos):
+                player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
+        resumed = dict(now)
+        resumed["started"] = int(time.time())
+        resumed["mode"] = "resume"
+        resumed["closed"] = False
+        state.set_now_playing(resumed)
+        state.set_session_state("playing")
+
+    resume_result: dict[str, object] | None = None
+    if start_pos is not None:
+        try:
+            resume_result = _control_result_or_raise(player.mpv_set_result("pause", False), action="resume_session")
+        except Exception:
+            resume_result = None
+
+    return {"status": "resumed", "now_playing": state.NOW_PLAYING, **_control_ack_payload(resume_result)}
+
+
+@router.post("/stop")
+def stop():
+    """User stop with resume support; always return to idle visuals."""
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    _discard_interrupted_playback_state("stop")
+
+    pos = None
+    dur = None
+    stop_hint_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    emit_stopped_hint = isinstance(stop_hint_now, dict) and bool(stop_hint_now.get("jellyfin_item_id"))
+    preserve_resume = _can_preserve_closed_session()
+    if preserve_resume:
+        with player.MPV_LOCK:
+            pos = player.mpv_get("time-pos")
+            dur = player.mpv_get("duration")
+        try:
+            state.set_session_position(float(pos) if pos is not None else None)
+        except Exception:
+            state.set_session_position(None)
+
+    if preserve_resume:
+        try:
+            if isinstance(state.NOW_PLAYING, dict):
+                np = dict(state.NOW_PLAYING)
+                if pos is not None:
+                    np["resume_pos"] = float(pos)
+                np["closed"] = True
+                np["closed_at"] = int(time.time())
+                state.set_now_playing(np)
+        except Exception:
+            pass
+    elif getattr(state, "SESSION_STATE", "idle") != "closed":
+        try:
+            state.set_now_playing(None)
+        except Exception:
+            pass
+        try:
+            state.set_session_position(None)
+        except Exception:
+            pass
+
+    if preserve_resume:
+        state.set_session_state("closed")
+        with player.MPV_LOCK:
+            player.stop_mpv()
+        player.update_history_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+            position_sec=pos,
+            duration_sec=dur,
+            force=True,
+        )
+        _jellyfin_emit_stopped_hint(pos, dur)
+        return {"status": "stopped", "resume_available": bool(state.NOW_PLAYING), "position": pos}
+
+    if emit_stopped_hint:
+        _jellyfin_emit_stopped_hint(pos, dur)
+    if getattr(state, "SESSION_STATE", "idle") != "closed":
+        try:
+            state.set_now_playing(None)
+        except Exception:
+            pass
+        try:
+            state.set_session_position(None)
+        except Exception:
+            pass
+    state.set_session_state("idle")
+    with player.MPV_LOCK:
+        player.stop_mpv()
+    return {"status": ("stopped" if emit_stopped_hint else "idle"), "resume_available": False, "position": pos}
 
 
 @router.post("/pause")
