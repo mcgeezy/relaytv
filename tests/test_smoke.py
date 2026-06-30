@@ -99,8 +99,20 @@ def test_ui_smoke() -> None:
     assert 'id="setUploadMaxSize"' in response.text
     assert 'id="setUploadRetentionHours"' in response.text
     assert 'id="setIdleDashboardEnabled"' in response.text
+    assert 'id="setYtUseInvidious"' in response.text
+    assert 'id="setIdleQrEnabled"' in response.text
+    assert 'id="setJfEnabled"' in response.text
+    assert 'id="setJfClearPassword"' in response.text
     assert 'class="toggleSwitch"' in response.text
+    assert 'data-idle-enable="${key}"' in response.text
+    assert 'class="chk"' not in response.text
+    assert '.settingsBody input.input:not([type])' in response.text
+    assert '.settingsBody select.input{' in response.text
+    assert 'appearance:none;' in response.text
     assert 'Show idle dashboard between plays' in response.text
+    assert 'Use Invidious server for YouTube playback' in response.text
+    assert 'Show connect QR in idle' in response.text
+    assert 'Enable Jellyfin integration' in response.text
     assert 'function _uploadBadge(item)' in response.text
     assert 'function _uploadSummary(item)' in response.text
     assert 'function _formatUploadSize(bytes)' in response.text
