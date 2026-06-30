@@ -26,12 +26,14 @@ import tempfile
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from . import state, resolver, player, devices, discovery_mdns, video_profile, upload_store, x11_overlay
-from .integrations import jellyfin_receiver
-from .debug import debug_log, get_logger
-from .thumb_cache import THUMB_DIR, ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
+from .. import state, resolver, player, devices, discovery_mdns, video_profile, upload_store, x11_overlay
+from ..debug import debug_log, get_logger
+from ..integrations import jellyfin_receiver
+from ..thumb_cache import THUMB_DIR, ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
+from .health import router as health_router
 
 router = APIRouter()
+router.include_router(health_router)
 logger = get_logger("routes")
 _JELLYFIN_PLAY_DEBOUNCE_LOCK = threading.Lock()
 _JELLYFIN_LAST_PLAY: dict[str, object] = {"ts": 0.0, "url": "", "item_id": "", "start_pos": None}
@@ -57,7 +59,7 @@ def _env_choice(name: str) -> bool | None:
 
 
 def _pyproject_version() -> str:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml"))
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "pyproject.toml"))
     try:
         text = open(path, encoding="utf-8").read()
     except Exception:
@@ -181,10 +183,11 @@ def _static_root_candidates() -> list[str]:
     roots.extend(
         [
             os.path.abspath(os.path.join(os.path.dirname(__file__), "static")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static")),
             "/app/relaytv_app/static",
             os.path.join(os.getcwd(), "static"),
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static")),
             os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "static")),
             "/app/static",
             "/opt/dev/relaytv/static",
             "/workspace/relaytv/static",
@@ -16474,7 +16477,7 @@ window.addEventListener('DOMContentLoaded', () => {
 # =========================
 
 _RELAYTV_THEME = "#0b0f19"
-_STATIC_ROOT = os.getenv("RELAYTV_STATIC_DIR") or os.path.join(os.path.dirname(__file__), "static")
+_STATIC_ROOT = os.getenv("RELAYTV_STATIC_DIR") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 _PWA_STATIC_ROOT = os.path.join(_STATIC_ROOT, "pwa")
 
 
@@ -16605,13 +16608,6 @@ def pwa_sw():
 @router.get("/")
 def root():
     return RedirectResponse(url="/ui")
-
-
-@router.get("/health")
-def health() -> dict[str, bool]:
-    # Keep the health payload intentionally minimal so basic liveness checks and
-    # smoke tests can rely on a stable response contract.
-    return {"ok": True}
 
 
 @router.get("/app/info")
