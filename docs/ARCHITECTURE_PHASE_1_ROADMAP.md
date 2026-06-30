@@ -67,7 +67,7 @@ Initial UI asset target:
 
 ### M0: Review And Roadmap Foundation
 
-Status: in progress
+Status: complete
 
 Deliverables:
 
@@ -83,7 +83,7 @@ Validation:
 
 ### M1: Route Inventory And Test Baseline
 
-Status: pending
+Status: complete
 
 Deliverables:
 
@@ -95,6 +95,8 @@ Deliverables:
 Notes:
 
 - This is a guardrail milestone. It should not move route code yet.
+- Completed with `docs/ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md` and
+  `tests/test_route_inventory.py`.
 
 ### M2: Extract Low-Risk Routers
 
@@ -232,17 +234,16 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 | Date | PR | Target | Summary | Validation | Follow-ups |
 | --- | --- | --- | --- | --- | --- |
-| 2026-06-30 | local | `codex/architecture-phase-1` | Created Phase 1 roadmap and kept architecture review docs in branch. | Pending final checks. | None. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Created Phase 1 roadmap and kept architecture review docs in branch. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | None. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Captured the public route inventory and added a route snapshot test before moving route code. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M2 with low-risk router extraction. |
 
 ## Open Questions
 
-- Should the route inventory be generated in CI or maintained as a hand-written
-  doc table?
 - Should UI CSS extraction happen before or after router extraction?
 - Should Phase 1 include a minimal Playwright dependency, or should browser
   validation stay manual until the UI assets are extracted?
 
 ## Current Recommendation
 
-Start with M1, then M2. Avoid moving playback, settings, and Jellyfin routes
-until the low-risk router aggregation pattern is proven.
+Begin M2 with low-risk router extraction. Avoid moving playback, settings, and
+Jellyfin routes until the router aggregation pattern is proven.

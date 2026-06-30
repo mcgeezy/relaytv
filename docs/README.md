@@ -14,6 +14,7 @@ Use this directory as a small operator/product doc set for the public release br
 
 - `ARCHITECTURE_REVIEW.md`: current architecture findings and recommended refactor roadmap
 - `ARCHITECTURE_PHASE_1_ROADMAP.md`: living Phase 1 branch roadmap, milestones, and PR log
+- `ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md`: Phase 1 route inventory and alias guardrail
 
 Development history, migration notes, archived docs, deep validation notes, and engineering-only guidance should stay out of the public documentation tree unless they are intentionally converted into operator-facing docs.
 
