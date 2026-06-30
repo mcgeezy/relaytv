@@ -434,7 +434,7 @@ Progress:
 
 ### M8: Phase 1 Final Validation
 
-Status: pending
+Status: in progress
 
 Required before merging to `main`:
 
@@ -456,6 +456,26 @@ Required before merging to `main`:
   - play title
   - queue title
 - Confirm `docs/ARCHITECTURE_PHASE_1_ROADMAP.md` status reflects reality.
+
+Progress:
+
+- Automated validation passed:
+  - `ruff check app tests`
+  - `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`
+  - `PYTHONPATH=app pytest -q`
+  - `git diff --check`
+- Live HTTP review passed on a local server with workers disabled and temporary
+  state/upload/thumb directories:
+  - `GET /ui`
+  - `GET /static/ui/app.css`
+  - `GET /static/ui/app.js`
+  - `GET /assets/banner.png`
+  - `GET /pwa/brand/banner.png`
+- Confirmed the updated banner image is served by the banner endpoints.
+- Browser-rendered `/ui` review remains pending because no local Playwright or
+  Chromium browser is available in this shell.
+- Credentialed Jellyfin manual smoke remains pending until Jellyfin credentials
+  and a live server are available.
 
 ## PR And Milestone Log
 
@@ -493,6 +513,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M6 by extracting command ingress, push, heartbeat, progress snapshot, stopped, and stopped snapshot routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Begin M7 UI static asset extraction. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M7 by extracting the main `/ui` stylesheet into `app/relaytv_app/static/ui/app.css` and adding narrow static UI asset serving. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Continue M7 with JavaScript extraction. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M7 by extracting the main `/ui` JavaScript into `app/relaytv_app/static/ui/app.js` with an inline bootstrap for dynamic catalog data. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Begin M8 final validation and manual UI review. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Started M8 final validation, included the updated banner image, passed automated gates and live HTTP asset checks. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check`; live `GET /ui`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png` | Complete rendered browser review and credentialed Jellyfin smoke when environment is available. |
 
 ## Open Questions
 
@@ -502,6 +523,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Begin M8 final validation. Run the required automated gates, then perform a
-manual `/ui` review and targeted settings/playback/Jellyfin smoke before
-preparing the final Phase 1 PR toward `main`.
+Complete the remaining M8 manual checks in an environment with browser tooling
+and Jellyfin credentials. The automated gates and live HTTP asset review have
+passed; do not merge Phase 1 to `main` until rendered `/ui`, settings,
+playback, and Jellyfin smoke are confirmed.
