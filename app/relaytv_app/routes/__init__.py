@@ -35,6 +35,7 @@ from .devices import router as devices_router
 from .health import router as health_router
 from .jellyfin import (
     JellyfinAudioSelectReq as JellyfinAudioSelectReq,
+    JellyfinItemActionReq as JellyfinItemActionReq,
     JellyfinSubtitleSelectReq as JellyfinSubtitleSelectReq,
     _require_jellyfin_catalog_ready as _require_jellyfin_catalog_ready,
     jellyfin_audio_options as jellyfin_audio_options,
@@ -42,6 +43,7 @@ from .jellyfin import (
     jellyfin_catalog_cache_clear as jellyfin_catalog_cache_clear,
     jellyfin_home as jellyfin_home,
     jellyfin_integration_status as jellyfin_integration_status,
+    jellyfin_item_action as jellyfin_item_action,
     jellyfin_item_adjacent as jellyfin_item_adjacent,
     jellyfin_item_detail as jellyfin_item_detail,
     jellyfin_movies as jellyfin_movies,
@@ -50,6 +52,7 @@ from .jellyfin import (
     jellyfin_subtitle_select as jellyfin_subtitle_select,
     jellyfin_tv_series as jellyfin_tv_series,
     jellyfin_tv_series_episodes as jellyfin_tv_series_episodes,
+    jellyfin_tv_series_play_all as jellyfin_tv_series_play_all,
     jellyfin_tv_series_seasons as jellyfin_tv_series_seasons,
     router as jellyfin_router,
 )
@@ -215,12 +218,6 @@ class JellyfinConnectReq(BaseModel):
     device_name: str | None = None
     heartbeat_sec: int | None = None
     register_now: bool = False
-
-
-class JellyfinItemActionReq(BaseModel):
-    item_id: str
-    command: str = "play_now"  # play_now|play_next|play_last|resume
-    resume_pos: float | None = None
 
 
 def _overlay_osd_debug_enabled() -> bool:
@@ -2380,101 +2377,6 @@ def toast(req: OverlayReq):
 def notify(req: OverlayReq):
     """Alias for /overlay to map cleanly to Home Assistant relaytv.notify services."""
     return overlay(req)
-
-
-@router.post("/jellyfin/tv/series/{series_id}/play_all")
-def jellyfin_tv_series_play_all(series_id: str, refresh: bool = False):
-    _require_jellyfin_catalog_ready()
-    sid = str(series_id or "").strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="series_id is required")
-    try:
-        payload = jellyfin_receiver.list_series_episodes(sid, refresh=bool(refresh))
-    except Exception as e:
-        jellyfin_receiver.mark_error(str(e))
-        raise HTTPException(status_code=502, detail="failed to fetch jellyfin series episodes")
-    episodes = payload.get("episodes") if isinstance(payload, dict) and isinstance(payload.get("episodes"), list) else []
-    item_ids = [str(ep.get("item_id") or "").strip() for ep in episodes if isinstance(ep, dict) and str(ep.get("item_id") or "").strip()]
-    if not item_ids:
-        raise HTTPException(status_code=404, detail="no episodes available for series")
-    first = next((ep for ep in episodes if isinstance(ep, dict) and str(ep.get("item_id") or "").strip() == item_ids[0]), {})
-    out = jellyfin_integration_command(
-        JellyfinCommandReq(
-            action="Play",
-            payload={"ItemIds": item_ids, "PlayCommand": "PlayNow"},
-            play_command="PlayNow",
-            use_ytdlp=False,
-        )
-    )
-    return {
-        "ok": bool(out.get("ok", True)),
-        "series_id": sid,
-        "series_title": str(first.get("series_name") or first.get("title") or "").strip(),
-        "queued_count": max(0, len(item_ids) - 1),
-        "started_item_id": item_ids[0],
-        "play_result": out,
-    }
-
-
-
-@router.post("/jellyfin/action")
-def jellyfin_item_action(req: JellyfinItemActionReq):
-    _require_jellyfin_catalog_ready()
-    item_id = str(req.item_id or "").strip()
-    if not item_id:
-        raise HTTPException(status_code=400, detail="item_id is required")
-    command = str(req.command or "play_now").strip().lower()
-    if command not in {"play_now", "play_next", "play_last", "resume"}:
-        raise HTTPException(status_code=400, detail="unsupported command")
-
-    payload: dict[str, object] = {"ItemId": item_id, "PlayCommand": "PlayNow"}
-    if command == "play_next":
-        payload["PlayCommand"] = "PlayNext"
-    elif command == "play_last":
-        payload["PlayCommand"] = "PlayLast"
-
-    start_pos: float | None = None
-    if command == "resume":
-        if req.resume_pos is not None:
-            try:
-                rp = float(req.resume_pos)
-                if rp > 0:
-                    start_pos = rp
-            except Exception:
-                start_pos = None
-        if start_pos is None:
-            try:
-                meta = jellyfin_receiver.get_item_detail(item_id)
-                rp2 = float(meta.get("resume_pos")) if isinstance(meta, dict) and meta.get("resume_pos") is not None else None
-                if rp2 is not None and rp2 > 0:
-                    start_pos = rp2
-            except Exception:
-                start_pos = None
-
-    if _jellyfin_should_suppress_duplicate_ui_action(command, item_id, start_pos):
-        return {
-            "ok": True,
-            "action": "ui_suppressed",
-            "suppressed_duplicate_ui_action": True,
-            "ui_command": command,
-            "item_id": item_id,
-            "resolved_resume_pos": start_pos,
-        }
-
-    out = jellyfin_integration_command(
-        JellyfinCommandReq(
-            action="Play",
-            start_pos=start_pos,
-            use_ytdlp=True,
-            payload=payload,
-        )
-    )
-    if isinstance(out, dict):
-        out = dict(out)
-        out["ui_command"] = command
-        out["item_id"] = item_id
-        out["resolved_resume_pos"] = start_pos
-    return out
 
 
 @router.post("/integrations/jellyfin/connect")

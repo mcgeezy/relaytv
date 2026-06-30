@@ -21,6 +21,12 @@ class JellyfinSubtitleSelectReq(BaseModel):
     index: int
 
 
+class JellyfinItemActionReq(BaseModel):
+    item_id: str
+    command: str = "play_now"  # play_now|play_next|play_last|resume
+    resume_pos: float | None = None
+
+
 def _ui_event_push_jellyfin(event: str, **payload) -> None:
     from . import _ui_event_push_jellyfin as push_jellyfin_event
 
@@ -208,6 +214,24 @@ def _jellyfin_enrich_now_stream_metadata(
         audio_stream_index=audio_stream_index,
         subtitle_stream_index=subtitle_stream_index,
     )
+
+
+def _jellyfin_command_req(**kwargs):
+    from . import JellyfinCommandReq
+
+    return JellyfinCommandReq(**kwargs)
+
+
+def _jellyfin_integration_command(req) -> dict[str, object]:
+    from . import jellyfin_integration_command as command
+
+    return command(req)
+
+
+def _jellyfin_should_suppress_duplicate_ui_action(command: str, item_id: str, resume_pos: float | None) -> bool:
+    from . import _jellyfin_should_suppress_duplicate_ui_action as helper
+
+    return helper(command, item_id, resume_pos)
 
 
 @router.get("/integrations/jellyfin/status")
@@ -462,6 +486,100 @@ def jellyfin_item_adjacent(item_id: str, refresh: bool = False):
         "connected": bool(refreshed.get("connected")),
         "last_error": refreshed.get("last_error"),
     }
+
+
+@router.post("/jellyfin/tv/series/{series_id}/play_all")
+def jellyfin_tv_series_play_all(series_id: str, refresh: bool = False):
+    _require_jellyfin_catalog_ready_for_playback()
+    sid = str(series_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="series_id is required")
+    try:
+        payload = jellyfin_receiver.list_series_episodes(sid, refresh=bool(refresh))
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin series episodes")
+    episodes = payload.get("episodes") if isinstance(payload, dict) and isinstance(payload.get("episodes"), list) else []
+    item_ids = [str(ep.get("item_id") or "").strip() for ep in episodes if isinstance(ep, dict) and str(ep.get("item_id") or "").strip()]
+    if not item_ids:
+        raise HTTPException(status_code=404, detail="no episodes available for series")
+    first = next((ep for ep in episodes if isinstance(ep, dict) and str(ep.get("item_id") or "").strip() == item_ids[0]), {})
+    out = _jellyfin_integration_command(
+        _jellyfin_command_req(
+            action="Play",
+            payload={"ItemIds": item_ids, "PlayCommand": "PlayNow"},
+            play_command="PlayNow",
+            use_ytdlp=False,
+        )
+    )
+    return {
+        "ok": bool(out.get("ok", True)),
+        "series_id": sid,
+        "series_title": str(first.get("series_name") or first.get("title") or "").strip(),
+        "queued_count": max(0, len(item_ids) - 1),
+        "started_item_id": item_ids[0],
+        "play_result": out,
+    }
+
+
+@router.post("/jellyfin/action")
+def jellyfin_item_action(req: JellyfinItemActionReq):
+    _require_jellyfin_catalog_ready_for_playback()
+    item_id = str(req.item_id or "").strip()
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id is required")
+    command = str(req.command or "play_now").strip().lower()
+    if command not in {"play_now", "play_next", "play_last", "resume"}:
+        raise HTTPException(status_code=400, detail="unsupported command")
+
+    payload: dict[str, object] = {"ItemId": item_id, "PlayCommand": "PlayNow"}
+    if command == "play_next":
+        payload["PlayCommand"] = "PlayNext"
+    elif command == "play_last":
+        payload["PlayCommand"] = "PlayLast"
+
+    start_pos: float | None = None
+    if command == "resume":
+        if req.resume_pos is not None:
+            try:
+                rp = float(req.resume_pos)
+                if rp > 0:
+                    start_pos = rp
+            except Exception:
+                start_pos = None
+        if start_pos is None:
+            try:
+                meta = jellyfin_receiver.get_item_detail(item_id)
+                rp2 = float(meta.get("resume_pos")) if isinstance(meta, dict) and meta.get("resume_pos") is not None else None
+                if rp2 is not None and rp2 > 0:
+                    start_pos = rp2
+            except Exception:
+                start_pos = None
+
+    if _jellyfin_should_suppress_duplicate_ui_action(command, item_id, start_pos):
+        return {
+            "ok": True,
+            "action": "ui_suppressed",
+            "suppressed_duplicate_ui_action": True,
+            "ui_command": command,
+            "item_id": item_id,
+            "resolved_resume_pos": start_pos,
+        }
+
+    out = _jellyfin_integration_command(
+        _jellyfin_command_req(
+            action="Play",
+            start_pos=start_pos,
+            use_ytdlp=True,
+            payload=payload,
+        )
+    )
+    if isinstance(out, dict):
+        out = dict(out)
+        out["ui_command"] = command
+        out["item_id"] = item_id
+        out["resolved_resume_pos"] = start_pos
+    return out
 
 
 @router.get("/jellyfin/audio/options")

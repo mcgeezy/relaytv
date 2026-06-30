@@ -362,8 +362,15 @@ Progress:
   - `POST /jellyfin/audio/select`
   - `GET /jellyfin/subtitle/options`
   - `POST /jellyfin/subtitle/select`
-- Remaining M6 slices: item actions, connect/disconnect/register, command
-  ingress, heartbeat/progress/stopped, and series play-all.
+- Added Jellyfin action route guardrails for series play-all command payloads,
+  empty series handling, play-next mapping, resume position resolution, and
+  duplicate UI action suppression.
+- Extracted Jellyfin item action and series play-all routes into
+  `app/relaytv_app/routes/jellyfin.py`:
+  - `POST /jellyfin/action`
+  - `POST /jellyfin/tv/series/{series_id}/play_all`
+- Remaining M6 slices: connect/disconnect/register, command ingress, and
+  heartbeat/progress/stopped.
 
 ### M7: Extract UI Static Assets
 
@@ -442,6 +449,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted `/play_now` and interrupt-preservation behavior into the playback router. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with close/resume/stop planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin audio/subtitle route guardrails before moving audio/subtitle routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract audio/subtitle routes into the Jellyfin router. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin audio/subtitle options and selection into `app/relaytv_app/routes/jellyfin.py`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_smoke.py` | Continue M6 with item actions or connect/disconnect/register. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin action and series play-all route guardrails before moving command-construction routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract item action and series play-all routes into the Jellyfin router. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin item action and series play-all routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Continue M6 with connect/disconnect/register. |
 
 ## Open Questions
 
@@ -451,7 +460,6 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Continue M6 with a narrow Jellyfin slice. Prefer item actions plus series
-play-all next because those routes share command construction behavior, then
-move connect/disconnect/register and finally command ingress plus
-heartbeat/progress/stopped.
+Continue M6 with connect/disconnect/register next. That slice is mostly
+receiver lifecycle and UI refresh events, and it should stay separate from the
+larger command ingress plus heartbeat/progress/stopped move.
