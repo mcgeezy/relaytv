@@ -225,6 +225,94 @@ def test_stop_route_preserves_resumable_current_item(monkeypatch) -> None:
     assert jellyfin_calls == [(31.5, 120.0)]
 
 
+def test_play_temporary_route_captures_current_state_and_starts_watchdog(monkeypatch) -> None:
+    play_calls: list[dict[str, object]] = []
+    set_calls: list[tuple[str, object]] = []
+    toast_calls: list[dict[str, object]] = []
+    thread_calls: list[dict[str, object]] = []
+
+    class FakeThread:
+        def __init__(self, *, target, args=(), daemon=None, **kwargs):
+            thread_calls.append({"target": target, "args": args, "daemon": daemon, "kwargs": kwargs})
+
+        def start(self):
+            thread_calls[-1]["started"] = True
+
+    routes._TEMP_PLAYBACK_STACK.clear()
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {"time-pos": 14.25, "pause": False})
+    monkeypatch.setattr(routes.player, "mpv_set", lambda prop, value: set_calls.append((prop, value)))
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.com/current.mp4", "title": "Current"}, raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [{"url": "https://example.com/queued.mp4"}], raising=False)
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toast_calls.append(dict(kwargs)))
+    monkeypatch.setattr(routes.threading, "Thread", FakeThread)
+    monkeypatch.setattr(
+        routes.player,
+        "play_item",
+        lambda item, **kwargs: play_calls.append({"item": item, **kwargs})
+        or {"url": item, "title": "Temporary", "thumbnail": "https://example.com/temp.jpg"},
+    )
+
+    try:
+        client = TestClient(create_app(testing=True))
+        response = client.post(
+            "/play_temporary",
+            json={"url": "https://example.com/temp.mp4", "timeout_sec": 12.5, "volume_override": 0.4},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["stack_depth"] == 1
+        assert body["now_playing"]["title"] == "Temporary"
+        assert set_calls == [("volume", 40.0)]
+        assert play_calls == [
+            {
+                "item": "https://example.com/temp.mp4",
+                "use_resolver": True,
+                "cec": False,
+                "clear_queue": False,
+                "mode": "play_temporary",
+            }
+        ]
+        frame = routes._TEMP_PLAYBACK_STACK[-1]
+        assert frame["id"] == body["temporary_id"]
+        assert frame["resume"] is True
+        assert frame["snapshot"]["now_playing"]["title"] == "Current"
+        assert frame["snapshot"]["position"] == 14.25
+        assert frame["snapshot"]["queue"] == [{"url": "https://example.com/queued.mp4"}]
+        assert toast_calls[-1]["text"] == "Temporary playback: Temporary"
+        assert thread_calls[-1]["args"] == (body["temporary_id"], 12.5)
+        assert thread_calls[-1]["daemon"] is True
+        assert thread_calls[-1]["started"] is True
+    finally:
+        routes._TEMP_PLAYBACK_STACK.clear()
+
+
+def test_play_temporary_cancel_route_restores_top_frame(monkeypatch) -> None:
+    restored: list[dict] = []
+    routes._TEMP_PLAYBACK_STACK.clear()
+    routes._TEMP_PLAYBACK_STACK.append(
+        {
+            "id": "frame-1",
+            "resume": True,
+            "snapshot": {"now_playing": {"url": "https://example.com/current.mp4"}},
+        }
+    )
+    monkeypatch.setattr(routes, "_restore_playback_state", lambda snapshot: restored.append(dict(snapshot)))
+
+    try:
+        client = TestClient(create_app(testing=True))
+        response = client.post("/play_temporary/cancel")
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "stack_depth": 0}
+        assert restored == [{"now_playing": {"url": "https://example.com/current.mp4"}}]
+        assert routes._TEMP_PLAYBACK_STACK == []
+    finally:
+        routes._TEMP_PLAYBACK_STACK.clear()
+
+
 def test_resume_session_route_uses_resolved_stream_without_relookup(monkeypatch) -> None:
     load_calls: list[dict[str, object]] = []
     start_calls: list[dict[str, object]] = []
