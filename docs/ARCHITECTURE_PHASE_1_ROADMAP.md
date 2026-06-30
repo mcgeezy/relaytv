@@ -248,6 +248,9 @@ Progress:
   `/resume/clear`, and `/stop` before moving the close/resume/stop cluster.
 - Extended playback route guardrails for `/play_temporary` and
   `/play_temporary/cancel` before moving temporary playback endpoints.
+- Extended playback route guardrails for `/play`, `/next`, `/play_at`,
+  `/previous`, `/share`, and `/smart` before moving the playback-action
+  cluster.
 - Extracted pause/resume/toggle-pause, seek, volume, mute, and
   `/playback/state` into `app/relaytv_app/routes/playback.py`.
 - Extracted `/playback/play` and `/playback/toggle` into

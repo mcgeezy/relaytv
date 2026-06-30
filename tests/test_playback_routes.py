@@ -5,6 +5,197 @@ from relaytv_app import routes
 from relaytv_app.main import create_app
 
 
+def test_play_route_uses_smart_item_and_resume_position(monkeypatch) -> None:
+    play_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        routes,
+        "_smart_item_from_url",
+        lambda url: {"url": url, "title": "Smart", "resume_pos": 22.0},
+    )
+    monkeypatch.setattr(
+        routes.player,
+        "play_item",
+        lambda item, **kwargs: play_calls.append({"item": item, **kwargs}) or {"url": item["url"], "title": item["title"]},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play", json={"url": "https://example.com/video.mp4", "use_ytdlp": False, "cec": True})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "playing"
+    assert play_calls == [
+        {
+            "item": {"url": "https://example.com/video.mp4", "title": "Smart", "resume_pos": 22.0},
+            "use_resolver": False,
+            "cec": True,
+            "clear_queue": True,
+            "mode": "play",
+            "start_pos": 22.0,
+        }
+    ]
+
+
+def test_next_route_advances_queue_and_hides_internal_method(monkeypatch) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(
+        routes.player,
+        "advance_queue_playback",
+        lambda mode, prefer_playlist_next=True, poll_sleep=None: calls.append((mode, bool(prefer_playlist_next)))
+        or {"status": "playing_next", "now_playing": {"title": "Next"}, "method": "dequeue_play_item"},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/next")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "playing_next"
+    assert body["now_playing"]["title"] == "Next"
+    assert "method" not in body
+    assert calls == [("next", True)]
+
+
+def test_play_at_route_schedules_delayed_play(monkeypatch) -> None:
+    thread_calls: list[dict[str, object]] = []
+
+    class FakeThread:
+        def __init__(self, *, target, args=(), daemon=None, **kwargs):
+            thread_calls.append({"target": target, "args": args, "daemon": daemon, "kwargs": kwargs})
+
+        def start(self):
+            thread_calls[-1]["started"] = True
+
+    monkeypatch.setattr(routes.threading, "Thread", FakeThread)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play_at", json={"url": "https://example.com/future.mp4", "start_at": routes.time.time() + 60.0})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["url"] == "https://example.com/future.mp4"
+    assert thread_calls[-1]["daemon"] is True
+    assert thread_calls[-1]["started"] is True
+
+
+def test_previous_route_restarts_current_item_when_position_is_past_threshold(monkeypatch) -> None:
+    commands: list[list[object]] = []
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "mpv_get", lambda prop: 8.0)
+    monkeypatch.setattr(routes.player, "mpv_command", lambda command: commands.append(list(command)) or {"error": "success"})
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/previous")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "action": "restart"}
+    assert commands == [["seek", 0.0, "absolute"]]
+
+
+def test_share_route_requests_cec_takeover_by_default(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url: {"url": url, "resume_pos": 11.0})
+
+    def fake_play_item(item, use_resolver, cec, clear_queue, mode, start_pos=None):
+        observed.update(
+            {
+                "item": item,
+                "use_resolver": use_resolver,
+                "cec": cec,
+                "clear_queue": clear_queue,
+                "mode": mode,
+                "start_pos": start_pos,
+            }
+        )
+        return {"url": item["url"]}
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/share", params={"url": "https://example.test/video"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "playing"
+    assert response.json()["source"] == "share_target"
+    assert observed == {
+        "item": {"url": "https://example.test/video", "resume_pos": 11.0},
+        "use_resolver": True,
+        "cec": True,
+        "clear_queue": True,
+        "mode": "share",
+        "start_pos": 11.0,
+    }
+
+
+def test_smart_route_queues_when_currently_playing(monkeypatch) -> None:
+    persist_calls: list[bool] = []
+    prefetch_calls: list[dict[str, object]] = []
+    prime_calls: list[bool] = []
+    toast_calls: list[tuple[dict[str, object], str]] = []
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes,
+        "_smart_item_from_url",
+        lambda url, lightweight=False: {"url": url, "lightweight": lightweight},
+    )
+    monkeypatch.setattr(routes.state, "QUEUE", [], raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.com/current.mp4"}, raising=False)
+    monkeypatch.setattr(routes.state, "persist_queue", lambda: persist_calls.append(True))
+    monkeypatch.setattr(routes.player, "prefetch_queue_item_stream", lambda item: prefetch_calls.append(dict(item)))
+    monkeypatch.setattr(routes.player, "prime_mpv_up_next_from_queue", lambda force=False: prime_calls.append(bool(force)))
+    monkeypatch.setattr(routes, "_push_queue_added_toast_async", lambda item, label: toast_calls.append((dict(item), label)))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/smart", json={"url": "https://example.com/queued.mp4"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "queued"
+    assert body["queue_length"] == 1
+    assert routes.state.QUEUE == [{"url": "https://example.com/queued.mp4", "lightweight": True}]
+    assert persist_calls == [True]
+    assert prefetch_calls == [{"url": "https://example.com/queued.mp4", "lightweight": True}]
+    assert prime_calls == [True]
+    assert toast_calls == [({"url": "https://example.com/queued.mp4", "lightweight": True}, "https://example.com/queued.mp4")]
+
+
+def test_smart_route_plays_when_idle(monkeypatch) -> None:
+    play_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(
+        routes,
+        "_smart_item_from_url",
+        lambda url: {"url": url, "title": "Smart Play", "resume_pos": 9.0},
+    )
+    monkeypatch.setattr(
+        routes.player,
+        "play_item",
+        lambda item, **kwargs: play_calls.append({"item": item, **kwargs}) or {"url": item["url"], "title": item["title"]},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/smart", json={"url": "https://example.com/play.mp4", "use_ytdlp": False, "cec": True})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "playing"
+    assert play_calls == [
+        {
+            "item": {"url": "https://example.com/play.mp4", "title": "Smart Play", "resume_pos": 9.0},
+            "use_resolver": False,
+            "cec": True,
+            "clear_queue": True,
+            "mode": "smart_play",
+            "start_pos": 9.0,
+        }
+    ]
+
+
 def test_play_now_route_preserves_current_and_uses_resolved_resume(monkeypatch) -> None:
     persisted: list[dict] = []
     queue_events: list[dict[str, object]] = []
