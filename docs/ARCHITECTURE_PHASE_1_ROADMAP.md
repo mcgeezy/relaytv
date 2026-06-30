@@ -100,7 +100,7 @@ Notes:
 
 ### M2: Extract Low-Risk Routers
 
-Status: in progress
+Status: complete
 
 Candidate domains:
 
@@ -135,6 +135,9 @@ Progress:
 - Extracted `GET /media/uploads/{upload_id}/{filename}` into
   `app/relaytv_app/routes/uploads.py`; ingest/upload playback endpoints remain
   in the aggregate router until queue/playback extraction.
+- Deferred `/notifications/capabilities` and `/runtime/capabilities` to the
+  overlay/playback extraction work because their helper dependencies are shared
+  with active overlay and playback status behavior.
 
 ### M3: Extract Queue And Playback Routers
 
@@ -267,6 +270,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting snapshot serving and capture aliases. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with uploads or simple root redirect. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by seeding the UI router with the root redirect. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with uploads or capability endpoints. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting static uploaded-media serving while leaving ingest/playback upload routes in place. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with capability endpoints or begin planning M3 queue/playback moves. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Closed M2 after extracting the low-risk standalone routers and documenting deferred capability endpoints. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history route extraction before playback controls. |
 
 ## Open Questions
 
@@ -276,6 +280,5 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Continue M2 with capability endpoints or begin planning M3 queue/playback
-moves. Avoid moving settings and Jellyfin routes until the router aggregation
-pattern is proven.
+Begin M3 with queue/history route extraction before playback controls. Avoid
+moving settings and Jellyfin routes until queue/playback movement is proven.
