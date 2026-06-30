@@ -17,7 +17,6 @@ import math
 import os
 import re
 import threading
-import uuid
 import socket
 import tempfile
 import urllib.request
@@ -34,6 +33,7 @@ from .health import router as health_router
 from .playback import (
     MuteReq as MuteReq,
     PlayNowReq as PlayNowReq,
+    PlayTemporaryReq as PlayTemporaryReq,
     SeekAbsReq as SeekAbsReq,
     SeekReq as SeekReq,
     VolumeReq as VolumeReq,
@@ -47,6 +47,8 @@ from .playback import (
     playback_state as playback_state,
     playback_toggle as playback_toggle,
     play_now as play_now,
+    play_temporary as play_temporary,
+    play_temporary_cancel as play_temporary_cancel,
     resume as resume,
     resume_session as resume_session,
     seek as seek,
@@ -135,14 +137,6 @@ class PlayReq(BaseModel):
     url: str
     use_ytdlp: bool = True
     cec: bool = False  # default false (most setups don't have /dev/cec0)
-
-
-class PlayTemporaryReq(BaseModel):
-    url: str
-    resume: bool = True
-    resume_mode: str = "auto"
-    timeout_sec: float | None = 15.0
-    volume_override: float | None = None
 
 
 class OverlayReq(BaseModel):
@@ -2297,54 +2291,6 @@ def next_track():
     if result.get("method") == "dequeue_play_item":
         result.pop("method", None)
     return result
-
-
-@router.post("/play_temporary")
-def play_temporary(req: PlayTemporaryReq):
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-    snapshot = _capture_current_playback_state()
-    frame_id = str(uuid.uuid4())
-    frame = {
-        "id": frame_id,
-        "resume": bool(req.resume),
-        "snapshot": snapshot,
-        "started_at": time.time(),
-    }
-
-    if req.volume_override is not None:
-        try:
-            player.mpv_set("volume", max(0.0, min(200.0, float(req.volume_override) * 100.0)))
-        except Exception:
-            pass
-
-    with _TEMP_PLAYBACK_LOCK:
-        _TEMP_PLAYBACK_STACK.append(frame)
-
-    now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_temporary")
-    try:
-        title = now.get("title") if isinstance(now, dict) else None
-        _push_overlay_toast(
-            text=f"Temporary playback: {title or req.url}",
-            duration=_playback_notification_display_sec(),
-            level="warn",
-            icon="play",
-            image_url=(now.get("thumbnail_local") or now.get("thumbnail")) if isinstance(now, dict) else None,
-        )
-    except Exception:
-        pass
-    timeout = float(req.timeout_sec) if req.timeout_sec is not None and req.timeout_sec > 0 else None
-    threading.Thread(target=_temporary_watchdog, args=(frame_id, timeout), daemon=True).start()
-    return {"ok": True, "temporary_id": frame_id, "now_playing": now, "stack_depth": len(_TEMP_PLAYBACK_STACK)}
-
-
-@router.post("/play_temporary/cancel")
-def play_temporary_cancel():
-    with _TEMP_PLAYBACK_LOCK:
-        if not _TEMP_PLAYBACK_STACK:
-            raise HTTPException(status_code=400, detail="No temporary playback in progress")
-        frame_id = _TEMP_PLAYBACK_STACK[-1].get("id")
-    restored = _complete_temporary_playback(frame_id, reason="cancel")
-    return {"ok": restored, "stack_depth": len(_TEMP_PLAYBACK_STACK)}
 
 
 @router.post("/overlay")

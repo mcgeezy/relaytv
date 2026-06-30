@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import time
+import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -43,6 +44,14 @@ class PlayNowReq(BaseModel):
     resolved_stream: str | None = None
     resolved_audio: str | None = None
     resolved_at: float | None = None
+
+
+class PlayTemporaryReq(BaseModel):
+    url: str
+    resume: bool = True
+    resume_mode: str = "auto"
+    timeout_sec: float | None = 15.0
+    volume_override: float | None = None
 
 
 def _control_ack_payload(result: dict | None) -> dict[str, object]:
@@ -238,6 +247,42 @@ def _next_track() -> dict:
     return next_track()
 
 
+def _temporary_playback_stack() -> list[dict]:
+    from . import _TEMP_PLAYBACK_STACK
+
+    return _TEMP_PLAYBACK_STACK
+
+
+def _temporary_playback_lock():
+    from . import _TEMP_PLAYBACK_LOCK
+
+    return _TEMP_PLAYBACK_LOCK
+
+
+def _capture_current_playback_state() -> dict | None:
+    from . import _capture_current_playback_state as capture_current_playback_state
+
+    return capture_current_playback_state()
+
+
+def _complete_temporary_playback(frame_id: str, reason: str) -> bool:
+    from . import _complete_temporary_playback as complete_temporary_playback
+
+    return complete_temporary_playback(frame_id, reason)
+
+
+def _temporary_watchdog(frame_id: str, timeout_sec: float | None) -> None:
+    from . import _temporary_watchdog as temporary_watchdog
+
+    temporary_watchdog(frame_id, timeout_sec)
+
+
+def _threading_module():
+    from . import threading as threading_module
+
+    return threading_module
+
+
 @router.post("/play_now")
 def play_now(req: PlayNowReq):
     """Play immediately, optionally preserving the currently playing item."""
@@ -295,6 +340,56 @@ def play_now(req: PlayNowReq):
     if preserved is not None or qlen:
         _ui_event_push_queue("play_now", queue=queue_snapshot, queue_length=qlen, source="play_now")
     return {"ok": True, "action": "played", "now_playing": now, "preserved": preserved, "queue_length": qlen}
+
+
+@router.post("/play_temporary")
+def play_temporary(req: PlayTemporaryReq):
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    snapshot = _capture_current_playback_state()
+    frame_id = str(uuid.uuid4())
+    frame = {
+        "id": frame_id,
+        "resume": bool(req.resume),
+        "snapshot": snapshot,
+        "started_at": time.time(),
+    }
+
+    if req.volume_override is not None:
+        try:
+            player.mpv_set("volume", max(0.0, min(200.0, float(req.volume_override) * 100.0)))
+        except Exception:
+            pass
+
+    stack = _temporary_playback_stack()
+    with _temporary_playback_lock():
+        stack.append(frame)
+
+    now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_temporary")
+    try:
+        title = now.get("title") if isinstance(now, dict) else None
+        _push_overlay_toast(
+            text=f"Temporary playback: {title or req.url}",
+            duration=_playback_notification_display_sec(),
+            level="warn",
+            icon="play",
+            image_url=(now.get("thumbnail_local") or now.get("thumbnail")) if isinstance(now, dict) else None,
+        )
+    except Exception:
+        pass
+    timeout = float(req.timeout_sec) if req.timeout_sec is not None and req.timeout_sec > 0 else None
+    _threading_module().Thread(target=_temporary_watchdog, args=(frame_id, timeout), daemon=True).start()
+    return {"ok": True, "temporary_id": frame_id, "now_playing": now, "stack_depth": len(stack)}
+
+
+@router.post("/play_temporary/cancel")
+def play_temporary_cancel():
+    stack = _temporary_playback_stack()
+    with _temporary_playback_lock():
+        if not stack:
+            raise HTTPException(status_code=400, detail="No temporary playback in progress")
+        frame_id = stack[-1].get("id")
+    restored = _complete_temporary_playback(frame_id, reason="cancel")
+    return {"ok": restored, "stack_depth": len(stack)}
 
 
 @router.post("/now_playing/clear")
