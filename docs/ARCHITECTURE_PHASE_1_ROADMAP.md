@@ -244,6 +244,11 @@ Progress:
 - Added `tests/test_playback_routes.py` for HTTP-level route guardrails around
   `play_now`, `close`, `resume_session`, seek/volume/mute controls, and
   `/playback/state`.
+- Extracted pause/resume/toggle-pause, seek, volume, mute, and
+  `/playback/state` into `app/relaytv_app/routes/playback.py`.
+- Kept `/playback/play`, `/playback/toggle`, close, play-now, resume-session,
+  temporary playback, and upload ingest playback in the aggregate router for
+  later M4 slices.
 
 ### M5: Extract Settings Router
 
@@ -363,6 +368,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted queue/history routes into `app/relaytv_app/routes/queue.py` and deferred `/now_playing/clear` to playback routing. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Close M3 after final route inventory review, then begin M4 playback router planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Closed M3 after confirming queue/history endpoints moved and `/now_playing/clear` remains in the playback/UI inventory group. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M4 playback router planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M4 by adding HTTP-level playback route guardrails before moving playback routes. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Extract a narrow playback control slice first. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Extracted low-risk playback controls and `/playback/state` into `app/relaytv_app/routes/playback.py`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with `/playback/play` and `/playback/toggle` or close/play-now planning. |
 
 ## Open Questions
 
