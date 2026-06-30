@@ -280,7 +280,7 @@ Progress:
 
 ### M5: Extract Settings Router
 
-Status: in progress
+Status: complete
 
 Candidate domains:
 
@@ -306,6 +306,10 @@ Progress:
 - Added `tests/test_settings_routes.py` for HTTP-level guardrails around
   sanitized settings reads, YouTube cookies upload/clear, Invidious validation,
   and runtime environment side effects from settings updates.
+- Extracted `GET /settings`, `POST /settings`,
+  `POST /settings/youtube/cookies`, and
+  `POST /settings/youtube/cookies/clear` into
+  `app/relaytv_app/routes/settings.py`.
 
 ### M6: Extract Jellyfin Router
 
