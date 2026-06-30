@@ -306,3 +306,131 @@ def test_jellyfin_subtitle_select_rejects_unavailable_index(monkeypatch) -> None
 
     assert response.status_code == 400
     assert response.json()["detail"] == "requested subtitle stream index is unavailable"
+
+
+def test_jellyfin_series_play_all_builds_play_command(monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "list_series_episodes",
+        lambda series_id, refresh=False: {
+            "episodes": [
+                {"item_id": "ep-1", "series_name": "Series", "title": "Episode 1"},
+                {"item_id": "ep-2", "series_name": "Series", "title": "Episode 2"},
+            ],
+        },
+    )
+
+    def fake_command(req):
+        captured.append({"action": req.action, "payload": req.payload, "use_ytdlp": req.use_ytdlp})
+        return {"ok": True, "started": True}
+
+    monkeypatch.setattr(routes, "jellyfin_integration_command", fake_command)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/tv/series/series-1/play_all", params={"refresh": "true"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "series_id": "series-1",
+        "series_title": "Series",
+        "queued_count": 1,
+        "started_item_id": "ep-1",
+        "play_result": {"ok": True, "started": True},
+    }
+    assert captured == [
+        {
+            "action": "Play",
+            "payload": {"ItemIds": ["ep-1", "ep-2"], "PlayCommand": "PlayNow"},
+            "use_ytdlp": False,
+        }
+    ]
+
+
+def test_jellyfin_series_play_all_requires_episode_ids(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(routes.jellyfin_receiver, "list_series_episodes", lambda series_id, refresh=False: {"episodes": []})
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/tv/series/series-1/play_all")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "no episodes available for series"
+
+
+def test_jellyfin_item_action_maps_play_next_command(monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(routes, "_jellyfin_should_suppress_duplicate_ui_action", lambda command, item_id, resume_pos: False)
+
+    def fake_command(req):
+        captured.append({"action": req.action, "payload": req.payload, "start_pos": req.start_pos, "use_ytdlp": req.use_ytdlp})
+        return {"ok": True, "queued": True}
+
+    monkeypatch.setattr(routes, "jellyfin_integration_command", fake_command)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/action", json={"item_id": "item-1", "command": "play_next"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["ui_command"] == "play_next"
+    assert body["item_id"] == "item-1"
+    assert body["resolved_resume_pos"] is None
+    assert captured == [
+        {
+            "action": "Play",
+            "payload": {"ItemId": "item-1", "PlayCommand": "PlayNext"},
+            "start_pos": None,
+            "use_ytdlp": True,
+        }
+    ]
+
+
+def test_jellyfin_item_action_resume_uses_item_detail_position(monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(routes, "_jellyfin_should_suppress_duplicate_ui_action", lambda command, item_id, resume_pos: False)
+    monkeypatch.setattr(routes.jellyfin_receiver, "get_item_detail", lambda item_id: {"resume_pos": 37.5})
+
+    def fake_command(req):
+        captured.append({"payload": req.payload, "start_pos": req.start_pos})
+        return {"ok": True, "playing": True}
+
+    monkeypatch.setattr(routes, "jellyfin_integration_command", fake_command)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/action", json={"item_id": "item-1", "command": "resume"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["resolved_resume_pos"] == 37.5
+    assert captured == [{"payload": {"ItemId": "item-1", "PlayCommand": "PlayNow"}, "start_pos": 37.5}]
+
+
+def test_jellyfin_item_action_suppresses_duplicate_ui_action(monkeypatch) -> None:
+    commands: list[object] = []
+
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(routes, "_jellyfin_should_suppress_duplicate_ui_action", lambda command, item_id, resume_pos: True)
+    monkeypatch.setattr(routes, "jellyfin_integration_command", lambda req: commands.append(req))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/action", json={"item_id": "item-1", "command": "resume", "resume_pos": 12.0})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "action": "ui_suppressed",
+        "suppressed_duplicate_ui_action": True,
+        "ui_command": "resume",
+        "item_id": "item-1",
+        "resolved_resume_pos": 12.0,
+    }
+    assert commands == []
