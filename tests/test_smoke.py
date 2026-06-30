@@ -39,14 +39,21 @@ def test_ui_smoke() -> None:
 
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
+    js_response = client.get('/static/ui/app.js')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
     assert '<link rel="stylesheet" href="/static/ui/app.css" />' in response.text
+    assert '<script src="/static/ui/app.js" defer></script>' in response.text
+    assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
     assert '<style>' not in response.text
     assert css_response.status_code == 200
     assert 'text/css' in css_response.headers['content-type']
     css = css_response.text
+    assert js_response.status_code == 200
+    assert 'javascript' in js_response.headers['content-type']
+    js = js_response.text
+    assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
@@ -63,9 +70,9 @@ def test_ui_smoke() -> None:
     assert 'id="setTvTakeoverEnabled"' in response.text
     assert 'id="setTvPauseOnInputChange"' in response.text
     assert 'id="setTvAutoResumeOnReturn"' in response.text
-    assert "fetch('/tv/status')" in response.text
-    assert "SETTINGS_TV_CONTROL_BASELINE" in response.text
-    assert "Object.entries(tvControl).forEach" in response.text
+    assert "fetch('/tv/status')" in js
+    assert "SETTINGS_TV_CONTROL_BASELINE" in js
+    assert "Object.entries(tvControl).forEach" in js
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text
@@ -76,9 +83,9 @@ def test_ui_smoke() -> None:
     assert 'id="aboutSupportLink"' in response.text
     assert 'https://buymeacoffee.com/relaytv' in response.text
     assert 'img.buymeacoffee.com/button-api' in response.text
-    assert 'function openAbout' in response.text
-    assert "async function loadAboutInfo" in response.text
-    assert "fetch('/app/info'" in response.text
+    assert 'function openAbout' in js
+    assert "async function loadAboutInfo" in js
+    assert "fetch('/app/info'" in js
     assert 'id="notifySection"' in response.text
     assert 'id="notifyTextInput"' in response.text
     assert 'id="notifyImageInput"' in response.text
@@ -89,10 +96,10 @@ def test_ui_smoke() -> None:
     assert '<option value="top-left" selected>Top left</option>' in response.text
     assert 'id="notifyDurationInput"' in response.text
     assert 'id="notifySendBtn"' in response.text
-    assert "async function submitNotificationToast()" in response.text
-    assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in response.text
-    assert "await _fetchWithTimeout('/overlay'" in response.text
-    assert 'bindAboutUi();' in response.text
+    assert "async function submitNotificationToast()" in js
+    assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in js
+    assert "await _fetchWithTimeout('/overlay'" in js
+    assert 'bindAboutUi();' in js
     assert 'class="nowSubRow"' in response.text
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
@@ -111,9 +118,9 @@ def test_ui_smoke() -> None:
     assert 'id="setJfEnabled"' in response.text
     assert 'id="setJfClearPassword"' in response.text
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
-    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in response.text
+    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in js
     assert 'class="toggleSwitch"' in response.text
-    assert 'data-idle-enable="${key}"' in response.text
+    assert 'data-idle-enable="${key}"' in js
     assert 'class="chk"' not in response.text
     assert '.settingsBody input.input:not([type])' in css
     assert '.settingsBody select.input{' in css
@@ -122,43 +129,43 @@ def test_ui_smoke() -> None:
     assert 'Use Invidious server for YouTube playback' in response.text
     assert 'Show connect QR in idle' in response.text
     assert 'Enable Jellyfin integration' in response.text
-    assert 'function _uploadBadge(item)' in response.text
-    assert 'function _uploadSummary(item)' in response.text
-    assert 'function _formatUploadSize(bytes)' in response.text
-    assert 'mediaBadge' in response.text
-    assert 'isUnavailable' in response.text
-    assert 'Playback unavailable: stored upload was removed' in response.text
+    assert 'function _uploadBadge(item)' in js
+    assert 'function _uploadSummary(item)' in js
+    assert 'function _formatUploadSize(bytes)' in js
+    assert 'mediaBadge' in js
+    assert 'isUnavailable' in js
+    assert 'Playback unavailable: stored upload was removed' in js
     assert 'onclick="post(\'/close\')"' in response.text
-    assert "await post('/now_playing/clear');" in response.text
+    assert "await post('/now_playing/clear');" in js
     assert 'id="jfSearchBtn"' not in response.text
     assert 'id="jfRefreshBtn"' not in response.text
     assert 'id="jfReconnectBtn"' not in response.text
-    assert 'function _jfSetActionStatus' in response.text
-    assert 'function _jfSetLaunchVisible' in response.text
-    assert 'function _jfCloseDetailPanel' in response.text
-    assert 'function _labelNowSubtitleLanguage' in response.text
-    assert 'function _renderNowSubtitleButton' in response.text
-    assert 'function _fetchNowSubtitleOptions' in response.text
-    assert 'function _renderNowSubtitleOptions' in response.text
-    assert 'function openNowSubtitleModal' in response.text
-    assert 'function bindNowSubtitleUi' in response.text
-    assert 'const shellRect = shell.getBoundingClientRect();' in response.text
-    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in response.text
-    assert 'function loadJellyfinMovies' in response.text
-    assert 'function loadJellyfinTvSeries' in response.text
-    assert 'function _jfPlayAllSeries' in response.text
-    assert 'function _jfSyncTabControls' in response.text
-    assert 'function _jfScheduleSearch' in response.text
-    assert 'function _jfBuildRowItemCard' in response.text
-    assert 'const __JF_REQ_TIMEOUT_MS' in response.text
-    assert 'function _jfFetchWithTimeout' in response.text
-    assert 'function _applyQueueSnapshot' in response.text
+    assert 'function _jfSetActionStatus' in js
+    assert 'function _jfSetLaunchVisible' in js
+    assert 'function _jfCloseDetailPanel' in js
+    assert 'function _labelNowSubtitleLanguage' in js
+    assert 'function _renderNowSubtitleButton' in js
+    assert 'function _fetchNowSubtitleOptions' in js
+    assert 'function _renderNowSubtitleOptions' in js
+    assert 'function openNowSubtitleModal' in js
+    assert 'function bindNowSubtitleUi' in js
+    assert 'const shellRect = shell.getBoundingClientRect();' in js
+    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in js
+    assert 'function loadJellyfinMovies' in js
+    assert 'function loadJellyfinTvSeries' in js
+    assert 'function _jfPlayAllSeries' in js
+    assert 'function _jfSyncTabControls' in js
+    assert 'function _jfScheduleSearch' in js
+    assert 'function _jfBuildRowItemCard' in js
+    assert 'const __JF_REQ_TIMEOUT_MS' in js
+    assert 'function _jfFetchWithTimeout' in js
+    assert 'function _applyQueueSnapshot' in js
     assert 'touch-action: none;' in css
-    assert "_applyQueueSnapshot(payload);" in response.text
-    assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in response.text
-    assert "play.disabled = !available;" in response.text
-    assert "queue.disabled = !available;" in response.text
-    assert "await fetch('/jellyfin/subtitle/select'" in response.text
+    assert "_applyQueueSnapshot(payload);" in js
+    assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
+    assert "play.disabled = !available;" in js
+    assert "queue.disabled = !available;" in js
+    assert "await fetch('/jellyfin/subtitle/select'" in js
     assert 'id="setAboutGithubLink"' not in response.text
     assert 'id="setAboutSupportLink"' not in response.text
 

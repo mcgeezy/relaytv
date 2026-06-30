@@ -394,7 +394,7 @@ Progress:
 
 ### M7: Extract UI Static Assets
 
-Status: in progress
+Status: complete
 
 Deliverables:
 
@@ -424,8 +424,13 @@ Progress:
 - Updated `/ui` to load `/static/ui/app.css` with a stylesheet link.
 - Updated smoke coverage so HTML structure remains checked through `/ui` while
   CSS-specific assertions read the stylesheet asset.
-- Remaining M7 work: extract the main `/ui` JavaScript block into
-  `app/relaytv_app/static/ui/app.js` without changing UI behavior.
+- Extracted the main `/ui` JavaScript block into
+  `app/relaytv_app/static/ui/app.js`.
+- Kept the dynamic idle panel catalog as a small inline bootstrap payload before
+  loading `/static/ui/app.js`.
+- Updated smoke coverage so JavaScript-specific assertions read the static
+  script asset.
+- M7 static UI asset extraction is complete.
 
 ### M8: Phase 1 Final Validation
 
@@ -487,6 +492,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin command/progress/stopped route guardrails before moving the remaining Jellyfin routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract remaining Jellyfin routes into the Jellyfin router. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M6 by extracting command ingress, push, heartbeat, progress snapshot, stopped, and stopped snapshot routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Begin M7 UI static asset extraction. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M7 by extracting the main `/ui` stylesheet into `app/relaytv_app/static/ui/app.css` and adding narrow static UI asset serving. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Continue M7 with JavaScript extraction. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Completed M7 by extracting the main `/ui` JavaScript into `app/relaytv_app/static/ui/app.js` with an inline bootstrap for dynamic catalog data. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Begin M8 final validation and manual UI review. |
 
 ## Open Questions
 
@@ -496,6 +502,6 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Begin M7 UI static asset extraction. Start with CSS extraction first because it
-can be validated by snapshot/string checks and browser review before moving the
-larger JavaScript block.
+Begin M8 final validation. Run the required automated gates, then perform a
+manual `/ui` review and targeted settings/playback/Jellyfin smoke before
+preparing the final Phase 1 PR toward `main`.
