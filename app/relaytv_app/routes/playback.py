@@ -28,6 +28,12 @@ class SeekAbsReq(BaseModel):
     sec: float
 
 
+class PlayReq(BaseModel):
+    url: str
+    use_ytdlp: bool = True
+    cec: bool = False
+
+
 class PlayNowReq(BaseModel):
     """Play immediately, optionally preserving current playback."""
 
@@ -52,6 +58,11 @@ class PlayTemporaryReq(BaseModel):
     resume_mode: str = "auto"
     timeout_sec: float | None = 15.0
     volume_override: float | None = None
+
+
+class PlayAtReq(BaseModel):
+    url: str
+    start_at: float
 
 
 def _control_ack_payload(result: dict | None) -> dict[str, object]:
@@ -242,8 +253,6 @@ def _jellyfin_emit_stopped_hint(position_sec: float | None = None, duration_sec:
 
 
 def _next_track() -> dict:
-    from . import next_track
-
     return next_track()
 
 
@@ -281,6 +290,56 @@ def _threading_module():
     from . import threading as threading_module
 
     return threading_module
+
+
+def _logger():
+    from . import logger
+
+    return logger
+
+
+def _smart_item_from_url(url: str, *, start_pos: float | None = None, lightweight: bool = False) -> dict:
+    from . import _smart_item_from_url as smart_item_from_url
+
+    if start_pos is not None:
+        return smart_item_from_url(url, start_pos=start_pos, lightweight=lightweight)
+    if lightweight:
+        return smart_item_from_url(url, lightweight=True)
+    return smart_item_from_url(url)
+
+
+def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
+    from . import _push_queue_added_toast_async as push_queue_added_toast_async
+
+    push_queue_added_toast_async(item, fallback_label)
+
+
+@router.post("/play")
+def play(req: PlayReq):
+    """Immediate play; clears queue."""
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    item = _smart_item_from_url(req.url or "")
+    start_pos = item.get("resume_pos") if isinstance(item, dict) else None
+    now = player.play_item(
+        item,
+        use_resolver=req.use_ytdlp,
+        cec=req.cec,
+        clear_queue=True,
+        mode="play",
+        start_pos=(float(start_pos) if start_pos is not None else None),
+    )
+    return {"status": "playing", "now_playing": now}
+
+
+@router.post("/next")
+def next_track():
+    try:
+        result = dict(player.advance_queue_playback(mode="next", prefer_playlist_next=True, poll_sleep=time.sleep))
+    except player.QueueAdvanceEmptyError:
+        raise HTTPException(status_code=400, detail="Queue is empty")
+    if result.get("method") == "dequeue_play_item":
+        result.pop("method", None)
+    return result
 
 
 @router.post("/play_now")
@@ -390,6 +449,118 @@ def play_temporary_cancel():
         frame_id = stack[-1].get("id")
     restored = _complete_temporary_playback(frame_id, reason="cancel")
     return {"ok": restored, "stack_depth": len(stack)}
+
+
+@router.post("/play_at")
+def play_at(req: PlayAtReq):
+    def _delayed_play() -> None:
+        delay = max(0.0, float(req.start_at) - time.time())
+        if delay > 0:
+            time.sleep(delay)
+        try:
+            player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_at")
+        except Exception as e:
+            _logger().warning("play_at_failed start_at=%s error=%s", req.start_at, e)
+
+    _threading_module().Thread(target=_delayed_play, daemon=True).start()
+    return {"ok": True, "url": req.url, "start_at": req.start_at}
+
+
+@router.post("/previous")
+def previous():
+    """Back button semantics."""
+    if player.is_playing():
+        try:
+            with player.MPV_LOCK:
+                pos = player.mpv_get("time-pos")
+            if pos is not None and float(pos) > 5.0:
+                player.mpv_command(["seek", 0.0, "absolute"])
+                return {"ok": True, "action": "restart"}
+        except Exception:
+            pass
+
+    cur_url = None
+    if isinstance(state.NOW_PLAYING, dict):
+        u = state.NOW_PLAYING.get("url")
+        if isinstance(u, str) and u.strip():
+            cur_url = u.strip()
+
+    chosen = None
+    with state.HISTORY_LOCK:
+        for i, it in enumerate(state.HISTORY):
+            if not isinstance(it, dict):
+                continue
+            u = it.get("url")
+            if not isinstance(u, str) or not u.strip():
+                continue
+            u = u.strip()
+            if cur_url and u == cur_url:
+                continue
+            chosen = dict(it)
+            state.HISTORY.pop(i)
+            break
+    if chosen is None:
+        raise HTTPException(status_code=400, detail="No previous history item")
+    try:
+        state.persist_history()
+    except Exception:
+        pass
+
+    return play_now(PlayNowReq(url=chosen.get("url"), preserve_current=True, reason="previous"))
+
+
+@router.get("/share")
+def share(url: str | None = None, link: str | None = None, cec: bool = True):
+    shared = (url or link or "").strip()
+    if not shared:
+        raise HTTPException(status_code=400, detail="Missing url or link query parameter")
+    item = _smart_item_from_url(shared)
+    start_pos = item.get("resume_pos") if isinstance(item, dict) else None
+    now = player.play_item(
+        item,
+        use_resolver=True,
+        cec=cec,
+        clear_queue=True,
+        mode="share",
+        start_pos=(float(start_pos) if start_pos is not None else None),
+    )
+    return {"status": "playing", "now_playing": now, "source": "share_target"}
+
+
+@router.post("/smart")
+def smart(req: PlayReq):
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    if player.is_playing():
+        item = _smart_item_from_url(req.url or "", lightweight=True)
+        with state.QUEUE_LOCK:
+            state.QUEUE.append(item)
+            qlen = len(state.QUEUE)
+        state.persist_queue()
+        try:
+            player.prefetch_queue_item_stream(item)
+        except Exception:
+            pass
+        try:
+            player.prime_mpv_up_next_from_queue(force=True)
+        except Exception:
+            pass
+        try:
+            _push_queue_added_toast_async(item, req.url or "item")
+        except Exception:
+            pass
+        return {"status": "queued", "item": item, "queue_length": qlen, "now_playing": state.NOW_PLAYING}
+
+    item = _smart_item_from_url(req.url or "")
+    start_pos = item.get("resume_pos") if isinstance(item, dict) else None
+    now = player.play_item(
+        item,
+        use_resolver=req.use_ytdlp,
+        cec=req.cec,
+        clear_queue=True,
+        mode="smart_play",
+        start_pos=(float(start_pos) if start_pos is not None else None),
+    )
+    return {"status": "playing", "now_playing": now}
 
 
 @router.post("/now_playing/clear")

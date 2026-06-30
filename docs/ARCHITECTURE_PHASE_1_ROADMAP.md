@@ -263,8 +263,9 @@ Progress:
   `app/relaytv_app/routes/playback.py`, while keeping the shared temporary
   playback stack helpers in the aggregate router until the remaining playback
   slices are moved.
-- Kept next/previous/smart/share and upload ingest playback in the aggregate
-  router for later M4 slices.
+- Extracted `/play`, `/next`, `/play_at`, `/previous`, `/share`, and `/smart`
+  into `app/relaytv_app/routes/playback.py`.
+- Kept upload ingest playback in the aggregate router for a later M4 slice.
 
 ### M5: Extract Settings Router
 

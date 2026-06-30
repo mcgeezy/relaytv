@@ -32,7 +32,9 @@ from .devices import router as devices_router
 from .health import router as health_router
 from .playback import (
     MuteReq as MuteReq,
+    PlayAtReq as PlayAtReq,
     PlayNowReq as PlayNowReq,
+    PlayReq as PlayReq,
     PlayTemporaryReq as PlayTemporaryReq,
     SeekAbsReq as SeekAbsReq,
     SeekReq as SeekReq,
@@ -42,17 +44,23 @@ from .playback import (
     clear_resumable_session as clear_resumable_session,
     close as close,
     mute as mute,
+    next_track as next_track,
     pause as pause,
+    play as play,
+    play_at as play_at,
     playback_play as playback_play,
     playback_state as playback_state,
     playback_toggle as playback_toggle,
     play_now as play_now,
     play_temporary as play_temporary,
     play_temporary_cancel as play_temporary_cancel,
+    previous as previous,
     resume as resume,
     resume_session as resume_session,
     seek as seek,
     seek_abs as seek_abs,
+    share as share,
+    smart as smart,
     stop as stop,
     toggle_pause as toggle_pause,
     volume as volume,
@@ -132,12 +140,6 @@ def _idle_weather_proxy_url(settings_payload: dict | None) -> str:
 # =========================
 # API Models
 # =========================
-
-class PlayReq(BaseModel):
-    url: str
-    use_ytdlp: bool = True
-    cec: bool = False  # default false (most setups don't have /dev/cec0)
-
 
 class OverlayReq(BaseModel):
     text: str | None = None
@@ -2108,12 +2110,6 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
 </body>
 </html>"""
 
-class PlayAtReq(BaseModel):
-    url: str
-    start_at: float
-
-
-
 class SettingsReq(BaseModel):
     device_name: str | None = None
     video_mode: str | None = None  # auto|x11|drm
@@ -2264,34 +2260,6 @@ def _temporary_watchdog(frame_id: str, timeout_sec: float | None) -> None:
 # =========================
 # API Endpoints
 # =========================
-
-@router.post("/play")
-def play(req: PlayReq):
-    """Immediate play; clears queue."""
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-    item = _smart_item_from_url(req.url or "")
-    start_pos = item.get("resume_pos") if isinstance(item, dict) else None
-    now = player.play_item(
-        item,
-        use_resolver=req.use_ytdlp,
-        cec=req.cec,
-        clear_queue=True,
-        mode="play",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
-    return {"status": "playing", "now_playing": now}
-
-
-@router.post("/next")
-def next_track():
-    try:
-        result = dict(player.advance_queue_playback(mode="next", prefer_playlist_next=True, poll_sleep=time.sleep))
-    except player.QueueAdvanceEmptyError:
-        raise HTTPException(status_code=400, detail="Queue is empty")
-    if result.get("method") == "dequeue_play_item":
-        result.pop("method", None)
-    return result
-
 
 @router.post("/overlay")
 def overlay(req: OverlayReq):
@@ -6306,129 +6274,6 @@ def qr_connect_svg(request: Request, u: str | None = None, logo: int = 1):
         media_type="image/svg+xml",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
-
-
-@router.post("/play_at")
-def play_at(req: PlayAtReq):
-    def _delayed_play() -> None:
-        delay = max(0.0, float(req.start_at) - time.time())
-        if delay > 0:
-            time.sleep(delay)
-        try:
-            player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_at")
-        except Exception as e:
-            logger.warning("play_at_failed start_at=%s error=%s", req.start_at, e)
-
-    threading.Thread(target=_delayed_play, daemon=True).start()
-    return {"ok": True, "url": req.url, "start_at": req.start_at}
-
-
-@router.post("/previous")
-def previous():
-    """Back button semantics.
-
-    - If current position > ~5s, restart current playback (seek to 0)
-    - Else, play the most recent *different* history entry and preserve current to queue front
-    """
-    if player.is_playing():
-        try:
-            with player.MPV_LOCK:
-                pos = player.mpv_get("time-pos")
-            if pos is not None and float(pos) > 5.0:
-                player.mpv_command(["seek", 0.0, "absolute"])
-                return {"ok": True, "action": "restart"}
-        except Exception:
-            pass
-
-    cur_url = None
-    if isinstance(state.NOW_PLAYING, dict):
-        u = state.NOW_PLAYING.get("url")
-        if isinstance(u, str) and u.strip():
-            cur_url = u.strip()
-
-    chosen = None
-    with state.HISTORY_LOCK:
-        for i, it in enumerate(state.HISTORY):
-            if not isinstance(it, dict):
-                continue
-            u = it.get("url")
-            if not isinstance(u, str) or not u.strip():
-                continue
-            u = u.strip()
-            if cur_url and u == cur_url:
-                continue
-            chosen = dict(it)
-            # Remove so repeated /previous walks back through history
-            state.HISTORY.pop(i)
-            break
-    if chosen is None:
-        raise HTTPException(status_code=400, detail="No previous history item")
-    try:
-        state.persist_history()
-    except Exception:
-        pass
-
-    return play_now(PlayNowReq(url=chosen.get("url"), preserve_current=True, reason="previous"))
-
-
-@router.get("/share")
-def share(url: str | None = None, link: str | None = None, cec: bool = True):
-    shared = (url or link or "").strip()
-    if not shared:
-        raise HTTPException(status_code=400, detail="Missing url or link query parameter")
-    item = _smart_item_from_url(shared)
-    start_pos = item.get("resume_pos") if isinstance(item, dict) else None
-    now = player.play_item(
-        item,
-        use_resolver=True,
-        cec=cec,
-        clear_queue=True,
-        mode="share",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
-    return {"status": "playing", "now_playing": now, "source": "share_target"}
-
-
-@router.post("/smart")
-def smart(req: PlayReq):
-    # Reset auto-next suppression on user-initiated actions
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-    """
-    One-button behavior:
-      - If mpv is currently playing -> enqueue
-      - Else -> play immediately (clears queue)
-    """
-    if player.is_playing():
-        item = _smart_item_from_url(req.url or "", lightweight=True)
-        with state.QUEUE_LOCK:
-            state.QUEUE.append(item)
-            qlen = len(state.QUEUE)
-        state.persist_queue()
-        try:
-            player.prefetch_queue_item_stream(item)
-        except Exception:
-            pass
-        try:
-            player.prime_mpv_up_next_from_queue(force=True)
-        except Exception:
-            pass
-        try:
-            _push_queue_added_toast_async(item, req.url or "item")
-        except Exception:
-            pass
-        return {"status": "queued", "item": item, "queue_length": qlen, "now_playing": state.NOW_PLAYING}
-
-    item = _smart_item_from_url(req.url or "")
-    start_pos = item.get("resume_pos") if isinstance(item, dict) else None
-    now = player.play_item(
-        item,
-        use_resolver=req.use_ytdlp,
-        cec=req.cec,
-        clear_queue=True,
-        mode="smart_play",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
-    return {"status": "playing", "now_playing": now}
 
 
 # ---- IPC controls (used by web UI and optional HTTP Shortcuts later)
