@@ -141,7 +141,7 @@ Progress:
 
 ### M3: Extract Queue And History Router
 
-Status: pending
+Status: complete
 
 Candidate domains:
 
@@ -156,7 +156,6 @@ Candidate domains:
   - `POST /queue/move`
   - `POST /queue/dedupe`
   - `POST /clear`
-  - `POST /now_playing/clear`
 - history endpoints:
   - `GET /history`
   - `POST /history/clear`
@@ -170,8 +169,9 @@ Risks:
   persistence, player prefetch/prime hooks, and queue UI events.
 - Avoid behavior refactors here. Move code first; improve internals later.
 - Keep playback actions such as `/play_now`, `/next`, `/previous`, `/smart`,
-  `/share`, `/play`, upload ingest enqueue/play, and close/resume/stop endpoints
-  out of M3 unless a helper must move to preserve queue behavior.
+  `/share`, `/play`, upload ingest enqueue/play, `/now_playing/clear`, and
+  close/resume/stop endpoints out of M3 unless a helper must move to preserve
+  queue behavior.
 
 Guardrails before moving:
 
@@ -187,6 +187,11 @@ Guardrails before moving:
 Progress:
 
 - Added focused queue/history route tests before moving M3 route code.
+- Extracted queue add aliases, `/clear`, `/queue`, `/history`,
+  `/history/clear`, `/history/play`, `/queue/remove`, `/queue/dedupe`, and
+  `/queue/move` into `app/relaytv_app/routes/queue.py`.
+- Deferred `/now_playing/clear` to M4 because it may stop playback, advance
+  active media, and control idle/dashboard return behavior.
 
 Exit criteria:
 
@@ -349,6 +354,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Closed M2 after extracting the low-risk standalone routers and documenting deferred capability endpoints. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history route extraction before playback controls. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Split queue/history and playback into separate milestones, added M3 guardrails, and renumbered later milestones. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history tests and route extraction. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused M3 queue/history route guardrail tests before moving route code. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Extract queue/history routes. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Extracted queue/history routes into `app/relaytv_app/routes/queue.py` and deferred `/now_playing/clear` to playback routing. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Close M3 after final route inventory review, then begin M4 playback router planning. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Closed M3 after confirming queue/history endpoints moved and `/now_playing/clear` remains in the playback/UI inventory group. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M4 playback router planning. |
 
 ## Open Questions
 
@@ -358,6 +365,6 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Begin M3 with queue/history tests and route extraction before playback controls.
-Avoid moving settings and Jellyfin routes until queue/playback movement is
-proven.
+Begin M4 playback router planning. Keep the first M4 slice narrow and preserve
+the recent close, interrupted playback, queue retention, and idle/dashboard
+return behavior.
