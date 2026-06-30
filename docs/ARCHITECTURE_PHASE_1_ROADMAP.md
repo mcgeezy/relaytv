@@ -122,6 +122,8 @@ Progress:
 - Extracted standalone `/devices` into `app/relaytv_app/routes/devices.py`.
 - Extracted standalone `/discovery/status` and `/tv/status` into
   `app/relaytv_app/routes/status.py`.
+- Extracted `/app/info` and its update-check helpers into
+  `app/relaytv_app/routes/app_info.py`.
 
 ### M3: Extract Queue And Playback Routers
 
@@ -248,6 +250,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M2 by converting `routes.py` to a package and extracting standalone `/health`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with status/assets routes. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting standalone `/devices`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with status/assets routes. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting `/discovery/status` and `/tv/status`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with assets or app info. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting `/app/info` and release update-check helpers. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with static/PWA/assets routes or simple root redirect. |
 
 ## Open Questions
 
@@ -257,5 +260,5 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Begin M2 with low-risk router extraction. Avoid moving playback, settings, and
-Jellyfin routes until the router aggregation pattern is proven.
+Continue M2 with low-risk static/PWA/assets routes. Avoid moving playback,
+settings, and Jellyfin routes until the router aggregation pattern is proven.

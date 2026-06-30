@@ -16,6 +16,7 @@ from relaytv_app import player
 from relaytv_app import resolver
 from relaytv_app import routes
 from relaytv_app import upload_store
+from relaytv_app.routes import app_info as app_info_routes
 from relaytv_app.qt_shell_app import (
     _cursor_hidden_refresh_ms,
     _cursor_mode,
@@ -172,7 +173,7 @@ def test_app_info_endpoint_reports_version_and_update_status(monkeypatch: pytest
     monkeypatch.setenv("RELAYTV_IMAGE_CREATED", "2026-06-28T00:00:00Z")
     monkeypatch.setenv("RELAYTV_IMAGE_SOURCE", "https://github.com/mcgeezy/relaytv")
     monkeypatch.setattr(
-        routes,
+        app_info_routes,
         "_latest_release_from_github",
         lambda: (
             {
