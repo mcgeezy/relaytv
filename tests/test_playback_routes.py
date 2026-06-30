@@ -113,6 +113,118 @@ def test_close_route_preserves_queue_and_returns_closed_session(monkeypatch) -> 
     assert stop_mpv_calls == []
 
 
+def test_clear_now_playing_route_advances_queue_and_discards_temporary_state(monkeypatch) -> None:
+    calls: list[tuple[str, bool]] = []
+    routes._TEMP_PLAYBACK_STACK.clear()
+    routes._TEMP_PLAYBACK_STACK.append(
+        {
+            "id": "frame-1",
+            "resume": True,
+            "snapshot": {"now_playing": {"url": "https://example.com/interrupted.mp4"}},
+        }
+    )
+
+    monkeypatch.setattr(routes.state, "QUEUE", [{"url": "https://example.com/next.mp4"}], raising=False)
+    monkeypatch.setattr(
+        routes.player,
+        "advance_queue_playback",
+        lambda mode, prefer_playlist_next=True, poll_sleep=None: calls.append((mode, bool(prefer_playlist_next)))
+        or {
+            "status": "playing_next",
+            "now_playing": {"title": "Next"},
+            "method": "dequeue_play_item",
+        },
+    )
+
+    try:
+        client = TestClient(create_app(testing=True))
+        response = client.post("/now_playing/clear")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "playing_next"
+        assert body["now_playing"]["title"] == "Next"
+        assert "method" not in body
+        assert calls == [("next", True)]
+        assert routes._TEMP_PLAYBACK_STACK == []
+    finally:
+        routes._TEMP_PLAYBACK_STACK.clear()
+
+
+def test_clear_resumable_session_route_stops_and_clears_state(monkeypatch) -> None:
+    now_values: list[object] = []
+    session_positions: list[object] = []
+    session_states: list[str] = []
+    stop_calls: list[bool] = []
+    persist_calls: list[bool] = []
+
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.com/current.mp4"}, raising=False)
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: now_values.append(value) or setattr(routes.state, "NOW_PLAYING", value))
+    monkeypatch.setattr(routes.state, "set_session_position", lambda value: session_positions.append(value))
+    monkeypatch.setattr(routes.state, "set_session_state", lambda value: session_states.append(value) or setattr(routes.state, "SESSION_STATE", value))
+    monkeypatch.setattr(routes.state, "persist_queue", lambda: persist_calls.append(True))
+    monkeypatch.setattr(routes.player, "stop_mpv", lambda *args, **kwargs: stop_calls.append(True))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/resume/clear")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "cleared", "resume_available": False}
+    assert stop_calls == [True]
+    assert now_values == [None]
+    assert session_positions == [None]
+    assert session_states == ["idle"]
+    assert persist_calls == [True]
+
+
+def test_stop_route_preserves_resumable_current_item(monkeypatch) -> None:
+    now_values: list[object] = []
+    session_positions: list[object] = []
+    session_states: list[str] = []
+    stop_calls: list[bool] = []
+    history_calls: list[dict[str, object]] = []
+    jellyfin_calls: list[tuple[object, object]] = []
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "native_qt_playback_explicitly_ended", lambda: False)
+    monkeypatch.setattr(routes.player, "mpv_get", lambda prop: 31.5 if prop == "time-pos" else 120.0)
+    monkeypatch.setattr(routes.player, "stop_mpv", lambda *args, **kwargs: stop_calls.append(True))
+    monkeypatch.setattr(
+        routes.player,
+        "update_history_progress",
+        lambda item, position_sec=None, duration_sec=None, force=False: history_calls.append(
+            {"item": item, "position_sec": position_sec, "duration_sec": duration_sec, "force": force}
+        ),
+    )
+    monkeypatch.setattr(routes, "_jellyfin_emit_stopped_hint", lambda pos, dur: jellyfin_calls.append((pos, dur)))
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {"url": "https://example.com/current.mp4", "title": "Current", "jellyfin_item_id": "jf-1"},
+        raising=False,
+    )
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: now_values.append(value) or setattr(routes.state, "NOW_PLAYING", value))
+    monkeypatch.setattr(routes.state, "set_session_position", lambda value: session_positions.append(value))
+    monkeypatch.setattr(routes.state, "set_session_state", lambda value: session_states.append(value) or setattr(routes.state, "SESSION_STATE", value))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/stop")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "stopped"
+    assert body["resume_available"] is True
+    assert body["position"] == 31.5
+    assert now_values[-1]["closed"] is True
+    assert now_values[-1]["resume_pos"] == 31.5
+    assert session_positions == [31.5]
+    assert session_states == ["closed"]
+    assert stop_calls == [True]
+    assert history_calls[-1]["position_sec"] == 31.5
+    assert history_calls[-1]["duration_sec"] == 120.0
+    assert jellyfin_calls == [(31.5, 120.0)]
+
+
 def test_resume_session_route_uses_resolved_stream_without_relookup(monkeypatch) -> None:
     load_calls: list[dict[str, object]] = []
     start_calls: list[dict[str, object]] = []

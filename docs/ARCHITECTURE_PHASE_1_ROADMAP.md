@@ -244,6 +244,8 @@ Progress:
 - Added `tests/test_playback_routes.py` for HTTP-level route guardrails around
   `play_now`, `close`, `resume_session`, seek/volume/mute controls, and
   `/playback/state`.
+- Extended playback route guardrails for `/now_playing/clear`,
+  `/resume/clear`, and `/stop` before moving the close/resume/stop cluster.
 - Extracted pause/resume/toggle-pause, seek, volume, mute, and
   `/playback/state` into `app/relaytv_app/routes/playback.py`.
 - Extracted `/playback/play` and `/playback/toggle` into
