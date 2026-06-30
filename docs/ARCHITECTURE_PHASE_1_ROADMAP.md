@@ -313,7 +313,7 @@ Progress:
 
 ### M6: Extract Jellyfin Router
 
-Status: pending
+Status: in progress
 
 Candidate domains:
 
@@ -333,6 +333,15 @@ Exit criteria:
 - Jellyfin browse, queue, play, subtitle/audio selection, and command ingress
   still work.
 - `docs/JELLYFIN_OPERATIONS.md` is updated if the move exposes doc drift.
+
+Progress:
+
+- Started with the low-risk catalog/status slice, leaving playback actions,
+  audio/subtitle mutation, command ingress, heartbeat, progress, and stopped
+  endpoints for later M6 slices.
+- Added `tests/test_jellyfin_routes.py` for HTTP-level guardrails around
+  Jellyfin integration status, catalog cache clearing, home/search/movies,
+  series/seasons/episodes, item detail, and adjacent episode reads.
 
 ### M7: Extract UI Static Assets
 
