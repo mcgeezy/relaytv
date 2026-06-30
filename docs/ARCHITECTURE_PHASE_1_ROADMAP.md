@@ -251,6 +251,9 @@ Progress:
 - Extended playback route guardrails for `/play`, `/next`, `/play_at`,
   `/previous`, `/share`, and `/smart` before moving the playback-action
   cluster.
+- Added upload-route guardrails for `/ingest/media/enqueue` and
+  `/ingest/media/play` before moving upload ingest playback into the uploads
+  router.
 - Extracted pause/resume/toggle-pause, seek, volume, mute, and
   `/playback/state` into `app/relaytv_app/routes/playback.py`.
 - Extracted `/playback/play` and `/playback/toggle` into
