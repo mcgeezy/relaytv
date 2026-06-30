@@ -184,3 +184,125 @@ def test_jellyfin_episode_routes_return_catalog_payloads(monkeypatch) -> None:
     assert adjacent.status_code == 200
     assert adjacent.json()["prev"] == {"item_id": "prev"}
     assert adjacent.json()["next"] == {"item_id": "next"}
+
+
+def test_jellyfin_audio_options_reports_runtime_selection(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {
+            "provider": "jellyfin",
+            "jellyfin_item_id": "item-1",
+            "url": "http://jellyfin.local/Videos/item-1/stream?audioStreamIndex=0",
+        },
+    )
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id, refresh=False: {
+            "item_id": item_id,
+            "audio_streams": [
+                {"index": 0, "language": "eng", "display": "English", "is_default": True},
+                {"index": 1, "language": "jpn", "display": "Japanese", "is_default": False},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        routes.player,
+        "mpv_get",
+        lambda prop: [
+            {"type": "audio", "ff-index": 1, "lang": "jpn", "title": "Japanese", "selected": True},
+        ]
+        if prop == "track-list"
+        else None,
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/jellyfin/audio/options")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["current_audio_stream_index"] == 1
+    assert body["current_audio_language"] == "jpn"
+    assert body["options"][1]["is_current"] is True
+
+
+def test_jellyfin_audio_select_switches_runtime_track_in_place(monkeypatch) -> None:
+    settings_updates: list[dict[str, object]] = []
+    emitted: list[bool] = []
+    now_playing: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {
+            "provider": "jellyfin",
+            "title": "Movie",
+            "jellyfin_item_id": "item-1",
+            "jellyfin_audio_stream_index": "0",
+            "url": "http://jellyfin.local/Videos/item-1/stream?audioStreamIndex=0",
+        },
+    )
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id, refresh=False: {
+            "item_id": item_id,
+            "audio_streams": [
+                {"index": 0, "language": "eng", "display": "English", "is_default": True},
+                {"index": 1, "language": "jpn", "display": "Japanese", "is_default": False},
+            ],
+            "subtitle_streams": [],
+        },
+    )
+    monkeypatch.setattr(routes.state, "update_settings", lambda data: settings_updates.append(dict(data)))
+    monkeypatch.setattr(routes, "_retarget_jellyfin_queue_stream_preferences", lambda: 2)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {"time-pos": 45.5, "pause": False})
+    monkeypatch.setattr(routes, "_jellyfin_try_set_mpv_audio_track", lambda language="", display="": True)
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda data: now_playing.append(dict(data)))
+    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: emitted.append(True))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/audio/select", json={"index": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["method"] == "mpv_runtime_aid"
+    assert body["current_audio_stream_index"] == 1
+    assert body["current_audio_language"] == "jpn"
+    assert body["queued_items_retargeted"] == 2
+    assert settings_updates == [{"jellyfin_audio_lang": "jpn"}]
+    assert emitted == [True]
+    assert now_playing[-1]["jellyfin_audio_stream_index"] == "1"
+
+
+def test_jellyfin_subtitle_select_rejects_unavailable_index(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {
+            "provider": "jellyfin",
+            "jellyfin_item_id": "item-1",
+            "url": "http://jellyfin.local/Videos/item-1/stream",
+        },
+    )
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id, refresh=False: {
+            "item_id": item_id,
+            "subtitle_streams": [
+                {"index": 2, "language": "eng", "display": "English", "is_default": True},
+            ],
+        },
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/jellyfin/subtitle/select", json={"index": 9})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "requested subtitle stream index is unavailable"
