@@ -27,6 +27,14 @@ class JellyfinItemActionReq(BaseModel):
     resume_pos: float | None = None
 
 
+class JellyfinConnectReq(BaseModel):
+    server_url: str
+    api_key: str | None = None
+    device_name: str | None = None
+    heartbeat_sec: int | None = None
+    register_now: bool = False
+
+
 def _ui_event_push_jellyfin(event: str, **payload) -> None:
     from . import _ui_event_push_jellyfin as push_jellyfin_event
 
@@ -234,6 +242,12 @@ def _jellyfin_should_suppress_duplicate_ui_action(command: str, item_id: str, re
     return helper(command, item_id, resume_pos)
 
 
+def _reset_jellyfin_command_state() -> None:
+    from . import _reset_jellyfin_command_state as reset
+
+    reset()
+
+
 @router.get("/integrations/jellyfin/status")
 def jellyfin_integration_status():
     """Jellyfin receiver integration status."""
@@ -255,6 +269,51 @@ def jellyfin_catalog_cache_clear():
         reason="manual_api",
     )
     return {"ok": True, "status": out}
+
+
+@router.post("/integrations/jellyfin/connect")
+def jellyfin_integration_connect(req: JellyfinConnectReq):
+    server_url = (req.server_url or "").strip()
+    if not server_url:
+        raise HTTPException(status_code=400, detail="server_url is required")
+    settings_name = ""
+    try:
+        settings_name = str((state.get_settings() if hasattr(state, "get_settings") else {}).get("device_name") or "").strip()
+    except Exception:
+        settings_name = ""
+    out = jellyfin_receiver.connect(
+        server_url=server_url,
+        api_key=req.api_key,
+        device_name=(req.device_name or settings_name or None),
+        heartbeat_sec=req.heartbeat_sec,
+    )
+    if bool(req.register_now):
+        out = dict(out)
+        out["register"] = jellyfin_receiver.register_receiver_once()
+    _reset_jellyfin_command_state()
+    _ui_event_push_jellyfin("connect", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
+    return out
+
+
+@router.post("/integrations/jellyfin/disconnect")
+def jellyfin_integration_disconnect():
+    _reset_jellyfin_command_state()
+    out = jellyfin_receiver.disconnect()
+    _ui_event_push_jellyfin("disconnect", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
+    return out
+
+
+@router.post("/integrations/jellyfin/register")
+def jellyfin_integration_register():
+    """Force a single Jellyfin receiver registration handshake."""
+    st = jellyfin_receiver.status()
+    if not bool(st.get("enabled")):
+        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+    out = jellyfin_receiver.register_receiver_once()
+    _ui_event_push_jellyfin("register", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
+    if not bool(out.get("ok")):
+        return JSONResponse(out, status_code=202)
+    return out
 
 
 @router.get("/jellyfin/home")

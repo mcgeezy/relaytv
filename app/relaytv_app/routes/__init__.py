@@ -35,12 +35,16 @@ from .devices import router as devices_router
 from .health import router as health_router
 from .jellyfin import (
     JellyfinAudioSelectReq as JellyfinAudioSelectReq,
+    JellyfinConnectReq as JellyfinConnectReq,
     JellyfinItemActionReq as JellyfinItemActionReq,
     JellyfinSubtitleSelectReq as JellyfinSubtitleSelectReq,
     _require_jellyfin_catalog_ready as _require_jellyfin_catalog_ready,
     jellyfin_audio_options as jellyfin_audio_options,
     jellyfin_audio_select as jellyfin_audio_select,
     jellyfin_catalog_cache_clear as jellyfin_catalog_cache_clear,
+    jellyfin_integration_connect as jellyfin_integration_connect,
+    jellyfin_integration_disconnect as jellyfin_integration_disconnect,
+    jellyfin_integration_register as jellyfin_integration_register,
     jellyfin_home as jellyfin_home,
     jellyfin_integration_status as jellyfin_integration_status,
     jellyfin_item_action as jellyfin_item_action,
@@ -210,14 +214,6 @@ class JellyfinCommandReq(BaseModel):
     start_pos: float | None = None
     use_ytdlp: bool = True
     payload: dict | None = None
-
-
-class JellyfinConnectReq(BaseModel):
-    server_url: str
-    api_key: str | None = None
-    device_name: str | None = None
-    heartbeat_sec: int | None = None
-    register_now: bool = False
 
 
 def _overlay_osd_debug_enabled() -> bool:
@@ -2377,51 +2373,6 @@ def toast(req: OverlayReq):
 def notify(req: OverlayReq):
     """Alias for /overlay to map cleanly to Home Assistant relaytv.notify services."""
     return overlay(req)
-
-
-@router.post("/integrations/jellyfin/connect")
-def jellyfin_integration_connect(req: JellyfinConnectReq):
-    server_url = (req.server_url or "").strip()
-    if not server_url:
-        raise HTTPException(status_code=400, detail="server_url is required")
-    settings_name = ""
-    try:
-        settings_name = str((state.get_settings() if hasattr(state, "get_settings") else {}).get("device_name") or "").strip()
-    except Exception:
-        settings_name = ""
-    out = jellyfin_receiver.connect(
-        server_url=server_url,
-        api_key=req.api_key,
-        device_name=(req.device_name or settings_name or None),
-        heartbeat_sec=req.heartbeat_sec,
-    )
-    if bool(req.register_now):
-        out = dict(out)
-        out["register"] = jellyfin_receiver.register_receiver_once()
-    _reset_jellyfin_command_state()
-    _ui_event_push_jellyfin("connect", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
-    return out
-
-
-@router.post("/integrations/jellyfin/disconnect")
-def jellyfin_integration_disconnect():
-    _reset_jellyfin_command_state()
-    out = jellyfin_receiver.disconnect()
-    _ui_event_push_jellyfin("disconnect", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
-    return out
-
-
-@router.post("/integrations/jellyfin/register")
-def jellyfin_integration_register():
-    """Force a single Jellyfin receiver registration handshake."""
-    st = jellyfin_receiver.status()
-    if not bool(st.get("enabled")):
-        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
-    out = jellyfin_receiver.register_receiver_once()
-    _ui_event_push_jellyfin("register", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
-    if not bool(out.get("ok")):
-        return JSONResponse(out, status_code=202)
-    return out
 
 
 def _first_nonempty_str(values: list[object]) -> str:

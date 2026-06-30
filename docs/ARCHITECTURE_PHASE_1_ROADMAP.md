@@ -369,8 +369,15 @@ Progress:
   `app/relaytv_app/routes/jellyfin.py`:
   - `POST /jellyfin/action`
   - `POST /jellyfin/tv/series/{series_id}/play_all`
-- Remaining M6 slices: connect/disconnect/register, command ingress, and
-  heartbeat/progress/stopped.
+- Added Jellyfin lifecycle route guardrails for settings-derived device names,
+  optional register-on-connect, command-state resets, UI refresh events, and
+  pending register handshakes.
+- Extracted Jellyfin lifecycle routes into
+  `app/relaytv_app/routes/jellyfin.py`:
+  - `POST /integrations/jellyfin/connect`
+  - `POST /integrations/jellyfin/disconnect`
+  - `POST /integrations/jellyfin/register`
+- Remaining M6 slice: command ingress plus heartbeat/progress/stopped.
 
 ### M7: Extract UI Static Assets
 
@@ -451,6 +458,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin audio/subtitle options and selection into `app/relaytv_app/routes/jellyfin.py`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_smoke.py` | Continue M6 with item actions or connect/disconnect/register. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin action and series play-all route guardrails before moving command-construction routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract item action and series play-all routes into the Jellyfin router. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin item action and series play-all routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Continue M6 with connect/disconnect/register. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin lifecycle route guardrails before moving connect/disconnect/register. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract lifecycle routes into the Jellyfin router. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin connect/disconnect/register routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Continue M6 with command ingress plus heartbeat/progress/stopped. |
 
 ## Open Questions
 
@@ -460,6 +469,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Continue M6 with connect/disconnect/register next. That slice is mostly
-receiver lifecycle and UI refresh events, and it should stay separate from the
-larger command ingress plus heartbeat/progress/stopped move.
+Continue M6 with the remaining command ingress plus heartbeat/progress/stopped
+cluster. Add guardrails first because those endpoints share command state,
+progress snapshots, stopped snapshots, playback handoff, and UI refresh side
+effects.
