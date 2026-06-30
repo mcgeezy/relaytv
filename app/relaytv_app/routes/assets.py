@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import asyncio
 import mimetypes
 import os
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+
+from ..thumb_cache import THUMB_DIR, ensure_cached_sync
 
 
 router = APIRouter()
@@ -210,6 +213,22 @@ def _jellyfin_svg(size: int = 128) -> str:
   <polygon points="64,28 95,82 33,82" fill="url(#jg)" />
   <circle cx="64" cy="90" r="8" fill="#8dc2ff" opacity="0.95" />
 </svg>'''
+
+
+@router.get("/thumbs/{filename}")
+async def thumbs(filename: str):
+    # Security: only allow simple filenames like <hex>.jpg
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return Response(status_code=400)
+    path = os.path.join(THUMB_DIR, filename)
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+    # Try to materialize on-demand from the stored mapping (best effort).
+    thumb_id = filename[:-4] if filename.lower().endswith(".jpg") else filename
+    ok = await asyncio.to_thread(ensure_cached_sync, thumb_id)
+    if ok and os.path.exists(path):
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+    return Response(status_code=404)
 
 
 @router.get("/assets/logo.svg")

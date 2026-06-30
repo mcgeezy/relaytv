@@ -28,7 +28,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from .. import state, resolver, player, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
 from ..integrations import jellyfin_receiver
-from ..thumb_cache import THUMB_DIR, ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
+from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
 from .devices import router as devices_router
@@ -94,21 +94,6 @@ def _idle_weather_proxy_url(settings_payload: dict | None) -> str:
     }
     return "https://api.open-meteo.com/v1/forecast?" + urlencode(params)
 
-
-@router.get("/thumbs/{filename}")
-async def thumbs(filename: str):
-    # Security: only allow simple filenames like <hex>.jpg
-    if "/" in filename or "\\" in filename or ".." in filename:
-        return Response(status_code=400)
-    path = os.path.join(THUMB_DIR, filename)
-    if os.path.exists(path):
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
-    # Try to materialize on-demand from the stored mapping (best effort).
-    thumb_id = filename[:-4] if filename.lower().endswith(".jpg") else filename
-    ok = await asyncio.to_thread(ensure_cached_sync, thumb_id)
-    if ok and os.path.exists(path):
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
-    return Response(status_code=404)
 
 # =========================
 # API Models
