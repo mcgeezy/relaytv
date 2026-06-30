@@ -434,3 +434,131 @@ def test_jellyfin_item_action_suppresses_duplicate_ui_action(monkeypatch) -> Non
         "resolved_resume_pos": 12.0,
     }
     assert commands == []
+
+
+def test_jellyfin_connect_uses_settings_device_name_and_registers(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    events: list[dict[str, object]] = []
+    resets: list[bool] = []
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"device_name": "Living Room TV"})
+
+    def fake_connect(*, server_url, api_key=None, device_name=None, heartbeat_sec=None):
+        calls.append(
+            {
+                "server_url": server_url,
+                "api_key": api_key,
+                "device_name": device_name,
+                "heartbeat_sec": heartbeat_sec,
+            }
+        )
+        return {"ok": True, "connected": True}
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "connect", fake_connect)
+    monkeypatch.setattr(routes.jellyfin_receiver, "register_receiver_once", lambda: {"ok": True, "registered": True})
+    monkeypatch.setattr(routes, "_reset_jellyfin_command_state", lambda: resets.append(True))
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post(
+        "/integrations/jellyfin/connect",
+        json={
+            "server_url": " http://jellyfin.local/ ",
+            "api_key": "secret",
+            "heartbeat_sec": 15,
+            "register_now": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "connected": True, "register": {"ok": True, "registered": True}}
+    assert calls == [
+        {
+            "server_url": "http://jellyfin.local/",
+            "api_key": "secret",
+            "device_name": "Living Room TV",
+            "heartbeat_sec": 15,
+        }
+    ]
+    assert resets == [True]
+    assert events == [
+        {
+            "event": "connect",
+            "refresh_active_tab": True,
+            "refresh_settings": True,
+            "refresh_status": True,
+        }
+    ]
+
+
+def test_jellyfin_connect_requires_server_url(monkeypatch) -> None:
+    calls: list[object] = []
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "connect", lambda **kwargs: calls.append(kwargs))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/connect", json={"server_url": "   "})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "server_url is required"
+    assert calls == []
+
+
+def test_jellyfin_disconnect_resets_and_emits_event(monkeypatch) -> None:
+    events: list[dict[str, object]] = []
+    resets: list[bool] = []
+
+    monkeypatch.setattr(routes, "_reset_jellyfin_command_state", lambda: resets.append(True))
+    monkeypatch.setattr(routes.jellyfin_receiver, "disconnect", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/disconnect")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "enabled": False}
+    assert resets == [True]
+    assert events == [
+        {
+            "event": "disconnect",
+            "refresh_active_tab": True,
+            "refresh_settings": True,
+            "refresh_status": True,
+        }
+    ]
+
+
+def test_jellyfin_register_requires_enabled_receiver(monkeypatch) -> None:
+    calls: list[bool] = []
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": False})
+    monkeypatch.setattr(routes.jellyfin_receiver, "register_receiver_once", lambda: calls.append(True))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/register")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "jellyfin integration disabled"
+    assert calls == []
+
+
+def test_jellyfin_register_returns_accepted_for_pending_handshake(monkeypatch) -> None:
+    events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes.jellyfin_receiver, "register_receiver_once", lambda: {"ok": False, "pending": True})
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/register")
+
+    assert response.status_code == 202
+    assert response.json() == {"ok": False, "pending": True}
+    assert events == [
+        {
+            "event": "register",
+            "refresh_active_tab": True,
+            "refresh_settings": True,
+            "refresh_status": True,
+        }
+    ]
