@@ -472,10 +472,27 @@ Progress:
   - `GET /assets/banner.png`
   - `GET /pwa/brand/banner.png`
 - Confirmed the updated banner image is served by the banner endpoints.
-- Browser-rendered `/ui` review remains pending because no local Playwright or
-  Chromium browser is available in this shell.
-- Credentialed Jellyfin manual smoke remains pending until Jellyfin credentials
-  and a live server are available.
+- Browser-rendered views were reviewed in the live container environment and
+  confirmed good.
+- Rebuilt and force-recreated the live `relaytv` Compose container from the
+  local branch image with existing `.env` credentials and data mounts.
+- Live credentialed HTTP smoke passed against the rebuilt container:
+  - `GET /status`
+  - `GET /settings`
+  - `GET /ui`
+  - `GET /idle`
+  - `GET /static/ui/app.css`
+  - `GET /static/ui/app.js`
+  - `GET /assets/banner.png`
+  - `GET /pwa/brand/banner.png`
+  - `GET /integrations/jellyfin/status`
+  - `GET /jellyfin/home?limit=6&refresh=1`
+  - `GET /jellyfin/movies?limit=6&refresh=1`
+  - `GET /jellyfin/search?q=the&limit=3`
+- Live status confirmed the Qt shell runtime is selected and Jellyfin is
+  enabled, authenticated, connected, and running.
+- Manual settings apply plus playback/Jellyfin play and queue actions still
+  need explicit confirmation before opening the final Phase 1 to `main` PR.
 
 ## PR And Milestone Log
 
@@ -514,6 +531,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M7 by extracting the main `/ui` stylesheet into `app/relaytv_app/static/ui/app.css` and adding narrow static UI asset serving. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Continue M7 with JavaScript extraction. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M7 by extracting the main `/ui` JavaScript into `app/relaytv_app/static/ui/app.js` with an inline bootstrap for dynamic catalog data. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Begin M8 final validation and manual UI review. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M8 final validation, included the updated banner image, passed automated gates and live HTTP asset checks. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check`; live `GET /ui`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png` | Complete rendered browser review and credentialed Jellyfin smoke when environment is available. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Rebuilt and force-recreated the live Compose container, recorded user-confirmed browser view review, and ran credentialed live HTTP/Jellyfin smoke. | `docker compose up -d --build --force-recreate relaytv`; live `GET /status`, `/settings`, `/ui`, `/idle`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`, `/integrations/jellyfin/status`, `/jellyfin/home?limit=6&refresh=1`, `/jellyfin/movies?limit=6&refresh=1`, `/jellyfin/search?q=the&limit=3`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Complete explicit settings apply plus playback/Jellyfin play and queue smoke before final Phase 1 to `main` PR. |
 
 ## Open Questions
 
@@ -523,7 +541,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Complete the remaining M8 manual checks in an environment with browser tooling
-and Jellyfin credentials. The automated gates and live HTTP asset review have
-passed; do not merge Phase 1 to `main` until rendered `/ui`, settings,
-playback, and Jellyfin smoke are confirmed.
+Complete the remaining M8 manual settings apply and playback action checks in
+the live environment. The automated gates, rendered browser view review, and
+credentialed live HTTP/Jellyfin browse smoke have passed; do not merge Phase 1
+to `main` until settings apply plus playback/Jellyfin play and queue actions
+are explicitly confirmed.
