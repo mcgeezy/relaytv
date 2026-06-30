@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, Request, File, Form, UploadFile
 from fastapi.responses import (
     StreamingResponse,
     HTMLResponse,
-    RedirectResponse,
     JSONResponse,
     FileResponse,
     Response,
@@ -35,6 +34,7 @@ from .devices import router as devices_router
 from .health import router as health_router
 from .snapshots import router as snapshots_router
 from .status import router as status_router
+from .ui import router as ui_router
 
 router = APIRouter()
 router.include_router(app_info_router)
@@ -43,6 +43,7 @@ router.include_router(devices_router)
 router.include_router(health_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)
+router.include_router(ui_router)
 logger = get_logger("routes")
 _JELLYFIN_PLAY_DEBOUNCE_LOCK = threading.Lock()
 _JELLYFIN_LAST_PLAY: dict[str, object] = {"ts": 0.0, "url": "", "item_id": "", "start_pos": None}
@@ -16079,12 +16080,3 @@ window.addEventListener('DOMContentLoaded', () => {
 """
     html = html.replace("__IDLE_PANEL_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
     return HTMLResponse(content=html)
-
-
-
-
-
-
-@router.get("/")
-def root():
-    return RedirectResponse(url="/ui")

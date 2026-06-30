@@ -130,6 +130,8 @@ Progress:
 - Extracted `/thumbs/{filename}` into `app/relaytv_app/routes/assets.py`.
 - Extracted `/snapshots/{filename}` and the GET/POST `/snapshot` aliases into
   `app/relaytv_app/routes/snapshots.py`.
+- Seeded `app/relaytv_app/routes/ui.py` with the `/` to `/ui` redirect ahead
+  of the larger `/ui` extraction.
 
 ### M3: Extract Queue And Playback Routers
 
@@ -260,6 +262,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting brand/static/PWA asset routes and shared static asset helpers. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with thumbnails/snapshots/uploads or simple root redirect. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by moving thumbnail serving into the asset router. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with snapshots/uploads or simple root redirect. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting snapshot serving and capture aliases. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with uploads or simple root redirect. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by seeding the UI router with the root redirect. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with uploads or capability endpoints. |
 
 ## Open Questions
 
@@ -269,6 +272,6 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Continue M2 with low-risk uploads or simple root redirect extraction. Avoid
-moving playback, settings, and Jellyfin routes until the router aggregation
-pattern is proven.
+Continue M2 with low-risk uploads or capability endpoints. Avoid moving
+playback, settings, and Jellyfin routes until the router aggregation pattern is
+proven.
