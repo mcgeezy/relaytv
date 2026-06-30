@@ -139,29 +139,98 @@ Progress:
   overlay/playback extraction work because their helper dependencies are shared
   with active overlay and playback status behavior.
 
-### M3: Extract Queue And Playback Routers
+### M3: Extract Queue And History Router
 
 Status: pending
 
 Candidate domains:
 
 - queue/history endpoints
-- play/pause/resume/seek/volume/close endpoints
-- smart/share/play-now aliases
+- queue add aliases:
+  - `POST /enqueue`
+  - `POST /queue/add`
+  - `POST /api/queue/add`
+  - `POST /v1/queue/add`
+- queue mutation endpoints:
+  - `POST /queue/remove`
+  - `POST /queue/move`
+  - `POST /queue/dedupe`
+  - `POST /clear`
+  - `POST /now_playing/clear`
+- history endpoints:
+  - `GET /history`
+  - `POST /history/clear`
+  - `POST /history/play`
+- queue read endpoint:
+  - `GET /queue`
 
 Risks:
 
-- These endpoints touch `state`, `player`, queue locks, resume state, and
-  Jellyfin stopped/progress side effects.
+- These endpoints touch `state`, queue locks, queue persistence, history
+  persistence, player prefetch/prime hooks, and queue UI events.
 - Avoid behavior refactors here. Move code first; improve internals later.
+- Keep playback actions such as `/play_now`, `/next`, `/previous`, `/smart`,
+  `/share`, `/play`, upload ingest enqueue/play, and close/resume/stop endpoints
+  out of M3 unless a helper must move to preserve queue behavior.
+
+Guardrails before moving:
+
+- Keep `tests/test_route_inventory.py` authoritative for aliases.
+- Add or identify focused queue/history tests for:
+  - alias registration
+  - queue add path equivalence
+  - queue remove/move/dedupe behavior
+  - queue clear behavior
+  - history read/clear/play behavior
+  - queue retention behavior from the recent close/play-now fixes
+
+Exit criteria:
+
+- Queue and history response shapes are unchanged.
+- Queue aliases continue to resolve to the same endpoint names.
+- Close/play-now behavior is not modified in this milestone.
+- Existing queue retention tests still pass.
+
+### M4: Extract Playback Router
+
+Status: pending
+
+Candidate domains:
+
+- play/pause/resume/seek/volume/close endpoints
+- play-now, play-temporary, next/previous, smart/share aliases
+- playback state endpoint
+- upload ingest enqueue/play endpoints if still coupled to playback helpers
+- `/notifications/capabilities` and `/runtime/capabilities` if helper
+  dependencies fit better with overlay/playback movement
+
+Risks:
+
+- These endpoints touch `state`, `player`, queue locks, resume state, temporary
+  playback stack, upload streaming, overlay toasts, and Jellyfin
+  stopped/progress side effects.
+- This is a route relocation milestone, not a playback behavior redesign.
+- Preserve the recent fixes for interrupted playback, close behavior, queue
+  retention, and idle/dashboard return semantics.
+
+Manual smoke required before closing:
+
+- play URL
+- enqueue URL
+- play now while queue exists
+- close active play with preserved queue
+- close returns idle/dashboard without replaying interrupted media
+- upload play/enqueue still works
+- playback state remains coherent with active media metadata
 
 Exit criteria:
 
 - Close/play-now/queue behavior is unchanged.
 - Focused tests cover queue retention and close behavior paths already fixed in
   previous PRs.
+- Upload ingest play/enqueue behavior is unchanged.
 
-### M4: Extract Settings Router
+### M5: Extract Settings Router
 
 Status: pending
 
@@ -184,7 +253,7 @@ Exit criteria:
 - CEC, idle dashboard, idle notifications, uploads, YouTube, and Jellyfin
   settings retain behavior.
 
-### M5: Extract Jellyfin Router
+### M6: Extract Jellyfin Router
 
 Status: pending
 
@@ -207,7 +276,7 @@ Exit criteria:
   still work.
 - `docs/JELLYFIN_OPERATIONS.md` is updated if the move exposes doc drift.
 
-### M6: Extract UI Static Assets
+### M7: Extract UI Static Assets
 
 Status: pending
 
@@ -231,7 +300,7 @@ Exit criteria:
 - Jellyfin shell still opens.
 - PWA/static asset paths still work.
 
-### M7: Phase 1 Final Validation
+### M8: Phase 1 Final Validation
 
 Status: pending
 
@@ -239,6 +308,7 @@ Required before merging to `main`:
 
 - `ruff check app tests`
 - `PYTHONPATH=app pytest -q tests/test_smoke.py`
+- `PYTHONPATH=app pytest -q tests/test_route_inventory.py`
 - Manual `/ui` review in a running container.
 - Manual settings modal apply check.
 - Manual playback smoke:
@@ -246,6 +316,8 @@ Required before merging to `main`:
   - enqueue URL
   - play now with queue present
   - close returns to idle/dashboard behavior
+  - close does not replay interrupted media
+  - upload play/enqueue
 - Manual Jellyfin smoke when credentials are available:
   - status badge
   - browse home
@@ -271,6 +343,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by seeding the UI router with the root redirect. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with uploads or capability endpoints. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting static uploaded-media serving while leaving ingest/playback upload routes in place. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with capability endpoints or begin planning M3 queue/playback moves. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Closed M2 after extracting the low-risk standalone routers and documenting deferred capability endpoints. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history route extraction before playback controls. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Split queue/history and playback into separate milestones, added M3 guardrails, and renumbered later milestones. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history tests and route extraction. |
 
 ## Open Questions
 
@@ -280,5 +353,6 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Begin M3 with queue/history route extraction before playback controls. Avoid
-moving settings and Jellyfin routes until queue/playback movement is proven.
+Begin M3 with queue/history tests and route extraction before playback controls.
+Avoid moving settings and Jellyfin routes until queue/playback movement is
+proven.
