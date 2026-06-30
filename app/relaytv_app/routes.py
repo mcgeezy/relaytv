@@ -10256,7 +10256,6 @@ def ui():
       text-decoration: none;
     }
 .hint { font-size: 12px; opacity: 0.75; margin-top: 6px; }
-.chk { display:flex; align-items:center; gap:8px; font-size: 14px; }
 .toggleRow{
   display:flex;
   align-items:center;
@@ -10308,7 +10307,7 @@ def ui():
 .toggleSwitch input:disabled + .toggleTrack{opacity:.45;cursor:not-allowed;filter:saturate(.55);}
 .toggleSwitch:has(input:disabled){cursor:not-allowed;}
 .modalBottom { display:flex; justify-content:flex-end; margin-top: 14px; }
-.fieldLbl { display:block; font-size: 13px; opacity: 0.8; margin-bottom: 6px; }
+.fieldLbl { display:block; font-size: 13px; opacity: 0.8; }
 .settingsGroup{
   margin-top: 12px;
   border: 1px solid var(--stroke);
@@ -10337,7 +10336,71 @@ def ui():
 .settingsGroup:not([open]) > summary::after{ content: '▸'; }
 .settingsGroup[open] > summary{ border-bottom-color: var(--stroke); }
 .settingsBody{ padding: 4px 14px 12px; }
-.settingsBody .fieldRow{ margin-top: 10px; }
+.settingsBody .fieldRow{
+  display:grid;
+  gap:6px;
+  align-items:start;
+  margin-top: 10px;
+}
+.settingsBody input.input:not([type]),
+.settingsBody .input[type="text"],
+.settingsBody .input[type="password"],
+.settingsBody .input[type="url"],
+.settingsBody .input[type="number"],
+.settingsBody select.input{
+  width:100%;
+  min-height:42px;
+  padding:0 13px;
+  border-radius:12px;
+  border:1px solid rgba(148, 163, 184, .30);
+  background:linear-gradient(180deg, rgba(15, 23, 42, .88), rgba(30, 41, 59, .68));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 8px 22px rgba(2, 6, 23, .18);
+  color:#edf4ff;
+  font:inherit;
+  font-size:14px;
+  outline:none;
+  transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.settingsBody input.input:not([type])::placeholder,
+.settingsBody .input[type="text"]::placeholder,
+.settingsBody .input[type="password"]::placeholder,
+.settingsBody .input[type="url"]::placeholder,
+.settingsBody .input[type="number"]::placeholder{
+  color:rgba(219, 228, 245, .60);
+}
+.settingsBody input.input:not([type]):focus,
+.settingsBody .input[type="text"]:focus,
+.settingsBody .input[type="password"]:focus,
+.settingsBody .input[type="url"]:focus,
+.settingsBody .input[type="number"]:focus,
+.settingsBody select.input:focus{
+  border-color:rgba(96, 165, 250, .72);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 3px rgba(96, 165, 250, .16), 0 10px 24px rgba(30, 64, 175, .22);
+}
+.settingsBody select.input{
+  appearance:none;
+  -webkit-appearance:none;
+  padding-right:38px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(226, 232, 240, .88) 50%),
+    linear-gradient(135deg, rgba(226, 232, 240, .88) 50%, transparent 50%),
+    linear-gradient(180deg, rgba(15, 23, 42, .88), rgba(30, 41, 59, .68));
+  background-position:
+    calc(100% - 19px) 50%,
+    calc(100% - 13px) 50%,
+    0 0;
+  background-size:6px 6px, 6px 6px, 100% 100%;
+  background-repeat:no-repeat;
+}
+.settingsBody select.input option{
+  background:#111827;
+  color:#edf4ff;
+}
+.settingsBody input.input:disabled,
+.settingsBody select.input:disabled{
+  opacity:.62;
+  cursor:not-allowed;
+}
 .sectionStatus{
   display:inline-flex;
   align-items:center;
@@ -10509,14 +10572,28 @@ def ui():
     background: linear-gradient(180deg, rgba(123, 196, 255, .24), rgba(255,255,255,.08));
   }
   .settingsBody select.input,
+  .settingsBody input.input:not([type]),
   .settingsBody .input[type="text"],
   .settingsBody .input[type="password"],
   .settingsBody .input[type="url"],
   .settingsBody .input[type="number"]{
-    background: rgba(255,255,255,.96);
+    background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(239, 246, 255, .94));
     color: #0c1324;
     border-color: rgba(15,23,42,.16);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.82), 0 1px 2px rgba(15,23,42,.04);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.82), 0 8px 22px rgba(15,23,42,.08);
+  }
+  .settingsBody input.input:not([type])::placeholder,
+  .settingsBody .input[type="text"]::placeholder,
+  .settingsBody .input[type="password"]::placeholder,
+  .settingsBody .input[type="url"]::placeholder,
+  .settingsBody .input[type="number"]::placeholder{
+    color: rgba(15,23,42,.42);
+  }
+  .settingsBody select.input{
+    background-image:
+      linear-gradient(45deg, transparent 50%, rgba(15,23,42,.72) 50%),
+      linear-gradient(135deg, rgba(15,23,42,.72) 50%, transparent 50%),
+      linear-gradient(180deg, rgba(255,255,255,.98), rgba(239, 246, 255, .94));
   }
   .settingsBody select.input option{
     background: #ffffff;
@@ -15389,7 +15466,17 @@ function renderIdlePanelSettings(cfg){
 
     const row = document.createElement('div');
     row.className = 'fieldRow';
-    row.innerHTML = `<label class="chk"><input type="checkbox" data-idle-enable="${key}" ${enabled ? 'checked' : ''}/> ${meta.title}</label><div class="hint">${meta.desc || ''}</div>`;
+    row.innerHTML = `
+      <div class="toggleRow">
+        <div class="toggleCopy">
+          <div class="toggleTitle">${meta.title}</div>
+          <div class="toggleHint">${meta.desc || ''}</div>
+        </div>
+        <label class="toggleSwitch" title="${meta.title}">
+          <input type="checkbox" data-idle-enable="${key}" ${enabled ? 'checked' : ''}/>
+          <span class="toggleTrack" aria-hidden="true"></span>
+        </label>
+      </div>`;
 
     const sel = document.createElement('select');
     sel.className = 'input';
@@ -15534,10 +15621,13 @@ async function loadSettingsUi(){
   }
   const jfBadge = document.getElementById('setJfStatus');
   if (jfBadge) {
-    const up = !!(jfStatus && jfStatus.enabled && (jfStatus.connected || jfStatus.authenticated));
-    jfBadge.textContent = up ? 'Connected' : 'Down';
-    jfBadge.classList.remove('up', 'down');
-    jfBadge.classList.add(up ? 'up' : 'down');
+    const enabled = jfStatus && Object.prototype.hasOwnProperty.call(jfStatus, 'enabled')
+      ? !!jfStatus.enabled
+      : !!cur.jellyfin_enabled;
+    const up = !!(enabled && jfStatus && (jfStatus.connected || jfStatus.authenticated));
+    jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';
+    jfBadge.classList.remove('up', 'down', 'warn', 'unknown');
+    jfBadge.classList.add(enabled ? (up ? 'up' : 'down') : 'unknown');
   }
   if (jfSyncDiag) {
     if (!jfStatus) {
@@ -16173,7 +16263,16 @@ window.addEventListener('DOMContentLoaded', () => {
     <details class="settingsGroup">
       <summary>YouTube</summary>
       <div class="settingsBody">
-        <label class="chk"><input type="checkbox" id="setYtUseInvidious" /> Use Invidious server for YouTube playback</label>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Use Invidious server for YouTube playback</div>
+            <div class="toggleHint">Resolve YouTube playback through the configured Invidious base URL.</div>
+          </div>
+          <label class="toggleSwitch" for="setYtUseInvidious" title="Use Invidious server for YouTube playback">
+            <input type="checkbox" id="setYtUseInvidious" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
         <div class="fieldRow">
           <label class="fieldLbl">Invidious server</label>
           <input id="setYtInvidiousBase" class="input" placeholder="https://invidious.example.org" />
@@ -16218,8 +16317,16 @@ window.addEventListener('DOMContentLoaded', () => {
         <details class="settingsGroup">
           <summary>Show QR in Idle</summary>
           <div class="settingsBody">
-            <label class="chk"><input type="checkbox" id="setIdleQrEnabled" /> Show connect QR in idle (bottom-right)</label>
-            <div class="hint">Displays a scannable code for the current RelayTV remote URL, with logo center.</div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Show connect QR in idle</div>
+                <div class="toggleHint">Display a scannable code for the current RelayTV remote URL, with logo center.</div>
+              </div>
+              <label class="toggleSwitch" for="setIdleQrEnabled" title="Show connect QR in idle">
+                <input type="checkbox" id="setIdleQrEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
             <div class="fieldRow">
               <label class="fieldLbl" for="setIdleQrSize">QR size <span id="setIdleQrSizeVal">168px</span></label>
               <input id="setIdleQrSize" class="input" type="range" min="96" max="280" step="4" value="168" />
@@ -16272,9 +16379,18 @@ window.addEventListener('DOMContentLoaded', () => {
     </details>
 
     <details class="settingsGroup">
-      <summary>Jellyfin Integration <span id="setJfStatus" class="sectionStatus down">Down</span></summary>
+      <summary>Jellyfin Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
-        <label class="chk"><input type="checkbox" id="setJfEnabled" /> Enable Jellyfin integration</label>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable Jellyfin integration</div>
+            <div class="toggleHint">Show Jellyfin browsing and playback controls when server settings are configured.</div>
+          </div>
+          <label class="toggleSwitch" for="setJfEnabled" title="Enable Jellyfin integration">
+            <input type="checkbox" id="setJfEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
 
         <div class="fieldRow">
           <label class="fieldLbl">Jellyfin server</label>
@@ -16294,7 +16410,16 @@ window.addEventListener('DOMContentLoaded', () => {
         <div class="fieldRow">
           <label class="fieldLbl">Password</label>
           <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-          <label class="chk"><input type="checkbox" id="setJfClearPassword" /> Clear stored password</label>
+          <div class="toggleRow">
+            <div class="toggleCopy">
+              <div class="toggleTitle">Clear stored password</div>
+              <div class="toggleHint">Remove the saved Jellyfin password on the next Jellyfin apply.</div>
+            </div>
+            <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
+              <input type="checkbox" id="setJfClearPassword" />
+              <span class="toggleTrack" aria-hidden="true"></span>
+            </label>
+          </div>
           <div class="hint" id="setJfPasswordState"></div>
         </div>
         <div class="fieldRow">
