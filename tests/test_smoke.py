@@ -103,6 +103,8 @@ def test_ui_smoke() -> None:
     assert 'id="setIdleQrEnabled"' in response.text
     assert 'id="setJfEnabled"' in response.text
     assert 'id="setJfClearPassword"' in response.text
+    assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
+    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in response.text
     assert 'class="toggleSwitch"' in response.text
     assert 'data-idle-enable="${key}"' in response.text
     assert 'class="chk"' not in response.text

@@ -15621,10 +15621,13 @@ async function loadSettingsUi(){
   }
   const jfBadge = document.getElementById('setJfStatus');
   if (jfBadge) {
-    const up = !!(jfStatus && jfStatus.enabled && (jfStatus.connected || jfStatus.authenticated));
-    jfBadge.textContent = up ? 'Connected' : 'Down';
-    jfBadge.classList.remove('up', 'down');
-    jfBadge.classList.add(up ? 'up' : 'down');
+    const enabled = jfStatus && Object.prototype.hasOwnProperty.call(jfStatus, 'enabled')
+      ? !!jfStatus.enabled
+      : !!cur.jellyfin_enabled;
+    const up = !!(enabled && jfStatus && (jfStatus.connected || jfStatus.authenticated));
+    jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';
+    jfBadge.classList.remove('up', 'down', 'warn', 'unknown');
+    jfBadge.classList.add(enabled ? (up ? 'up' : 'down') : 'unknown');
   }
   if (jfSyncDiag) {
     if (!jfStatus) {
@@ -16376,7 +16379,7 @@ window.addEventListener('DOMContentLoaded', () => {
     </details>
 
     <details class="settingsGroup">
-      <summary>Jellyfin Integration <span id="setJfStatus" class="sectionStatus down">Down</span></summary>
+      <summary>Jellyfin Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
         <div class="toggleRow">
           <div class="toggleCopy">
