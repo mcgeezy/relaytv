@@ -268,7 +268,11 @@ Progress:
   slices are moved.
 - Extracted `/play`, `/next`, `/play_at`, `/previous`, `/share`, and `/smart`
   into `app/relaytv_app/routes/playback.py`.
-- Kept upload ingest playback in the aggregate router for a later M4 slice.
+- Extracted `/ingest/media`, `/ingest/media/enqueue`, and
+  `/ingest/media/play` into `app/relaytv_app/routes/uploads.py`.
+- Remaining M4 candidates are `/notifications/capabilities` and
+  `/runtime/capabilities`, which share overlay/playback helper state and may
+  fit better in a small capability-router slice.
 
 ### M5: Extract Settings Router
 
