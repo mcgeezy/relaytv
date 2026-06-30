@@ -342,6 +342,21 @@ Progress:
 - Added `tests/test_jellyfin_routes.py` for HTTP-level guardrails around
   Jellyfin integration status, catalog cache clearing, home/search/movies,
   series/seasons/episodes, item detail, and adjacent episode reads.
+- Extracted Jellyfin catalog/status routes into
+  `app/relaytv_app/routes/jellyfin.py`:
+  - `GET /integrations/jellyfin/status`
+  - `POST /integrations/jellyfin/catalog/cache_clear`
+  - `GET /jellyfin/home`
+  - `GET /jellyfin/search`
+  - `GET /jellyfin/movies`
+  - `GET /jellyfin/tv/series`
+  - `GET /jellyfin/tv/series/{series_id}/seasons`
+  - `GET /jellyfin/tv/series/{series_id}/episodes`
+  - `GET /jellyfin/item/{item_id}`
+  - `GET /jellyfin/item/{item_id}/adjacent`
+- Remaining M6 slices: audio/subtitle options and selection, item actions,
+  connect/disconnect/register, command ingress, heartbeat/progress/stopped, and
+  series play-all.
 
 ### M7: Extract UI Static Assets
 
