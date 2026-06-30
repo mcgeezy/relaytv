@@ -354,9 +354,16 @@ Progress:
   - `GET /jellyfin/tv/series/{series_id}/episodes`
   - `GET /jellyfin/item/{item_id}`
   - `GET /jellyfin/item/{item_id}/adjacent`
-- Remaining M6 slices: audio/subtitle options and selection, item actions,
-  connect/disconnect/register, command ingress, heartbeat/progress/stopped, and
-  series play-all.
+- Added Jellyfin audio/subtitle route guardrails for runtime audio selection,
+  in-place audio switching, and unavailable subtitle index validation.
+- Extracted Jellyfin audio/subtitle option and selection routes into
+  `app/relaytv_app/routes/jellyfin.py`:
+  - `GET /jellyfin/audio/options`
+  - `POST /jellyfin/audio/select`
+  - `GET /jellyfin/subtitle/options`
+  - `POST /jellyfin/subtitle/select`
+- Remaining M6 slices: item actions, connect/disconnect/register, command
+  ingress, heartbeat/progress/stopped, and series play-all.
 
 ### M7: Extract UI Static Assets
 
@@ -433,6 +440,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted low-risk playback controls and `/playback/state` into `app/relaytv_app/routes/playback.py`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with `/playback/play` and `/playback/toggle` or close/play-now planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted `/playback/play` and `/playback/toggle` into the playback router. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with close/play-now planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted `/play_now` and interrupt-preservation behavior into the playback router. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with close/resume/stop planning. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin audio/subtitle route guardrails before moving audio/subtitle routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract audio/subtitle routes into the Jellyfin router. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin audio/subtitle options and selection into `app/relaytv_app/routes/jellyfin.py`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_smoke.py` | Continue M6 with item actions or connect/disconnect/register. |
 
 ## Open Questions
 
@@ -442,6 +451,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Begin M4 playback router planning. Keep the first M4 slice narrow and preserve
-the recent close, interrupted playback, queue retention, and idle/dashboard
-return behavior.
+Continue M6 with a narrow Jellyfin slice. Prefer item actions plus series
+play-all next because those routes share command construction behavior, then
+move connect/disconnect/register and finally command ingress plus
+heartbeat/progress/stopped.

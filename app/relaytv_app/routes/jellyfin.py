@@ -1,11 +1,24 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import os
+import time
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from .. import player, state
 from ..integrations import jellyfin_receiver
 
 
 router = APIRouter()
+
+
+class JellyfinAudioSelectReq(BaseModel):
+    index: int
+
+
+class JellyfinSubtitleSelectReq(BaseModel):
+    index: int
 
 
 def _ui_event_push_jellyfin(event: str, **payload) -> None:
@@ -23,6 +36,178 @@ def _require_jellyfin_catalog_ready() -> dict[str, object]:
     if not str(st.get("server_url") or "").strip():
         raise HTTPException(status_code=400, detail="jellyfin server_url not configured")
     return st
+
+
+def _require_jellyfin_catalog_ready_for_playback() -> dict[str, object]:
+    from . import _require_jellyfin_catalog_ready as require
+
+    return require()
+
+
+def _first_nonempty_str(values: list[str]) -> str:
+    from . import _first_nonempty_str as helper
+
+    return helper(values)
+
+
+def _extract_jellyfin_item_id_from_url_raw(raw_url: str | None) -> str:
+    from . import _extract_jellyfin_item_id_from_url_raw as helper
+
+    return helper(raw_url)
+
+
+def _extract_jellyfin_media_source_id_from_url(url: str) -> str:
+    from . import _extract_jellyfin_media_source_id_from_url as helper
+
+    return helper(url)
+
+
+def _extract_jellyfin_audio_stream_index_from_url(url: str) -> str:
+    from . import _extract_jellyfin_audio_stream_index_from_url as helper
+
+    return helper(url)
+
+
+def _extract_jellyfin_subtitle_stream_index_from_url(url: str) -> str:
+    from . import _extract_jellyfin_subtitle_stream_index_from_url as helper
+
+    return helper(url)
+
+
+def _jellyfin_runtime_selected_audio_stream(audio_streams: list[dict[str, object]]) -> tuple[int | None, str]:
+    from . import _jellyfin_runtime_selected_audio_stream as helper
+
+    return helper(audio_streams)
+
+
+def _jellyfin_runtime_selected_subtitle_stream(subtitle_streams: list[dict[str, object]]) -> tuple[int | None, str, bool]:
+    from . import _jellyfin_runtime_selected_subtitle_stream as helper
+
+    return helper(subtitle_streams)
+
+
+def _normalize_lang_pref(raw: str) -> str:
+    from . import _normalize_lang_pref as helper
+
+    return helper(raw)
+
+
+def _retarget_jellyfin_queue_stream_preferences() -> int:
+    from . import _retarget_jellyfin_queue_stream_preferences as helper
+
+    return helper()
+
+
+def _jellyfin_try_set_mpv_audio_track(
+    *,
+    language: str = "",
+    display: str = "",
+    preferred_stream_index: int | None = None,
+) -> bool:
+    from . import _jellyfin_try_set_mpv_audio_track as helper
+
+    if preferred_stream_index is None:
+        return helper(language=language, display=display)
+    return helper(language=language, display=display, preferred_stream_index=preferred_stream_index)
+
+
+def _jellyfin_try_set_mpv_subtitle_track(
+    *,
+    language: str = "",
+    display: str = "",
+    preferred_stream_index: int | None = None,
+    off: bool = False,
+) -> bool:
+    from . import _jellyfin_try_set_mpv_subtitle_track as helper
+
+    return helper(language=language, display=display, preferred_stream_index=preferred_stream_index, off=off)
+
+
+def _jellyfin_emit_progress_hint() -> None:
+    from . import _jellyfin_emit_progress_hint as helper
+
+    helper()
+
+
+def _jellyfin_access_token() -> str:
+    from . import _jellyfin_access_token as helper
+
+    return helper()
+
+
+def _build_jellyfin_item_stream_url(
+    item_id: str,
+    *,
+    server_url: str,
+    api_key: str,
+    media_source_id: str = "",
+    audio_stream_index: str = "",
+    subtitle_stream_index: str = "",
+) -> str:
+    from . import _build_jellyfin_item_stream_url as helper
+
+    return helper(
+        item_id,
+        server_url=server_url,
+        api_key=api_key,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+
+
+def _select_jellyfin_playback_url(
+    *,
+    item_id: str,
+    source_url: str,
+    server_url: str,
+    api_key: str,
+    media_source_id: str = "",
+    audio_stream_index: str = "",
+    subtitle_stream_index: str = "",
+    settings: dict[str, object] | None = None,
+) -> dict[str, object]:
+    from . import _select_jellyfin_playback_url as helper
+
+    return helper(
+        item_id=item_id,
+        source_url=source_url,
+        server_url=server_url,
+        api_key=api_key,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+        settings=settings,
+    )
+
+
+def _normalize_jellyfin_source_url(raw_url: str, *, server_url: str, api_key: str) -> str:
+    from . import _normalize_jellyfin_source_url as helper
+
+    return helper(raw_url, server_url=server_url, api_key=api_key)
+
+
+def _apply_jellyfin_stream_params(url: str, *, audio_stream_index: str = "", subtitle_stream_index: str = "") -> str:
+    from . import _apply_jellyfin_stream_params as helper
+
+    return helper(url, audio_stream_index=audio_stream_index, subtitle_stream_index=subtitle_stream_index)
+
+
+def _jellyfin_enrich_now_stream_metadata(
+    now: dict[str, object],
+    *,
+    detail: dict[str, object],
+    audio_stream_index: str = "",
+    subtitle_stream_index: str = "",
+) -> dict[str, object]:
+    from . import _jellyfin_enrich_now_stream_metadata as helper
+
+    return helper(
+        now,
+        detail=detail,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
 
 
 @router.get("/integrations/jellyfin/status")
@@ -276,4 +461,645 @@ def jellyfin_item_adjacent(item_id: str, refresh: bool = False):
         "next": nxt,
         "connected": bool(refreshed.get("connected")),
         "last_error": refreshed.get("last_error"),
+    }
+
+
+@router.get("/jellyfin/audio/options")
+def jellyfin_audio_options(refresh: bool = False):
+    _require_jellyfin_catalog_ready_for_playback()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not isinstance(now, dict) or not now:
+        raise HTTPException(status_code=409, detail="no active now_playing item")
+    provider = str(now.get("provider") or "").strip().lower()
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        item_id = _extract_jellyfin_item_id_from_url_raw(str(now.get("url") or ""))
+    if provider != "jellyfin" and not item_id:
+        raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    if not item_id:
+        raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+    try:
+        detail = jellyfin_receiver.get_item_detail(item_id, refresh=bool(refresh))
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin stream options")
+
+    audio_streams = detail.get("audio_streams") if isinstance(detail, dict) and isinstance(detail.get("audio_streams"), list) else []
+    current_idx = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_audio_stream_index") or "").strip(),
+            _extract_jellyfin_audio_stream_index_from_url(str(now.get("url") or "")),
+        ]
+    )
+    runtime_idx, runtime_lang = _jellyfin_runtime_selected_audio_stream(audio_streams)
+    if runtime_idx is not None:
+        current_idx = str(runtime_idx)
+    selected_numeric: int | None = None
+    try:
+        if current_idx != "":
+            selected_numeric = int(current_idx)
+    except Exception:
+        selected_numeric = None
+
+    options: list[dict[str, object]] = []
+    current_opt: dict[str, object] | None = None
+    fallback_default: dict[str, object] | None = None
+    fallback_first: dict[str, object] | None = None
+    for row in audio_streams:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx_int = int(row.get("index"))
+        except Exception:
+            continue
+        opt = {
+            "index": idx_int,
+            "language": str(row.get("language") or "").strip(),
+            "display": str(row.get("display") or "").strip(),
+            "is_default": bool(row.get("is_default")),
+            "is_current": False,
+        }
+        if fallback_first is None:
+            fallback_first = opt
+        if bool(opt["is_default"]) and fallback_default is None:
+            fallback_default = opt
+        if selected_numeric is not None and idx_int == selected_numeric:
+            opt["is_current"] = True
+            current_opt = opt
+        options.append(opt)
+
+    if current_opt is None and fallback_default is not None:
+        for opt in options:
+            if int(opt.get("index")) == int(fallback_default.get("index")):
+                opt["is_current"] = True
+                current_opt = opt
+                break
+    if current_opt is None and fallback_first is not None:
+        for opt in options:
+            if int(opt.get("index")) == int(fallback_first.get("index")):
+                opt["is_current"] = True
+                current_opt = opt
+                break
+
+    current_lang = _first_nonempty_str(
+        [
+            str((current_opt or {}).get("language") or "").strip(),
+            runtime_lang,
+            str(now.get("jellyfin_audio_language") or "").strip(),
+            str(now.get("audio_language") or "").strip(),
+            str(detail.get("audio_language") if isinstance(detail, dict) else "").strip(),
+        ]
+    )
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "current_audio_stream_index": (current_opt or {}).get("index"),
+        "current_audio_language": current_lang,
+        "options": options,
+    }
+
+
+@router.get("/jellyfin/subtitle/options")
+def jellyfin_subtitle_options(refresh: bool = False):
+    _require_jellyfin_catalog_ready_for_playback()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not isinstance(now, dict) or not now:
+        raise HTTPException(status_code=409, detail="no active now_playing item")
+    provider = str(now.get("provider") or "").strip().lower()
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        item_id = _extract_jellyfin_item_id_from_url_raw(str(now.get("url") or ""))
+    if provider != "jellyfin" and not item_id:
+        raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    if not item_id:
+        raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+    try:
+        detail = jellyfin_receiver.get_item_detail(item_id, refresh=bool(refresh))
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin subtitle options")
+
+    subtitle_streams = detail.get("subtitle_streams") if isinstance(detail, dict) and isinstance(detail.get("subtitle_streams"), list) else []
+    current_idx = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_subtitle_stream_index") or "").strip(),
+            _extract_jellyfin_subtitle_stream_index_from_url(str(now.get("url") or "")),
+        ]
+    )
+    runtime_idx, runtime_lang, runtime_off = _jellyfin_runtime_selected_subtitle_stream(subtitle_streams)
+    if runtime_off:
+        current_idx = "-1"
+    elif runtime_idx is not None:
+        current_idx = str(runtime_idx)
+    current_is_off = current_idx == "-1"
+    selected_numeric: int | None = None
+    try:
+        if not current_is_off and current_idx != "":
+            selected_numeric = int(current_idx)
+    except Exception:
+        selected_numeric = None
+
+    options: list[dict[str, object]] = [{
+        "index": -1,
+        "language": "",
+        "display": "Off",
+        "is_default": False,
+        "is_current": current_is_off,
+        "is_off": True,
+    }]
+    current_opt: dict[str, object] | None = options[0] if current_is_off else None
+    fallback_default: dict[str, object] | None = None
+    fallback_first: dict[str, object] | None = None
+    for row in subtitle_streams:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx_int = int(row.get("index"))
+        except Exception:
+            continue
+        opt = {
+            "index": idx_int,
+            "language": str(row.get("language") or "").strip(),
+            "display": str(row.get("display") or "").strip(),
+            "is_default": bool(row.get("is_default")),
+            "is_current": False,
+            "is_off": False,
+        }
+        if fallback_first is None:
+            fallback_first = opt
+        if bool(opt["is_default"]) and fallback_default is None:
+            fallback_default = opt
+        if selected_numeric is not None and idx_int == selected_numeric:
+            opt["is_current"] = True
+            current_opt = opt
+        options.append(opt)
+
+    if current_opt is None and fallback_default is not None:
+        for opt in options:
+            if int(opt.get("index")) == int(fallback_default.get("index")):
+                opt["is_current"] = True
+                current_opt = opt
+                break
+    if current_opt is None and fallback_first is not None:
+        for opt in options:
+            if int(opt.get("index")) == int(fallback_first.get("index")):
+                opt["is_current"] = True
+                current_opt = opt
+                break
+
+    current_lang = "off" if current_is_off else _first_nonempty_str(
+        [
+            str((current_opt or {}).get("language") or "").strip(),
+            runtime_lang,
+            str(now.get("jellyfin_subtitle_language") or "").strip(),
+            str(now.get("subtitle_language") or "").strip(),
+            str(detail.get("subtitle_language") if isinstance(detail, dict) else "").strip(),
+        ]
+    )
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "current_subtitle_stream_index": -1 if current_is_off else (current_opt or {}).get("index"),
+        "current_subtitle_language": current_lang,
+        "current_subtitle_off": current_is_off,
+        "options": options,
+    }
+
+
+@router.post("/jellyfin/audio/select")
+def jellyfin_audio_select(req: JellyfinAudioSelectReq):
+    st = _require_jellyfin_catalog_ready_for_playback()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not isinstance(now, dict) or not now:
+        raise HTTPException(status_code=409, detail="no active now_playing item")
+    provider = str(now.get("provider") or "").strip().lower()
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        item_id = _extract_jellyfin_item_id_from_url_raw(str(now.get("url") or ""))
+    if provider != "jellyfin" and not item_id:
+        raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    if not item_id:
+        raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+
+    try:
+        detail = jellyfin_receiver.get_item_detail(item_id)
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin item detail")
+
+    audio_streams = detail.get("audio_streams") if isinstance(detail, dict) and isinstance(detail.get("audio_streams"), list) else []
+    try:
+        requested_idx = int(req.index)
+    except Exception:
+        raise HTTPException(status_code=400, detail="audio index must be an integer")
+    if requested_idx < 0:
+        raise HTTPException(status_code=400, detail="audio index must be non-negative")
+    requested_audio_language = ""
+    requested_audio_display = ""
+    if audio_streams:
+        valid = False
+        for row in audio_streams:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("index")) == requested_idx:
+                    valid = True
+                    requested_audio_language = str(row.get("language") or "").strip()
+                    requested_audio_display = str(row.get("display") or "").strip()
+                    break
+            except Exception:
+                continue
+        if not valid:
+            raise HTTPException(status_code=400, detail="requested audio stream index is unavailable")
+    preferred_audio_lang = _normalize_lang_pref(requested_audio_language)
+    queue_retargeted = 0
+    if preferred_audio_lang:
+        try:
+            state.update_settings({"jellyfin_audio_lang": preferred_audio_lang})
+        except Exception:
+            pass
+        try:
+            os.environ["RELAYTV_JELLYFIN_AUDIO_LANG"] = preferred_audio_lang
+        except Exception:
+            pass
+        try:
+            queue_retargeted = int(_retarget_jellyfin_queue_stream_preferences())
+        except Exception:
+            queue_retargeted = 0
+
+    was_playing = bool(player.is_playing())
+    try:
+        props = player.mpv_get_many(["time-pos", "pause"]) if was_playing else {}
+    except Exception:
+        props = {}
+    start_pos: float | None = None
+    if isinstance(props, dict):
+        try:
+            raw_pos = props.get("time-pos")
+            if raw_pos is not None:
+                start_pos = float(raw_pos)
+        except Exception:
+            start_pos = None
+    if start_pos is None:
+        try:
+            raw_resume = now.get("resume_pos")
+            if raw_resume is not None:
+                start_pos = float(raw_resume)
+        except Exception:
+            start_pos = None
+    was_paused = bool((props or {}).get("pause")) or str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
+    pause_reason = state.get_pause_reason() if hasattr(state, "get_pause_reason") else None
+
+    media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            _extract_jellyfin_media_source_id_from_url(str(now.get("url") or "")),
+            str(detail.get("media_source_id") if isinstance(detail, dict) else "").strip(),
+        ]
+    )
+    subtitle_stream_index = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_subtitle_stream_index") or "").strip(),
+            _extract_jellyfin_subtitle_stream_index_from_url(str(now.get("url") or "")),
+        ]
+    )
+    audio_stream_index = str(requested_idx)
+
+    if _jellyfin_try_set_mpv_audio_track(language=requested_audio_language, display=requested_audio_display):
+        now_out = _jellyfin_enrich_now_stream_metadata(
+            dict(now),
+            detail=detail if isinstance(detail, dict) else {},
+            audio_stream_index=audio_stream_index,
+            subtitle_stream_index=subtitle_stream_index,
+        )
+        state.set_now_playing(now_out)
+        _jellyfin_emit_progress_hint()
+        return {
+            "ok": True,
+            "method": "mpv_runtime_aid",
+            "item_id": item_id,
+            "current_audio_stream_index": requested_idx,
+            "current_audio_language": str(now_out.get("jellyfin_audio_language") or now_out.get("audio_language") or "").strip(),
+            "queued_items_retargeted": queue_retargeted,
+            "now_playing": now_out,
+        }
+
+    try:
+        settings_snapshot = state.get_settings()
+    except Exception:
+        settings_snapshot = {}
+    auth_token = _jellyfin_access_token()
+
+    source_url = _build_jellyfin_item_stream_url(
+        item_id,
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    selected_stream = _select_jellyfin_playback_url(
+        item_id=item_id,
+        source_url=source_url,
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+        settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
+    )
+    source_url = _normalize_jellyfin_source_url(
+        str(selected_stream.get("url") or source_url),
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+    )
+    source_url = _apply_jellyfin_stream_params(
+        source_url,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    media_source_id = _first_nonempty_str(
+        [
+            str(selected_stream.get("media_source_id") or "").strip(),
+            _extract_jellyfin_media_source_id_from_url(source_url),
+            media_source_id,
+        ]
+    )
+    if not source_url:
+        raise HTTPException(status_code=502, detail="unable to build jellyfin stream url")
+
+    play_payload = {
+        "url": source_url,
+        "provider": "jellyfin",
+        "title": str(now.get("title") or "").strip() or f"Jellyfin item {item_id}",
+        **({"channel": now.get("channel")} if now.get("channel") else {}),
+        **({"thumbnail": now.get("thumbnail")} if now.get("thumbnail") else {}),
+        **({"thumbnail_local": now.get("thumbnail_local")} if now.get("thumbnail_local") else {}),
+        "jellyfin_item_id": item_id,
+        **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+    }
+
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    switched = player.play_item(
+        play_payload,
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="jellyfin_audio_switch",
+        start_pos=start_pos,
+    )
+    now_out = switched if isinstance(switched, dict) else dict(play_payload)
+    now_out["jellyfin_item_id"] = item_id
+    if media_source_id:
+        now_out["jellyfin_media_source_id"] = media_source_id
+    now_out["jellyfin_stream_mode"] = str(selected_stream.get("mode") or "direct")
+    now_out["jellyfin_stream_reason"] = str(selected_stream.get("reason") or "")
+    now_out = _jellyfin_enrich_now_stream_metadata(
+        now_out,
+        detail=detail if isinstance(detail, dict) else {},
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    _jellyfin_try_set_mpv_audio_track(language=requested_audio_language, display=requested_audio_display)
+    state.set_now_playing(now_out)
+    if was_paused:
+        try:
+            player.mpv_set("pause", True)
+        except Exception:
+            pass
+        state.set_session_state("paused")
+        state.set_pause_reason(pause_reason if pause_reason is not None else "user")
+    _jellyfin_emit_progress_hint()
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "current_audio_stream_index": requested_idx,
+        "current_audio_language": str(now_out.get("jellyfin_audio_language") or now_out.get("audio_language") or "").strip(),
+        "queued_items_retargeted": queue_retargeted,
+        "now_playing": now_out,
+    }
+
+
+@router.post("/jellyfin/subtitle/select")
+def jellyfin_subtitle_select(req: JellyfinSubtitleSelectReq):
+    st = _require_jellyfin_catalog_ready_for_playback()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not isinstance(now, dict) or not now:
+        raise HTTPException(status_code=409, detail="no active now_playing item")
+    provider = str(now.get("provider") or "").strip().lower()
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        item_id = _extract_jellyfin_item_id_from_url_raw(str(now.get("url") or ""))
+    if provider != "jellyfin" and not item_id:
+        raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    if not item_id:
+        raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+
+    try:
+        detail = jellyfin_receiver.get_item_detail(item_id)
+    except Exception as e:
+        jellyfin_receiver.mark_error(str(e))
+        raise HTTPException(status_code=502, detail="failed to fetch jellyfin item detail")
+
+    subtitle_streams = detail.get("subtitle_streams") if isinstance(detail, dict) and isinstance(detail.get("subtitle_streams"), list) else []
+    try:
+        requested_idx = int(req.index)
+    except Exception:
+        raise HTTPException(status_code=400, detail="subtitle index must be an integer")
+    if requested_idx < -1:
+        raise HTTPException(status_code=400, detail="subtitle index must be -1 or non-negative")
+    requested_subtitle_language = ""
+    requested_subtitle_display = ""
+    if requested_idx >= 0 and subtitle_streams:
+        valid = False
+        for row in subtitle_streams:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("index")) == requested_idx:
+                    valid = True
+                    requested_subtitle_language = str(row.get("language") or "").strip()
+                    requested_subtitle_display = str(row.get("display") or "").strip()
+                    break
+            except Exception:
+                continue
+        if not valid:
+            raise HTTPException(status_code=400, detail="requested subtitle stream index is unavailable")
+    preferred_subtitle_lang = "off" if requested_idx < 0 else _normalize_lang_pref(requested_subtitle_language)
+    queue_retargeted = 0
+    try:
+        state.update_settings({"jellyfin_sub_lang": preferred_subtitle_lang})
+    except Exception:
+        pass
+    try:
+        os.environ["RELAYTV_JELLYFIN_SUB_LANG"] = preferred_subtitle_lang
+    except Exception:
+        pass
+    try:
+        queue_retargeted = int(_retarget_jellyfin_queue_stream_preferences())
+    except Exception:
+        queue_retargeted = 0
+
+    was_playing = bool(player.is_playing())
+    try:
+        props = player.mpv_get_many(["time-pos", "pause"]) if was_playing else {}
+    except Exception:
+        props = {}
+    start_pos: float | None = None
+    if isinstance(props, dict):
+        try:
+            raw_pos = props.get("time-pos")
+            if raw_pos is not None:
+                start_pos = float(raw_pos)
+        except Exception:
+            start_pos = None
+    if start_pos is None:
+        try:
+            raw_resume = now.get("resume_pos")
+            if raw_resume is not None:
+                start_pos = float(raw_resume)
+        except Exception:
+            start_pos = None
+    was_paused = bool((props or {}).get("pause")) or str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
+    pause_reason = state.get_pause_reason() if hasattr(state, "get_pause_reason") else None
+
+    media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            _extract_jellyfin_media_source_id_from_url(str(now.get("url") or "")),
+            str(detail.get("media_source_id") if isinstance(detail, dict) else "").strip(),
+        ]
+    )
+    audio_stream_index = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_audio_stream_index") or "").strip(),
+            _extract_jellyfin_audio_stream_index_from_url(str(now.get("url") or "")),
+        ]
+    )
+    subtitle_stream_index = "-1" if requested_idx < 0 else str(requested_idx)
+
+    if _jellyfin_try_set_mpv_subtitle_track(
+        language=requested_subtitle_language,
+        display=requested_subtitle_display,
+        preferred_stream_index=(requested_idx if requested_idx >= 0 else None),
+        off=(requested_idx < 0),
+    ):
+        now_out = _jellyfin_enrich_now_stream_metadata(
+            dict(now),
+            detail=detail if isinstance(detail, dict) else {},
+            audio_stream_index=audio_stream_index,
+            subtitle_stream_index=subtitle_stream_index,
+        )
+        state.set_now_playing(now_out)
+        _jellyfin_emit_progress_hint()
+        return {
+            "ok": True,
+            "method": "mpv_runtime_sid",
+            "item_id": item_id,
+            "current_subtitle_stream_index": requested_idx,
+            "current_subtitle_language": str(now_out.get("jellyfin_subtitle_language") or now_out.get("subtitle_language") or "").strip(),
+            "current_subtitle_off": requested_idx < 0,
+            "queued_items_retargeted": queue_retargeted,
+            "now_playing": now_out,
+        }
+
+    try:
+        settings_snapshot = state.get_settings()
+    except Exception:
+        settings_snapshot = {}
+    auth_token = _jellyfin_access_token()
+
+    source_url = _build_jellyfin_item_stream_url(
+        item_id,
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    selected_stream = _select_jellyfin_playback_url(
+        item_id=item_id,
+        source_url=source_url,
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+        media_source_id=media_source_id,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+        settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
+    )
+    source_url = _normalize_jellyfin_source_url(
+        str(selected_stream.get("url") or source_url),
+        server_url=str(st.get("server_url") or ""),
+        api_key=auth_token,
+    )
+    source_url = _apply_jellyfin_stream_params(
+        source_url,
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    media_source_id = _first_nonempty_str(
+        [
+            str(selected_stream.get("media_source_id") or "").strip(),
+            _extract_jellyfin_media_source_id_from_url(source_url),
+            media_source_id,
+        ]
+    )
+    if not source_url:
+        raise HTTPException(status_code=502, detail="unable to build jellyfin stream url")
+
+    play_payload = {
+        "url": source_url,
+        "provider": "jellyfin",
+        "title": str(now.get("title") or "").strip() or f"Jellyfin item {item_id}",
+        **({"channel": now.get("channel")} if now.get("channel") else {}),
+        **({"thumbnail": now.get("thumbnail")} if now.get("thumbnail") else {}),
+        **({"thumbnail_local": now.get("thumbnail_local")} if now.get("thumbnail_local") else {}),
+        "jellyfin_item_id": item_id,
+        **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+    }
+
+    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    switched = player.play_item(
+        play_payload,
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="jellyfin_subtitle_switch",
+        start_pos=start_pos,
+    )
+    now_out = switched if isinstance(switched, dict) else dict(play_payload)
+    now_out["jellyfin_item_id"] = item_id
+    if media_source_id:
+        now_out["jellyfin_media_source_id"] = media_source_id
+    now_out["jellyfin_stream_mode"] = str(selected_stream.get("mode") or "direct")
+    now_out["jellyfin_stream_reason"] = str(selected_stream.get("reason") or "")
+    now_out = _jellyfin_enrich_now_stream_metadata(
+        now_out,
+        detail=detail if isinstance(detail, dict) else {},
+        audio_stream_index=audio_stream_index,
+        subtitle_stream_index=subtitle_stream_index,
+    )
+    _jellyfin_try_set_mpv_subtitle_track(
+        language=requested_subtitle_language,
+        display=requested_subtitle_display,
+        preferred_stream_index=(requested_idx if requested_idx >= 0 else None),
+        off=(requested_idx < 0),
+    )
+    state.set_now_playing(now_out)
+    if was_paused:
+        try:
+            player.mpv_set("pause", True)
+        except Exception:
+            pass
+        state.set_session_state("paused")
+        state.set_pause_reason(pause_reason if pause_reason is not None else "user")
+    _jellyfin_emit_progress_hint()
+    return {
+        "ok": True,
+        "item_id": item_id,
+        "current_subtitle_stream_index": requested_idx,
+        "current_subtitle_language": str(now_out.get("jellyfin_subtitle_language") or now_out.get("subtitle_language") or "").strip(),
+        "current_subtitle_off": requested_idx < 0,
+        "queued_items_retargeted": queue_retargeted,
+        "now_playing": now_out,
     }
