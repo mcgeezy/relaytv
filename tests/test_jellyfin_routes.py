@@ -562,3 +562,109 @@ def test_jellyfin_register_returns_accepted_for_pending_handshake(monkeypatch) -
             "refresh_status": True,
         }
     ]
+
+
+def test_jellyfin_push_route_is_deprecated() -> None:
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/push")
+
+    assert response.status_code == 410
+    assert "deprecated" in response.json()["detail"]
+
+
+def test_jellyfin_command_pause_dispatches_playback_control(monkeypatch) -> None:
+    receiver_events: list[tuple[str, object]] = []
+    progress_hints: list[bool] = []
+    pauses: list[bool] = []
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: receiver_events.append(("command", action)))
+    monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: receiver_events.append(("heartbeat", True)))
+    monkeypatch.setattr(routes, "pause", lambda: pauses.append(True) or {"paused": True})
+    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: progress_hints.append(True))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/command", json={"action": "Pause"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "action": "pause", "result": {"paused": True}}
+    assert receiver_events == [("command", "pause"), ("heartbeat", True)]
+    assert pauses == [True]
+    assert progress_hints == [True]
+
+
+def test_jellyfin_command_requires_enabled_receiver(monkeypatch) -> None:
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": False})
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/command", json={"action": "Pause"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "jellyfin integration disabled"
+
+
+def test_jellyfin_heartbeat_returns_accepted_for_pending_push(monkeypatch) -> None:
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes.jellyfin_receiver, "send_progress_once", lambda: {"ok": False, "pending": True})
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/heartbeat")
+
+    assert response.status_code == 202
+    assert response.json() == {"ok": False, "pending": True}
+
+
+def test_jellyfin_progress_snapshot_returns_payload(monkeypatch) -> None:
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes, "_jellyfin_progress_snapshot", lambda: {"ItemId": "item-1", "PositionTicks": 120})
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/integrations/jellyfin/progress_snapshot")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "payload": {"ItemId": "item-1", "PositionTicks": 120}}
+
+
+def test_jellyfin_progress_snapshot_returns_accepted_without_payload(monkeypatch) -> None:
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes, "_jellyfin_progress_snapshot", lambda: None)
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/integrations/jellyfin/progress_snapshot")
+
+    assert response.status_code == 202
+    assert response.json() == {"ok": False, "reason": "no_payload"}
+
+
+def test_jellyfin_stopped_route_sends_snapshot(monkeypatch) -> None:
+    sent: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes, "_jellyfin_stopped_snapshot", lambda: {"ItemId": "item-1", "PositionTicks": 250})
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "send_playback_stopped_once",
+        lambda payload: sent.append(dict(payload)) or {"ok": True, "sent": True},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/integrations/jellyfin/stopped")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "payload": {"ItemId": "item-1", "PositionTicks": 250},
+        "result": {"ok": True, "sent": True},
+    }
+    assert sent == [{"ItemId": "item-1", "PositionTicks": 250}]
+
+
+def test_jellyfin_stopped_snapshot_returns_accepted_without_payload(monkeypatch) -> None:
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
+    monkeypatch.setattr(routes, "_jellyfin_stopped_snapshot", lambda: None)
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/integrations/jellyfin/stopped_snapshot")
+
+    assert response.status_code == 202
+    assert response.json() == {"ok": False, "reason": "no_payload"}
