@@ -280,7 +280,7 @@ Progress:
 
 ### M5: Extract Settings Router
 
-Status: pending
+Status: in progress
 
 Candidate domains:
 
@@ -300,6 +300,12 @@ Exit criteria:
 - Settings UI still loads and applies.
 - CEC, idle dashboard, idle notifications, uploads, YouTube, and Jellyfin
   settings retain behavior.
+
+Progress:
+
+- Added `tests/test_settings_routes.py` for HTTP-level guardrails around
+  sanitized settings reads, YouTube cookies upload/clear, Invidious validation,
+  and runtime environment side effects from settings updates.
 
 ### M6: Extract Jellyfin Router
 
