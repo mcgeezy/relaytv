@@ -33,6 +33,7 @@ from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
 from .devices import router as devices_router
 from .health import router as health_router
+from .snapshots import router as snapshots_router
 from .status import router as status_router
 
 router = APIRouter()
@@ -40,6 +41,7 @@ router.include_router(app_info_router)
 router.include_router(assets_router)
 router.include_router(devices_router)
 router.include_router(health_router)
+router.include_router(snapshots_router)
 router.include_router(status_router)
 logger = get_logger("routes")
 _JELLYFIN_PLAY_DEBOUNCE_LOCK = threading.Lock()
@@ -6692,30 +6694,6 @@ def play_at(req: PlayAtReq):
 
     threading.Thread(target=_delayed_play, daemon=True).start()
     return {"ok": True, "url": req.url, "start_at": req.start_at}
-
-
-@router.get("/snapshots/{filename}")
-async def get_snapshot(filename: str):
-    if "/" in filename or "\\" in filename or ".." in filename:
-        return Response(status_code=400)
-    snap_dir = os.getenv("RELAYTV_SNAPSHOT_DIR", "/data/snapshots")
-    path = os.path.join(snap_dir, filename)
-    if not os.path.exists(path):
-        return Response(status_code=404)
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
-
-
-@router.post("/snapshot")
-@router.get("/snapshot")
-def snapshot():
-    if not player.is_playing():
-        raise HTTPException(status_code=409, detail="No active playback for snapshot")
-    snap_dir = os.getenv("RELAYTV_SNAPSHOT_DIR", "/data/snapshots")
-    os.makedirs(snap_dir, exist_ok=True)
-    name = f"snapshot-{int(time.time() * 1000)}.jpg"
-    path = os.path.join(snap_dir, name)
-    player.mpv_command(["screenshot-to-file", path, "video"])
-    return {"ok": True, "image_url": f"/snapshots/{name}"}
 
 
 @router.post("/previous")
