@@ -202,7 +202,7 @@ Exit criteria:
 
 ### M4: Extract Playback Router
 
-Status: pending
+Status: in progress
 
 Candidate domains:
 
@@ -238,6 +238,12 @@ Exit criteria:
 - Focused tests cover queue retention and close behavior paths already fixed in
   previous PRs.
 - Upload ingest play/enqueue behavior is unchanged.
+
+Progress:
+
+- Added `tests/test_playback_routes.py` for HTTP-level route guardrails around
+  `play_now`, `close`, `resume_session`, seek/volume/mute controls, and
+  `/playback/state`.
 
 ### M5: Extract Settings Router
 
@@ -356,6 +362,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused M3 queue/history route guardrail tests before moving route code. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Extract queue/history routes. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted queue/history routes into `app/relaytv_app/routes/queue.py` and deferred `/now_playing/clear` to playback routing. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Close M3 after final route inventory review, then begin M4 playback router planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Closed M3 after confirming queue/history endpoints moved and `/now_playing/clear` remains in the playback/UI inventory group. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M4 playback router planning. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Started M4 by adding HTTP-level playback route guardrails before moving playback routes. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Extract a narrow playback control slice first. |
 
 ## Open Questions
 
