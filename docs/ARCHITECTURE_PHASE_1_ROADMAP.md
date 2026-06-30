@@ -176,13 +176,17 @@ Risks:
 Guardrails before moving:
 
 - Keep `tests/test_route_inventory.py` authoritative for aliases.
-- Add or identify focused queue/history tests for:
+- Added `tests/test_queue_history_routes.py` for:
   - alias registration
   - queue add path equivalence
   - queue remove/move/dedupe behavior
   - queue clear behavior
   - history read/clear/play behavior
   - queue retention behavior from the recent close/play-now fixes
+
+Progress:
+
+- Added focused queue/history route tests before moving M3 route code.
 
 Exit criteria:
 
@@ -344,6 +348,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting static uploaded-media serving while leaving ingest/playback upload routes in place. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with capability endpoints or begin planning M3 queue/playback moves. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Closed M2 after extracting the low-risk standalone routers and documenting deferred capability endpoints. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history route extraction before playback controls. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Split queue/history and playback into separate milestones, added M3 guardrails, and renumbered later milestones. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M3 with queue/history tests and route extraction. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Added focused M3 queue/history route guardrail tests before moving route code. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Extract queue/history routes. |
 
 ## Open Questions
 
