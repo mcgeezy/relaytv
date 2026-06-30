@@ -32,10 +32,12 @@ from ..integrations import jellyfin_receiver
 from ..thumb_cache import THUMB_DIR, ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .devices import router as devices_router
 from .health import router as health_router
+from .status import router as status_router
 
 router = APIRouter()
 router.include_router(devices_router)
 router.include_router(health_router)
+router.include_router(status_router)
 logger = get_logger("routes")
 _JELLYFIN_PLAY_DEBOUNCE_LOCK = threading.Lock()
 _JELLYFIN_LAST_PLAY: dict[str, object] = {"ts": 0.0, "url": "", "item_id": "", "start_pos": None}
@@ -3075,11 +3077,6 @@ def notifications_capabilities():
 @router.get("/runtime/capabilities")
 def runtime_capabilities():
     return _runtime_capabilities()
-
-
-@router.get("/discovery/status")
-def discovery_status():
-    return {"mdns": discovery_mdns.status()}
 
 
 def _require_jellyfin_catalog_ready() -> dict[str, object]:
@@ -8370,21 +8367,6 @@ async def _ui_events_sse(request: Request) -> object:
 @router.get("/ui/events")
 async def ui_events(request: Request):
     return await _ui_events_sse(request)
-
-
-@router.get("/tv/status")
-def tv_status():
-    tv = state.get_tv_state() if hasattr(state, "get_tv_state") else {}
-    cec_controller = player.cec_controller_status() if hasattr(player, "cec_controller_status") else {}
-    return {
-        "tv_power_state": tv.get("tv_power_status"),
-        "active_source_phys_addr": tv.get("active_source_phys_addr"),
-        "last_cec_event_ts": tv.get("last_event_ts"),
-        "last_cec_event": tv.get("last_event"),
-        "tv_control_method": tv.get("control_method", "cec-client"),
-        "cec_controller": cec_controller,
-        "confidence": tv.get("confidence", {}),
-    }
 
 
 @router.get("/settings")
