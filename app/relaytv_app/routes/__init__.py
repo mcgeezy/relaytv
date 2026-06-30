@@ -4,7 +4,6 @@ from fastapi.responses import (
     StreamingResponse,
     HTMLResponse,
     JSONResponse,
-    FileResponse,
     Response,
 )
 from starlette.concurrency import run_in_threadpool
@@ -35,6 +34,7 @@ from .health import router as health_router
 from .snapshots import router as snapshots_router
 from .status import router as status_router
 from .ui import router as ui_router
+from .uploads import router as uploads_router
 
 router = APIRouter()
 router.include_router(app_info_router)
@@ -44,6 +44,7 @@ router.include_router(health_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)
 router.include_router(ui_router)
+router.include_router(uploads_router)
 logger = get_logger("routes")
 _JELLYFIN_PLAY_DEBOUNCE_LOCK = threading.Lock()
 _JELLYFIN_LAST_PLAY: dict[str, object] = {"ts": 0.0, "url": "", "item_id": "", "start_pos": None}
@@ -8420,25 +8421,6 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                 upload_store.delete_upload(upload_id)
             except Exception:
                 pass
-
-
-@router.get("/media/uploads/{upload_id}/{filename}", name="get_uploaded_media")
-def get_uploaded_media(upload_id: str, filename: str):
-    meta = upload_store.load_metadata(upload_id)
-    if not isinstance(meta, dict):
-        raise HTTPException(status_code=410, detail="Uploaded media expired or removed")
-    expected_name = os.path.basename(str(meta.get("public_name") or meta.get("filename") or "").strip())
-    if os.path.basename(filename) != expected_name:
-        raise HTTPException(status_code=404, detail="Uploaded media not found")
-    path = upload_store.stored_file_path(meta)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=410, detail="Uploaded media expired or removed")
-    return FileResponse(
-        path,
-        media_type=str(meta.get("mime_type") or "application/octet-stream"),
-        filename=str(meta.get("filename") or expected_name),
-        headers={"Cache-Control": "private, max-age=60"},
-    )
 
 
 @router.post("/settings")
