@@ -38,7 +38,9 @@ from .playback import (
     VolumeReq as VolumeReq,
     mute as mute,
     pause as pause,
+    playback_play as playback_play,
     playback_state as playback_state,
+    playback_toggle as playback_toggle,
     resume as resume,
     seek as seek,
     seek_abs as seek_abs,
@@ -6788,112 +6790,6 @@ def _seek_absolute_result(target_sec: float) -> dict[str, object]:
     if isinstance(result, dict):
         return result
     return _control_result_or_raise(player.mpv_command(["seek", float(target_sec), "absolute"]), action="seek_abs")
-@router.post("/playback/play")
-def playback_play():
-    """
-    User-facing Play semantics:
-      - If mpv is running: toggle pause/resume
-      - Else if current session is resumable and NOW_PLAYING exists: resume at saved position
-      - Else: play next item from queue (if any)
-    """
-    # If already playing, behave as play/pause for stale clients that still call
-    # /playback/play instead of /playback/toggle.
-    if player.is_playing():
-        cur = bool(player.mpv_get("pause"))
-        target = not cur
-        result = _control_result_or_raise(player.mpv_set_result("pause", target), action="playback_play")
-        state.set_session_state("paused" if target else "playing")
-        state.set_pause_reason("user" if target else None)
-        return {
-            "ok": True,
-            "action": ("pause" if target else "resume"),
-            "paused": target,
-            "now_playing": state.NOW_PLAYING,
-            **_control_ack_payload(result),
-        }
-
-    paused_resume = _resume_paused_current_session_in_place(action="resume")
-    if paused_resume is not None:
-        return paused_resume
-
-    # If runtime dropped out but app state still has a resumable current item,
-    # prefer resuming that item over consuming the queue.
-    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
-    if sess in {"closed", "paused", "playing"} and state.NOW_PLAYING:
-        now = state.NOW_PLAYING
-        # Reuse resolved stream/audio where possible.
-        stream = now.get("stream")
-        audio = now.get("audio")
-        pos = now.get("resume_pos")
-        if pos is None:
-            pos = getattr(state, "SESSION_POSITION", None)
-        start_pos = None
-        try:
-            start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
-        except Exception:
-            start_pos = None
-        state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-
-        if isinstance(stream, str) and stream.strip():
-            resume_result: dict[str, object] | None = None
-            with player.MPV_LOCK:
-                stream_url = stream.strip()
-                audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
-                if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url, start_pos=start_pos):
-                    player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
-            try:
-                resume_result = _control_result_or_raise(player.mpv_set_result("pause", False), action="resume_session")
-            except Exception:
-                resume_result = None
-            resumed = dict(now)
-            resumed["started"] = int(time.time())
-            resumed["mode"] = "resume"
-            resumed["closed"] = False
-            state.set_now_playing(resumed)
-            state.set_session_state("playing")
-            state.set_pause_reason(None)
-            return {"ok": True, "action": "resume_session", "now_playing": state.NOW_PLAYING, **_control_ack_payload(resume_result)}
-
-        # Fallback: re-resolve/play via play_item
-        resumed = player.play_item(
-            now,
-            use_resolver=True,
-            cec=False,
-            clear_queue=False,
-            mode="resume",
-            start_pos=(float(pos) if pos is not None else None),
-        )
-        resumed["closed"] = False
-        state.set_now_playing(resumed)
-        state.set_session_state("playing")
-        state.set_pause_reason(None)
-        return {"ok": True, "action": "resume_session", "now_playing": state.NOW_PLAYING}
-
-    # Else: play next queue item
-    try:
-        handoff = player.advance_queue_playback(mode="play_next", prefer_playlist_next=False)
-    except player.QueueAdvanceEmptyError:
-        raise HTTPException(status_code=400, detail="Queue is empty")
-    return {"ok": True, "action": "play_next", "now_playing": handoff.get("now_playing")}
-
-@router.post("/playback/toggle")
-def playback_toggle():
-    """
-    Single button behavior:
-      - If playing: toggle pause
-      - If not playing: behave like /playback/play
-    """
-    if player.is_playing():
-        cur = bool(player.mpv_get("pause"))
-        target = not cur
-        result = _control_result_or_raise(player.mpv_set_result("pause", target), action="toggle_pause")
-        state.set_session_state("paused" if target else "playing")
-        state.set_pause_reason("user" if target else None)
-        return {"ok": True, "action": "toggle_pause", "paused": target, **_control_ack_payload(result)}
-    return playback_play()
-
-
-
 @router.post("/close")
 def close():
     """Close the player but keep session resumable (queue preserved)."""
