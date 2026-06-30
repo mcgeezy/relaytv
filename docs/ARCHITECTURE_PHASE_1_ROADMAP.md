@@ -119,6 +119,7 @@ Progress:
 - Converted `app/relaytv_app/routes.py` into a `routes` package while
   preserving `from relaytv_app.routes import router`.
 - Extracted standalone `/health` into `app/relaytv_app/routes/health.py`.
+- Extracted standalone `/devices` into `app/relaytv_app/routes/devices.py`.
 
 ### M3: Extract Queue And Playback Routers
 
@@ -243,6 +244,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Created Phase 1 roadmap and kept architecture review docs in branch. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | None. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Captured the public route inventory and added a route snapshot test before moving route code. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Begin M2 with low-risk router extraction. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M2 by converting `routes.py` to a package and extracting standalone `/health`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with status/assets routes. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Continued M2 by extracting standalone `/devices`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M2 with status/assets routes. |
 
 ## Open Questions
 

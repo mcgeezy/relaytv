@@ -26,13 +26,15 @@ import tempfile
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .. import state, resolver, player, devices, discovery_mdns, video_profile, upload_store, x11_overlay
+from .. import state, resolver, player, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
 from ..integrations import jellyfin_receiver
 from ..thumb_cache import THUMB_DIR, ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
+from .devices import router as devices_router
 from .health import router as health_router
 
 router = APIRouter()
+router.include_router(devices_router)
 router.include_router(health_router)
 logger = get_logger("routes")
 _JELLYFIN_PLAY_DEBOUNCE_LOCK = threading.Lock()
@@ -8384,10 +8386,6 @@ def tv_status():
         "confidence": tv.get("confidence", {}),
     }
 
-
-@router.get("/devices")
-def get_devices():
-    return devices.discover()
 
 @router.get("/settings")
 def get_settings():
