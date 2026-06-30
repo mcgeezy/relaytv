@@ -35,6 +35,7 @@ from .devices import router as devices_router
 from .health import router as health_router
 from .jellyfin import (
     JellyfinAudioSelectReq as JellyfinAudioSelectReq,
+    JellyfinCommandReq as JellyfinCommandReq,
     JellyfinConnectReq as JellyfinConnectReq,
     JellyfinItemActionReq as JellyfinItemActionReq,
     JellyfinSubtitleSelectReq as JellyfinSubtitleSelectReq,
@@ -42,9 +43,15 @@ from .jellyfin import (
     jellyfin_audio_options as jellyfin_audio_options,
     jellyfin_audio_select as jellyfin_audio_select,
     jellyfin_catalog_cache_clear as jellyfin_catalog_cache_clear,
+    jellyfin_integration_command as jellyfin_integration_command,
     jellyfin_integration_connect as jellyfin_integration_connect,
     jellyfin_integration_disconnect as jellyfin_integration_disconnect,
+    jellyfin_integration_heartbeat as jellyfin_integration_heartbeat,
+    jellyfin_integration_progress_snapshot as jellyfin_integration_progress_snapshot,
+    jellyfin_integration_push as jellyfin_integration_push,
     jellyfin_integration_register as jellyfin_integration_register,
+    jellyfin_integration_stopped as jellyfin_integration_stopped,
+    jellyfin_integration_stopped_snapshot as jellyfin_integration_stopped_snapshot,
     jellyfin_home as jellyfin_home,
     jellyfin_integration_status as jellyfin_integration_status,
     jellyfin_item_action as jellyfin_item_action,
@@ -206,14 +213,6 @@ class OverlayClientStateReq(BaseModel):
     client_event: str | None = None
     client_reason: str | None = None
     active_toasts: int | None = None
-
-
-class JellyfinCommandReq(BaseModel):
-    action: str | None = None
-    url: str | None = None
-    start_pos: float | None = None
-    use_ytdlp: bool = True
-    payload: dict | None = None
 
 
 def _overlay_osd_debug_enabled() -> bool:
@@ -4459,19 +4458,7 @@ def _jellyfin_progress_snapshot() -> dict | None:
 jellyfin_receiver.register_progress_provider(_jellyfin_progress_snapshot)
 
 
-@router.post("/integrations/jellyfin/push")
-def jellyfin_integration_push():
-    """
-    Legacy Jellyfin plugin ingress retained only to emit a clear deprecation error.
-    """
-    raise HTTPException(
-        status_code=410,
-        detail="jellyfin plugin ingress deprecated; use RelayTV native Jellyfin client or /integrations/jellyfin/command",
-    )
-
-
-@router.post("/integrations/jellyfin/command")
-def jellyfin_integration_command(req: JellyfinCommandReq):
+def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
     """Normalized Jellyfin command ingress (v1: Play/Stop/Pause/Resume/Seek/Next)."""
     st = jellyfin_receiver.status()
     if not bool(st.get("enabled")):
@@ -5052,56 +5039,6 @@ def jellyfin_integration_command(req: JellyfinCommandReq):
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=500, detail=f"jellyfin command failed: {e}")
 
-
-@router.post("/integrations/jellyfin/heartbeat")
-def jellyfin_integration_heartbeat():
-    """Force a single Jellyfin progress heartbeat (debug/validation helper)."""
-    st = jellyfin_receiver.status()
-    if not bool(st.get("enabled")):
-        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
-    out = jellyfin_receiver.send_progress_once()
-    if not bool(out.get("ok")):
-        return JSONResponse(out, status_code=202)
-    return out
-
-
-@router.get("/integrations/jellyfin/progress_snapshot")
-def jellyfin_integration_progress_snapshot():
-    """Return the current outbound Jellyfin progress payload (debug helper)."""
-    st = jellyfin_receiver.status()
-    if not bool(st.get("enabled")):
-        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
-    payload = _jellyfin_progress_snapshot()
-    if not isinstance(payload, dict):
-        return JSONResponse({"ok": False, "reason": "no_payload"}, status_code=202)
-    return {"ok": True, "payload": payload}
-
-
-@router.post("/integrations/jellyfin/stopped")
-def jellyfin_integration_stopped():
-    """Force a single Jellyfin playback-stopped report using current snapshot."""
-    st = jellyfin_receiver.status()
-    if not bool(st.get("enabled")):
-        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
-    payload = _jellyfin_stopped_snapshot()
-    if not isinstance(payload, dict):
-        return JSONResponse({"ok": False, "reason": "no_payload"}, status_code=202)
-    out = jellyfin_receiver.send_playback_stopped_once(payload)
-    if not bool(out.get("ok")):
-        return JSONResponse(out, status_code=202)
-    return {"ok": True, "payload": payload, "result": out}
-
-
-@router.get("/integrations/jellyfin/stopped_snapshot")
-def jellyfin_integration_stopped_snapshot():
-    """Return the current outbound Jellyfin playback-stopped payload (debug helper)."""
-    st = jellyfin_receiver.status()
-    if not bool(st.get("enabled")):
-        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
-    payload = _jellyfin_stopped_snapshot()
-    if not isinstance(payload, dict):
-        return JSONResponse({"ok": False, "reason": "no_payload"}, status_code=202)
-    return {"ok": True, "payload": payload}
 
 @router.get("/x11/overlay")
 def x11_overlay_page():

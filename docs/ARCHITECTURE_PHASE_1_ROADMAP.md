@@ -313,7 +313,7 @@ Progress:
 
 ### M6: Extract Jellyfin Router
 
-Status: in progress
+Status: complete
 
 Candidate domains:
 
@@ -377,7 +377,20 @@ Progress:
   - `POST /integrations/jellyfin/connect`
   - `POST /integrations/jellyfin/disconnect`
   - `POST /integrations/jellyfin/register`
-- Remaining M6 slice: command ingress plus heartbeat/progress/stopped.
+- Added Jellyfin command/progress/stopped route guardrails for deprecated push
+  ingress, command dispatch, disabled receiver handling, heartbeat pending
+  responses, progress snapshots, and stopped snapshots.
+- Extracted remaining Jellyfin command/progress/stopped routes into
+  `app/relaytv_app/routes/jellyfin.py`:
+  - `POST /integrations/jellyfin/push`
+  - `POST /integrations/jellyfin/command`
+  - `POST /integrations/jellyfin/heartbeat`
+  - `GET /integrations/jellyfin/progress_snapshot`
+  - `POST /integrations/jellyfin/stopped`
+  - `GET /integrations/jellyfin/stopped_snapshot`
+- M6 route extraction is complete. Command implementation helpers remain in the
+  aggregate module for now and should be considered Phase 2/service extraction
+  follow-up, not unfinished Phase 1 route work.
 
 ### M7: Extract UI Static Assets
 
@@ -460,6 +473,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin item action and series play-all routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Continue M6 with connect/disconnect/register. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin lifecycle route guardrails before moving connect/disconnect/register. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract lifecycle routes into the Jellyfin router. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin connect/disconnect/register routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Continue M6 with command ingress plus heartbeat/progress/stopped. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin command/progress/stopped route guardrails before moving the remaining Jellyfin routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract remaining Jellyfin routes into the Jellyfin router. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Completed M6 by extracting command ingress, push, heartbeat, progress snapshot, stopped, and stopped snapshot routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Begin M7 UI static asset extraction. |
 
 ## Open Questions
 
@@ -469,7 +484,6 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Continue M6 with the remaining command ingress plus heartbeat/progress/stopped
-cluster. Add guardrails first because those endpoints share command state,
-progress snapshots, stopped snapshots, playback handoff, and UI refresh side
-effects.
+Begin M7 UI static asset extraction. Start with CSS extraction first because it
+can be validated by snapshot/string checks and browser review before moving the
+larger JavaScript block.

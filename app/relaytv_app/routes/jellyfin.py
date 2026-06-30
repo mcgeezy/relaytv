@@ -21,6 +21,14 @@ class JellyfinSubtitleSelectReq(BaseModel):
     index: int
 
 
+class JellyfinCommandReq(BaseModel):
+    action: str | None = None
+    url: str | None = None
+    start_pos: float | None = None
+    use_ytdlp: bool = True
+    payload: dict | None = None
+
+
 class JellyfinItemActionReq(BaseModel):
     item_id: str
     command: str = "play_now"  # play_now|play_next|play_last|resume
@@ -248,6 +256,24 @@ def _reset_jellyfin_command_state() -> None:
     reset()
 
 
+def _jellyfin_integration_command_impl(req: JellyfinCommandReq) -> dict[str, object]:
+    from . import _jellyfin_integration_command_impl as command
+
+    return command(req)
+
+
+def _jellyfin_progress_snapshot() -> dict | None:
+    from . import _jellyfin_progress_snapshot as snapshot
+
+    return snapshot()
+
+
+def _jellyfin_stopped_snapshot() -> dict | None:
+    from . import _jellyfin_stopped_snapshot as snapshot
+
+    return snapshot()
+
+
 @router.get("/integrations/jellyfin/status")
 def jellyfin_integration_status():
     """Jellyfin receiver integration status."""
@@ -314,6 +340,74 @@ def jellyfin_integration_register():
     if not bool(out.get("ok")):
         return JSONResponse(out, status_code=202)
     return out
+
+
+@router.post("/integrations/jellyfin/push")
+def jellyfin_integration_push():
+    """
+    Legacy Jellyfin plugin ingress retained only to emit a clear deprecation error.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail="jellyfin plugin ingress deprecated; use RelayTV native Jellyfin client or /integrations/jellyfin/command",
+    )
+
+
+@router.post("/integrations/jellyfin/command")
+def jellyfin_integration_command(req: JellyfinCommandReq):
+    """Normalized Jellyfin command ingress (v1: Play/Stop/Pause/Resume/Seek/Next)."""
+    return _jellyfin_integration_command_impl(req)
+
+
+@router.post("/integrations/jellyfin/heartbeat")
+def jellyfin_integration_heartbeat():
+    """Force a single Jellyfin progress heartbeat (debug/validation helper)."""
+    st = jellyfin_receiver.status()
+    if not bool(st.get("enabled")):
+        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+    out = jellyfin_receiver.send_progress_once()
+    if not bool(out.get("ok")):
+        return JSONResponse(out, status_code=202)
+    return out
+
+
+@router.get("/integrations/jellyfin/progress_snapshot")
+def jellyfin_integration_progress_snapshot():
+    """Return the current outbound Jellyfin progress payload (debug helper)."""
+    st = jellyfin_receiver.status()
+    if not bool(st.get("enabled")):
+        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+    payload = _jellyfin_progress_snapshot()
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "no_payload"}, status_code=202)
+    return {"ok": True, "payload": payload}
+
+
+@router.post("/integrations/jellyfin/stopped")
+def jellyfin_integration_stopped():
+    """Force a single Jellyfin playback-stopped report using current snapshot."""
+    st = jellyfin_receiver.status()
+    if not bool(st.get("enabled")):
+        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+    payload = _jellyfin_stopped_snapshot()
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "no_payload"}, status_code=202)
+    out = jellyfin_receiver.send_playback_stopped_once(payload)
+    if not bool(out.get("ok")):
+        return JSONResponse(out, status_code=202)
+    return {"ok": True, "payload": payload, "result": out}
+
+
+@router.get("/integrations/jellyfin/stopped_snapshot")
+def jellyfin_integration_stopped_snapshot():
+    """Return the current outbound Jellyfin playback-stopped payload (debug helper)."""
+    st = jellyfin_receiver.status()
+    if not bool(st.get("enabled")):
+        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+    payload = _jellyfin_stopped_snapshot()
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "no_payload"}, status_code=202)
+    return {"ok": True, "payload": payload}
 
 
 @router.get("/jellyfin/home")
