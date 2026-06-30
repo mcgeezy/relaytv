@@ -300,6 +300,18 @@ def pwa_weather_asset(asset_name: str, theme: str | None = None):
     return Response(_fallback_svg(safe_name.removesuffix(".svg")), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=300"})
 
 
+@router.get("/static/ui/{asset_name}")
+def ui_static_asset(asset_name: str):
+    safe_name = os.path.basename(asset_name)
+    if safe_name != asset_name or safe_name not in {"app.css", "app.js"}:
+        return Response(status_code=400)
+    path = _resolve_static_asset("ui", safe_name)
+    if path and os.path.exists(path) and os.path.isfile(path):
+        media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=3600"})
+    return Response(status_code=404)
+
+
 @router.get("/manifest.json")
 def pwa_manifest():
     return JSONResponse(

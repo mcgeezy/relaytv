@@ -394,7 +394,7 @@ Progress:
 
 ### M7: Extract UI Static Assets
 
-Status: pending
+Status: in progress
 
 Deliverables:
 
@@ -415,6 +415,17 @@ Exit criteria:
 - Queue actions still update.
 - Jellyfin shell still opens.
 - PWA/static asset paths still work.
+
+Progress:
+
+- Added narrow static UI asset serving for `GET /static/ui/{asset_name}`.
+- Extracted the main `/ui` stylesheet into
+  `app/relaytv_app/static/ui/app.css`.
+- Updated `/ui` to load `/static/ui/app.css` with a stylesheet link.
+- Updated smoke coverage so HTML structure remains checked through `/ui` while
+  CSS-specific assertions read the stylesheet asset.
+- Remaining M7 work: extract the main `/ui` JavaScript block into
+  `app/relaytv_app/static/ui/app.js` without changing UI behavior.
 
 ### M8: Phase 1 Final Validation
 
@@ -475,6 +486,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted Jellyfin connect/disconnect/register routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Continue M6 with command ingress plus heartbeat/progress/stopped. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Added focused Jellyfin command/progress/stopped route guardrails before moving the remaining Jellyfin routes. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py` | Extract remaining Jellyfin routes into the Jellyfin router. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M6 by extracting command ingress, push, heartbeat, progress snapshot, stopped, and stopped snapshot routes into `app/relaytv_app/routes/jellyfin.py`. | `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_route_inventory.py tests/test_smoke.py` | Begin M7 UI static asset extraction. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Started M7 by extracting the main `/ui` stylesheet into `app/relaytv_app/static/ui/app.css` and adding narrow static UI asset serving. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Continue M7 with JavaScript extraction. |
 
 ## Open Questions
 

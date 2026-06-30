@@ -99,6 +99,7 @@ EXPECTED_ROUTES = {
     ("POST", "/snapshot", "snapshot"),
     ("GET", "/snapshots/{filename}", "get_snapshot"),
     ("GET", "/status", "status"),
+    ("GET", "/static/ui/{asset_name}", "ui_static_asset"),
     ("POST", "/stop", "stop"),
     ("GET", "/sw.js", "pwa_sw"),
     ("GET", "/thumbs/{filename}", "thumbs"),

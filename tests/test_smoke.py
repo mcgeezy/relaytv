@@ -38,9 +38,15 @@ def test_ui_smoke() -> None:
     client = TestClient(app)
 
     response = client.get('/ui')
+    css_response = client.get('/static/ui/app.css')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
+    assert '<link rel="stylesheet" href="/static/ui/app.css" />' in response.text
+    assert '<style>' not in response.text
+    assert css_response.status_code == 200
+    assert 'text/css' in css_response.headers['content-type']
+    css = css_response.text
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
@@ -109,9 +115,9 @@ def test_ui_smoke() -> None:
     assert 'class="toggleSwitch"' in response.text
     assert 'data-idle-enable="${key}"' in response.text
     assert 'class="chk"' not in response.text
-    assert '.settingsBody input.input:not([type])' in response.text
-    assert '.settingsBody select.input{' in response.text
-    assert 'appearance:none;' in response.text
+    assert '.settingsBody input.input:not([type])' in css
+    assert '.settingsBody select.input{' in css
+    assert 'appearance:none;' in css
     assert 'Show idle dashboard between plays' in response.text
     assert 'Use Invidious server for YouTube playback' in response.text
     assert 'Show connect QR in idle' in response.text
@@ -147,7 +153,7 @@ def test_ui_smoke() -> None:
     assert 'const __JF_REQ_TIMEOUT_MS' in response.text
     assert 'function _jfFetchWithTimeout' in response.text
     assert 'function _applyQueueSnapshot' in response.text
-    assert 'touch-action: none;' in response.text
+    assert 'touch-action: none;' in css
     assert "_applyQueueSnapshot(payload);" in response.text
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in response.text
     assert "play.disabled = !available;" in response.text
