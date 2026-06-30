@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/mcgeezy/relaytv/compare/v0.3.1...v0.4.0) (2026-06-30)
+
+
+### Features
+
+* modernize settings modal controls ([#20](https://github.com/mcgeezy/relaytv/issues/20)) ([0bc277b](https://github.com/mcgeezy/relaytv/commit/0bc277b2312a8dc88b00b5fb8ec39eb93506be15))
+
+
+### Bug Fixes
+
+* harden runtime profile and cec defaults ([#17](https://github.com/mcgeezy/relaytv/issues/17)) ([0d86d51](https://github.com/mcgeezy/relaytv/commit/0d86d51680c21086de0aa9a3805e2b23b588af35))
+* keep tv cursor persistently hidden ([#19](https://github.com/mcgeezy/relaytv/issues/19)) ([812092a](https://github.com/mcgeezy/relaytv/commit/812092a63302222f7d92d155d2f0d4bca1621e08))
+
 ## [0.3.1](https://github.com/mcgeezy/relaytv/compare/v0.3.0...v0.3.1) (2026-06-29)
 
 
