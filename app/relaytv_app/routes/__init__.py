@@ -33,14 +33,17 @@ from .devices import router as devices_router
 from .health import router as health_router
 from .playback import (
     MuteReq as MuteReq,
+    PlayNowReq as PlayNowReq,
     SeekAbsReq as SeekAbsReq,
     SeekReq as SeekReq,
     VolumeReq as VolumeReq,
+    _preserve_current_to_queue_front as _preserve_current_to_queue_front,
     mute as mute,
     pause as pause,
     playback_play as playback_play,
     playback_state as playback_state,
     playback_toggle as playback_toggle,
+    play_now as play_now,
     resume as resume,
     seek as seek,
     seek_abs as seek_abs,
@@ -127,24 +130,6 @@ class PlayReq(BaseModel):
     url: str
     use_ytdlp: bool = True
     cec: bool = False  # default false (most setups don't have /dev/cec0)
-
-
-class PlayNowReq(BaseModel):
-    """Play immediately, optionally preserving current playback into the queue."""
-
-    url: str
-    preserve_current: bool = True
-    preserve_to: str = "queue_front"  # future: other strategies
-    resume_current: bool = True
-    reason: str | None = None
-    title: str | None = None
-    thumbnail: str | None = None
-    resume_pos: float | None = None
-    history_id: str | None = None
-    resolved_source_url: str | None = None
-    resolved_stream: str | None = None
-    resolved_audio: str | None = None
-    resolved_at: float | None = None
 
 
 class PlayTemporaryReq(BaseModel):
@@ -2343,148 +2328,6 @@ def clear_now_playing():
     except Exception:
         pass
     return {"status": "cleared", "resume_available": False, "kept_player_shell": bool(stopped_in_place)}
-
-
-def _preserve_current_to_queue_front() -> dict | None:
-    """If something is playing, capture it and insert at front of queue with resume_pos."""
-    if not player.is_playing():
-        return None
-    now = state.NOW_PLAYING
-    if not isinstance(now, dict):
-        return None
-
-    # Capture current position safely.
-    pos = None
-    dur = None
-    with player.MPV_LOCK:
-        try:
-            pos = player.mpv_get("time-pos")
-        except Exception:
-            pos = None
-        try:
-            dur = player.mpv_get("duration")
-        except Exception:
-            dur = None
-    try:
-        pos_f = float(pos) if pos is not None else None
-    except Exception:
-        pos_f = None
-
-    url = now.get("url")
-    if not isinstance(url, str) or not url.strip():
-        return None
-
-    preserved = {
-        "url": url.strip(),
-        "title": now.get("title") or url.strip(),
-        "provider": now.get("provider"),
-        "_relaytv_interrupt_preserved": True,
-        "_relaytv_interrupt_preserved_at": int(time.time()),
-    }
-    if isinstance(now.get("channel"), str) and now.get("channel"):
-        preserved["channel"] = now.get("channel")
-    # Preserve thumbnail refs when available
-    if isinstance(now.get("thumbnail"), str) and now.get("thumbnail"):
-        preserved["thumbnail"] = now.get("thumbnail")
-    if isinstance(now.get("thumbnail_local"), str) and now.get("thumbnail_local"):
-        preserved["thumbnail_local"] = now.get("thumbnail_local")
-    if isinstance(now.get("jellyfin_item_id"), str) and now.get("jellyfin_item_id"):
-        preserved["jellyfin_item_id"] = now.get("jellyfin_item_id")
-    if isinstance(now.get("jellyfin_media_source_id"), str) and now.get("jellyfin_media_source_id"):
-        preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
-    if isinstance(now.get("history_id"), str) and now.get("history_id"):
-        preserved["history_id"] = now.get("history_id")
-    resolved_stream = str(now.get("_resolved_stream") or "").strip()
-    if not resolved_stream:
-        now_stream = str(now.get("stream") or "").strip()
-        if now_stream and now_stream != url.strip():
-            resolved_stream = now_stream
-    if resolved_stream:
-        preserved["_resolved_source_url"] = url.strip()
-        preserved["_resolved_stream"] = resolved_stream
-        resolved_audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip()
-        if resolved_audio:
-            preserved["_resolved_audio"] = resolved_audio
-        try:
-            preserved["_resolved_at"] = float(now.get("_resolved_at") or time.time())
-        except Exception:
-            preserved["_resolved_at"] = time.time()
-    if pos_f is not None:
-        preserved["resume_pos"] = pos_f
-    player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
-
-    with state.QUEUE_LOCK:
-        state.QUEUE.insert(0, preserved)
-        snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
-    try:
-        state.persist_queue_payload(snapshot)
-    except Exception as e:
-        logger.warning("queue_persist_failed route=play_now_preserve error=%s", e)
-    return preserved
-
-
-@router.post("/play_now")
-def play_now(req: PlayNowReq):
-    """Play immediately, optionally preserving the currently playing item.
-
-    If `preserve_current` is true and something is playing, the current item is
-    moved to the *front* of the queue with its current position saved as
-    `resume_pos`, then the requested URL begins playback.
-    """
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-
-    preserved = None
-    if req.preserve_current and req.preserve_to == "queue_front" and req.resume_current:
-        preserved = _preserve_current_to_queue_front()
-
-    if (
-        req.title
-        or req.thumbnail
-        or req.resume_pos is not None
-        or req.history_id
-        or req.resolved_stream
-    ):
-        item = {"url": req.url}
-        if req.title:
-            item["title"] = req.title
-        if req.thumbnail:
-            item["thumbnail"] = req.thumbnail
-        if req.history_id:
-            item["history_id"] = req.history_id
-        if req.resolved_stream:
-            item["_resolved_source_url"] = (req.resolved_source_url or req.url or "").strip()
-            item["_resolved_stream"] = req.resolved_stream.strip()
-            if req.resolved_audio:
-                item["_resolved_audio"] = req.resolved_audio.strip()
-            if req.resolved_at is not None:
-                item["_resolved_at"] = req.resolved_at
-        now = player.play_item(
-            item,
-            use_resolver=True,
-            cec=False,
-            clear_queue=False,
-            mode=(req.reason or "play_now"),
-            start_pos=req.resume_pos,
-        )
-    else:
-        now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
-    try:
-        title = now.get("title") if isinstance(now, dict) else None
-        _push_overlay_toast(
-            text=f"Playing now: {title or req.url}",
-            duration=_playback_notification_display_sec(),
-            level="success",
-            icon="play",
-            image_url=(now.get("thumbnail_local") or now.get("thumbnail")) if isinstance(now, dict) else None,
-        )
-    except Exception:
-        pass
-    with state.QUEUE_LOCK:
-        qlen = len(state.QUEUE)
-        queue_snapshot = list(state.QUEUE)
-    if preserved is not None or qlen:
-        _ui_event_push_queue("play_now", queue=queue_snapshot, queue_length=qlen, source="play_now")
-    return {"ok": True, "action": "played", "now_playing": now, "preserved": preserved, "queue_length": qlen}
 
 
 @router.post("/play_temporary")

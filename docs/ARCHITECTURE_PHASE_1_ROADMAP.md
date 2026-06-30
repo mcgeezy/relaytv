@@ -248,8 +248,10 @@ Progress:
   `/playback/state` into `app/relaytv_app/routes/playback.py`.
 - Extracted `/playback/play` and `/playback/toggle` into
   `app/relaytv_app/routes/playback.py`.
-- Kept close, play-now, resume-session, temporary playback, and upload ingest
-  playback in the aggregate router for later M4 slices.
+- Extracted `/play_now` and its interrupt-preservation helper into
+  `app/relaytv_app/routes/playback.py`.
+- Kept close, resume-session, temporary playback, and upload ingest playback in
+  the aggregate router for later M4 slices.
 
 ### M5: Extract Settings Router
 
@@ -371,6 +373,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M4 by adding HTTP-level playback route guardrails before moving playback routes. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Extract a narrow playback control slice first. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted low-risk playback controls and `/playback/state` into `app/relaytv_app/routes/playback.py`. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with `/playback/play` and `/playback/toggle` or close/play-now planning. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Extracted `/playback/play` and `/playback/toggle` into the playback router. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with close/play-now planning. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Extracted `/play_now` and interrupt-preservation behavior into the playback router. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py tests/test_queue_history_routes.py tests/test_route_inventory.py tests/test_smoke.py`; `git diff --check` | Continue M4 with close/resume/stop planning. |
 
 ## Open Questions
 
