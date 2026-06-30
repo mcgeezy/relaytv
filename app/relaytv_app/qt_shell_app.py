@@ -152,6 +152,24 @@ def _cursor_autohide_enabled() -> bool:
     return True
 
 
+def _cursor_mode() -> str:
+    raw = (os.getenv("RELAYTV_QT_CURSOR_MODE") or os.getenv("RELAYTV_CURSOR_MODE") or "").strip().lower()
+    if raw in ("hidden", "hide", "none", "blank", "off"):
+        return "hidden"
+    if raw in ("autohide", "auto-hide", "auto"):
+        return "autohide"
+    if raw in ("visible", "show", "on"):
+        return "visible"
+
+    # Backward compatibility for the older autohide-only switch.
+    override = _env_choice("RELAYTV_QT_CURSOR_AUTOHIDE")
+    if override is True:
+        return "autohide"
+    if override is False:
+        return "visible"
+    return "hidden"
+
+
 def _cursor_autohide_timeout_ms(default: int = 2000) -> int:
     raw = (os.getenv("RELAYTV_QT_CURSOR_AUTOHIDE_MS") or "").strip()
     if not raw:
@@ -167,6 +185,16 @@ def _cursor_autohide_timeout_ms(default: int = 2000) -> int:
         return int(default)
     try:
         return max(250, min(15000, int(float(raw))))
+    except Exception:
+        return int(default)
+
+
+def _cursor_hidden_refresh_ms(default: int = 1000) -> int:
+    raw = (os.getenv("RELAYTV_QT_CURSOR_REFRESH_MS") or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return max(250, min(10000, int(float(raw))))
     except Exception:
         return int(default)
 
@@ -2396,17 +2424,23 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
 
-    cursor_autohide_enabled = (not headless_qpa) and _cursor_autohide_enabled()
+    cursor_mode = _cursor_mode()
+    cursor_management_enabled = (not headless_qpa) and cursor_mode in ("hidden", "autohide")
+    cursor_persistent_hidden = cursor_management_enabled and cursor_mode == "hidden"
+    cursor_autohide_enabled = cursor_management_enabled and cursor_mode == "autohide"
     cursor_autohide_timeout_ms = _cursor_autohide_timeout_ms()
+    cursor_hidden_refresh_ms = _cursor_hidden_refresh_ms()
     cursor_hidden = False
     cursor_hide_timer = None
     cursor_force_hide_timer = None
+    cursor_sweep_timer = None
     cursor_force_hide_remaining = 0
     cursor_widgets: list[QWidget] = []
     cursor_widget_ids: set[int] = set()
     _cursor_debug(
         "startup "
-        f"enabled={cursor_autohide_enabled} timeout_ms={cursor_autohide_timeout_ms} "
+        f"mode={cursor_mode} enabled={cursor_management_enabled} "
+        f"timeout_ms={cursor_autohide_timeout_ms} refresh_ms={cursor_hidden_refresh_ms} "
         f"headless={headless_qpa} qpa={qpa_platform or 'default'}"
     )
 
@@ -2449,6 +2483,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
 
+    def _register_all_cursor_widgets() -> None:
+        try:
+            for widget in QApplication.allWidgets():
+                _register_cursor_widget(widget)
+        except Exception:
+            pass
+
     def _live_cursor_windows() -> list[tuple[object, str]]:
         out: list[tuple[object, str]] = []
         seen: set[int] = set()
@@ -2483,9 +2524,37 @@ def main(argv: list[str] | None = None) -> int:
             _cursor_debug(f"live-window-scan-failed err={exc!r}")
         return out
 
+    def _set_app_blank_cursor() -> None:
+        blank = QCursor(Qt.BlankCursor)
+        try:
+            if QApplication.overrideCursor() is None:
+                app.setOverrideCursor(blank)
+            else:
+                app.changeOverrideCursor(blank)
+        except Exception:
+            try:
+                app.setOverrideCursor(blank)
+            except Exception:
+                pass
+
+    def _restore_app_cursor() -> None:
+        try:
+            for _ in range(8):
+                if QApplication.overrideCursor() is None:
+                    break
+                app.restoreOverrideCursor()
+        except Exception:
+            try:
+                app.restoreOverrideCursor()
+            except Exception:
+                pass
+
     def _show_cursor(reason: str = "activity") -> None:
         nonlocal cursor_hidden, cursor_force_hide_remaining
-        if not cursor_autohide_enabled:
+        if not cursor_management_enabled:
+            return
+        if cursor_persistent_hidden:
+            _hide_cursor(reason=f"activity:{reason}")
             return
         try:
             if cursor_force_hide_timer is not None:
@@ -2494,10 +2563,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
         if cursor_hidden:
-            try:
-                app.restoreOverrideCursor()
-            except Exception:
-                pass
+            _restore_app_cursor()
             for widget in cursor_widgets:
                 try:
                     widget.unsetCursor()
@@ -2534,10 +2600,11 @@ def main(argv: list[str] | None = None) -> int:
 
     def _hide_cursor(reason: str = "timer") -> None:
         nonlocal cursor_hidden, cursor_force_hide_remaining
-        if not cursor_autohide_enabled:
+        if not cursor_management_enabled:
             return
         try:
-            app.setOverrideCursor(QCursor(Qt.BlankCursor))
+            _register_all_cursor_widgets()
+            _set_app_blank_cursor()
             for widget in cursor_widgets:
                 try:
                     widget.setCursor(QCursor(Qt.BlankCursor))
@@ -2569,7 +2636,12 @@ def main(argv: list[str] | None = None) -> int:
                 _cursor_debug(f"rehide reason={reason} widgets={len(cursor_widgets)}")
             cursor_hidden = True
             try:
-                if is_wayland and cursor_force_hide_timer is not None and (reason != "refresh"):
+                if (
+                    cursor_autohide_enabled
+                    and is_wayland
+                    and cursor_force_hide_timer is not None
+                    and (reason != "refresh")
+                ):
                     cursor_force_hide_remaining = 8
                     cursor_force_hide_timer.start()
                     _cursor_debug(
@@ -2620,7 +2692,10 @@ def main(argv: list[str] | None = None) -> int:
                         return False
                 except Exception:
                     pass
-                _show_cursor(reason=f"event:{int(etype)}")
+                if cursor_persistent_hidden:
+                    _hide_cursor(reason=f"event:{int(etype)}")
+                else:
+                    _show_cursor(reason=f"event:{int(etype)}")
             return False
 
     resize_filter = _ResizeFilter()
@@ -2640,7 +2715,7 @@ def main(argv: list[str] | None = None) -> int:
         _register_cursor_widget_tree(native_toast_host)
         _set_mouse_tracking(native_toast_host)
     cursor_filter = None
-    if cursor_autohide_enabled:
+    if cursor_management_enabled:
         cursor_hide_timer = QTimer()
         cursor_hide_timer.setSingleShot(True)
         cursor_hide_timer.timeout.connect(lambda: _hide_cursor(reason="timer"))
@@ -2656,6 +2731,11 @@ def main(argv: list[str] | None = None) -> int:
         if overlay is not None:
             _register_cursor_widget_tree(overlay)
             _install_cursor_filter(overlay, cursor_filter)
+        if cursor_persistent_hidden:
+            cursor_sweep_timer = QTimer()
+            cursor_sweep_timer.setInterval(cursor_hidden_refresh_ms)
+            cursor_sweep_timer.timeout.connect(lambda: _hide_cursor(reason="sweep"))
+            cursor_sweep_timer.start()
 
     if headless_qpa:
         # Offscreen/minimal platforms do not represent a real window stack.
@@ -2689,7 +2769,7 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(0, fn)
     _layout_overlay()
     _sync_idle_visibility()
-    if cursor_autohide_enabled:
+    if cursor_management_enabled:
         QTimer.singleShot(0, lambda: _hide_cursor(reason="startup"))
     if overlay is not None and (not headless_qpa) and (not is_wayland):
         try:

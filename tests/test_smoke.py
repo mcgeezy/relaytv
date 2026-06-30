@@ -17,6 +17,8 @@ from relaytv_app import resolver
 from relaytv_app import routes
 from relaytv_app import upload_store
 from relaytv_app.qt_shell_app import (
+    _cursor_hidden_refresh_ms,
+    _cursor_mode,
     _embedded_web_overlay_enabled,
     _libmpv_enabled,
     _native_idle_overlay_enabled,
@@ -1418,6 +1420,48 @@ def test_qt_overlay_software_mode_defaults_on_for_pi(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
 
     assert _overlay_software_mode_enabled() is True
+
+
+def test_qt_cursor_defaults_to_persistent_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_CURSOR_MODE', raising=False)
+    monkeypatch.delenv('RELAYTV_CURSOR_MODE', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_CURSOR_AUTOHIDE', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_CURSOR_REFRESH_MS', raising=False)
+
+    assert _cursor_mode() == 'hidden'
+    assert _cursor_hidden_refresh_ms() == 1000
+
+
+def test_qt_cursor_mode_supports_autohide_and_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_QT_CURSOR_MODE', 'autohide')
+    assert _cursor_mode() == 'autohide'
+
+    monkeypatch.setenv('RELAYTV_QT_CURSOR_MODE', 'visible')
+    assert _cursor_mode() == 'visible'
+
+    monkeypatch.delenv('RELAYTV_QT_CURSOR_MODE', raising=False)
+    monkeypatch.setenv('RELAYTV_QT_CURSOR_AUTOHIDE', '1')
+    assert _cursor_mode() == 'autohide'
+
+    monkeypatch.setenv('RELAYTV_QT_CURSOR_AUTOHIDE', '0')
+    assert _cursor_mode() == 'visible'
+
+
+def test_qt_cursor_manager_uses_persistent_sweep() -> None:
+    text = (ROOT_DIR / 'app/relaytv_app/qt_shell_app.py').read_text()
+
+    assert 'cursor_mode = _cursor_mode()' in text
+    assert 'cursor_sweep_timer.timeout.connect(lambda: _hide_cursor(reason="sweep"))' in text
+    assert 'QApplication.allWidgets()' in text
+    assert 'app.changeOverrideCursor(blank)' in text
+
+
+def test_qt_overlay_fallback_hides_cursor() -> None:
+    text = (ROOT_DIR / 'app/relaytv_app/overlay_app.py').read_text()
+
+    assert 'from PySide6.QtGui import QCursor' in text
+    assert 'blank_cursor = QCursor(Qt.BlankCursor)' in text
+    assert 'cursor_timer.timeout.connect(_hide_cursor)' in text
 
 
 def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatch) -> None:
