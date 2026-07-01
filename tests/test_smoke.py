@@ -2423,6 +2423,43 @@ def test_interrupt_preserved_queue_item_is_not_mpv_primed() -> None:
     ) is None
 
 
+def test_interrupt_preserved_queue_head_suppresses_auto_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    preserved = {
+        'url': 'https://example.com/interrupted.mp4',
+        '_relaytv_interrupt_preserved': True,
+        '_relaytv_interrupt_preserved_at': 1234,
+        'resume_pos': 37.0,
+    }
+
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'idle', raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [preserved], raising=False)
+
+    assert player._queue_head_interrupt_preserved() is True
+    assert player._auto_next_suppressed() is True
+
+
+def test_auto_next_does_not_consume_interrupt_preserved_queue_head(monkeypatch: pytest.MonkeyPatch) -> None:
+    preserved = {
+        'url': 'https://example.com/interrupted.mp4',
+        '_relaytv_interrupt_preserved': True,
+        '_relaytv_interrupt_preserved_at': 1234,
+        'resume_pos': 37.0,
+    }
+    persisted: list[dict] = []
+
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'idle', raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [preserved], raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'play_item', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('auto-next should not play preserved item')))
+
+    with pytest.raises(player.QueueAdvanceSuppressedError):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == [preserved]
+    assert persisted == []
+
+
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
     monkeypatch.setattr(

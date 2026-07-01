@@ -3696,7 +3696,18 @@ class QueueAdvanceSuppressedError(RuntimeError):
 def _auto_next_suppressed() -> bool:
     if str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() == "closed":
         return True
+    if _queue_head_interrupt_preserved():
+        return True
     return False
+
+
+def _queue_head_interrupt_preserved() -> bool:
+    try:
+        with state.QUEUE_LOCK:
+            head = state.QUEUE[0] if state.QUEUE else None
+    except Exception:
+        return False
+    return isinstance(head, dict) and head.get("_relaytv_interrupt_preserved") is True
 
 
 def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None = None) -> str | None:
@@ -4536,6 +4547,11 @@ def _autoplay_next_worker():
             if _session_already_idle_without_queue():
                 continue
             _handle_playback_idle_no_queue()
+            continue
+        if _queue_head_interrupt_preserved():
+            if not _session_already_idle_without_queue():
+                _handle_playback_idle_no_queue()
+            state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + max(queue_handoff_suppress_sec(), 3.0)
             continue
 
         _set_auto_next_transition(True)
