@@ -625,6 +625,18 @@ _QT_EXTERNAL_RUNTIME_STATE: dict[str, object] = {
     "video_health_last_ts": 0.0,
     "video_health_fail_count": 0,
 }
+_QT_SHELL_SUPERVISOR_LOCK = threading.Lock()
+_QT_SHELL_SUPERVISOR_STATE: dict[str, object] = {
+    "enabled": True,
+    "running": False,
+    "display_ready": False,
+    "display_ready_since": 0.0,
+    "last_check_ts": 0.0,
+    "last_action": "",
+    "last_reason": "",
+    "last_restart_ts": 0.0,
+    "restart_count": 0,
+}
 
 
 def _is_arm_arch() -> bool:
@@ -824,6 +836,21 @@ def _qt_runtime_uses_external_mpv() -> bool:
 def _qt_shell_running() -> bool:
     global QT_SHELL_PROC
     return QT_SHELL_PROC is not None and QT_SHELL_PROC.poll() is None
+
+
+def _qt_shell_supervisor_enabled() -> bool:
+    raw = (os.getenv("RELAYTV_QT_SHELL_SUPERVISOR") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _qt_shell_supervisor_set(**updates: object) -> None:
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        _QT_SHELL_SUPERVISOR_STATE.update(updates)
+
+
+def qt_shell_supervisor_state() -> dict[str, object]:
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        return dict(_QT_SHELL_SUPERVISOR_STATE)
 
 
 def _qt_external_mpv_running() -> bool:
@@ -1211,6 +1238,8 @@ def ensure_qt_shell_idle(*, force: bool = False, allow_notification_fallback: bo
         if _qt_external_mpv_running():
             return
     if _qt_shell_running():
+        return
+    if not _qt_shell_display_stable():
         return
     _start_qt_shell(None, audio_url=None)
 
@@ -1677,6 +1706,15 @@ def qt_shell_runtime_telemetry(*, max_age_sec: float = 3.0) -> dict[str, Any]:
         "last_control_handled": (data or {}).get("last_control_handled"),
         "last_control_ok": (data or {}).get("last_control_ok"),
         "last_control_error": str((data or {}).get("last_control_error") or ""),
+        "qt_overlay_enabled": (data or {}).get("qt_overlay_enabled"),
+        "qt_overlay_software_mode": (data or {}).get("qt_overlay_software_mode"),
+        "qt_overlay_load_ok": (data or {}).get("qt_overlay_load_ok"),
+        "qt_overlay_load_failures": (data or {}).get("qt_overlay_load_failures"),
+        "qt_overlay_last_load_ts": (data or {}).get("qt_overlay_last_load_ts"),
+        "qt_overlay_last_error_ts": (data or {}).get("qt_overlay_last_error_ts"),
+        "qt_overlay_visible": (data or {}).get("qt_overlay_visible"),
+        "qt_native_idle_enabled": (data or {}).get("qt_native_idle_enabled"),
+        "qt_native_idle_visible": (data or {}).get("qt_native_idle_visible"),
         "mpv_runtime_initialized": (data or {}).get("mpv_runtime_initialized"),
         "mpv_runtime_playback_active": (data or {}).get("mpv_runtime_playback_active"),
         "mpv_runtime_stream_loaded": (data or {}).get("mpv_runtime_stream_loaded"),
@@ -2746,6 +2784,12 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
     # is tearing down the idle runtime and spawning the media runtime.
     _mark_playback_transition()
     stop_splash_screen()
+    if _qt_shell_backend_enabled():
+        try:
+            from . import x11_overlay
+            x11_overlay.stop_overlay()
+        except Exception:
+            pass
     stop_mpv(restart_splash=False)
     _reset_mpv_up_next_state()
 
@@ -4319,6 +4363,12 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         # immediately before the playback handoff so background idle workers do
         # not collapse the session while the reused runtime is loading media.
         _mark_playback_transition()
+        if _qt_shell_backend_enabled():
+            try:
+                from . import x11_overlay
+                x11_overlay.stop_overlay()
+            except Exception:
+                pass
         reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
         if (not reused_runtime) and _qt_shell_backend_enabled():
             # ARM hosts can expose a brief control-gap at EOF; retry a couple
@@ -4631,6 +4681,11 @@ _SESSION_TRACKER_THREAD_LOCK = threading.Lock()
 _QT_AUDIO_WATCHDOG_THREAD_STARTED = False
 _QT_AUDIO_WATCHDOG_THREAD_LOCK = threading.Lock()
 _QT_AUDIO_RECOVERY_LAST_TS = 0.0
+_QT_SHELL_SUPERVISOR_THREAD_STARTED = False
+_QT_SHELL_SUPERVISOR_THREAD_LOCK = threading.Lock()
+_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC = 0.0
+_QT_SHELL_DISPLAY_READY_MONOTONIC = 0.0
+_QT_SHELL_DISPLAY_READY_WALL = 0.0
 _SESSION_RESTORE_ATTEMPTED = False
 _AUTO_NEXT_TRANSITION_LOCK = threading.Lock()
 _AUTO_NEXT_TRANSITION = False
@@ -5142,6 +5197,286 @@ def _session_tracker_worker() -> None:
             continue
 
 
+def _qt_shell_display_available() -> bool:
+    qpa_platform = (os.getenv("QT_QPA_PLATFORM") or "").strip().lower()
+    if qpa_platform in ("offscreen", "vnc", "minimal"):
+        return True
+    return bool(_has_x11_display() or _has_wayland_display())
+
+
+def _qt_shell_boot_grace_remaining() -> float:
+    try:
+        grace = max(0.0, float(os.getenv("RELAYTV_QT_SHELL_BOOT_GRACE_SEC", "45.0")))
+    except Exception:
+        grace = 45.0
+    if grace <= 0.0:
+        return 0.0
+    try:
+        with open("/proc/uptime", encoding="utf-8") as fh:
+            uptime = float((fh.read().strip().split() or ["0"])[0])
+    except Exception:
+        return 0.0
+    return max(0.0, grace - uptime)
+
+
+def _qt_shell_display_stable(now_mono: float | None = None) -> bool:
+    global _QT_SHELL_DISPLAY_READY_MONOTONIC, _QT_SHELL_DISPLAY_READY_WALL
+    now = time.monotonic() if now_mono is None else float(now_mono)
+    available = _qt_shell_display_available()
+    if not available:
+        _QT_SHELL_DISPLAY_READY_MONOTONIC = 0.0
+        _QT_SHELL_DISPLAY_READY_WALL = 0.0
+        _qt_shell_supervisor_set(
+            display_socket_available=False,
+            display_ready=False,
+            display_ready_since=0.0,
+        )
+        return False
+    if _QT_SHELL_DISPLAY_READY_MONOTONIC <= 0.0:
+        _QT_SHELL_DISPLAY_READY_MONOTONIC = now
+        _QT_SHELL_DISPLAY_READY_WALL = time.time()
+    try:
+        settle_sec = max(0.0, float(os.getenv("RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC", "5.0")))
+    except Exception:
+        settle_sec = 5.0
+    boot_remaining = _qt_shell_boot_grace_remaining()
+    stable = boot_remaining <= 0.0 and (now - float(_QT_SHELL_DISPLAY_READY_MONOTONIC or 0.0)) >= settle_sec
+    _qt_shell_supervisor_set(
+        display_socket_available=True,
+        display_ready=stable,
+        display_ready_since=float(_QT_SHELL_DISPLAY_READY_WALL or 0.0),
+        display_boot_grace_remaining_sec=float(boot_remaining),
+    )
+    return stable
+
+
+def _qt_shell_supervisor_restart_allowed(now_mono: float, reason: str) -> bool:
+    cooldown = 20.0
+    try:
+        cooldown = max(0.0, float(os.getenv("RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC", "20.0")))
+    except Exception:
+        pass
+    if (now_mono - float(_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC or 0.0)) < cooldown:
+        _qt_shell_supervisor_set(last_action="cooldown", last_reason=reason)
+        return False
+    return True
+
+
+def _qt_shell_supervisor_record_restart(reason: str, action: str) -> None:
+    global _QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC
+    _QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC = time.monotonic()
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        count = int(_QT_SHELL_SUPERVISOR_STATE.get("restart_count") or 0) + 1
+        _QT_SHELL_SUPERVISOR_STATE.update(
+            {
+                "last_action": action,
+                "last_reason": reason,
+                "last_restart_ts": time.time(),
+                "restart_count": count,
+            }
+        )
+
+
+def _qt_shell_idle_needs_repair(telemetry: dict[str, Any]) -> tuple[bool, str]:
+    if not _idle_qt_shell_enabled():
+        return False, "idle_visual_surface_disabled"
+    if not _qt_shell_running():
+        return True, "idle_shell_not_running"
+    freshness = str(telemetry.get("freshness") or "missing").strip().lower()
+    if freshness != "fresh":
+        return True, f"idle_telemetry_{freshness or 'missing'}"
+    if telemetry.get("alive") is False:
+        return True, "idle_runtime_not_alive"
+    if telemetry.get("qt_overlay_enabled") is True and telemetry.get("qt_overlay_load_ok") is False:
+        return True, "idle_overlay_load_failed"
+    return False, ""
+
+
+def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
+    if not isinstance(getattr(state, "NOW_PLAYING", None), dict):
+        return ""
+    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
+    if sess not in ("playing", "paused"):
+        return ""
+    if not _is_playing():
+        return ""
+    now = state.NOW_PLAYING
+    try:
+        grace = max(0.0, float(os.getenv("RELAYTV_QT_SHELL_VIDEO_GRACE_SEC", "8.0")))
+    except Exception:
+        grace = 8.0
+    try:
+        started_at = float(now.get("started") or 0.0)
+    except Exception:
+        started_at = 0.0
+    if started_at > 0.0 and (time.time() - started_at) < grace:
+        return ""
+    if not _qt_shell_running():
+        return "active_shell_not_running"
+
+    freshness = str(telemetry.get("freshness") or "missing").strip().lower()
+    if freshness != "fresh":
+        return f"active_telemetry_{freshness or 'missing'}"
+
+    native_state = _qt_shell_runtime_output_state(max_age_sec=2.0)
+    if not isinstance(native_state, dict):
+        return ""
+    has_video = bool(native_state.get("current_vo"))
+    playback_active = bool(native_state.get("playback_active"))
+    if native_state.get("sample_detail") == "property_read_degraded" and playback_active:
+        has_video = True
+    has_audio = bool(native_state.get("current_ao")) or isinstance(native_state.get("aid"), int)
+    media_loaded = bool(
+        playback_active
+        or native_state.get("stream_loaded")
+        or native_state.get("playback_started")
+        or native_state.get("path")
+    )
+    if media_loaded and has_audio and not has_video:
+        return "active_audio_without_video"
+    return ""
+
+
+def _current_runtime_position() -> float | None:
+    for getter in (
+        lambda: mpv_get("time-pos"),
+        lambda: getattr(state, "SESSION_POSITION", None),
+        lambda: (state.NOW_PLAYING or {}).get("resume_pos") if isinstance(state.NOW_PLAYING, dict) else None,
+    ):
+        try:
+            value = getter()
+        except Exception:
+            value = None
+        try:
+            pos = float(value) if value is not None else None
+        except Exception:
+            pos = None
+        if pos is not None and pos >= 0.0:
+            return pos
+    return None
+
+
+def _current_runtime_paused() -> bool:
+    try:
+        return bool(mpv_get("pause"))
+    except Exception:
+        return str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
+
+
+def _restart_active_qt_shell_playback(reason: str) -> bool:
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not now:
+        return False
+    stream = str(now.get("_resolved_stream") or now.get("stream") or now.get("url") or "").strip()
+    if not stream:
+        return False
+    audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip() or None
+    pos = _current_runtime_position()
+    paused = _current_runtime_paused()
+    start_pos = _normalize_start_pos(pos)
+    _mark_playback_transition(window_sec=8.0)
+    try:
+        with MPV_LOCK:
+            start_mpv(stream, audio_url=audio, start_pos=start_pos)
+        if paused:
+            try:
+                mpv_set("pause", True)
+            except Exception:
+                pass
+        updated = dict(now)
+        updated["stream"] = stream
+        updated["audio"] = audio
+        updated["mode"] = "supervisor_recover"
+        updated["started"] = int(time.time())
+        if pos is not None:
+            updated["resume_pos"] = float(pos)
+            updated["_playback_started_pos"] = float(pos)
+        state.set_now_playing(updated)
+        state.set_session_state("paused" if paused else "playing")
+        if pos is not None:
+            state.set_session_position(float(pos))
+        logger.warning("qt_shell_supervisor_restarted_active_playback reason=%s", reason)
+        return True
+    except Exception as exc:
+        logger.warning("qt_shell_supervisor_active_repair_failed reason=%s error=%s", reason, exc)
+        _qt_shell_supervisor_set(last_action="repair_failed", last_reason=reason)
+        return False
+
+
+def _repair_idle_qt_shell(reason: str) -> bool:
+    try:
+        if _qt_shell_running():
+            _stop_qt_shell()
+        ensure_qt_shell_idle(force=True)
+        logger.warning("qt_shell_supervisor_restarted_idle_shell reason=%s", reason)
+        return True
+    except Exception as exc:
+        logger.warning("qt_shell_supervisor_idle_repair_failed reason=%s error=%s", reason, exc)
+        _qt_shell_supervisor_set(last_action="repair_failed", last_reason=reason)
+        return False
+
+
+def _qt_shell_supervisor_tick(now_mono: float | None = None) -> bool:
+    if not _qt_shell_supervisor_enabled():
+        _qt_shell_supervisor_set(
+            enabled=False,
+            running=bool(_QT_SHELL_SUPERVISOR_THREAD_STARTED),
+            last_action="disabled",
+        )
+        return False
+    _qt_shell_supervisor_set(
+        enabled=True,
+        running=bool(_QT_SHELL_SUPERVISOR_THREAD_STARTED),
+        last_check_ts=time.time(),
+    )
+    if not _qt_shell_backend_enabled() or _qt_runtime_uses_external_mpv():
+        _qt_shell_supervisor_set(last_action="skipped", last_reason="qt_backend_inactive")
+        return False
+    now = time.monotonic() if now_mono is None else float(now_mono)
+    if not _qt_shell_display_stable(now):
+        _qt_shell_supervisor_set(last_action="waiting", last_reason="display_not_stable")
+        return False
+    if playback_transitioning() or auto_next_transitioning():
+        _qt_shell_supervisor_set(last_action="skipped", last_reason="playback_transition")
+        return False
+
+    telemetry = qt_shell_runtime_telemetry(max_age_sec=3.0)
+    active_reason = _qt_shell_active_video_repair_reason(telemetry)
+    if active_reason:
+        if not _qt_shell_supervisor_restart_allowed(now, active_reason):
+            return False
+        if _restart_active_qt_shell_playback(active_reason):
+            _qt_shell_supervisor_record_restart(active_reason, "restarted_active_playback")
+            return True
+        return False
+
+    if not _is_playing():
+        idle_needs_repair, idle_reason = _qt_shell_idle_needs_repair(telemetry)
+        if idle_needs_repair:
+            if not _qt_shell_supervisor_restart_allowed(now, idle_reason):
+                return False
+            if _repair_idle_qt_shell(idle_reason):
+                _qt_shell_supervisor_record_restart(idle_reason, "restarted_idle_shell")
+                return True
+            return False
+
+    _qt_shell_supervisor_set(last_action="ok", last_reason="")
+    return False
+
+
+def _qt_shell_supervisor_worker() -> None:
+    while True:
+        try:
+            interval = max(0.5, float(os.getenv("RELAYTV_QT_SHELL_SUPERVISOR_INTERVAL", "3.0")))
+        except Exception:
+            interval = 3.0
+        time.sleep(interval)
+        try:
+            _qt_shell_supervisor_tick()
+        except Exception as exc:
+            logger.warning("qt_shell_supervisor_tick_failed error=%s", exc)
+
+
 def _qt_audio_watchdog_tick(now_ts: float | None = None) -> bool:
     """Best-effort periodic audio recovery for Qt runtime playback."""
     global _QT_AUDIO_RECOVERY_LAST_TS
@@ -5190,6 +5525,16 @@ def start_qt_audio_watchdog_worker() -> None:
             return
         threading.Thread(target=_qt_audio_watchdog_worker, daemon=True).start()
         _QT_AUDIO_WATCHDOG_THREAD_STARTED = True
+
+
+def start_qt_shell_supervisor_worker() -> None:
+    global _QT_SHELL_SUPERVISOR_THREAD_STARTED
+    with _QT_SHELL_SUPERVISOR_THREAD_LOCK:
+        if _QT_SHELL_SUPERVISOR_THREAD_STARTED:
+            return
+        threading.Thread(target=_qt_shell_supervisor_worker, daemon=True).start()
+        _QT_SHELL_SUPERVISOR_THREAD_STARTED = True
+        _qt_shell_supervisor_set(running=True)
 
 
 def start_autoplay_worker() -> None:

@@ -1154,9 +1154,27 @@ def test_x11_overlay_enabled_by_idle_notifications_default(monkeypatch: pytest.M
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
-    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {"idle_notifications_enabled": True, "idle_dashboard_enabled": False},
+    )
 
     assert x11_overlay.overlay_enabled() is True
+
+
+def test_x11_overlay_default_disabled_when_idle_dashboard_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import x11_overlay
+
+    monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
+    monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {"idle_notifications_enabled": True, "idle_dashboard_enabled": True},
+    )
+
+    assert x11_overlay.overlay_enabled() is False
 
 
 def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1164,7 +1182,11 @@ def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.setenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "0")
-    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {"idle_notifications_enabled": True, "idle_dashboard_enabled": False},
+    )
 
     assert x11_overlay.overlay_enabled() is False
 
@@ -1213,6 +1235,7 @@ def test_x11_overlay_launch_forces_xcb_with_clickthrough(monkeypatch: pytest.Mon
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     monkeypatch.setenv("QT_QPA_PLATFORM", "wayland")
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("RELAYTV_X11_OVERLAY", "1")
     monkeypatch.setenv("RELAYTV_OVERLAY_LOG", str(tmp_path / "overlay.log"))
 
     x11_overlay.start_overlay()
@@ -1253,6 +1276,7 @@ def test_x11_overlay_launch_repairs_stale_xauthority(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("XAUTHORITY", str(stale_xauthority))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("RELAYTV_X11_OVERLAY", "1")
     monkeypatch.setenv("RELAYTV_OVERLAY_LOG", str(tmp_path / "overlay.log"))
 
     x11_overlay.start_overlay()
@@ -1461,6 +1485,9 @@ def test_qt_runtime_defaults_prefer_libmpv_and_overlay_toasts_on_x86(monkeypatch
     monkeypatch.delenv('RELAYTV_QT_LIBMPV', raising=False)
     monkeypatch.delenv('RELAYTV_QT_NATIVE_TOASTS', raising=False)
     monkeypatch.delenv('RELAYTV_QT_OVERLAY_SOFTWARE', raising=False)
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'xcb')
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'x11')
+    monkeypatch.delenv('RELAYTV_HOST_SESSION_TYPE', raising=False)
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'x86_64')
 
     assert _libmpv_enabled() is True
@@ -1468,8 +1495,19 @@ def test_qt_runtime_defaults_prefer_libmpv_and_overlay_toasts_on_x86(monkeypatch
     assert _overlay_software_mode_enabled() is False
 
 
+def test_qt_overlay_software_mode_defaults_on_for_wayland(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_SOFTWARE', raising=False)
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'wayland')
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'wayland')
+    monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'x86_64')
+
+    assert _overlay_software_mode_enabled() is True
+
+
 def test_qt_overlay_software_mode_defaults_on_for_pi(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('RELAYTV_QT_OVERLAY_SOFTWARE', raising=False)
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'xcb')
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'x11')
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
 
     assert _overlay_software_mode_enabled() is True
@@ -2207,6 +2245,23 @@ def test_close_uses_overlay_not_qt_shell_for_idle_notifications_on_x11(monkeypat
     assert stop_shell_calls == [True]
     assert stop_mpv_calls == [True]
     assert ensure_surface_calls == [False]
+
+
+def test_notification_surface_does_not_start_x11_overlay_when_qt_shell_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(routes, '_idle_notifications_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes, '_idle_dashboard_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(routes.x11_overlay, 'start_overlay', lambda: calls.append('start_overlay'))
+    monkeypatch.setattr(routes.x11_overlay, 'stop_overlay', lambda: calls.append('stop_overlay'))
+    monkeypatch.setattr(routes.x11_overlay, 'overlay_running', lambda: False)
+    monkeypatch.setattr(routes.player, 'ensure_qt_shell_idle', lambda **kwargs: calls.append('ensure_qt'))
+
+    routes._ensure_notification_surface(wait_for_subscriber=False)
+
+    assert calls == ['stop_overlay', 'ensure_qt']
 
 
 def test_clear_now_playing_advances_queue_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3008,6 +3063,200 @@ def test_status_endpoint_includes_native_qt_deprecation_metadata() -> None:
     assert payload['native_qt_idle_status'] == 'override_only'
     assert payload['native_qt_toasts_deprecated'] is True
     assert payload['native_qt_toasts_status'] == 'override_only'
+    assert 'qt_shell_supervisor_enabled' in payload
+    assert 'qt_shell_supervisor_last_action' in payload
+    assert 'qt_shell_display_boot_grace_remaining_sec' in payload
+
+
+def test_qt_shell_supervisor_repairs_stale_idle_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_BOOT_GRACE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_THREAD_STARTED', True, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_display_available', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {'selected': True, 'available': False, 'freshness': 'stale', 'alive': False},
+    )
+    monkeypatch.setattr(player, '_stop_qt_shell', lambda: calls.append('stop_shell'))
+    monkeypatch.setattr(player, 'ensure_qt_shell_idle', lambda force=False: calls.append(f'ensure:{force}'))
+
+    assert player._qt_shell_supervisor_tick() is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls == ['stop_shell', 'ensure:True']
+    assert supervisor['last_action'] == 'restarted_idle_shell'
+    assert supervisor['last_reason'] == 'idle_telemetry_stale'
+
+
+def test_qt_shell_supervisor_repairs_idle_overlay_load_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_BOOT_GRACE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_THREAD_STARTED', True, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_display_available', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {
+            'selected': True,
+            'available': True,
+            'freshness': 'fresh',
+            'alive': True,
+            'qt_overlay_enabled': True,
+            'qt_overlay_load_ok': False,
+        },
+    )
+    monkeypatch.setattr(player, '_stop_qt_shell', lambda: calls.append('stop_shell'))
+    monkeypatch.setattr(player, 'ensure_qt_shell_idle', lambda force=False: calls.append(f'ensure:{force}'))
+
+    assert player._qt_shell_supervisor_tick() is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls == ['stop_shell', 'ensure:True']
+    assert supervisor['last_action'] == 'restarted_idle_shell'
+    assert supervisor['last_reason'] == 'idle_overlay_load_failed'
+
+
+def test_ensure_qt_shell_idle_waits_for_boot_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda allow_notification_fallback=False: True)
+    monkeypatch.setattr(player, '_has_x11_display', lambda: False)
+    monkeypatch.setattr(player, '_has_wayland_display', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_boot_grace_remaining', lambda: 30.0)
+    monkeypatch.setattr(player, '_start_qt_shell', lambda *args, **kwargs: calls.append('start'))
+
+    player.ensure_qt_shell_idle()
+
+    assert calls == []
+    assert player.qt_shell_supervisor_state()['display_ready'] is False
+
+
+def test_ensure_qt_shell_idle_starts_after_boot_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda allow_notification_fallback=False: True)
+    monkeypatch.setattr(player, '_has_x11_display', lambda: False)
+    monkeypatch.setattr(player, '_has_wayland_display', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_boot_grace_remaining', lambda: 0.0)
+    monkeypatch.setattr(player, '_start_qt_shell', lambda *args, **kwargs: calls.append('start'))
+
+    player.ensure_qt_shell_idle()
+
+    assert calls == ['start']
+
+
+def test_qt_shell_supervisor_recovers_active_audio_without_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object]] = []
+    now = {
+        'url': 'https://jellyfin.example/items/1/stream',
+        'title': 'Movie',
+        'stream': 'https://jellyfin.example/resolved/video.m3u8',
+        'audio': 'https://jellyfin.example/resolved/audio.m4a',
+        'started': player.time.time() - 30,
+        'resume_pos': 12.0,
+    }
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_BOOT_GRACE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_VIDEO_GRACE_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_THREAD_STARTED', True, raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', dict(now), raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_display_available', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {'selected': True, 'available': True, 'freshness': 'fresh', 'alive': True},
+    )
+    monkeypatch.setattr(
+        player,
+        '_qt_shell_runtime_output_state',
+        lambda max_age_sec=2.0: {
+            'path': 'https://jellyfin.example/resolved/video.m3u8',
+            'current_vo': '',
+            'current_ao': 'pulse',
+            'aid': 1,
+            'playback_active': True,
+            'stream_loaded': True,
+            'playback_started': True,
+            'sample_detail': '',
+        },
+    )
+    monkeypatch.setattr(player, 'mpv_get', lambda prop: 42.5 if prop == 'time-pos' else False)
+
+    def fake_start_mpv(stream: str, audio_url: str | None = None, start_pos: float | None = None):
+        calls.append(('start_mpv', {'stream': stream, 'audio': audio_url, 'start_pos': start_pos}))
+
+    def fake_set_now_playing(payload: dict):
+        player.state.NOW_PLAYING = dict(payload)
+        calls.append(('now', dict(payload)))
+
+    monkeypatch.setattr(player, 'start_mpv', fake_start_mpv)
+    monkeypatch.setattr(player.state, 'set_now_playing', fake_set_now_playing)
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: calls.append(('state', value)))
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: calls.append(('position', value)))
+
+    assert player._qt_shell_supervisor_tick() is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls[0] == (
+        'start_mpv',
+        {
+            'stream': 'https://jellyfin.example/resolved/video.m3u8',
+            'audio': 'https://jellyfin.example/resolved/audio.m4a',
+            'start_pos': 42.5,
+        },
+    )
+    assert player.state.NOW_PLAYING['mode'] == 'supervisor_recover'
+    assert player.state.NOW_PLAYING['resume_pos'] == 42.5
+    assert supervisor['last_action'] == 'restarted_active_playback'
+    assert supervisor['last_reason'] == 'active_audio_without_video'
 
 
 def test_stop_mpv_persists_live_runtime_volume(monkeypatch: pytest.MonkeyPatch) -> None:

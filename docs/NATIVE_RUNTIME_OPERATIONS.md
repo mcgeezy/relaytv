@@ -157,7 +157,7 @@ Quick post-run check:
 ```bash
 cd /path/to/relaytv
 ./scripts/host-ops.sh native-ready --wait 5
-curl -sS http://127.0.0.1:8787/status | jq '{playing,state,player_backend,player_runtime_engine,visual_runtime_mode,notifications_deliverable}'
+curl -sS http://127.0.0.1:8787/status | jq '{playing,state,player_backend,player_runtime_engine,visual_runtime_mode,notifications_deliverable,qt_shell_display_ready,qt_shell_supervisor_last_action,qt_shell_supervisor_last_reason}'
 ```
 
 ## Troubleshooting Flow
@@ -170,6 +170,95 @@ curl -sS http://127.0.0.1:8787/status | jq '{playing,state,player_backend,player
    - `playback_telemetry_freshness`
 3. If native runtime is unhealthy, capture logs.
 4. If queue or playback behavior is wrong, capture `status` and recent logs together.
+
+### Black Video With Audio After Host Boot
+
+RelayTV starts a Qt shell supervisor with the app. It watches the host display
+socket, waits for it to stay stable, and then repairs common Qt display startup
+failures without restarting the container.
+
+Status fields:
+
+- `qt_shell_display_socket_available`
+- `qt_shell_display_ready`
+- `qt_shell_display_boot_grace_remaining_sec`
+- `qt_shell_supervisor_last_action`
+- `qt_shell_supervisor_last_reason`
+- `qt_shell_supervisor_restart_count`
+- `overlay_subscribers`
+
+Expected healthy values after the desktop is fully up:
+
+```bash
+curl -sS http://127.0.0.1:8787/status | jq '{
+  qt_shell_running,
+  overlay_subscribers,
+  qt_shell_display_socket_available,
+  qt_shell_display_ready,
+  qt_shell_display_boot_grace_remaining_sec,
+  qt_shell_supervisor_last_action,
+  qt_shell_supervisor_last_reason,
+  qt_shell_supervisor_restart_count
+}'
+```
+
+The supervisor repairs:
+
+- idle Qt shell process missing or stale after the display becomes ready
+- active native Qt playback with audio output but no video output after startup
+  grace
+
+If Qt reports a loaded video output but the TV is still black, check for a
+separate X11 notification overlay covering the Qt shell:
+
+```bash
+ps -eo pid,args | rg 'relaytv_app\.overlay_app|relaytv_app\.qt_shell_app'
+```
+
+The X11 overlay should only run for desktop-visible notifications when the idle
+dashboard is disabled. During native Qt idle or playback, notifications are
+delivered through the Qt shell surface instead.
+
+If the app is idle and the TV is black after boot, check the embedded Qt overlay
+health:
+
+```bash
+curl -sS http://127.0.0.1:8787/status | jq '{
+  state,
+  qt_shell_running,
+  native_qt_overlay_enabled,
+  native_qt_overlay_software_mode,
+  native_qt_overlay_load_ok,
+  native_qt_overlay_visible
+}'
+```
+
+On Wayland, RelayTV defaults the embedded overlay to software rendering because
+QtWebEngine can initialize before the compositor/GPU path is ready during host
+startup. If a host is Wayland-only, keep `RELAYTV_XAUTHORITY_HOST_PATH=/dev/null`
+instead of pinning a boot-specific `.mutter-Xwaylandauth.*` path; those filenames
+change across reboots and Docker can recreate stale paths as directories.
+
+If the host journal shows an early `python3.13` segfault in `libQt6Core.so.6` or
+Mutter logs `meta_window_set_stack_position_no_sync` while RelayTV is starting,
+the Qt shell is being launched too early in the graphical-session startup
+window. RelayTV waits before starting the idle Qt shell on fresh boots. Tune with:
+
+- `RELAYTV_QT_SHELL_BOOT_GRACE_SEC=60`
+
+It intentionally skips repair during playback transitions and applies a cooldown
+between restarts to avoid loops. Useful tuning env vars:
+
+- `RELAYTV_QT_SHELL_SUPERVISOR=0` disables the supervisor
+- `RELAYTV_QT_SHELL_BOOT_GRACE_SEC=45.0`
+- `RELAYTV_QT_SHELL_SUPERVISOR_INTERVAL=3.0`
+- `RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC=5.0`
+- `RELAYTV_QT_SHELL_VIDEO_GRACE_SEC=8.0`
+- `RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC=20.0`
+
+If the supervisor repeatedly reports `display_not_stable`, inspect host session
+startup order and Wayland/X11 socket mounts. A systemd unit ordered after the
+graphical session is still the preferred host-level fix for boot races.
 
 ### YouTube Bot Checks Or Cookie Resolver Errors
 

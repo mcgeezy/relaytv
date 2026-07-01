@@ -569,6 +569,10 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         qt_runtime_telemetry = dict(getattr(player, "qt_shell_runtime_telemetry", lambda **_: {})() or {})
     except Exception:
         qt_runtime_telemetry = {}
+    try:
+        qt_shell_supervisor = dict(getattr(player, "qt_shell_supervisor_state", lambda: {})() or {})
+    except Exception:
+        qt_shell_supervisor = {}
     native_qt_selected = bool(qt_runtime_telemetry.get("selected"))
     native_qt_available = bool(qt_runtime_telemetry.get("available"))
     native_qt_freshness = str(qt_runtime_telemetry.get("freshness") or "")
@@ -636,6 +640,19 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "qt_external_video_health_last_ok": qt_external_runtime.get("video_health_last_ok"),
         "qt_external_video_health_last_ts": float(qt_external_runtime.get("video_health_last_ts") or 0.0),
         "qt_external_video_health_fail_count": int(qt_external_runtime.get("video_health_fail_count") or 0),
+        "qt_shell_supervisor_enabled": bool(qt_shell_supervisor.get("enabled", True)),
+        "qt_shell_supervisor_running": bool(qt_shell_supervisor.get("running")),
+        "qt_shell_display_socket_available": bool(qt_shell_supervisor.get("display_socket_available")),
+        "qt_shell_display_ready": bool(qt_shell_supervisor.get("display_ready")),
+        "qt_shell_display_ready_since": float(qt_shell_supervisor.get("display_ready_since") or 0.0),
+        "qt_shell_display_boot_grace_remaining_sec": float(
+            qt_shell_supervisor.get("display_boot_grace_remaining_sec") or 0.0
+        ),
+        "qt_shell_supervisor_last_check_ts": float(qt_shell_supervisor.get("last_check_ts") or 0.0),
+        "qt_shell_supervisor_last_action": str(qt_shell_supervisor.get("last_action") or ""),
+        "qt_shell_supervisor_last_reason": str(qt_shell_supervisor.get("last_reason") or ""),
+        "qt_shell_supervisor_last_restart_ts": float(qt_shell_supervisor.get("last_restart_ts") or 0.0),
+        "qt_shell_supervisor_restart_count": int(qt_shell_supervisor.get("restart_count") or 0),
         "native_qt_telemetry_contract_version": str(qt_runtime_telemetry.get("contract_version") or "v1"),
         "native_qt_telemetry_source": native_qt_telemetry_source,
         "native_qt_telemetry_selected": bool(qt_runtime_telemetry.get("selected")),
@@ -651,6 +668,13 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "native_qt_telemetry_last_control_handled": qt_runtime_telemetry.get("last_control_handled"),
         "native_qt_telemetry_last_control_ok": qt_runtime_telemetry.get("last_control_ok"),
         "native_qt_telemetry_last_control_error": str(qt_runtime_telemetry.get("last_control_error") or ""),
+        "native_qt_overlay_enabled": qt_runtime_telemetry.get("qt_overlay_enabled"),
+        "native_qt_overlay_software_mode": qt_runtime_telemetry.get("qt_overlay_software_mode"),
+        "native_qt_overlay_load_ok": qt_runtime_telemetry.get("qt_overlay_load_ok"),
+        "native_qt_overlay_load_failures": qt_runtime_telemetry.get("qt_overlay_load_failures"),
+        "native_qt_overlay_visible": qt_runtime_telemetry.get("qt_overlay_visible"),
+        "native_qt_native_idle_enabled": qt_runtime_telemetry.get("qt_native_idle_enabled"),
+        "native_qt_native_idle_visible": qt_runtime_telemetry.get("qt_native_idle_visible"),
         "native_qt_mpv_runtime_initialized": qt_runtime_telemetry.get("mpv_runtime_initialized"),
         "native_qt_mpv_runtime_playback_active": qt_runtime_telemetry.get("mpv_runtime_playback_active"),
         "native_qt_mpv_runtime_stream_loaded": qt_runtime_telemetry.get("mpv_runtime_stream_loaded"),
@@ -4341,11 +4365,32 @@ def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
     if not _idle_notifications_enabled_for_player():
         return
     try:
-        x11_overlay.start_overlay()
+        qt_backend = bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)())
+        qt_running = bool(getattr(player, "_qt_shell_running", lambda: False)())
     except Exception:
-        pass
+        qt_backend = False
+        qt_running = False
+    if qt_running:
+        try:
+            x11_overlay.stop_overlay()
+        except Exception:
+            pass
+    elif _idle_dashboard_enabled_for_player() and qt_backend:
+        try:
+            player.ensure_qt_shell_idle(force=True, allow_notification_fallback=True)
+        except Exception:
+            pass
+    else:
+        try:
+            x11_overlay.start_overlay()
+        except Exception:
+            pass
     try:
-        if not x11_overlay.overlay_running() and bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)()):
+        overlay_running = bool(x11_overlay.overlay_running())
+    except Exception:
+        overlay_running = False
+    try:
+        if not overlay_running and bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)()):
             player.ensure_qt_shell_idle(force=True, allow_notification_fallback=True)
     except Exception:
         pass

@@ -2,10 +2,9 @@
 """
 RelayTV X11 overlay process manager.
 
-Starts a transparent always-on-top overlay window (WebKitGTK) only when:
-- XDG_SESSION_TYPE is x11 (not wayland)
-- DISPLAY is set
-- RELAYTV_X11_OVERLAY=1 (or true/yes/on)
+Starts a transparent always-on-top overlay window (WebKitGTK) only when X11 is
+available and RelayTV is in desktop-visible notification mode. It stays out of
+the normal Qt shell path so it cannot cover playback.
 
 The overlay loads a RelayTV-served page and subscribes to SSE notifications.
 """
@@ -69,13 +68,24 @@ def overlay_enabled() -> bool:
     raw = (os.getenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
+    dashboard_disabled = False
     try:
         from . import state
         settings = state.get_settings() if hasattr(state, "get_settings") else {}
-        if isinstance(settings, dict) and settings.get("idle_notifications_enabled") is False:
-            return False
+        if isinstance(settings, dict):
+            if settings.get("idle_notifications_enabled") is False:
+                return False
+            if "idle_dashboard_enabled" in settings:
+                if settings.get("idle_dashboard_enabled") is not False:
+                    return False
+                dashboard_disabled = True
     except Exception:
         pass
+    if dashboard_disabled:
+        return True
+    raw_dashboard = (os.getenv("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
+    if raw_dashboard not in ("0", "false", "no", "off"):
+        return False
     return True
 
 def overlay_running() -> bool:

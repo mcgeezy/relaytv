@@ -86,6 +86,10 @@ def _overlay_software_mode_enabled() -> bool:
     override = _env_choice("RELAYTV_QT_OVERLAY_SOFTWARE")
     if override is not None:
         return bool(override)
+    qpa_platform = (os.getenv("QT_QPA_PLATFORM") or "").strip().lower()
+    host_session = (os.getenv("RELAYTV_HOST_SESSION_TYPE") or os.getenv("XDG_SESSION_TYPE") or "").strip().lower()
+    if "wayland" in qpa_platform or host_session == "wayland":
+        return True
     arch = (platform.machine() or "").strip().lower()
     return arch in ("aarch64", "arm64", "armv7l", "armv6l")
 
@@ -2184,6 +2188,14 @@ def main(argv: list[str] | None = None) -> int:
     overlay: QWebEngineView | None = None
     native_toast_host: _NativeToastLayer | None = None
     native_idle_host: _NativeIdleLayer | None = None
+    overlay_health: dict[str, object] = {
+        "enabled": bool(overlay_enabled),
+        "software_mode": bool(overlay_software_mode),
+        "load_ok": None,
+        "load_failures": 0,
+        "last_load_ts": 0.0,
+        "last_error_ts": 0.0,
+    }
     native_toast_toplevel = False
     native_idle_toplevel = False
     overlay_parent_is_main_window = False
@@ -2292,9 +2304,20 @@ def main(argv: list[str] | None = None) -> int:
             # loading the overlay page with bounded exponential backoff.
             if ok:
                 _overlay_failures["n"] = 0
+                overlay_health["load_ok"] = True
+                overlay_health["last_load_ts"] = time.time()
+                try:
+                    overlay.show()
+                    overlay.raise_()
+                    _layout_overlay()
+                except Exception:
+                    pass
                 return
+            overlay_health["load_ok"] = False
+            overlay_health["last_error_ts"] = time.time()
             _show_overlay_placeholder()
             _overlay_failures["n"] = min(8, int(_overlay_failures["n"]) + 1)
+            overlay_health["load_failures"] = int(_overlay_failures["n"])
             delay_ms = min(5000, 250 * (2 ** _overlay_failures["n"]))
             if debug:
                 _eprint(f"qt-shell overlay retry in {delay_ms}ms")
@@ -2771,7 +2794,7 @@ def main(argv: list[str] | None = None) -> int:
     _sync_idle_visibility()
     if cursor_management_enabled:
         QTimer.singleShot(0, lambda: _hide_cursor(reason="startup"))
-    if overlay is not None and (not headless_qpa) and (not is_wayland):
+    if overlay is not None and (not headless_qpa):
         try:
             overlay_raise_timer = QTimer()
             overlay_raise_timer.setInterval(900)
@@ -3039,6 +3062,15 @@ def main(argv: list[str] | None = None) -> int:
             "last_control_handled": control_state.get("last_handled"),
             "last_control_ok": control_state.get("last_ok"),
             "last_control_error": str(control_state.get("last_error") or ""),
+            "qt_overlay_enabled": bool(overlay_health.get("enabled")),
+            "qt_overlay_software_mode": bool(overlay_health.get("software_mode")),
+            "qt_overlay_load_ok": overlay_health.get("load_ok"),
+            "qt_overlay_load_failures": int(overlay_health.get("load_failures") or 0),
+            "qt_overlay_last_load_ts": float(overlay_health.get("last_load_ts") or 0.0),
+            "qt_overlay_last_error_ts": float(overlay_health.get("last_error_ts") or 0.0),
+            "qt_overlay_visible": bool(overlay is not None and overlay.isVisible()),
+            "qt_native_idle_enabled": bool(native_idle_host is not None),
+            "qt_native_idle_visible": bool(native_idle_host is not None and native_idle_host.isVisible()),
         }
         if libmpv_player is not None:
             payload.update(libmpv_player.runtime_snapshot())
