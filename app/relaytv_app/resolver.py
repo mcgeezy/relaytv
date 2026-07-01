@@ -408,12 +408,9 @@ def _build_youtube_strategies(base: list[str], candidates: list[str]) -> list[tu
         strategies.append((public_base, candidates))
 
     # Keep Android as a later fallback only.
-    if not has_extractor_args:
+    if not has_extractor_args and not has_cookie_auth:
         android_last = [*public_base, "--extractor-args", "youtube:player_client=android"]
         strategies.append((android_last, candidates))
-        if has_cookie_auth:
-            android_cookie = [*base, "--extractor-args", "youtube:player_client=android"]
-            strategies.append((android_cookie, candidates))
     out: list[tuple[list[str], list[str]]] = []
     seen: set[tuple[str, ...]] = set()
     for args_base, strategy_candidates in strategies:

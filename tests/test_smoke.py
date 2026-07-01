@@ -1558,6 +1558,17 @@ def test_youtube_strategies_prefer_quality_retries_before_plain_default(monkeypa
     assert (['yt-dlp', '--no-playlist'], ['fmt1', 'best']) in strategies
 
 
+def test_youtube_cookie_strategies_do_not_use_android_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resolver, '_preferred_js_runtime_spec', lambda: 'node')
+
+    strategies = resolver._build_youtube_strategies(
+        ['yt-dlp', '--cookies', '/data/cookies.txt', '--js-runtimes', 'node', '--no-playlist'],
+        ['best'],
+    )
+
+    assert all('youtube:player_client=android' not in args for args, _candidates in strategies)
+
+
 def test_repair_orphan_runtime_playback_ignores_idle_core_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
     monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)

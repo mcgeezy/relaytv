@@ -502,6 +502,9 @@ Progress:
   the shared Bitchute interrupt remained `now_playing`, the interrupted
   Jellyfin item stayed queued with `_relaytv_interrupt_preserved: true`, and
   `transition_in_progress` cleared instead of auto-resuming Jellyfin.
+- YouTube cookies validation found that yt-dlp's Android client fallback does
+  not support cookies and can mask the cookie-auth strategy result. Resolver
+  strategy sets now skip Android fallback entirely when cookies are configured.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
