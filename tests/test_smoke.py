@@ -2482,6 +2482,31 @@ def test_preserve_current_marks_interrupt_queue_entry(monkeypatch: pytest.Monkey
     assert persisted[-1]['queue'] == [preserved]
 
 
+def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    original_resume = {
+        'url': 'https://jellyfin.example/title.m3u8',
+        'title': 'Interrupted Jellyfin Title',
+        'provider': 'jellyfin',
+        '_relaytv_interrupt_preserved': True,
+        'resume_pos': 120.0,
+    }
+    remaining = {'url': 'https://jellyfin.example/next.m3u8', 'title': 'Next Jellyfin Title', 'provider': 'jellyfin'}
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 12.0 if prop == 'time-pos' else 60.0)
+    monkeypatch.setattr(routes.player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'url': 'https://example.com/temporary-share.mp4', 'title': 'Temporary Share'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [original_resume, remaining], raising=False)
+    monkeypatch.setattr(routes.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+
+    preserved = routes._preserve_current_to_queue_front()
+
+    assert preserved is None
+    assert routes.state.QUEUE == [original_resume, remaining]
+    assert persisted == []
+
+
 def test_persisted_queue_item_keeps_interrupt_preserved_marker() -> None:
     item = {
         'url': 'https://example.com/interrupted.mp4',
@@ -2571,6 +2596,41 @@ def test_manual_next_can_dequeue_interrupted_item(monkeypatch: pytest.MonkeyPatc
     assert persisted[-1]['queue'] == []
     assert play_calls[-1]['item']['url'] == 'https://example.com/interrupted.mp4'
     assert play_calls[-1]['start_pos'] == 12.5
+
+
+def test_auto_next_resumes_interrupted_item_without_dropping_queue_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[dict[str, object]] = []
+    resumed = {'url': 'https://jellyfin.example/title.m3u8', '_relaytv_interrupt_preserved': True, 'resume_pos': 120.0}
+    remaining = {'url': 'https://jellyfin.example/next.m3u8', 'title': 'Next Jellyfin Title'}
+    now_ts = player.time.time()
+
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/share.mp4', 'resume_pos': 119.0, 'duration_sec': 120.0, 'started': now_ts - 119.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, 'QUEUE', [resumed, remaining], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(
+        player,
+        'play_item',
+        lambda item, **kwargs: play_calls.append({'item': item, **kwargs}) or {'url': item['url']},
+    )
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert player.state.QUEUE == [remaining]
+    assert persisted[-1]['queue'] == [remaining]
+    assert play_calls[-1]['item'] == resumed
+    assert play_calls[-1]['clear_queue'] is False
+    assert play_calls[-1]['start_pos'] == 120.0
 
 
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:

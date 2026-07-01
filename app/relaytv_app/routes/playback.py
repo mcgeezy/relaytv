@@ -137,6 +137,10 @@ def _preserve_current_to_queue_front() -> dict | None:
     now = state.NOW_PLAYING
     if not isinstance(now, dict):
         return None
+    with state.QUEUE_LOCK:
+        queue_head = state.QUEUE[0] if state.QUEUE else None
+    if isinstance(queue_head, dict) and queue_head.get("_relaytv_interrupt_preserved") is True:
+        return None
 
     pos = None
     dur = None
@@ -206,6 +210,32 @@ def _preserve_current_to_queue_front() -> dict | None:
 
         logger.warning("queue_persist_failed route=play_now_preserve")
     return preserved
+
+
+def _rollback_play_now_preserve(preserved: dict | None) -> None:
+    if preserved is None:
+        return
+    removed = False
+    with state.QUEUE_LOCK:
+        if state.QUEUE and state.QUEUE[0] is preserved:
+            state.QUEUE.pop(0)
+            removed = True
+        elif state.QUEUE and state.QUEUE[0] == preserved:
+            state.QUEUE.pop(0)
+            removed = True
+        if not removed:
+            return
+        snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
+    try:
+        state.persist_queue_payload(snapshot)
+    except Exception:
+        from . import logger
+
+        logger.warning("queue_persist_failed route=play_now_preserve_rollback")
+    try:
+        _ui_event_push_queue("play_now_rollback", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="play_now")
+    except Exception:
+        pass
 
 
 def _discard_interrupted_playback_state(reason: str) -> None:
@@ -351,37 +381,41 @@ def play_now(req: PlayNowReq):
     if req.preserve_current and req.preserve_to == "queue_front" and req.resume_current:
         preserved = _preserve_current_to_queue_front()
 
-    if (
-        req.title
-        or req.thumbnail
-        or req.resume_pos is not None
-        or req.history_id
-        or req.resolved_stream
-    ):
-        item = {"url": req.url}
-        if req.title:
-            item["title"] = req.title
-        if req.thumbnail:
-            item["thumbnail"] = req.thumbnail
-        if req.history_id:
-            item["history_id"] = req.history_id
-        if req.resolved_stream:
-            item["_resolved_source_url"] = (req.resolved_source_url or req.url or "").strip()
-            item["_resolved_stream"] = req.resolved_stream.strip()
-            if req.resolved_audio:
-                item["_resolved_audio"] = req.resolved_audio.strip()
-            if req.resolved_at is not None:
-                item["_resolved_at"] = req.resolved_at
-        now = player.play_item(
-            item,
-            use_resolver=True,
-            cec=False,
-            clear_queue=False,
-            mode=(req.reason or "play_now"),
-            start_pos=req.resume_pos,
-        )
-    else:
-        now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
+    try:
+        if (
+            req.title
+            or req.thumbnail
+            or req.resume_pos is not None
+            or req.history_id
+            or req.resolved_stream
+        ):
+            item = {"url": req.url}
+            if req.title:
+                item["title"] = req.title
+            if req.thumbnail:
+                item["thumbnail"] = req.thumbnail
+            if req.history_id:
+                item["history_id"] = req.history_id
+            if req.resolved_stream:
+                item["_resolved_source_url"] = (req.resolved_source_url or req.url or "").strip()
+                item["_resolved_stream"] = req.resolved_stream.strip()
+                if req.resolved_audio:
+                    item["_resolved_audio"] = req.resolved_audio.strip()
+                if req.resolved_at is not None:
+                    item["_resolved_at"] = req.resolved_at
+            now = player.play_item(
+                item,
+                use_resolver=True,
+                cec=False,
+                clear_queue=False,
+                mode=(req.reason or "play_now"),
+                start_pos=req.resume_pos,
+            )
+        else:
+            now = player.play_item(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
+    except Exception:
+        _rollback_play_now_preserve(preserved)
+        raise
     try:
         title = now.get("title") if isinstance(now, dict) else None
         _push_overlay_toast(

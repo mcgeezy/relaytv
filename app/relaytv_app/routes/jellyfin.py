@@ -690,6 +690,8 @@ def jellyfin_item_action(req: JellyfinItemActionReq):
         payload["PlayCommand"] = "PlayNext"
     elif command == "play_last":
         payload["PlayCommand"] = "PlayLast"
+    elif command == "resume":
+        payload["PlayCommand"] = "Resume"
 
     start_pos: float | None = None
     if command == "resume":

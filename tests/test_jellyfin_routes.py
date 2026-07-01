@@ -411,7 +411,43 @@ def test_jellyfin_item_action_resume_uses_item_detail_position(monkeypatch) -> N
     assert response.status_code == 200
     body = response.json()
     assert body["resolved_resume_pos"] == 37.5
-    assert captured == [{"payload": {"ItemId": "item-1", "PlayCommand": "PlayNow"}, "start_pos": 37.5}]
+    assert captured == [{"payload": {"ItemId": "item-1", "PlayCommand": "Resume"}, "start_pos": 37.5}]
+
+
+def test_jellyfin_resume_command_preserves_existing_queue(monkeypatch) -> None:
+    play_calls: list[dict[str, object]] = []
+    queue_item = {"url": "https://example.com/queued.mp4", "title": "Queued"}
+
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jellyfin.local"})
+    monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: None)
+    monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: None)
+    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos})
+    monkeypatch.setattr(routes.state, "QUEUE", [queue_item], raising=False)
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: setattr(routes.state, "NOW_PLAYING", value))
+    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: None)
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda *args, **kwargs: None)
+
+    def fake_play_item(item, **kwargs):
+        play_calls.append({"item": item, **kwargs})
+        return {"url": item["url"], "title": item["title"], "provider": "jellyfin"}
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    out = routes._jellyfin_integration_command_impl(
+        routes.JellyfinCommandReq(
+            action="Play",
+            url="http://jellyfin.local/Videos/item-1/master.m3u8",
+            payload={"PlayCommand": "Resume"},
+            start_pos=37.5,
+        )
+    )
+
+    assert out["ok"] is True
+    assert routes.state.QUEUE == [queue_item]
+    assert play_calls[-1]["clear_queue"] is False
+    assert play_calls[-1]["mode"] == "jellyfin_play"
+    assert play_calls[-1]["start_pos"] == 37.5
 
 
 def test_jellyfin_item_action_suppresses_duplicate_ui_action(monkeypatch) -> None:

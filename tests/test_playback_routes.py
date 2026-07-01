@@ -268,6 +268,40 @@ def test_play_now_route_preserves_current_and_uses_resolved_resume(monkeypatch) 
     assert queue_events[-1]["action"] == "play_now"
 
 
+def test_play_now_route_rolls_back_preserved_current_when_start_fails(monkeypatch) -> None:
+    persisted: list[dict] = []
+    queue_events: list[dict[str, object]] = []
+    existing = {"url": "https://example.com/queued.mp4", "title": "Queued"}
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "mpv_get", lambda prop: 37.0 if prop == "time-pos" else 120.0)
+    monkeypatch.setattr(routes.player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {"url": "https://jellyfin.example/title.m3u8", "title": "Jellyfin Title", "provider": "jellyfin"},
+        raising=False,
+    )
+    monkeypatch.setattr(routes.state, "QUEUE", [existing], raising=False)
+    monkeypatch.setattr(routes.state, "persist_queue_payload", lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda action, **payload: queue_events.append({"action": action, **payload}))
+
+    def fake_play_item(*args, **kwargs):
+        raise routes.HTTPException(status_code=400, detail="resolver failed")
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play_now", json={"url": "https://youtube.com/watch?v=blocked"})
+
+    assert response.status_code == 400
+    assert routes.state.QUEUE == [existing]
+    assert persisted[0]["queue"][0]["title"] == "Jellyfin Title"
+    assert persisted[-1]["queue"] == [existing]
+    assert queue_events[-1]["action"] == "play_now_rollback"
+    assert queue_events[-1]["queue"] == [existing]
+
+
 def test_close_route_preserves_queue_and_returns_closed_session(monkeypatch) -> None:
     now_values: list[object] = []
     session_values: list[str] = []
