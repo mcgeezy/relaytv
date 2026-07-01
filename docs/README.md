@@ -16,6 +16,24 @@ Use this directory as a small operator/product doc set for the public release br
 - `ARCHITECTURE_PHASE_1_ROADMAP.md`: living Phase 1 branch roadmap, milestones, and PR log
 - `ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md`: Phase 1 route inventory and alias guardrail
 
+## Module Ownership Snapshot
+
+- `app/relaytv_app/routes/`: FastAPI route modules and compatibility
+  aggregation. Domain routers own public endpoint registration; the aggregate
+  package still owns shared route helpers and cross-domain glue.
+- `app/relaytv_app/static/ui/`: main web UI stylesheet and JavaScript loaded by
+  `/ui`.
+- `app/relaytv_app/player.py`: playback process/runtime adapter plus remaining
+  playback policy that should move behind a transition service in a later
+  phase.
+- `app/relaytv_app/state.py`: persisted queue, history, session, and settings
+  data.
+- `app/relaytv_app/resolver.py`: URL validation, provider classification, and
+  stream resolution.
+- `app/relaytv_app/integrations/jellyfin_receiver.py`: Jellyfin transport,
+  auth, status, catalog cache, and progress/stopped calls.
+- `scripts/`: install, doctor, host operations, and release support scripts.
+
 Development history, migration notes, archived docs, deep validation notes, and engineering-only guidance should stay out of the public documentation tree unless they are intentionally converted into operator-facing docs.
 
 ## Rule

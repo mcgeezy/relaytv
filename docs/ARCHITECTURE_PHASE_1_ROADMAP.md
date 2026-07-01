@@ -508,6 +508,9 @@ Progress:
 - Settings apply validation found that enabling the idle dashboard from a
   disabled idle state only prepared notification surfaces. Idle settings sync
   now explicitly starts the dashboard surface when visuals are enabled.
+- Comprehensive documentation review refreshed operator security guidance,
+  Jellyfin auth expectations, route-inventory count, and current architecture
+  status notes.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
@@ -552,12 +555,12 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-07-01 | local | `codex/architecture-phase-1` | Guarded play-now interruption recovery so preserved Jellyfin items remain queued after incomplete interrupt playback instead of auto-taking over. | Live container logs/status confirmed Bitchute remained `now_playing`, Jellyfin stayed queued with `_relaytv_interrupt_preserved: true`, and `transition_in_progress` cleared; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_playback_routes.py`; `git diff --check` | Keep observing live playback transitions; consider Phase 2 staged playback handoff before replacing active media. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Prevented nested play-now interrupts from stacking transient shared media ahead of an already-preserved Jellyfin resume item, kept Jellyfin UI resume from clearing the RelayTV queue, rolled back preservation when a shared item fails to start, and added queue-tail retention coverage. | `PYTHONPATH=app pytest -q tests/test_smoke.py -k 'preserve_current or auto_next_resumes or auto_next_does_not_dequeue or manual_next_can_dequeue'`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py -k 'resume or item_action'`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py -k 'play_now_route'`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_playback_routes.py`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Recheck full Phase 1 gates before the next push. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Fixed idle settings sync so enabling the dashboard while idle starts the dashboard surface immediately instead of waiting for close or playback end. | `PYTHONPATH=app pytest -q tests/test_smoke.py -k "idle_settings_sync or settings_apply_now"`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `git diff --check` | Rebuild live container and manually confirm settings apply. |
+| 2026-07-01 | local | `codex/architecture-phase-1` | Reviewed and refreshed the full public/engineering doc set for current Phase 1 state, trusted-LAN assumptions, Jellyfin auth, release/install wording, route inventory count, and future-agent validation guidance. | Markdown fence sanity; `git diff --check`; full Phase 1 gates before push | Keep docs in sync with any remaining M8 manual validation results. |
 
 ## Open Questions
 
-- Should UI CSS extraction happen before or after router extraction?
-- Should Phase 1 include a minimal Playwright dependency, or should browser
-  validation stay manual until the UI assets are extracted?
+- Should Phase 1 add a minimal Playwright smoke before merging to `main`, or
+  should rendered browser validation remain manual until Phase 2+?
 
 ## Current Recommendation
 

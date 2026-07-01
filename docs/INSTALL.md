@@ -1,6 +1,8 @@
 # Install
 
-RelayTV supports a native Qt desktop runtime by default. Rollback during Phase 5 decommission is now a tagged-baseline redeploy, not a parallel compat runtime.
+RelayTV supports a native Qt desktop runtime by default. Rollback for a broken
+runtime rollout is a tagged-baseline redeploy, not a parallel compatibility
+runtime.
 
 Supported default product profiles:
 
@@ -102,10 +104,24 @@ Published-image defaults:
 
 Published image:
 
-- `ghcr.io/mcgeezy/relaytv:latest` is the only public image tag offered by the installer.
+- `ghcr.io/mcgeezy/relaytv:latest` is the default public image tag offered by the installer.
+- Immutable release tags are also published by the release workflow; see
+  [RELEASE.md](RELEASE.md) for tag shapes and image traceability.
 - The deleted `dev` branch is not an install target and no `dev` image tag is offered.
 - Use `main` for published-image installs; use a source checkout plus `docker compose up -d --build` for local development or testing.
 - Local developers can still use build-time bundle flags with `docker compose up -d --build` when testing optional runtime paths.
+
+## Network Trust Model
+
+RelayTV is designed for a trusted local network. The HTTP API can start
+playback, mutate the queue, upload media, change settings, send TV
+notifications, and interact with Jellyfin. Do not expose the service directly
+to the public internet.
+
+If remote access is needed, put RelayTV behind a VPN, trusted reverse proxy, or
+Home Assistant access layer that provides authentication and transport
+security. Optional built-in API token auth is not part of the current release
+branch.
 
 ## Docker Build Bundles
 

@@ -213,6 +213,9 @@ For the doc map, see [docs/README.md](docs/README.md).
 - Wayland and X11 desktop installs default to native Qt
 - Rollback is a tagged-baseline redeploy, not a live compatibility mode
 - Published images are available through GitHub Container Registry
+- RelayTV is intended for trusted LAN use; do not expose the HTTP API directly
+  to the public internet without an authenticated proxy, VPN, or equivalent
+  access layer
 
 Published image:
 

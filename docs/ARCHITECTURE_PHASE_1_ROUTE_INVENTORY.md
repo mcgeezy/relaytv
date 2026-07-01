@@ -6,16 +6,20 @@ Branch: `codex/architecture-phase-1`
 
 Purpose: preserve the current public FastAPI route surface while Phase 1 splits
 `routes.py` into domain routers. This inventory is not a replacement for
-`docs/API.md`; it is a refactor guardrail.
+`docs/API.md`; it is a refactor guardrail. It records the public route surface,
+not every internal helper dependency.
 
 The matching automated guardrail is `tests/test_route_inventory.py`.
 
 ## Summary
 
-- Current registered public API routes: 108 method/path registrations.
+- Current registered public API routes: 109 method/path registrations.
 - Public endpoint paths and aliases must remain stable during Phase 1.
 - Endpoint function names are included because they help detect accidental route
   shadowing or alias loss while moving code.
+- Many endpoints have now moved into domain routers under
+  `app/relaytv_app/routes/`; the aggregate package still owns shared helpers
+  and compatibility glue while Phase 1 finishes.
 
 ## Compatibility Alias Groups
 
@@ -91,6 +95,7 @@ may change as code movement exposes dependencies; update this file and
 | playback/ui | `GET` | `/` | `root` |
 | playback/ui | `GET` | `/playback/state` | `playback_state` |
 | playback/ui | `GET` | `/share` | `share` |
+| playback/ui | `GET` | `/static/ui/{asset_name}` | `ui_static_asset` |
 | playback/ui | `GET` | `/ui` | `ui` |
 | playback/ui | `GET` | `/ui/events` | `ui_events` |
 | playback/ui | `POST` | `/close` | `close` |

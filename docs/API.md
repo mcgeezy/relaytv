@@ -6,11 +6,20 @@ RelayTV serves its HTTP API from the root path. Most endpoints return JSON. HTML
 
 This file is the active endpoint reference for the native Qt runtime. Historical compat-only endpoints are removed from the active tree and are not documented here.
 
+## Network trust model
+
+RelayTV's API is intended for trusted LAN use. Write endpoints can control
+playback, mutate queue/history state, upload local media, change settings, send
+TV notifications, and interact with Jellyfin. Do not expose RelayTV directly to
+the public internet. Use a VPN, trusted reverse proxy, or Home Assistant access
+layer if remote access is required.
+
 ## UI and utility endpoints
 
 - `GET /ui`: main web UI HTML
 - `GET /ui/events`
   - Server-Sent Events stream for the main web UI
+- `GET /static/ui/{asset_name}`: static CSS/JavaScript used by `/ui`
 - `GET /idle`: idle dashboard HTML
 - `GET /`: redirects to `/ui`
 - `GET /health`: `{"ok": true}`

@@ -63,6 +63,6 @@ Before finishing Phase 1 work, run:
 
 ```text
 ruff check app tests
-PYTHONPATH=app pytest -q tests/test_smoke.py
+PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py
 git diff --check
 ```

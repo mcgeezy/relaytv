@@ -2,6 +2,12 @@
 
 Date: 2026-06-30
 
+Status note, 2026-07-01: Phase 1 route and static UI extraction work is in
+progress on `codex/architecture-phase-1`. This review remains the higher-level
+findings document, but several Phase 1 items below now have branch-local
+progress. See [ARCHITECTURE_PHASE_1_ROADMAP.md](ARCHITECTURE_PHASE_1_ROADMAP.md)
+for the current milestone log.
+
 Scope reviewed:
 
 - FastAPI app setup, routes, settings, status, playback, queue, upload, overlay, Jellyfin, and PWA endpoints
@@ -35,7 +41,7 @@ preserving behavior:
 
 ## Current Shape
 
-Measured hotspots:
+Original measured hotspots:
 
 - `app/relaytv_app/routes.py`: 16,619 lines, 282 functions.
 - `routes.py::ui`: 7,393 lines of server-rendered HTML/CSS/JS.
@@ -43,6 +49,19 @@ Measured hotspots:
 - `app/relaytv_app/qt_shell_app.py`: 3,082 lines, with a 1,823-line `main()`.
 - `app/relaytv_app/integrations/jellyfin_receiver.py`: 2,619 lines.
 - `tests/test_smoke.py`: 2,960 lines.
+
+Current Phase 1 branch shape:
+
+- `app/relaytv_app/routes/` is now a package with domain modules for app info,
+  assets, capabilities, devices, health, Jellyfin, playback, queue, settings,
+  snapshots, status, UI, and uploads.
+- `app/relaytv_app/routes/__init__.py` remains the aggregate compatibility
+  module and still owns shared helpers plus unresolved cross-domain glue.
+- Main UI CSS and JavaScript now live in
+  `app/relaytv_app/static/ui/app.css` and
+  `app/relaytv_app/static/ui/app.js`.
+- Focused route test files now cover capabilities, Jellyfin, playback,
+  queue/history, settings, uploads, and the public route inventory.
 
 Positive foundations:
 
@@ -52,12 +71,14 @@ Positive foundations:
 - Upload paths and thumbnails have useful validation and cleanup behavior.
 - Status/runtime endpoints expose a lot of operational detail.
 - The product is consistently local-first and automation-friendly.
+- Phase 1 has already reduced route registration and UI asset coupling without
+  changing public endpoint paths.
 
 ## Findings
 
 ### 1. `routes.py` Owns Too Many Boundaries
 
-`routes.py` currently owns:
+The original monolithic `routes.py` owned:
 
 - HTTP route registration
 - API request models
@@ -71,7 +92,14 @@ Positive foundations:
 - PWA/static asset helpers
 - the full browser UI document
 
-Impact:
+Current Phase 1 status:
+
+- Public route registration has been split into domain modules.
+- The aggregate `routes/__init__.py` still owns a large helper surface,
+  temporary playback stack, overlay/idle behavior, status payload construction,
+  and cross-domain compatibility functions.
+
+Remaining impact:
 
 - Simple UI or playback changes can accidentally affect API behavior.
 - Reviewers have to hold multiple subsystems in memory.
@@ -80,7 +108,7 @@ Impact:
 
 Recommendation:
 
-Split the router by domain without changing public endpoints:
+Continue splitting helper ownership by domain without changing public endpoints:
 
 - `routes/playback.py`
 - `routes/queue.py`
@@ -92,29 +120,29 @@ Split the router by domain without changing public endpoints:
 - `routes/ui.py`
 - `routes/assets.py`
 
-Keep a top-level `router` aggregator so imports remain simple.
+Keep the top-level `router` aggregator so imports remain simple.
 
 ### 2. The Web UI Is Embedded As One Large Python String
 
-The main UI is generated inside `ui()` with inline CSS, markup, and JavaScript.
-This has worked, but the UI is now large enough that Python is no longer a good
-container for it.
+The main UI originally lived inside `ui()` with inline CSS, markup, and
+JavaScript. CSS and JavaScript have now been extracted to static assets, but the
+HTML shell and dynamic bootstrap data are still generated server-side.
 
-Impact:
+Remaining impact:
 
-- UI regressions are hard to review because markup, CSS, and JS are interleaved.
+- UI regressions are easier to review than before, but template structure,
+  bootstrap data, and browser behavior are still mostly covered by Python smoke
+  assertions and manual review.
 - Tests assert raw strings rather than behavior.
 - Browser-only issues are not naturally covered by the Python test suite.
 
 Recommendation:
 
-Move assets incrementally:
+Finish the current low-build-tooling path:
 
-1. Extract CSS to `app/relaytv_app/static/ui/app.css`.
-2. Extract JS to `app/relaytv_app/static/ui/app.js`.
-3. Keep the HTML template simple, using lightweight token replacement where
+1. Keep the HTML template simple, using lightweight token replacement where
    needed.
-4. Add one Playwright smoke path for `/ui`, settings modal, queue actions, and
+2. Add one Playwright smoke path for `/ui`, settings modal, queue actions, and
    Jellyfin shell visibility.
 
 Do not introduce a frontend build pipeline unless the UI needs bundling. Plain
@@ -206,9 +234,8 @@ Impact:
 
 - Jellyfin changes often require editing unrelated route sections.
 - It is difficult to test Jellyfin behavior without FastAPI route context.
-- The public operations doc has drifted: it still lists
-  `RELAYTV_JELLYFIN_API_KEY` as required, while the current settings flow
-  supports username/password auth and treats API key as optional/fallback.
+- The public operations doc has been updated to make username/password auth the
+  preferred path while keeping API key as an optional fallback.
 
 Recommendation:
 
@@ -350,7 +377,8 @@ Examples:
 - Several `_env_bool` / `_env_choice` helpers exist across modules.
 - Provider classification and URL handling are duplicated in resolver/player
   paths.
-- Jellyfin operations docs still describe API key as required.
+- Jellyfin operations docs have been updated to describe username/password auth
+  as preferred and API key as optional/fallback.
 - `resolver.resolve_streams_invidious()` contains a duplicated `api_url`
   assignment.
 
@@ -372,12 +400,14 @@ Create small shared modules:
 
 Goal: improve reviewability without changing runtime behavior.
 
-- Keep this architecture review in-tree.
-- Update Jellyfin docs to make username/password auth the preferred path and API
-  key optional/fallback.
-- Document trusted-LAN security assumptions.
-- Add a module ownership map to `docs/README.md`.
-- Add CI job names for lint and smoke tests separately.
+Status:
+
+- Architecture review and Phase 1 roadmap are in-tree.
+- Jellyfin docs now make username/password auth the preferred path and API key
+  optional/fallback.
+- Trusted-LAN security assumptions are documented in install/API docs.
+- `docs/README.md` includes a concise module ownership snapshot; revisit it
+  after Phase 1 merges if ownership changes again.
 
 Suggested PR size: small.
 
@@ -391,8 +421,13 @@ Goal: reduce `routes.py` risk.
 - Preserve all public paths.
 - Add one browser smoke test for settings/open/close and basic queue rendering.
 
-Suggested PR size: medium, but split if route extraction and UI asset extraction
-grow too large.
+Status:
+
+- Public routes have been split into domain modules under
+  `app/relaytv_app/routes/`.
+- Main `/ui` CSS and JavaScript have been extracted into static files.
+- Final validation and optional browser automation remain before merging Phase 1
+  to `main`.
 
 ### Phase 2: Runtime Config Service
 
@@ -462,13 +497,13 @@ Goal: catch runtime regressions before users do.
 
 Suggested PR size: ongoing.
 
-## Suggested First Five PRs
+## Suggested Next PRs
 
-1. `docs: document architecture roadmap and trusted lan model`
-2. `docs: refresh jellyfin auth and operations guidance`
-3. `refactor(routes): split settings and status routers`
-4. `refactor(ui): extract main ui css and javascript`
-5. `test(playback): cover close and play-now transition service behavior`
+1. `test(ui): add browser smoke for settings and queue shell`
+2. `docs: refresh module ownership map after phase 1 merge`
+3. `refactor(config): introduce runtime config snapshot`
+4. `test(playback): cover close and play-now transition service behavior`
+5. `refactor(playback): centralize close and queue advancement policy`
 
 ## Non-Goals
 
