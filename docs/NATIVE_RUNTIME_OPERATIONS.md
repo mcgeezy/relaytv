@@ -90,6 +90,17 @@ Expected:
 
 When validating on the actual display after startup, close, or natural end-of-playback, confirm the idle surface is visible again rather than dropping back to the desktop.
 
+Settings apply checks:
+
+- when `idle_dashboard_enabled` is changed from disabled to enabled while
+  playback is idle, clicking Apply should bring the idle dashboard up
+  immediately
+- when the dashboard is disabled but `idle_notifications_enabled` remains
+  enabled, the app should leave the desktop visible while still allowing toast
+  delivery
+- when both dashboard and idle notifications are disabled, RelayTV should stop
+  idle visual surfaces and return to the desktop/session background
+
 Pi refresh sequence:
 
 ```bash
@@ -159,6 +170,29 @@ curl -sS http://127.0.0.1:8787/status | jq '{playing,state,player_backend,player
    - `playback_telemetry_freshness`
 3. If native runtime is unhealthy, capture logs.
 4. If queue or playback behavior is wrong, capture `status` and recent logs together.
+
+### YouTube Bot Checks Or Cookie Resolver Errors
+
+If YouTube starts returning bot-check or sign-in challenges after repeated
+testing, configure a Netscape-format cookies file through the Settings UI or:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/settings/youtube/cookies \
+  -H 'Content-Type: application/json' \
+  --data '{"cookies_text":"# Netscape HTTP Cookie File\n..."}'
+```
+
+Then verify RelayTV reports cookies as configured without exposing the stored
+path:
+
+```bash
+curl -sS http://127.0.0.1:8787/settings | jq '{youtube_cookies_configured}'
+```
+
+When cookies are configured, RelayTV passes them to yt-dlp and skips yt-dlp
+client fallbacks that do not support cookie auth. Avoid repeated live YouTube
+resolve tests while bot checks are active; prefer checking settings and recent
+resolver logs first.
 
 ### Idle Weather Or Layout Drift
 
