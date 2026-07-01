@@ -1417,6 +1417,31 @@ def test_settings_apply_now_does_not_restart_closed_session(monkeypatch: pytest.
     assert body['apply_succeeded'] is False
 
 
+def test_idle_settings_sync_starts_dashboard_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    ensure_calls: list[dict[str, object]] = []
+    notification_calls: list[bool] = []
+    overlay_stops: list[bool] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
+    monkeypatch.setattr(routes, '_idle_dashboard_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes, '_idle_notifications_enabled_for_player', lambda: False)
+    monkeypatch.setattr(routes, '_idle_visual_surface_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'ensure_qt_shell_idle', lambda **kwargs: ensure_calls.append(dict(kwargs)))
+    monkeypatch.setattr(
+        routes,
+        '_ensure_notification_surface',
+        lambda wait_for_subscriber=False: notification_calls.append(bool(wait_for_subscriber)),
+    )
+    monkeypatch.setattr(routes.x11_overlay, 'stop_overlay', lambda: overlay_stops.append(True))
+
+    routes._sync_idle_visual_surfaces_after_settings()
+
+    assert ensure_calls == [{'force': True}]
+    assert notification_calls == [False]
+    assert overlay_stops == [True]
+
+
 def test_native_idle_weather_layout_normalizes_to_supported_values() -> None:
     assert _native_idle_weather_layout({}) == 'split'
     assert _native_idle_weather_layout({'idle_panels': {'weather': {'layout': 'minimal'}}}) == 'minimal'

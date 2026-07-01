@@ -4366,6 +4366,21 @@ def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
         time.sleep(0.05)
 
 
+def _ensure_idle_dashboard_surface() -> None:
+    if not _idle_dashboard_enabled_for_player():
+        return
+    try:
+        if bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)()):
+            player.ensure_qt_shell_idle(force=True)
+            return
+    except Exception:
+        pass
+    try:
+        player.start_splash_screen()
+    except Exception:
+        pass
+
+
 def _sync_idle_visual_surfaces_after_settings() -> None:
     try:
         playing = bool(player.is_playing())
@@ -4379,6 +4394,7 @@ def _sync_idle_visual_surfaces_after_settings() -> None:
         except Exception:
             pass
     if _idle_visual_surface_enabled_for_player():
+        _ensure_idle_dashboard_surface()
         _ensure_notification_surface(wait_for_subscriber=False)
     else:
         try:

@@ -505,6 +505,9 @@ Progress:
 - YouTube cookies validation found that yt-dlp's Android client fallback does
   not support cookies and can mask the cookie-auth strategy result. Resolver
   strategy sets now skip Android fallback entirely when cookies are configured.
+- Settings apply validation found that enabling the idle dashboard from a
+  disabled idle state only prepared notification surfaces. Idle settings sync
+  now explicitly starts the dashboard surface when visuals are enabled.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
@@ -548,6 +551,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Rebuilt and force-recreated the live Compose container, recorded user-confirmed browser view review, and ran credentialed live HTTP/Jellyfin smoke. | `docker compose up -d --build --force-recreate relaytv`; live `GET /status`, `/settings`, `/ui`, `/idle`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`, `/integrations/jellyfin/status`, `/jellyfin/home?limit=6&refresh=1`, `/jellyfin/movies?limit=6&refresh=1`, `/jellyfin/search?q=the&limit=3`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Complete explicit settings apply plus playback/Jellyfin play and queue smoke before final Phase 1 to `main` PR. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Guarded play-now interruption recovery so preserved Jellyfin items remain queued after incomplete interrupt playback instead of auto-taking over. | Live container logs/status confirmed Bitchute remained `now_playing`, Jellyfin stayed queued with `_relaytv_interrupt_preserved: true`, and `transition_in_progress` cleared; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_playback_routes.py`; `git diff --check` | Keep observing live playback transitions; consider Phase 2 staged playback handoff before replacing active media. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Prevented nested play-now interrupts from stacking transient shared media ahead of an already-preserved Jellyfin resume item, kept Jellyfin UI resume from clearing the RelayTV queue, rolled back preservation when a shared item fails to start, and added queue-tail retention coverage. | `PYTHONPATH=app pytest -q tests/test_smoke.py -k 'preserve_current or auto_next_resumes or auto_next_does_not_dequeue or manual_next_can_dequeue'`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py -k 'resume or item_action'`; `PYTHONPATH=app pytest -q tests/test_playback_routes.py -k 'play_now_route'`; `PYTHONPATH=app pytest -q tests/test_jellyfin_routes.py tests/test_playback_routes.py`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Recheck full Phase 1 gates before the next push. |
+| 2026-07-01 | local | `codex/architecture-phase-1` | Fixed idle settings sync so enabling the dashboard while idle starts the dashboard surface immediately instead of waiting for close or playback end. | `PYTHONPATH=app pytest -q tests/test_smoke.py -k "idle_settings_sync or settings_apply_now"`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `git diff --check` | Rebuild live container and manually confirm settings apply. |
 
 ## Open Questions
 
