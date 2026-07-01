@@ -3189,6 +3189,16 @@ def test_qt_shell_runtime_survived_load_rejects_immediate_exit(monkeypatch: pyte
     assert player._qt_shell_runtime_survived_load() is False
 
 
+def test_qt_shell_runtime_survived_load_requires_loaded_media(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_QT_POST_LOAD_SURVIVAL_SEC', '0.12')
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_runtime_snapshot', lambda max_age_sec=1.0: {})
+
+    assert player._qt_shell_runtime_survived_load() is False
+
+
 def test_qt_runtime_active_treats_paused_loaded_stream_as_active(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'paused', raising=False)
     monkeypatch.setattr(player.state, 'NOW_PLAYING', {'url': 'https://example.com/video.mp4'}, raising=False)

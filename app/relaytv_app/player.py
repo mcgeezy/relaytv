@@ -2740,18 +2740,16 @@ def _qt_shell_runtime_survived_load() -> bool:
     if not (_qt_shell_backend_enabled() and (not _qt_runtime_uses_external_mpv())):
         return True
     try:
-        timeout_sec = float(os.getenv("RELAYTV_QT_POST_LOAD_SURVIVAL_SEC", "2.5"))
+        timeout_sec = float(os.getenv("RELAYTV_QT_POST_LOAD_SURVIVAL_SEC", "5.0"))
     except Exception:
-        timeout_sec = 2.5
+        timeout_sec = 5.0
     timeout_sec = max(0.0, min(timeout_sec, 8.0))
     if timeout_sec <= 0:
         return _qt_shell_running()
     deadline = time.time() + timeout_sec
-    saw_running = False
     while time.time() < deadline:
         if not _qt_shell_running():
             return False
-        saw_running = True
         snap = _qt_shell_runtime_snapshot(max_age_sec=1.0)
         if isinstance(snap, dict):
             path = str(snap.get("mpv_runtime_path") or "").strip()
@@ -2763,7 +2761,7 @@ def _qt_shell_runtime_survived_load() -> bool:
             ):
                 return True
         time.sleep(0.05)
-    return saw_running
+    return False
 
 
 def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None):
@@ -2793,7 +2791,14 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
     if _overlay_osd_debug_enabled():
         debug_log("osd", f"start_mpv requested_mode={mode!r} display={os.getenv('DISPLAY')!r} xdg_session_type={os.getenv('XDG_SESSION_TYPE')!r}")
 
-    startup_timeout = float(os.getenv("RELAYTV_MPV_STARTUP_TIMEOUT", "5"))
+    startup_timeout_default = "5"
+    if _qt_shell_backend_enabled() and (not _qt_runtime_uses_external_mpv()):
+        startup_timeout_default = "12"
+    startup_timeout = float(
+        os.getenv("RELAYTV_QT_MPV_STARTUP_TIMEOUT")
+        or os.getenv("RELAYTV_MPV_STARTUP_TIMEOUT")
+        or startup_timeout_default
+    )
 
     if _qt_shell_backend_enabled():
         if _qt_runtime_uses_external_mpv():

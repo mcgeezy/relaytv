@@ -524,10 +524,11 @@ Progress:
   crashed embedded Qt shell. Embedded Qt startup readiness now requires the Qt
   shell process/telemetry and rejects stale sockets before a fake playing
   session is accepted.
-- The idle-shell reuse handoff can also acknowledge a load request just before
-  the embedded Qt shell exits on the Raspberry Pi. Reuse now waits briefly for
-  the shell to survive or report loaded media; otherwise it falls back to a full
-  Qt shell launch.
+- The idle-shell reuse handoff can also acknowledge a load request without
+  loaded-media telemetry on the Raspberry Pi. Reuse now requires loaded media
+  after the handoff before accepting success, otherwise it falls back to a full
+  Qt shell launch. Embedded Qt startup also gets a longer default readiness
+  window on slower hosts.
 - Jellyfin direct media URLs from history can be classified as generic `other`
   URLs when the server hostname is local. Jellyfin-looking `/Videos` and
   `/Items` media URLs now force mpv ytdl integration off even when provider
