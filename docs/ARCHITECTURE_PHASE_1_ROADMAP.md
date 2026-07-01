@@ -506,6 +506,10 @@ Progress:
   suppressed for `_relaytv_interrupt_preserved` queue heads so interrupted
   media remains queued for explicit user action instead of replaying
   automatically.
+- Rebuild-resume review found that startup restore depended on the autoplay
+  worker and shutdown depended on the periodic session tracker. Startup now
+  attempts persisted-session restore synchronously before showing the idle Qt
+  shell, and shutdown writes one final session snapshot before teardown.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
@@ -549,6 +553,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Rebuilt and force-recreated the live Compose container, recorded user-confirmed browser view review, and ran credentialed live HTTP/Jellyfin smoke. | `docker compose up -d --build --force-recreate relaytv`; live `GET /status`, `/settings`, `/ui`, `/idle`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`, `/integrations/jellyfin/status`, `/jellyfin/home?limit=6&refresh=1`, `/jellyfin/movies?limit=6&refresh=1`, `/jellyfin/search?q=the&limit=3`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Complete explicit settings apply plus playback/Jellyfin play and queue smoke before final Phase 1 to `main` PR. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Fixed stale queue-handoff detection found on Raspberry Pi after interrupt/advance left Qt playback runtime unavailable with preserved queue state. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check`; Raspberry Pi `docker compose up -d --build --force-recreate relaytv`; live `/status` and `/playback/state` after transition expiry | Continue manual playback/Jellyfin action smoke for final M8 sign-off. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Suppressed auto-next for interrupt-preserved queue entries so failed `/play_now` attempts do not automatically replay the interrupted Jellyfin item. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check` | Rebuild Raspberry Pi live container and verify failed play-now leaves the interrupted item queued instead of auto-playing it. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Made rebuild resume more deterministic by persisting a final shutdown session snapshot and restoring persisted playback before idle shell startup. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check` | Rebuild Raspberry Pi live container and retest active Jellyfin playback resume across recreate. |
 
 ## Open Questions
 

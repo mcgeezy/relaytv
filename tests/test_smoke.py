@@ -2460,6 +2460,28 @@ def test_auto_next_does_not_consume_interrupt_preserved_queue_head(monkeypatch: 
     assert persisted == []
 
 
+def test_startup_restore_wrapper_marks_attempt_consumed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(player, '_SESSION_RESTORE_ATTEMPTED', False, raising=False)
+    monkeypatch.setattr(player, '_restore_session_on_startup_if_needed', lambda: calls.append('restore') or True)
+
+    assert player.restore_session_on_startup_if_needed() is True
+    assert calls == ['restore']
+    assert player._SESSION_RESTORE_ATTEMPTED is True
+
+
+def test_shutdown_session_snapshot_persists_after_tracker_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(player, '_session_tracker_tick', lambda: calls.append('tick'))
+    monkeypatch.setattr(player.state, 'persist_session', lambda: calls.append('persist'))
+
+    player.persist_current_session_snapshot()
+
+    assert calls == ['tick', 'persist']
+
+
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
     monkeypatch.setattr(

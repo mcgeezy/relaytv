@@ -4526,8 +4526,7 @@ def _autoplay_next_worker():
     while True:
         time.sleep(0.25)
         if not _SESSION_RESTORE_ATTEMPTED:
-            _SESSION_RESTORE_ATTEMPTED = True
-            if _restore_session_on_startup_if_needed():
+            if restore_session_on_startup_if_needed():
                 continue
         if time.time() < state.AUTO_NEXT_SUPPRESS_UNTIL:
             continue
@@ -4977,6 +4976,25 @@ def _restore_session_on_startup_if_needed() -> bool:
     except Exception as e:
         logger.warning("startup_session_restore_failed error=%s", e)
         return False
+
+
+def restore_session_on_startup_if_needed() -> bool:
+    """Public startup restore wrapper; marks the one-shot attempt as consumed."""
+    global _SESSION_RESTORE_ATTEMPTED
+    _SESSION_RESTORE_ATTEMPTED = True
+    return _restore_session_on_startup_if_needed()
+
+
+def persist_current_session_snapshot() -> None:
+    """Best-effort final session write before process shutdown/recreate."""
+    try:
+        _session_tracker_tick()
+    except Exception:
+        pass
+    try:
+        state.persist_session()
+    except Exception:
+        pass
 
 
 def _repair_orphan_runtime_playback(props: dict[str, Any] | None = None) -> bool:

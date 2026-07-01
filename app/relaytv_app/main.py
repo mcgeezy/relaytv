@@ -9,7 +9,9 @@ from starlette.requests import Request
 
 from .player import (
     ensure_qt_shell_idle,
+    persist_current_session_snapshot,
     qt_shell_backend_enabled,
+    restore_session_on_startup_if_needed,
     start_autoplay_worker,
     start_cec_monitor,
     start_qt_audio_watchdog_worker,
@@ -73,22 +75,27 @@ def create_app(*, testing: bool = False) -> FastAPI:
             testing or os.getenv("RELAYTV_DISABLE_WORKERS", "0").strip() in ("1", "true", "yes", "on")
         )
         if workers_enabled:
+            start_x11_overlay()
+            jellyfin_receiver.start()
+            discovery_mdns.start_async()
+            restored_session = False
+            if qt_shell_backend_enabled():
+                restored_session = restore_session_on_startup_if_needed()
+                if not restored_session:
+                    ensure_qt_shell_idle()
+            else:
+                start_splash_screen()
             start_autoplay_worker()
             start_session_tracker_worker()
             start_qt_audio_watchdog_worker()
             start_cec_monitor()
             start_thumb_worker()
             upload_store.start_cleanup_worker()
-            start_x11_overlay()
-            jellyfin_receiver.start()
-            discovery_mdns.start_async()
-            if qt_shell_backend_enabled():
-                ensure_qt_shell_idle()
-            else:
-                start_splash_screen()
         try:
             yield
         finally:
+            if workers_enabled:
+                persist_current_session_snapshot()
             jellyfin_receiver.stop()
             discovery_mdns.stop()
             stop_x11_overlay()
