@@ -2728,6 +2728,7 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, 
     if not isinstance(resp, dict) or resp.get("error") != "success":
         return False
     if not _qt_shell_runtime_survived_load():
+        logger.warning("qt_runtime_reuse_failed reason=post_load_no_media")
         return False
 
     # Existing "up-next armed" state points at the old timeline.
@@ -2837,10 +2838,13 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
 
         _start_qt_shell(stream_url, audio_url=audio_url, start_pos=start_pos)
         if not wait_for_ipc_ready(timeout=startup_timeout):
+            logger.warning("qt_shell_startup_failed reason=ipc_not_ready timeout=%s", startup_timeout)
             raise HTTPException(status_code=500, detail="qt shell started but mpv IPC not ready")
         if not _qt_shell_running():
             _cleanup_ipc_socket()
+            logger.warning("qt_shell_startup_failed reason=process_exited")
             raise HTTPException(status_code=500, detail="qt shell exited during playback startup")
+        logger.info("qt_shell_startup_ready timeout=%s", startup_timeout)
         _set_mpv_process_start_option_active(process_start_option_active)
         _apply_startup_mpv_runtime_settings()
         _recover_audio_output_if_needed(settings)
