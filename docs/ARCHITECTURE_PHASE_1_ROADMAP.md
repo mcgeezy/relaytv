@@ -491,6 +491,11 @@ Progress:
   - `GET /jellyfin/search?q=the&limit=3`
 - Live status confirmed the Qt shell runtime is selected and Jellyfin is
   enabled, authenticated, connected, and running.
+- Raspberry Pi live-container review found that stale queue state could keep
+  `/status` and `/playback/state` in an endless queue-handoff/buffering state
+  after the Qt playback runtime exited. Tightened handoff detection so queued
+  items alone do not count as an active transition; explicit playback or
+  auto-next transition markers are now required.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
@@ -532,6 +537,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M7 by extracting the main `/ui` JavaScript into `app/relaytv_app/static/ui/app.js` with an inline bootstrap for dynamic catalog data. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Begin M8 final validation and manual UI review. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M8 final validation, included the updated banner image, passed automated gates and live HTTP asset checks. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check`; live `GET /ui`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png` | Complete rendered browser review and credentialed Jellyfin smoke when environment is available. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Rebuilt and force-recreated the live Compose container, recorded user-confirmed browser view review, and ran credentialed live HTTP/Jellyfin smoke. | `docker compose up -d --build --force-recreate relaytv`; live `GET /status`, `/settings`, `/ui`, `/idle`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`, `/integrations/jellyfin/status`, `/jellyfin/home?limit=6&refresh=1`, `/jellyfin/movies?limit=6&refresh=1`, `/jellyfin/search?q=the&limit=3`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Complete explicit settings apply plus playback/Jellyfin play and queue smoke before final Phase 1 to `main` PR. |
+| 2026-06-30 | local | `codex/architecture-phase-1` | Fixed stale queue-handoff detection found on Raspberry Pi after interrupt/advance left Qt playback runtime unavailable with preserved queue state. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check` | Rebuild Raspberry Pi live container and verify `/status` no longer reports endless active handoff when runtime is gone. |
 
 ## Open Questions
 

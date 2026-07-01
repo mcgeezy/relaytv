@@ -5328,23 +5328,22 @@ def _derive_playback_runtime_state(
     return "idle", "no_active_session"
 
 
+def _playback_handoff_transition_active() -> bool:
+    """True only while an explicit playback/auto-next handoff marker is active."""
+    try:
+        return bool(getattr(player, "playback_transitioning", lambda: False)()) or bool(
+            getattr(player, "auto_next_transitioning", lambda: False)()
+        )
+    except Exception:
+        return False
+
+
 def _playback_state_fast_snapshot() -> dict[str, object]:
     sess, playing, paused = _session_playing_fast()
     has_now_playing = isinstance(getattr(state, "NOW_PLAYING", None), dict)
     queue_length = len(getattr(state, "QUEUE", []) or [])
     transition_active = False
-    try:
-        manual_transition = bool(getattr(player, "playback_transitioning", lambda: False)())
-        queue_handoff_transition = (
-            ((sess in ("playing", "paused")) or has_now_playing)
-            and (
-                bool(getattr(player, "auto_next_transitioning", lambda: False)())
-                or queue_length > 0
-            )
-        )
-        transition_active = bool(manual_transition or queue_handoff_transition)
-    except Exception:
-        transition_active = False
+    transition_active = _playback_handoff_transition_active()
     try:
         explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (time.time() + 60.0)
     except Exception:
@@ -5480,12 +5479,20 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         payload["playing"] = False
         payload["paused"] = False
         payload["state"] = "idle"
-    transition_active = bool(transition_active or (
+    elif (
         bool(payload.get("playing"))
+        and source == "none"
+        and not _playback_handoff_transition_active()
+        and str(payload.get("state") or "") not in ("closed", "paused")
+    ):
+        payload["playing"] = False
+        payload["paused"] = False
+    transition_active = bool(transition_active or (
+        _playback_handoff_transition_active()
+        and bool(payload.get("playing"))
         and (not bool(payload.get("paused")))
         and (not runtime_playing)
         and str(payload.get("state") or "") != "closed"
-        and (has_now_playing or queue_length > 0)
     ))
     payload["transitioning_between_items"] = transition_active
     payload["transition_in_progress"] = transition_active
@@ -5517,19 +5524,12 @@ def _status_payload() -> dict[str, object]:
     playing = player.is_playing()
     transitioning_between_items = False
     try:
-        manual_transition = bool(getattr(player, "playback_transitioning", lambda: False)())
-        queue_handoff_transition = (
-            ((sess in ("playing", "paused")) or has_now_playing)
-            and (
-                bool(getattr(player, "auto_next_transitioning", lambda: False)())
-                or len(q) > 0
-            )
-        )
+        transition_marker_active = _playback_handoff_transition_active()
         if (
             (not playing)
             and bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)())
             and (sess != "closed")
-            and (manual_transition or queue_handoff_transition)
+            and transition_marker_active
         ):
             # Qt startup/handoff gaps: keep UI in playing mode to avoid idle flashes.
             playing = True

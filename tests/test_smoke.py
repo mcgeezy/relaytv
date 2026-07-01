@@ -2193,6 +2193,43 @@ def test_status_preserves_paused_session_during_runtime_dropout(monkeypatch: pyt
     assert session_sets == ['paused']
 
 
+def test_status_does_not_treat_queued_item_as_stale_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_sets: list[str] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_runtime_active', lambda **_: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: False)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, '_effective_ytdl_format', lambda s=None: '')
+    monkeypatch.setattr(routes.player, 'get_mpv_log_tail', lambda lines=40: [])
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda props: {})
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'interrupted'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [{'url': 'https://example.com/queued.mp4'}], raising=False)
+    monkeypatch.setattr(routes.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda val: session_sets.append(val))
+    monkeypatch.setattr(
+        routes,
+        '_runtime_capabilities',
+        lambda playing=None: {
+            'backend_ready': False,
+            'player_backend': 'qt',
+            'qt_runtime_mode_effective': 'embed',
+            'native_qt_telemetry_source': 'none',
+            'ipc_socket_exists': False,
+        },
+    )
+
+    payload = routes.status()
+
+    assert payload['playing'] is False
+    assert payload['transition_in_progress'] is False
+    assert payload['queue_length'] == 1
+    assert session_sets == ['idle']
+
+
 def test_playback_toggle_resumes_paused_session_without_reloading(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
     monkeypatch.setattr(routes.state, 'SESSION_STATE', 'paused', raising=False)
@@ -2565,6 +2602,33 @@ def test_playback_state_exposes_transition_during_manual_play_handoff(monkeypatc
     assert payload['transition_in_progress'] is True
     assert payload['transitioning_between_items'] is True
     assert payload['playback_runtime_state'] == 'buffering'
+
+
+def test_playback_state_does_not_treat_queued_item_as_stale_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'interrupted'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [{'url': 'https://example.com/queued.mp4'}], raising=False)
+    monkeypatch.setattr(routes.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'natural_idle_reset_holding', lambda: False)
+    monkeypatch.setattr(routes.player, 'qt_shell_runtime_telemetry', lambda **_: {'selected': True, 'available': False, 'freshness': 'missing'})
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda props: {})
+    monkeypatch.setattr(
+        routes.state,
+        'update_playback_runtime_state',
+        lambda next_state, reason='': {
+            'playback_runtime_state': next_state,
+            'playback_runtime_state_reason': reason,
+        },
+    )
+
+    payload = routes.playback_state()
+
+    assert payload['transition_in_progress'] is False
+    assert payload['transitioning_between_items'] is False
+    assert payload['playback_runtime_state'] == 'buffering'
+    assert payload['playback_runtime_state_reason'] == 'session_runtime_gap'
 
 
 def test_resume_clear_sets_explicit_stop_hold(monkeypatch: pytest.MonkeyPatch) -> None:
