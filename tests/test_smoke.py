@@ -1748,6 +1748,132 @@ def test_playback_runtime_idle_or_ended_ignores_active_play_transition(monkeypat
     assert player._playback_runtime_idle_or_ended() is False
 
 
+def test_playback_runtime_idle_or_ended_holds_incomplete_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 12.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setenv('RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC', '1.0')
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', player.time.time() - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_holds_implausible_completed_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 120.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setenv('RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC', '1.0')
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_recovers_completed_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 119.0, 'duration_sec': 120.0, 'started': now_ts - 121.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setenv('RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC', '1.0')
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', 0.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', player.time.time() - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is True
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_runtime_gap_completion_uses_started_position_for_resumed_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    now = {
+        'title': 'Resumed movie',
+        'resume_pos': 120.0,
+        'duration_sec': 120.0,
+        'started': now_ts - 11.0,
+        '_playback_started_pos': 110.0,
+    }
+
+    assert player._runtime_gap_completion_plausible(now) is True
+
+
+def test_playback_runtime_idle_or_ended_holds_implausible_qt_eof(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 120.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: {
+            'core-idle': True,
+            'eof-reached': True,
+            'pause': False,
+            'path': '',
+            'time-pos': 120.0,
+            'duration': 120.0,
+        },
+    )
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_holds_implausible_native_qt_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 120.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: True)
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
 def test_is_playing_ignores_idle_qt_socket_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
@@ -2384,6 +2510,67 @@ def test_interrupt_preserved_queue_item_is_not_mpv_primed() -> None:
             '_resolved_stream': 'https://cdn.example.com/interrupted.mp4',
         }
     ) is None
+
+
+def test_auto_next_does_not_dequeue_interrupted_item_after_incomplete_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[object] = []
+    now_ts = player.time.time()
+
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/share.mp4', 'resume_pos': 15.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        player.state,
+        'QUEUE',
+        [{'url': 'https://example.com/interrupted.mp4', '_relaytv_interrupt_preserved': True}],
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'play_item', lambda *args, **kwargs: play_calls.append(args) or {})
+
+    with pytest.raises(player.QueueAdvanceSuppressedError):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == [{'url': 'https://example.com/interrupted.mp4', '_relaytv_interrupt_preserved': True}]
+    assert persisted == []
+    assert play_calls == []
+
+
+def test_manual_next_can_dequeue_interrupted_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', {'url': 'https://example.com/share.mp4'}, raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'QUEUE',
+        [{'url': 'https://example.com/interrupted.mp4', '_relaytv_interrupt_preserved': True, 'resume_pos': 12.5}],
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(
+        player,
+        'play_item',
+        lambda item, **kwargs: play_calls.append({'item': item, **kwargs}) or {'url': item['url']},
+    )
+
+    result = player.advance_queue_playback(mode='next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert player.state.QUEUE == []
+    assert persisted[-1]['queue'] == []
+    assert play_calls[-1]['item']['url'] == 'https://example.com/interrupted.mp4'
+    assert play_calls[-1]['start_pos'] == 12.5
 
 
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:

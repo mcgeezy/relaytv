@@ -277,6 +277,13 @@ Progress:
   `app/relaytv_app/routes/capabilities.py`; the shared capability helper
   functions remain in the aggregate router for now because status, overlay,
   and playback-state logic still use them.
+- Live playback validation on the ARM/Qt container uncovered an existing
+  play-now interruption edge case: when a shared stream interrupted Jellyfin
+  playback and then ended or the backend closed early, auto-next could resume
+  the preserved Jellyfin queue item before the interrupt was plausibly complete.
+  Added focused guards so interrupted queue entries remain preserved until the
+  active interrupt has plausibly completed, while manual `/next` can still
+  resume the preserved item.
 
 ### M5: Extract Settings Router
 
@@ -491,6 +498,10 @@ Progress:
   - `GET /jellyfin/search?q=the&limit=3`
 - Live status confirmed the Qt shell runtime is selected and Jellyfin is
   enabled, authenticated, connected, and running.
+- Live play-now interruption validation passed after the playback guard update:
+  the shared Bitchute interrupt remained `now_playing`, the interrupted
+  Jellyfin item stayed queued with `_relaytv_interrupt_preserved: true`, and
+  `transition_in_progress` cleared instead of auto-resuming Jellyfin.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
@@ -532,6 +543,7 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-06-30 | local | `codex/architecture-phase-1` | Completed M7 by extracting the main `/ui` JavaScript into `app/relaytv_app/static/ui/app.js` with an inline bootstrap for dynamic catalog data. | `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py` | Begin M8 final validation and manual UI review. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Started M8 final validation, included the updated banner image, passed automated gates and live HTTP asset checks. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `PYTHONPATH=app pytest -q`; `git diff --check`; live `GET /ui`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png` | Complete rendered browser review and credentialed Jellyfin smoke when environment is available. |
 | 2026-06-30 | local | `codex/architecture-phase-1` | Rebuilt and force-recreated the live Compose container, recorded user-confirmed browser view review, and ran credentialed live HTTP/Jellyfin smoke. | `docker compose up -d --build --force-recreate relaytv`; live `GET /status`, `/settings`, `/ui`, `/idle`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`, `/integrations/jellyfin/status`, `/jellyfin/home?limit=6&refresh=1`, `/jellyfin/movies?limit=6&refresh=1`, `/jellyfin/search?q=the&limit=3`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Complete explicit settings apply plus playback/Jellyfin play and queue smoke before final Phase 1 to `main` PR. |
+| 2026-07-01 | local | `codex/architecture-phase-1` | Guarded play-now interruption recovery so preserved Jellyfin items remain queued after incomplete interrupt playback instead of auto-taking over. | Live container logs/status confirmed Bitchute remained `now_playing`, Jellyfin stayed queued with `_relaytv_interrupt_preserved: true`, and `transition_in_progress` cleared; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_playback_routes.py`; `git diff --check` | Keep observing live playback transitions; consider Phase 2 staged playback handoff before replacing active media. |
 
 ## Open Questions
 

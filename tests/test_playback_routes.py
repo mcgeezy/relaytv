@@ -612,3 +612,34 @@ def test_playback_state_route_reports_closed_stop_hold(monkeypatch) -> None:
     assert body["playing"] is False
     assert body["transition_in_progress"] is False
     assert body["queue_length"] == 1
+
+
+def test_playback_state_route_reports_dead_backend_with_queue_as_runtime_gap(monkeypatch) -> None:
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"title": "Shared stream"}, raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [{"url": "https://example.com/interrupted.mp4"}], raising=False)
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
+    monkeypatch.setattr(routes.player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "natural_idle_reset_holding", lambda: False)
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {})
+    monkeypatch.setattr(
+        routes.player,
+        "qt_shell_runtime_telemetry",
+        lambda **kwargs: {"selected": True, "available": False, "freshness": "missing"},
+    )
+    monkeypatch.setattr(
+        routes.state,
+        "update_playback_runtime_state",
+        lambda next_state, reason="": {"playback_runtime_state": next_state, "playback_runtime_state_reason": reason},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/playback/state")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["queue_length"] == 1
+    assert body["transition_in_progress"] is False
+    assert body["playback_runtime_state"] == "degraded"
+    assert body["playback_runtime_state_reason"] == "backend_not_ready"

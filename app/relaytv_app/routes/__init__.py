@@ -5306,6 +5306,8 @@ def _derive_playback_runtime_state(
 
     if sess_val == "closed":
         return "closed", "session_closed"
+    if backend_ready is False and has_now_playing and sess_val not in ("idle", "closed") and not transition_active:
+        return "degraded", "backend_not_ready"
     if playing:
         if paused:
             return "paused", ("runtime_paused" if source_val != "none" else "session_paused")
@@ -5318,8 +5320,6 @@ def _derive_playback_runtime_state(
         return "buffering", transition_reason
     if source_val == "qt_runtime_stale" or freshness_val == "stale":
         return "degraded", "telemetry_stale"
-    if backend_ready is False and has_now_playing and sess_val not in ("idle", "closed"):
-        return "degraded", "backend_not_ready"
     if has_now_playing:
         if sess_val in ("playing", "paused"):
             return "buffering", "session_runtime_gap"
@@ -5337,10 +5337,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         manual_transition = bool(getattr(player, "playback_transitioning", lambda: False)())
         queue_handoff_transition = (
             ((sess in ("playing", "paused")) or has_now_playing)
-            and (
-                bool(getattr(player, "auto_next_transitioning", lambda: False)())
-                or queue_length > 0
-            )
+            and bool(getattr(player, "auto_next_transitioning", lambda: False)())
         )
         transition_active = bool(manual_transition or queue_handoff_transition)
     except Exception:
@@ -5429,6 +5426,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
             transition_active=transition_active,
             telemetry_source=str(payload.get("playback_telemetry_source") or "none"),
             telemetry_freshness=str(payload.get("playback_telemetry_freshness") or "unknown"),
+            backend_ready=payload.get("backend_ready") if payload.get("backend_ready") is not None else None,
         )
         payload.update(state.update_playback_runtime_state(runtime_state, runtime_reason))
         return payload
@@ -5480,13 +5478,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         payload["playing"] = False
         payload["paused"] = False
         payload["state"] = "idle"
-    transition_active = bool(transition_active or (
-        bool(payload.get("playing"))
-        and (not bool(payload.get("paused")))
-        and (not runtime_playing)
-        and str(payload.get("state") or "") != "closed"
-        and (has_now_playing or queue_length > 0)
-    ))
+    transition_active = bool(transition_active)
     payload["transitioning_between_items"] = transition_active
     payload["transition_in_progress"] = transition_active
     runtime_state, runtime_reason = _derive_playback_runtime_state(
@@ -5498,6 +5490,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         transition_active=transition_active,
         telemetry_source=str(payload.get("playback_telemetry_source") or "none"),
         telemetry_freshness=str(payload.get("playback_telemetry_freshness") or "unknown"),
+        backend_ready=payload.get("backend_ready") if payload.get("backend_ready") is not None else None,
     )
     payload.update(state.update_playback_runtime_state(runtime_state, runtime_reason))
     return payload
@@ -5520,10 +5513,7 @@ def _status_payload() -> dict[str, object]:
         manual_transition = bool(getattr(player, "playback_transitioning", lambda: False)())
         queue_handoff_transition = (
             ((sess in ("playing", "paused")) or has_now_playing)
-            and (
-                bool(getattr(player, "auto_next_transitioning", lambda: False)())
-                or len(q) > 0
-            )
+            and bool(getattr(player, "auto_next_transitioning", lambda: False)())
         )
         if (
             (not playing)

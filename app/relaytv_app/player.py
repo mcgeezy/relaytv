@@ -3693,6 +3693,10 @@ class QueueAdvanceSuppressedError(RuntimeError):
     """Raised when auto-next queue advance is suppressed by explicit user close/stop."""
 
 
+def _interrupt_preserved_item(item: object) -> bool:
+    return isinstance(item, dict) and item.get("_relaytv_interrupt_preserved") is True
+
+
 def _auto_next_suppressed() -> bool:
     if str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() == "closed":
         return True
@@ -3793,6 +3797,9 @@ def advance_queue_playback(
                     if skipped_unplayable > 0:
                         raise QueueAdvanceEmptyError("No playable items remain in queue")
                     raise QueueAdvanceEmptyError("Queue is empty")
+                if mode == "auto_next" and _interrupt_preserved_item(state.QUEUE[0]):
+                    if not _runtime_gap_completion_plausible(prev_now):
+                        raise QueueAdvanceSuppressedError("auto-next suppressed for interrupted resume item")
                 next_item = state.QUEUE.pop(0)
                 snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
 
@@ -4012,6 +4019,10 @@ def _consume_mpv_queued_next_if_started(
                     None,
                 )
             if idx is not None:
+                candidate_item = state.QUEUE[idx]
+                if _interrupt_preserved_item(candidate_item) and not _runtime_gap_completion_plausible(prev_now):
+                    _reset_mpv_up_next_state()
+                    return False
                 consumed = state.QUEUE.pop(idx)
                 snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
 
@@ -4183,6 +4194,36 @@ def _history_item_completed(now: dict | None) -> bool:
     return position >= (duration * 0.98) or (duration - position) <= 10.0
 
 
+def _runtime_gap_completion_plausible(now: dict | None) -> bool:
+    """Return true when a dead runtime plausibly represents natural completion."""
+    if not _history_item_completed(now):
+        return False
+    if not isinstance(now, dict):
+        return False
+    try:
+        duration = float(now.get("duration_sec"))
+    except Exception:
+        return True
+    if duration <= 0.0:
+        return True
+    try:
+        started_at = float(now.get("started"))
+    except Exception:
+        return True
+    if started_at <= 0.0:
+        return True
+    try:
+        started_pos = float(now.get("_playback_started_pos") or 0.0)
+    except Exception:
+        started_pos = 0.0
+    expected_runtime = max(0.0, duration - max(0.0, started_pos))
+    if expected_runtime <= 0.0:
+        return True
+    elapsed = max(0.0, time.time() - started_at)
+    required_elapsed = min(max(0.0, expected_runtime - 10.0), expected_runtime * 0.75)
+    return elapsed >= required_elapsed
+
+
 def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mode: str, start_pos: float | None = None):
     """Play a queue item dict or a raw shared URL/text."""
     update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
@@ -4346,8 +4387,11 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     if start_pos is not None:
         try:
             now["resume_pos"] = float(start_pos)
+            now["_playback_started_pos"] = float(start_pos)
         except Exception:
             pass
+    else:
+        now["_playback_started_pos"] = 0.0
 
     _add_history_entry(now)
     state.set_now_playing(now)
@@ -4447,15 +4491,37 @@ def _playback_runtime_idle_or_ended() -> bool:
         _clear_idle_candidate()
         return False
     if not _is_playing():
-        if has_now and sess in ("playing", "paused"):
+        if has_now and sess == "paused":
             _clear_idle_candidate()
             return False
+        if has_now and sess == "playing":
+            now = getattr(state, "NOW_PLAYING", None)
+            if not _runtime_gap_completion_plausible(now if isinstance(now, dict) else None):
+                _clear_idle_candidate()
+                return False
+            now_ts = time.time()
+            if _PLAYBACK_IDLE_CANDIDATE_SINCE <= 0.0:
+                _PLAYBACK_IDLE_CANDIDATE_SINCE = now_ts
+                return False
+            try:
+                confirm = float(os.getenv("RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC", "3.0"))
+            except Exception:
+                confirm = 3.0
+            confirm = max(0.5, min(30.0, confirm))
+            if (now_ts - _PLAYBACK_IDLE_CANDIDATE_SINCE) < confirm:
+                return False
+            _clear_idle_candidate()
+            return True
         _clear_idle_candidate()
         return True
     if not _qt_shell_backend_enabled():
         _clear_idle_candidate()
         return False
     if native_qt_playback_explicitly_ended():
+        now = getattr(state, "NOW_PLAYING", None)
+        if isinstance(now, dict) and not _runtime_gap_completion_plausible(now):
+            _clear_idle_candidate()
+            return False
         _clear_idle_candidate()
         return True
     try:
@@ -4490,6 +4556,10 @@ def _playback_runtime_idle_or_ended() -> bool:
 
     candidate = bool(eof_reached is True or not path or near_end)
     if not candidate:
+        _clear_idle_candidate()
+        return False
+    now = getattr(state, "NOW_PLAYING", None)
+    if isinstance(now, dict) and not _runtime_gap_completion_plausible(now):
         _clear_idle_candidate()
         return False
 
