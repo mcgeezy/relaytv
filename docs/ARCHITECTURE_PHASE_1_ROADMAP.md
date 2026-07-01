@@ -520,6 +520,10 @@ Progress:
   `/status` no longer demotes a queue-empty playing session to idle during that
   gap; it reports a transition state and lets the playback worker handle true
   natural ends.
+- The same replay showed that a stale `/tmp/mpv.sock` can briefly outlive a
+  crashed embedded Qt shell. Embedded Qt startup readiness now requires the Qt
+  shell process/telemetry and rejects stale sockets before a fake playing
+  session is accepted.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 

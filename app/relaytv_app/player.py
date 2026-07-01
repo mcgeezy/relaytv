@@ -2798,6 +2798,9 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
         _start_qt_shell(stream_url, audio_url=audio_url, start_pos=start_pos)
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="qt shell started but mpv IPC not ready")
+        if not _qt_shell_running():
+            _cleanup_ipc_socket()
+            raise HTTPException(status_code=500, detail="qt shell exited during playback startup")
         _set_mpv_process_start_option_active(process_start_option_active)
         _apply_startup_mpv_runtime_settings()
         _recover_audio_output_if_needed(settings)
@@ -2869,12 +2872,20 @@ def wait_for_ipc_ready(timeout: float = 5.0) -> bool:
     timeout_sec = max(0.1, timeout)
     deadline = time.time() + timeout_sec
     heartbeat_age = max(0.5, min(timeout_sec, 1.5))
+    native_qt_embed = _qt_shell_backend_enabled() and not _qt_runtime_uses_external_mpv()
     while time.time() < deadline:
-        if _qt_shell_runtime_startup_ready(max_age_sec=heartbeat_age):
-            return True
-        if not _is_playing():
-            time.sleep(0.05)
-            continue
+        if native_qt_embed:
+            if not _qt_shell_running():
+                time.sleep(0.05)
+                continue
+            if _qt_shell_runtime_startup_ready(max_age_sec=heartbeat_age):
+                return True
+        else:
+            if _qt_shell_runtime_startup_ready(max_age_sec=heartbeat_age):
+                return True
+            if not _is_playing():
+                time.sleep(0.05)
+                continue
         if os.path.exists(IPC_PATH):
             try:
                 r = _mpv_ipc_request({"command": ["get_property", "pause"]}, timeout=0.5)

@@ -3023,6 +3023,17 @@ def test_restart_current_ignores_closed_resumable_session(monkeypatch: pytest.Mo
     assert player.restart_current() is None
 
 
+def test_wait_for_ipc_ready_rejects_stale_socket_when_qt_shell_exited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_runtime_startup_ready', lambda max_age_sec=1.5: False)
+    monkeypatch.setattr(player.os.path, 'exists', lambda path: True)
+    monkeypatch.setattr(player, '_mpv_ipc_request', lambda payload, timeout=0.5: {'error': 'success'})
+
+    assert player.wait_for_ipc_ready(timeout=0.12) is False
+
+
 def test_idle_qt_shell_can_be_reused_for_stream_load(monkeypatch: pytest.MonkeyPatch) -> None:
     observed: dict[str, object] = {}
 
