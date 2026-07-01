@@ -4985,12 +4985,160 @@ def restore_session_on_startup_if_needed() -> bool:
     return _restore_session_on_startup_if_needed()
 
 
-def persist_current_session_snapshot() -> None:
-    """Best-effort final session write before process shutdown/recreate."""
+def _runtime_resume_url_fingerprint(raw: object) -> tuple[str, str, str, tuple[tuple[str, str], ...]] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
     try:
-        _session_tracker_tick()
+        parsed = urlsplit(text)
+    except Exception:
+        return None
+    if not (parsed.scheme and parsed.netloc and parsed.path):
+        return None
+    volatile = {
+        "api_key",
+        "apikey",
+        "auth",
+        "expires",
+        "exp",
+        "signature",
+        "sig",
+        "token",
+        "x-emby-token",
+        "x-jellyfin-token",
+        "jwt",
+    }
+    stable_query: list[tuple[str, str]] = []
+    try:
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            clean_key = str(key or "").strip().lower()
+            if not clean_key or clean_key in volatile:
+                continue
+            stable_query.append((clean_key, str(value or "").strip()))
+        stable_query.sort()
+    except Exception:
+        stable_query = []
+    return (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, tuple(stable_query))
+
+
+def _runtime_resume_urls_match(left: object, right: object) -> bool:
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+    left_fp = _runtime_resume_url_fingerprint(left_text)
+    right_fp = _runtime_resume_url_fingerprint(right_text)
+    if not left_fp or not right_fp:
+        return False
+    if left_fp == right_fp:
+        return True
+    return left_fp[:3] == right_fp[:3] and (not left_fp[3] or not right_fp[3])
+
+
+def _history_entry_matches_runtime_path(entry: dict[str, Any], runtime_path: str) -> bool:
+    candidates = (
+        entry.get("stream"),
+        entry.get("_resolved_stream"),
+        entry.get("url"),
+        entry.get("input"),
+    )
+    return any(_runtime_resume_urls_match(candidate, runtime_path) for candidate in candidates)
+
+
+def _recover_orphan_runtime_session_snapshot() -> bool:
+    """Recover a shutdown resume session when playback is live but app state is idle."""
+    try:
+        props = mpv_get_many(["path", "time-pos", "duration", "pause"])
+    except Exception:
+        props = {}
+    runtime_path = str(props.get("path") or "").strip()
+    if not runtime_path:
+        return False
+
+    matched: dict[str, Any] | None = None
+    try:
+        with state.HISTORY_LOCK:
+            for entry in state.HISTORY:
+                if isinstance(entry, dict) and _history_entry_matches_runtime_path(entry, runtime_path):
+                    matched = dict(entry)
+                    break
+    except Exception:
+        matched = None
+    if matched is None and not _looks_like_jellyfin_media_url(runtime_path):
+        return False
+    if matched is None:
+        matched = {
+            "url": runtime_path,
+            "title": runtime_path,
+            "provider": "jellyfin",
+        }
+
+    try:
+        pos = float(props.get("time-pos")) if props.get("time-pos") is not None else matched.get("resume_pos")
+    except Exception:
+        pos = matched.get("resume_pos")
+    try:
+        dur = float(props.get("duration")) if props.get("duration") is not None else matched.get("duration_sec")
+    except Exception:
+        dur = matched.get("duration_sec")
+
+    now = dict(matched)
+    now["input"] = now.get("input") or now.get("url") or runtime_path
+    now["url"] = now.get("url") or runtime_path
+    now["stream"] = runtime_path
+    now["audio"] = now.get("audio") or now.get("_resolved_audio")
+    now["started"] = int(time.time())
+    now["mode"] = "shutdown_resume_snapshot"
+    if pos is not None:
+        try:
+            now["resume_pos"] = float(pos)
+        except Exception:
+            pass
+    if dur is not None:
+        try:
+            now["duration_sec"] = float(dur)
+        except Exception:
+            pass
+    try:
+        if str(now.get("provider") or "").strip().lower() == "jellyfin" or _looks_like_jellyfin_media_url(runtime_path):
+            now = _hydrate_jellyfin_resume_metadata(now)
     except Exception:
         pass
+
+    paused = bool(props.get("pause"))
+    try:
+        state.set_now_playing(now)
+        state.set_session_position(float(now.get("resume_pos")) if now.get("resume_pos") is not None else None)
+        state.set_session_state("paused" if paused else "playing")
+        state.set_pause_reason("shutdown_snapshot" if paused else None)
+        update_history_progress(now, position_sec=now.get("resume_pos"), duration_sec=now.get("duration_sec"), force=True)
+    except Exception:
+        return False
+    logger.info(
+        "shutdown_session_recovered_from_runtime provider=%s title=%s paused=%s position=%s",
+        str(now.get("provider") or "").strip(),
+        str(now.get("title") or "").strip(),
+        paused,
+        now.get("resume_pos"),
+    )
+    return True
+
+
+def persist_current_session_snapshot() -> None:
+    """Best-effort final session write before process shutdown/recreate."""
+    if isinstance(getattr(state, "NOW_PLAYING", None), dict):
+        try:
+            _session_tracker_tick()
+        except Exception:
+            pass
+    else:
+        try:
+            if _is_playing() or native_qt_runtime_active():
+                _recover_orphan_runtime_session_snapshot()
+        except Exception:
+            pass
     try:
         state.persist_session()
     except Exception:

@@ -2474,12 +2474,73 @@ def test_startup_restore_wrapper_marks_attempt_consumed(monkeypatch: pytest.Monk
 def test_shutdown_session_snapshot_persists_after_tracker_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', {'url': 'https://example.com/current.mp4'}, raising=False)
     monkeypatch.setattr(player, '_session_tracker_tick', lambda: calls.append('tick'))
     monkeypatch.setattr(player.state, 'persist_session', lambda: calls.append('persist'))
 
     player.persist_current_session_snapshot()
 
     assert calls == ['tick', 'persist']
+
+
+def test_runtime_resume_urls_match_with_rotated_jellyfin_token() -> None:
+    first = 'http://jellyfin.local/Videos/abc/master.m3u8?MediaSourceId=ms1&api_key=old'
+    second = 'http://jellyfin.local/Videos/abc/master.m3u8?MediaSourceId=ms1&api_key=new'
+    path_only = 'http://jellyfin.local/Videos/abc/master.m3u8?api_key=new'
+
+    assert player._runtime_resume_urls_match(first, second) is True
+    assert player._runtime_resume_urls_match(first, path_only) is True
+    assert player._runtime_resume_urls_match(first, 'http://jellyfin.local/Videos/other/master.m3u8?api_key=new') is False
+
+
+def test_shutdown_session_snapshot_recovers_orphan_runtime_playback(monkeypatch: pytest.MonkeyPatch) -> None:
+    history_entry = {
+        'url': 'http://jellyfin.local/Videos/abc/master.m3u8?MediaSourceId=ms1&api_key=old',
+        'title': 'Recovered Jellyfin Title',
+        'provider': 'jellyfin',
+        'resume_pos': 31.0,
+        'duration_sec': 4000.0,
+        'jellyfin_item_id': 'abc',
+    }
+    runtime_path = 'http://jellyfin.local/Videos/abc/master.m3u8?MediaSourceId=ms1&api_key=new'
+    captured: dict[str, object] = {}
+    calls: list[str] = []
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'HISTORY', [history_entry], raising=False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, 'native_qt_runtime_active', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: {'path': runtime_path, 'time-pos': 222.5, 'duration': 3999.0, 'pause': False},
+    )
+    monkeypatch.setattr(player, '_hydrate_jellyfin_resume_metadata', lambda item: item)
+    monkeypatch.setattr(player.state, 'set_now_playing', lambda item: captured.setdefault('now', dict(item)))
+    monkeypatch.setattr(player.state, 'set_session_position', lambda pos: captured.setdefault('position', pos))
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: captured.setdefault('state', value))
+    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: captured.setdefault('pause_reason', value))
+    monkeypatch.setattr(player, 'update_history_progress', lambda item, **kwargs: captured.setdefault('progress', kwargs))
+    monkeypatch.setattr(player.state, 'persist_session', lambda: calls.append('persist'))
+
+    player.persist_current_session_snapshot()
+
+    assert calls == ['persist']
+    assert captured['state'] == 'playing'
+    assert captured['position'] == 222.5
+    assert captured['pause_reason'] is None
+    now = captured['now']
+    assert isinstance(now, dict)
+    assert now['title'] == 'Recovered Jellyfin Title'
+    assert now['stream'] == runtime_path
+    assert now['resume_pos'] == 222.5
+    assert now['duration_sec'] == 3999.0
+    assert now['mode'] == 'shutdown_resume_snapshot'
+    progress = captured['progress']
+    assert isinstance(progress, dict)
+    assert progress['position_sec'] == 222.5
+    assert progress['duration_sec'] == 3999.0
+    assert progress['force'] is True
 
 
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:

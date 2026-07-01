@@ -510,6 +510,11 @@ Progress:
   worker and shutdown depended on the periodic session tracker. Startup now
   attempts persisted-session restore synchronously before showing the idle Qt
   shell, and shutdown writes one final session snapshot before teardown.
+- Follow-up Raspberry Pi testing found that active mpv playback can outlive
+  RelayTV's in-memory `NOW_PLAYING` state during rebuilds. Shutdown snapshots
+  now recover a resumable Jellyfin session from the live mpv path and matching
+  history entry before persisting session state, including rotated/volatile
+  Jellyfin URL tokens.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 
