@@ -528,6 +528,10 @@ Progress:
   the embedded Qt shell exits on the Raspberry Pi. Reuse now waits briefly for
   the shell to survive or report loaded media; otherwise it falls back to a full
   Qt shell launch.
+- Jellyfin direct media URLs from history can be classified as generic `other`
+  URLs when the server hostname is local. Jellyfin-looking `/Videos` and
+  `/Items` media URLs now force mpv ytdl integration off even when provider
+  metadata was lost.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 

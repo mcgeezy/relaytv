@@ -1529,6 +1529,13 @@ def test_mark_playback_transition_allows_longer_resolve_window(monkeypatch: pyte
     assert player._PLAYBACK_TRANSITION_UNTIL == 1020.0
 
 
+def test_jellyfin_media_urls_force_ytdl_off() -> None:
+    url = 'http://jellyfin.local:8096/Videos/abc/master.m3u8?MediaSourceId=abc&api_key=token'
+
+    assert player._should_force_ytdl_off(url, 'other') is True
+    assert player._should_force_ytdl_off(url, 'jellyfin') is True
+
+
 def test_youtube_arm_safe_strategies_prefer_quality_retries_before_plain_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resolver, '_preferred_js_runtime_spec', lambda: 'node')
 

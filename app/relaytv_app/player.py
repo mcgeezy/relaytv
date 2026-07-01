@@ -1544,6 +1544,8 @@ def _signed_direct_url(url: str) -> bool:
 
 def _should_force_ytdl_off(stream_url: str, provider_hint: str | None = None) -> bool:
     prov = str(provider_hint or "").strip().lower() or _provider_hint_for_stream(stream_url, fallback_now_playing=False)
+    if prov == "jellyfin" or _looks_like_jellyfin_media_url(stream_url):
+        return True
     if prov != "tiktok":
         return False
     return _signed_direct_url(stream_url)
