@@ -515,6 +515,11 @@ Progress:
   now recover a resumable Jellyfin session from the live mpv path and matching
   history entry before persisting session state, including rotated/volatile
   Jellyfin URL tokens.
+- Controlled Raspberry Pi replay found that slower Qt/libmpv startup can leave
+  a now-playing item in a brief runtime telemetry gap after `/history/play`.
+  `/status` no longer demotes a queue-empty playing session to idle during that
+  gap; it reports a transition state and lets the playback worker handle true
+  natural ends.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 

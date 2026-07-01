@@ -5584,6 +5584,19 @@ def _status_payload() -> dict[str, object]:
             if native_active and isinstance(state.NOW_PLAYING, dict):
                 sess = "playing"
                 state.set_session_state(sess)
+            elif sess == "playing" and isinstance(state.NOW_PLAYING, dict) and not q:
+                native_ended = False
+                try:
+                    native_ended = bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)())
+                except Exception:
+                    native_ended = False
+                if not native_ended:
+                    playing = True
+                    transitioning_between_items = True
+                    state.set_session_state("playing")
+                else:
+                    sess = "idle"
+                    state.set_session_state(sess)
             else:
                 sess = "idle"
                 state.set_session_state(sess)

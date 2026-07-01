@@ -2193,6 +2193,45 @@ def test_status_preserves_paused_session_during_runtime_dropout(monkeypatch: pyt
     assert session_sets == ['paused']
 
 
+def test_status_preserves_playing_session_during_empty_queue_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_sets: list[str] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_runtime_active', lambda **_: False)
+    monkeypatch.setattr(routes.player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, '_effective_ytdl_format', lambda s=None: '')
+    monkeypatch.setattr(routes.player, 'get_mpv_log_tail', lambda lines=40: [])
+    monkeypatch.setattr(routes.player, 'IPC_PATH', '/tmp/test-mpv.sock', raising=False)
+    monkeypatch.setattr(routes.os.path, 'exists', lambda p: False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'slow starting'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda val: session_sets.append(val))
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda props: {})
+    monkeypatch.setattr(
+        routes,
+        '_runtime_capabilities',
+        lambda playing=None: {
+            'backend_ready': True,
+            'player_backend': 'qt',
+            'qt_runtime_mode_effective': 'embed',
+            'native_qt_telemetry_source': 'qt_runtime',
+            'native_qt_mpv_runtime_path': '',
+        },
+    )
+
+    payload = routes.status()
+
+    assert payload['state'] == 'playing'
+    assert payload['playing'] is True
+    assert payload['transition_in_progress'] is True
+    assert session_sets == ['playing']
+
+
 def test_status_does_not_treat_queued_item_as_stale_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
     session_sets: list[str] = []
 
