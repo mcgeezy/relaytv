@@ -3038,6 +3038,7 @@ def test_idle_qt_shell_can_be_reused_for_stream_load(monkeypatch: pytest.MonkeyP
     observed: dict[str, object] = {}
 
     monkeypatch.setenv('RELAYTV_MPV_SEAMLESS_REPLACE', '1')
+    monkeypatch.setenv('RELAYTV_QT_POST_LOAD_SURVIVAL_SEC', '0')
     monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
     monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
@@ -3079,6 +3080,7 @@ def test_idle_qt_shell_can_be_reused_for_video_only_stream_load(monkeypatch: pyt
     observed: dict[str, object] = {}
 
     monkeypatch.setenv('RELAYTV_MPV_SEAMLESS_REPLACE', '1')
+    monkeypatch.setenv('RELAYTV_QT_POST_LOAD_SURVIVAL_SEC', '0')
     monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
     monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
@@ -3144,6 +3146,7 @@ def test_idle_qt_shell_can_be_reused_without_fresh_snapshot_control_file(monkeyp
     observed: dict[str, object] = {}
 
     monkeypatch.setenv('RELAYTV_MPV_SEAMLESS_REPLACE', '1')
+    monkeypatch.setenv('RELAYTV_QT_POST_LOAD_SURVIVAL_SEC', '0')
     monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
     monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
@@ -3165,6 +3168,18 @@ def test_idle_qt_shell_can_be_reused_without_fresh_snapshot_control_file(monkeyp
         'audio': None,
     }
     assert observed['reset'] is True
+
+
+def test_qt_shell_runtime_survived_load_rejects_immediate_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    states = iter([True, False])
+
+    monkeypatch.setenv('RELAYTV_QT_POST_LOAD_SURVIVAL_SEC', '0.2')
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: next(states, False))
+    monkeypatch.setattr(player, '_qt_shell_runtime_snapshot', lambda max_age_sec=1.0: {})
+
+    assert player._qt_shell_runtime_survived_load() is False
 
 
 def test_qt_runtime_active_treats_paused_loaded_stream_as_active(monkeypatch: pytest.MonkeyPatch) -> None:

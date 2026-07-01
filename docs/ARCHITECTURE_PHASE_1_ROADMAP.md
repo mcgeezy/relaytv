@@ -524,6 +524,10 @@ Progress:
   crashed embedded Qt shell. Embedded Qt startup readiness now requires the Qt
   shell process/telemetry and rejects stale sockets before a fake playing
   session is accepted.
+- The idle-shell reuse handoff can also acknowledge a load request just before
+  the embedded Qt shell exits on the Raspberry Pi. Reuse now waits briefly for
+  the shell to survive or report loaded media; otherwise it falls back to a full
+  Qt shell launch.
 - Manual settings apply plus playback/Jellyfin play and queue actions still
   need explicit confirmation before opening the final Phase 1 to `main` PR.
 

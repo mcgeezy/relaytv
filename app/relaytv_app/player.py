@@ -2725,10 +2725,43 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, 
             return False
     if not isinstance(resp, dict) or resp.get("error") != "success":
         return False
+    if not _qt_shell_runtime_survived_load():
+        return False
 
     # Existing "up-next armed" state points at the old timeline.
     _reset_mpv_up_next_state()
     return True
+
+
+def _qt_shell_runtime_survived_load() -> bool:
+    """Return false when embedded Qt exits immediately after accepting load control."""
+    if not (_qt_shell_backend_enabled() and (not _qt_runtime_uses_external_mpv())):
+        return True
+    try:
+        timeout_sec = float(os.getenv("RELAYTV_QT_POST_LOAD_SURVIVAL_SEC", "2.5"))
+    except Exception:
+        timeout_sec = 2.5
+    timeout_sec = max(0.0, min(timeout_sec, 8.0))
+    if timeout_sec <= 0:
+        return _qt_shell_running()
+    deadline = time.time() + timeout_sec
+    saw_running = False
+    while time.time() < deadline:
+        if not _qt_shell_running():
+            return False
+        saw_running = True
+        snap = _qt_shell_runtime_snapshot(max_age_sec=1.0)
+        if isinstance(snap, dict):
+            path = str(snap.get("mpv_runtime_path") or "").strip()
+            if (
+                path
+                or snap.get("mpv_runtime_playback_active") is True
+                or snap.get("mpv_runtime_stream_loaded") is True
+                or snap.get("mpv_runtime_playback_started") is True
+            ):
+                return True
+        time.sleep(0.05)
+    return saw_running
 
 
 def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None):
