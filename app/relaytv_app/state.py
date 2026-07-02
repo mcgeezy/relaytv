@@ -30,14 +30,14 @@ def _default_ytdlp_format() -> str:
     if env_fmt:
         return env_fmt
 
-    # Raspberry Pi / arm64 defaults to the arm-safe AVC-first profile with a
-    # 1080p cap unless explicitly overridden.
+    # Raspberry Pi / arm64 defaults to the same 1080p non-AV1 selector as other
+    # hosts unless explicitly overridden.
     arch = (platform.machine() or "").lower()
     if arch in ("aarch64", "arm64"):
         arm_cap = (os.getenv("RELAYTV_ARM_DEFAULT_QUALITY") or "1080").strip()
-        if arm_cap in {"360", "480", "720", "1080"}:
-            return f"best[height<={arm_cap}][fps<=30][vcodec^=avc1]/best[height<={arm_cap}][fps<=30]/best[height<={arm_cap}]/best"
-        return "best[height<=1080][fps<=30][vcodec^=avc1]/best[height<=1080][fps<=30]/best[height<=1080]/best"
+        if arm_cap not in {"360", "480", "720", "1080"}:
+            arm_cap = "1080"
+        return f"bestvideo[vcodec!*=av01][height<={arm_cap}][fps<=60]+bestaudio/best[vcodec!*=av01][height<={arm_cap}]/best"
 
     # Universal default for unknown providers: avoid AV1-heavy picks while
     # still allowing split streams where that is the only good choice.

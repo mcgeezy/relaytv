@@ -544,7 +544,7 @@ def _build_mpv_args(
         args.append(f"--log-file={log_file}")
     if debug and not _has_opt(args + extra, "--msg-level"):
         args.append("--msg-level=all=debug")
-    arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", True)
+    arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", False)
     if arm_fast_default and (platform.machine() or "").lower() in ("aarch64", "arm64") and not _has_opt(args + extra, "--profile"):
         args.append("--profile=fast")
     if ipc_path:
@@ -1093,7 +1093,7 @@ class _QtLibMpvPlayer:
         if self.debug:
             self._set_opt_best_effort("msg-level", "all=debug")
 
-        arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", True)
+        arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", False)
         if arm_fast_default and (platform.machine() or "").lower() in ("aarch64", "arm64"):
             self._set_opt_best_effort("profile", "fast")
 

@@ -2450,7 +2450,7 @@ def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str, start_pos
 
     # Keep defaults mostly mpv-driven, but allow a lightweight ARM safety net
     # for sync stability when users do not provide an explicit profile.
-    arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", True)
+    arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", False)
     arm_machine = (platform.machine() or "").lower() in ("aarch64", "arm64")
     if arm_fast_default and (arm_machine or decode_profile == "arm_safe") and not _has_opt(mpv_args + extra, "--profile"):
         mpv_args.append("--profile=fast")

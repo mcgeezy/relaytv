@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 from relaytv_app.main import create_app
 from relaytv_app import container_entrypoint
 from relaytv_app import player
+from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
 from relaytv_app import upload_store
+from relaytv_app import ytdlp_format_policy
 from relaytv_app.routes import app_info as app_info_routes
 from relaytv_app.qt_shell_app import (
     _cursor_hidden_refresh_ms,
@@ -1296,6 +1298,80 @@ def test_pwa_brand_banner_png_asset_resolves_with_logo_fallback() -> None:
     assert response.headers['content-type'].startswith(('image/png', 'image/svg+xml'))
 
 
+def test_pi_ytdlp_defaults_prefer_1080p_non_av1_without_progressive_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        'YTDLP_FORMAT',
+        'YTDLP_FORMAT_YOUTUBE',
+        'YTDLP_FORMAT_RUMBLE',
+        'RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT',
+        'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST',
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr('relaytv_app.ytdlp_format_policy.platform.machine', lambda: 'aarch64')
+    profile = {'decode_profile': 'arm_safe', 'display_cap_height': 1080, 'av1_allowed': False}
+
+    youtube_fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='youtube', profile=profile)
+    rumble_fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='rumble', profile=profile)
+
+    assert youtube_fmt == 'bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best[vcodec!*=av01][height<=1080]/best'
+    assert rumble_fmt == 'best*[height<=1080][fps<=60]/best*[height<=1080]/best[height<=1080][fps<=60]/best'
+    assert ytdlp_format_policy.youtube_progressive_startup_enabled(profile) is False
+
+
+def test_pi_ytdlp_safe_selector_remains_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ('YTDLP_FORMAT', 'YTDLP_FORMAT_YOUTUBE', 'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT', '1')
+    monkeypatch.setattr('relaytv_app.ytdlp_format_policy.platform.machine', lambda: 'aarch64')
+    profile = {'decode_profile': 'arm_safe', 'display_cap_height': 1080, 'av1_allowed': False}
+
+    fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='youtube', profile=profile)
+
+    assert fmt == 'best[height<=1080][fps<=30][vcodec^=avc1]/best[height<=1080][fps<=30]/best[height<=1080]/best'
+
+
+def test_pi_youtube_resolver_does_not_fall_back_to_auto_when_av1_disallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    class Proc:
+        returncode = 0
+        stdout = 'https://video.example/stream.mp4\nhttps://audio.example/stream.m4a\n'
+        stderr = ''
+
+    for key in (
+        'YTDLP_FORMAT',
+        'YTDLP_FORMAT_YOUTUBE',
+        'RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT',
+        'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST',
+        'YTDLP_ARGS',
+        'RELAYTV_YTDLP_JS_RUNTIME',
+        'YTDLP_JS_RUNTIME',
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr('relaytv_app.ytdlp_format_policy.platform.machine', lambda: 'aarch64')
+    monkeypatch.setattr('relaytv_app.resolver.platform.machine', lambda: 'aarch64')
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr(
+        'relaytv_app.video_profile.get_profile',
+        lambda: {'decode_profile': 'arm_safe', 'display_cap_height': 1080, 'av1_allowed': False},
+    )
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+
+    def fake_run(cmd, check=False):
+        calls.append(list(cmd))
+        return Proc()
+
+    monkeypatch.setattr(resolver, 'run', fake_run)
+
+    stream, audio = resolver.resolve_streams_ytdlp('https://www.youtube.com/watch?v=abc123')
+
+    assert stream == 'https://video.example/stream.mp4'
+    assert audio == 'https://audio.example/stream.m4a'
+    assert calls
+    assert '-f' in calls[0]
+    assert 'vcodec!*=av01' in calls[0][calls[0].index('-f') + 1]
+
+
 def test_jellyfin_plugin_ingress_is_deprecated() -> None:
     app = create_app(testing=True)
     client = TestClient(app)
@@ -1560,6 +1636,28 @@ def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
 
     assert _libmpv_enabled() is False
+
+
+def test_pi_qt_mpv_args_do_not_use_fast_profile_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_ARM_FAST_PROFILE', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+    monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
+
+    args = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+
+    assert '--profile=fast' not in args
+
+
+def test_pi_qt_mpv_args_allow_explicit_fast_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_ARM_FAST_PROFILE', '1')
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+    monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
+
+    args = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+
+    assert '--profile=fast' in args
 
 
 def test_qt_libmpv_initial_stream_waits_for_render_context() -> None:

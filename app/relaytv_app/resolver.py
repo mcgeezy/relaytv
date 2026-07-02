@@ -490,6 +490,9 @@ def resolve_streams_ytdlp(url: str):
     fmt = ytdlp_format_policy.effective_ytdlp_format(settings, provider=provider, profile=profile)
     base = build_ytdlp_base_args()
     candidates = [fmt, "best", "b", ""]
+    av1_allowed = bool(profile.get("av1_allowed")) if isinstance(profile, dict) and profile.get("av1_allowed") is not None else False
+    if is_youtube_url(u) and not av1_allowed and fmt:
+        candidates = [fmt]
     if is_youtube_url(u) and ytdlp_format_policy.youtube_progressive_startup_enabled(profile):
         candidates = ytdlp_format_policy.youtube_progressive_startup_candidates(settings, profile=profile)
     candidates = list(dict.fromkeys(candidates))

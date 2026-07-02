@@ -113,7 +113,7 @@ def _auto_provider_format(provider: str, cap: int, *, av1_allowed: bool) -> str:
     if p in ("twitch", "tiktok", "bitchute"):
         return f"best[height<={cap}][fps<=60]/best"
     vcodec = "" if av1_allowed else "[vcodec!*=av01]"
-    return f"bestvideo{vcodec}[height<={cap}][fps<=60]+bestaudio/best{vcodec}/best"
+    return f"bestvideo{vcodec}[height<={cap}][fps<=60]+bestaudio/best{vcodec}[height<={cap}]/best"
 
 
 def youtube_progressive_startup_format(
@@ -163,10 +163,7 @@ def youtube_progressive_startup_enabled(profile: dict[str, Any] | None = None) -
     env = os.getenv("RELAYTV_YOUTUBE_PROGRESSIVE_FIRST")
     if env is not None and str(env).strip() != "":
         return _env_bool("RELAYTV_YOUTUBE_PROGRESSIVE_FIRST", False)
-    if isinstance(profile, dict) and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe":
-        return True
-    machine = (platform.machine() or "").lower()
-    return machine in ("aarch64", "arm64")
+    return False
 
 
 def _arm_safe_if_needed(fmt: str, *, mode: str, cap: int) -> str:
@@ -174,7 +171,7 @@ def _arm_safe_if_needed(fmt: str, *, mode: str, cap: int) -> str:
     is_arm = arch in ("aarch64", "arm64")
     if not is_arm:
         return fmt
-    if not _env_bool("RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT", True):
+    if not _env_bool("RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT", False):
         return fmt
 
     arm_cap = _arm_default_quality_cap()
