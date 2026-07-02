@@ -3767,10 +3767,15 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
     if not head:
         raise QueueAdvanceEmptyError("Queue is empty")
 
-    try:
-        seamless_ready = bool(prime_mpv_up_next_from_queue(force=False))
-    except Exception:
-        seamless_ready = False
+    with _MPV_UPNEXT_LOCK:
+        already_armed = bool(_MPV_UPNEXT_ARMED_ID and _MPV_UPNEXT_ARMED_URL)
+    if already_armed and not is_playing():
+        seamless_ready = True
+    else:
+        try:
+            seamless_ready = bool(prime_mpv_up_next_from_queue(force=False))
+        except Exception:
+            seamless_ready = False
     if not seamless_ready:
         return None
 
@@ -3822,7 +3827,7 @@ def advance_queue_playback(
     with state.ADVANCE_LOCK:
         if mode == "auto_next" and _auto_next_suppressed():
             raise QueueAdvanceSuppressedError("auto-next suppressed while session is closed")
-        if prefer_playlist_next and is_playing():
+        if prefer_playlist_next:
             method = _attempt_playlist_next_handoff(poll_sleep=poll_sleep)
             if method:
                 state.AUTO_NEXT_SUPPRESS_UNTIL = max(
@@ -4660,7 +4665,7 @@ def _autoplay_next_worker():
 
         _set_auto_next_transition(True)
         try:
-            advance_queue_playback(mode="auto_next", prefer_playlist_next=False)
+            advance_queue_playback(mode="auto_next", prefer_playlist_next=True)
         except QueueAdvanceEmptyError:
             _handle_playback_idle_no_queue()
         except QueueAdvanceSuppressedError:

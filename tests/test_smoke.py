@@ -2689,6 +2689,58 @@ def test_manual_next_can_dequeue_interrupted_item(monkeypatch: pytest.MonkeyPatc
     assert play_calls[-1]['start_pos'] == 12.5
 
 
+def test_auto_next_worker_prefers_mpv_playlist_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    sleep_calls = 0
+
+    def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            raise RuntimeError('stop worker')
+
+    def fake_advance(**kwargs):
+        calls.append(dict(kwargs))
+        raise RuntimeError('stop worker')
+
+    monkeypatch.setattr(player.time, 'sleep', fake_sleep)
+    monkeypatch.setattr(player, '_SESSION_RESTORE_ATTEMPTED', True, raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [{'url': 'https://example.com/next.mp4'}], raising=False)
+    monkeypatch.setattr(player, '_playback_runtime_idle_or_ended', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_set_auto_next_transition', lambda value: None)
+    monkeypatch.setattr(player, 'advance_queue_playback', fake_advance)
+
+    with pytest.raises(RuntimeError, match='stop worker'):
+        player._autoplay_next_worker()
+
+    assert calls == [{'mode': 'auto_next', 'prefer_playlist_next': True}]
+
+
+def test_auto_next_playlist_handoff_uses_armed_item_after_eof(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[object]] = []
+
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(
+        player,
+        'prime_mpv_up_next_from_queue',
+        lambda force=False: (_ for _ in ()).throw(AssertionError('already armed EOF handoff should not re-prime')),
+    )
+    monkeypatch.setattr(player.state, 'QUEUE', [{'url': 'https://example.com/next.mp4'}], raising=False)
+    monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_ID', player._queue_item_identity(player.state.QUEUE[0]), raising=False)
+    monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_URL', 'https://example.com/next.mp4', raising=False)
+    monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_AT', 123.0, raising=False)
+    monkeypatch.setattr(player, 'mpv_command', lambda command: commands.append(list(command)) or {'error': 'success'})
+    monkeypatch.setattr(player, 'mpv_get_many', lambda props: {'playlist-pos': 0, 'playlist-count': 2, 'time-pos': None, 'path': '', 'pause': False})
+
+    method = player._attempt_playlist_next_handoff(poll_sleep=lambda _seconds: None)
+
+    assert method == 'mpv_playlist_next_pending'
+    assert commands == [['playlist-next', 'force']]
+
+
 def test_auto_next_resumes_interrupted_item_without_dropping_queue_tail(monkeypatch: pytest.MonkeyPatch) -> None:
     persisted: list[dict] = []
     play_calls: list[dict[str, object]] = []
