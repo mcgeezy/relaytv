@@ -126,7 +126,7 @@ Status: complete
 
 ### M1: Jellyfin Surface Inventory And Guardrail Baseline
 
-Status: planned
+Status: complete
 
 - `tests/test_jellyfin_inventory.py`: scans the routes package for Jellyfin
   product function definitions and pins the allowed set per module; each
