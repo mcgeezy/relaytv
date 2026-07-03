@@ -28,10 +28,14 @@ attributes and must keep intercepting the calls.
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Callable
 
 from . import player, state
+from .debug import get_logger
+
+logger = get_logger("playback")
 
 
 def play_now(
@@ -128,3 +132,117 @@ def suppress_auto_next(seconds: float, *, extend_only: bool = False) -> None:
 def clear_auto_next_suppression() -> None:
     """Allow queue auto-advance again immediately."""
     state.AUTO_NEXT_SUPPRESS_UNTIL = 0.0
+
+
+# --- temporary playback (picture-in-place interruptions with restore) ------
+#
+# Moved from routes/__init__.py in Phase 3 M4. The stack holds restore frames
+# for /play_temporary; completing (or timing out / ending) the top frame
+# restores the captured session. routes/__init__.py keeps aliases to the same
+# objects for compatibility with existing callers and tests.
+
+_TEMP_PLAYBACK_LOCK = threading.Lock()
+_TEMP_PLAYBACK_STACK: list[dict] = []
+
+
+def discard_temporary_playback(reason: str) -> int:
+    """Discard temporary restore frames after an explicit user stop/close."""
+    with _TEMP_PLAYBACK_LOCK:
+        count = len(_TEMP_PLAYBACK_STACK)
+        _TEMP_PLAYBACK_STACK.clear()
+    if count:
+        try:
+            logger.info("temporary_playback_discarded reason=%s count=%s", reason, count)
+        except Exception:
+            pass
+    return count
+
+
+def discard_interrupted_playback_state(reason: str) -> None:
+    discard_temporary_playback(reason)
+
+
+def capture_current_playback_state() -> dict | None:
+    if not player.is_playing() or not isinstance(state.NOW_PLAYING, dict):
+        return None
+
+    with player.MPV_LOCK:
+        props = player.mpv_get_many(["time-pos", "pause"])
+    pos = props.get("time-pos")
+    paused = bool(props.get("pause"))
+    try:
+        pos_f = float(pos) if pos is not None else None
+    except Exception:
+        pos_f = None
+
+    with state.QUEUE_LOCK:
+        queue_snapshot = list(state.QUEUE)
+
+    return {
+        "now_playing": dict(state.NOW_PLAYING),
+        "position": pos_f,
+        "paused": paused,
+        "queue": queue_snapshot,
+    }
+
+
+def restore_playback_state(snapshot: dict) -> None:
+    now = snapshot.get("now_playing") if isinstance(snapshot, dict) else None
+    if not isinstance(now, dict):
+        return
+
+    with state.QUEUE_LOCK:
+        state.QUEUE[:] = list(snapshot.get("queue") or [])
+    state.persist_queue()
+
+    start_pos = snapshot.get("position")
+    resumed = play_now(
+        now,
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode="temporary_resume",
+        start_pos=(float(start_pos) if start_pos is not None else None),
+    )
+    if snapshot.get("paused"):
+        try:
+            player.mpv_set("pause", True)
+            state.set_session_state("paused")
+            state.set_pause_reason("temporary")
+        except Exception:
+            pass
+    else:
+        state.set_session_state("playing")
+        state.set_pause_reason(None)
+    state.set_now_playing(resumed)
+
+
+def complete_temporary_playback(frame_id: str, reason: str) -> bool:
+    with _TEMP_PLAYBACK_LOCK:
+        if not _TEMP_PLAYBACK_STACK or _TEMP_PLAYBACK_STACK[-1].get("id") != frame_id:
+            return False
+        frame = _TEMP_PLAYBACK_STACK.pop()
+
+    if frame.get("resume") and isinstance(frame.get("snapshot"), dict):
+        try:
+            restore_playback_state(frame["snapshot"])
+        except Exception as e:
+            logger.warning("temporary_restore_failed frame_id=%s error=%s", frame_id, e)
+            return False
+    return True
+
+
+def temporary_watchdog(frame_id: str, timeout_sec: float | None) -> None:
+    started = time.time()
+    while True:
+        time.sleep(0.25)
+        with _TEMP_PLAYBACK_LOCK:
+            is_top = bool(_TEMP_PLAYBACK_STACK) and _TEMP_PLAYBACK_STACK[-1].get("id") == frame_id
+        if not is_top:
+            return
+        if timeout_sec is not None and (time.time() - started) >= float(timeout_sec):
+            complete_temporary_playback(frame_id, reason="timeout")
+            return
+        if not player.is_playing():
+            complete_temporary_playback(frame_id, reason="ended")
+            return

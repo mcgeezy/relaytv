@@ -118,12 +118,14 @@ def test_transition_inventory_doc_matches_source() -> None:
 # this pin tracks the module sets, which is what the migration changes.
 EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
     "NOW_PLAYING": {
+        "playback_service.py",
         "player.py",
         "routes/__init__.py",
         "routes/jellyfin.py",
         "routes/playback.py",
     },
     "SESSION_STATE": {
+        "playback_service.py",
         "player.py",
         "routes/__init__.py",
         "routes/jellyfin.py",
@@ -142,7 +144,14 @@ EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
         "routes/uploads.py",
         "upload_store.py",
     },
-    "_TEMP_PLAYBACK_STACK": {"routes/__init__.py", "routes/playback.py"},
+    # M4: the stack lives in playback_service; routes/__init__.py keeps a
+    # single compat alias line and routes/playback.py thin wrappers until the
+    # M7 test reshape retires them.
+    "_TEMP_PLAYBACK_STACK": {
+        "playback_service.py",
+        "routes/__init__.py",
+        "routes/playback.py",
+    },
 }
 
 

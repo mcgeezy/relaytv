@@ -2150,111 +2150,17 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
 </body>
 </html>"""
 
-_TEMP_PLAYBACK_LOCK = threading.Lock()
-_TEMP_PLAYBACK_STACK: list[dict] = []
-
-
-def _discard_temporary_playback(reason: str) -> int:
-    """Discard temporary restore frames after an explicit user stop/close."""
-    with _TEMP_PLAYBACK_LOCK:
-        count = len(_TEMP_PLAYBACK_STACK)
-        _TEMP_PLAYBACK_STACK.clear()
-    if count:
-        try:
-            logger.info("temporary_playback_discarded reason=%s count=%s", reason, count)
-        except Exception:
-            pass
-    return count
-
-
-def _discard_interrupted_playback_state(reason: str) -> None:
-    _discard_temporary_playback(reason)
-
-
-def _capture_current_playback_state() -> dict | None:
-    if not player.is_playing() or not isinstance(state.NOW_PLAYING, dict):
-        return None
-
-    with player.MPV_LOCK:
-        props = player.mpv_get_many(["time-pos", "pause"])
-    pos = props.get("time-pos")
-    paused = bool(props.get("pause"))
-    try:
-        pos_f = float(pos) if pos is not None else None
-    except Exception:
-        pos_f = None
-
-    with state.QUEUE_LOCK:
-        queue_snapshot = list(state.QUEUE)
-
-    return {
-        "now_playing": dict(state.NOW_PLAYING),
-        "position": pos_f,
-        "paused": paused,
-        "queue": queue_snapshot,
-    }
-
-
-def _restore_playback_state(snapshot: dict) -> None:
-    now = snapshot.get("now_playing") if isinstance(snapshot, dict) else None
-    if not isinstance(now, dict):
-        return
-
-    with state.QUEUE_LOCK:
-        state.QUEUE[:] = list(snapshot.get("queue") or [])
-    state.persist_queue()
-
-    start_pos = snapshot.get("position")
-    resumed = playback_service.play_now(
-        now,
-        use_resolver=True,
-        cec=False,
-        clear_queue=False,
-        mode="temporary_resume",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
-    if snapshot.get("paused"):
-        try:
-            player.mpv_set("pause", True)
-            state.set_session_state("paused")
-            state.set_pause_reason("temporary")
-        except Exception:
-            pass
-    else:
-        state.set_session_state("playing")
-        state.set_pause_reason(None)
-    state.set_now_playing(resumed)
-
-
-def _complete_temporary_playback(frame_id: str, reason: str) -> bool:
-    with _TEMP_PLAYBACK_LOCK:
-        if not _TEMP_PLAYBACK_STACK or _TEMP_PLAYBACK_STACK[-1].get("id") != frame_id:
-            return False
-        frame = _TEMP_PLAYBACK_STACK.pop()
-
-    if frame.get("resume") and isinstance(frame.get("snapshot"), dict):
-        try:
-            _restore_playback_state(frame["snapshot"])
-        except Exception as e:
-            logger.warning("temporary_restore_failed frame_id=%s error=%s", frame_id, e)
-            return False
-    return True
-
-
-def _temporary_watchdog(frame_id: str, timeout_sec: float | None) -> None:
-    started = time.time()
-    while True:
-        time.sleep(0.25)
-        with _TEMP_PLAYBACK_LOCK:
-            is_top = bool(_TEMP_PLAYBACK_STACK) and _TEMP_PLAYBACK_STACK[-1].get("id") == frame_id
-        if not is_top:
-            return
-        if timeout_sec is not None and (time.time() - started) >= float(timeout_sec):
-            _complete_temporary_playback(frame_id, reason="timeout")
-            return
-        if not player.is_playing():
-            _complete_temporary_playback(frame_id, reason="ended")
-            return
+# Temporary playback moved to playback_service (Phase 3 M4). These aliases
+# keep existing callers and tests working: the stack/lock are the same
+# objects, so in-place mutation is shared with the service.
+_TEMP_PLAYBACK_LOCK = playback_service._TEMP_PLAYBACK_LOCK
+_TEMP_PLAYBACK_STACK = playback_service._TEMP_PLAYBACK_STACK
+_discard_temporary_playback = playback_service.discard_temporary_playback
+_discard_interrupted_playback_state = playback_service.discard_interrupted_playback_state
+_capture_current_playback_state = playback_service.capture_current_playback_state
+_restore_playback_state = playback_service.restore_playback_state
+_complete_temporary_playback = playback_service.complete_temporary_playback
+_temporary_watchdog = playback_service.temporary_watchdog
 
 # =========================
 # API Endpoints

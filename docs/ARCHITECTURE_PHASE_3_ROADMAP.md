@@ -218,6 +218,22 @@ Validation: gates; inventory containment test green.
 
 ### M4: Temporary Playback Stack Relocation
 
+Status: complete (2026-07-03)
+
+Notes:
+
+- The stack, its lock, and all six helpers (discard, discard-interrupted,
+  capture, restore, complete, watchdog) moved verbatim into
+  `playback_service`; `routes/__init__.py` keeps one alias block pointing at
+  the same objects so existing callers and tests that reference
+  `routes._TEMP_PLAYBACK_STACK` keep observing the live stack.
+- Two test monkeypatches of `routes._restore_playback_state` were repointed
+  to `playback_service.restore_playback_state` — with the implementation in
+  the service, patching the routes alias no longer intercepts the restore
+  call (module-global dispatch happens inside the service now).
+- Moving `restore_playback_state` makes the service a legitimate writer of
+  `NOW_PLAYING`/`SESSION_STATE`; pins updated accordingly.
+
 Deliverables:
 
 - `_TEMP_PLAYBACK_STACK`, its lock, capture/complete/watchdog helpers move
@@ -290,3 +306,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M1: machine-checked transition writer inventory (137 write sites, 7 modules) with pinned per-global writer sets, plus the previously missing app-restart resume guardrail. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M2 playback service facade. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M2: `playback_service` facade with the review command vocabulary; 17 route transition call sites migrated with zero test changes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M3 auto-next suppression ownership. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M3: all 20 auto-next suppression writes migrated to the service API; writer set for `AUTO_NEXT_SUPPRESS_UNTIL` tightened to `{playback_service.py}`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M4 temporary playback stack relocation. |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M4: temporary playback stack and helpers moved into `playback_service` with routes-side compat aliases; two restore monkeypatches repointed to the service. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M5 close and resume semantics. |

@@ -14,6 +14,7 @@ from relaytv_app.main import create_app
 from relaytv_app.config import runtime_config
 from relaytv_app import container_entrypoint
 from relaytv_app import player
+from relaytv_app import playback_service
 from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
@@ -2273,7 +2274,7 @@ def test_close_discards_temporary_restore_stack(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 12.5 if prop == 'time-pos' else 99.0)
     monkeypatch.setattr(routes.player, 'stop_playback_keep_qt_shell', lambda: True)
     monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: None)
-    monkeypatch.setattr(routes, '_restore_playback_state', lambda snapshot: (_ for _ in ()).throw(AssertionError('close must not restore temporary playback')))
+    monkeypatch.setattr(playback_service, 'restore_playback_state', lambda snapshot: (_ for _ in ()).throw(AssertionError('close must not restore temporary playback')))
     monkeypatch.setattr(routes, '_jellyfin_emit_stopped_hint', lambda pos, dur: None)
     monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Active', 'url': 'https://example.com/active.mp4'}, raising=False)
     monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: None)

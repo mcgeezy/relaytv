@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from fastapi.testclient import TestClient
 
-from relaytv_app import routes
+from relaytv_app import playback_service, routes
 from relaytv_app.main import create_app
 
 
@@ -524,7 +524,7 @@ def test_play_temporary_cancel_route_restores_top_frame(monkeypatch) -> None:
             "snapshot": {"now_playing": {"url": "https://example.com/current.mp4"}},
         }
     )
-    monkeypatch.setattr(routes, "_restore_playback_state", lambda snapshot: restored.append(dict(snapshot)))
+    monkeypatch.setattr(playback_service, "restore_playback_state", lambda snapshot: restored.append(dict(snapshot)))
 
     try:
         client = TestClient(create_app(testing=True))
