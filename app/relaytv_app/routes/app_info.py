@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import urllib.request
+from ..config import env_choice
 
 from fastapi import APIRouter
 
@@ -17,15 +18,7 @@ _APP_INFO_CACHE: dict[str, object] = {"checked_at": 0.0, "latest": None, "error"
 
 
 def _env_choice(name: str) -> bool | None:
-    raw = os.getenv(name)
-    if raw is None:
-        return None
-    text = str(raw).strip().lower()
-    if text in ("1", "true", "yes", "on", "enable", "enabled"):
-        return True
-    if text in ("0", "false", "no", "off", "disable", "disabled"):
-        return False
-    return None
+    return env_choice(name, extended=True)
 
 
 def _pyproject_version() -> str:

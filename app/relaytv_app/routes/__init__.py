@@ -22,6 +22,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .. import state, resolver, player, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
+from ..config import env_choice
 from ..integrations import jellyfin_receiver
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
@@ -147,15 +148,7 @@ _JELLYFIN_LAST_UI_ACTION: dict[str, object] = {"ts": 0.0, "command": "", "item_i
 
 
 def _env_choice(name: str) -> bool | None:
-    raw = os.getenv(name)
-    if raw is None:
-        return None
-    text = str(raw).strip().lower()
-    if text in ("1", "true", "yes", "on", "enable", "enabled"):
-        return True
-    if text in ("0", "false", "no", "off", "disable", "disabled"):
-        return False
-    return None
+    return env_choice(name, extended=True)
 
 
 def _idle_weather_proxy_url(settings_payload: dict | None) -> str:

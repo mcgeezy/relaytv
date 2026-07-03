@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import threading
+from ..config import env_bool as _env_bool
 import time
 import json
 import hashlib
@@ -83,13 +84,6 @@ _CATALOG_CACHE_LOCK = threading.Lock()
 _CATALOG_CACHE: dict[str, tuple[float, object]] = {}
 _LAST_STOPPED_SIGNATURE = ""
 _LAST_STOPPED_TS = 0.0
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _catalog_ttl_sec(kind: str) -> float:

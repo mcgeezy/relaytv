@@ -141,7 +141,21 @@ Notes:
 
 ### M2: Shared Env Parsing Module
 
-Status: not started
+Status: complete
+
+Results:
+
+- `app/relaytv_app/config.py` now owns `env_bool`, `env_choice`, `env_int`,
+  `env_float`, and `env_str`, covered by `tests/test_config.py`.
+- All 13 duplicated `_env_*` helpers were replaced with aliased imports; the
+  two route-side `_env_choice` copies accepted extra "enable(d)"/"disable(d)"
+  spellings, preserved via `env_choice(name, extended=True)` wrappers in
+  `routes/app_info.py` and `routes/__init__.py`.
+- `resolver._env_bool` was defined but never called and was deleted.
+- The duplicated `api_url` assignment in `resolve_streams_invidious()` noted
+  in the review had already been fixed on the Phase 1 branch; nothing to do.
+- Monkeypatch compatibility preserved: `player._env_bool` remains a module
+  attribute (aliased import), which `tests/test_smoke.py` patches.
 
 Deliverables:
 
@@ -283,6 +297,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Created the Phase 2 branch and roadmap with env-inventory-first milestones. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Rebase onto `main` after PR #21 merges; begin M1 env inventory. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M1: generated the machine-checked env inventory (246 variables), pinned the settings-bus/child-process contract (`RELAYTV_DEVICE_NAME` only, dormant fallback), and added settings-apply/startup env sync guardrail tests. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (232 passed); `git diff --check` | Begin M2 shared env parsing module. |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Completed M2: added `config.py` typed env helpers, replaced all 13 duplicated `_env_*` copies with aliased imports (extended `_env_choice` spellings preserved via wrappers), and deleted the dead `resolver._env_bool`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (257 passed); `git diff --check`; `py_compile` on child-process modules | Begin M3 RuntimeConfig and SettingsSnapshot. |
 
 ## Open Questions
 

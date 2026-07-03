@@ -218,13 +218,6 @@ def run(argv: list[str], check: bool = True, timeout: int | None = None) -> subp
         detail = stderr or f"Command timed out after {timeout}s"
         return subprocess.CompletedProcess(argv, 124, stdout, detail)
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
-
 def _truthy(v: object) -> bool:
     return str(v or "").strip().lower() in ("1", "true", "yes", "on")
 

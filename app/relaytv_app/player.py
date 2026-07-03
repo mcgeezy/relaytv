@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
 import importlib.util
+from .config import env_bool as _env_bool
 import shlex
 import subprocess
 import json
@@ -1428,13 +1429,6 @@ def stop_splash_screen() -> None:
         except Exception:
             pass
         SPLASH_PROC = None
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
 
 def _split_env_args(name: str) -> list[str]:
     raw = (os.getenv(name) or "").strip()

@@ -6,6 +6,7 @@ import time
 import re
 import platform
 import tempfile
+from .config import env_bool as _env_bool
 from .resolver import provider_from_url
 from .debug import get_logger
 
@@ -136,13 +137,6 @@ def _normalize_idle_qr_size(v: object, default: int = 168) -> int:
     if out > 280:
         return 280
     return out
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _ensure_state_dir() -> None:

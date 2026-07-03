@@ -15,6 +15,7 @@ import ctypes.util
 import json
 import os
 import platform
+from .config import env_bool as _env_bool, env_choice as _env_choice
 import shlex
 import signal
 import socket
@@ -44,27 +45,8 @@ def _eprint(*a: object) -> None:
     logger.info(" ".join(str(part) for part in a))
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
-
 def _has_opt(args: list[str], opt: str) -> bool:
     return any(a == opt or a.startswith(opt + "=") for a in args)
-
-
-def _env_choice(name: str) -> bool | None:
-    v = os.getenv(name)
-    if v is None:
-        return None
-    text = v.strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off"):
-        return False
-    return None
 
 
 def _append_env_flags(name: str, flags: list[str]) -> None:

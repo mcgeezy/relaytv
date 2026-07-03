@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import socket
 import threading
+from .config import env_bool as _env_bool
 
 try:
     from zeroconf import ServiceInfo, Zeroconf
@@ -18,13 +19,6 @@ _ZEROCONF = None
 _SERVICE_INFO = None
 _LAST_ERROR: str | None = None
 _START_THREAD: threading.Thread | None = None
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _enabled() -> bool:

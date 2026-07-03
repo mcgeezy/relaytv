@@ -13,6 +13,7 @@ import os
 import platform
 import shlex
 import sys
+from .config import env_choice as _env_choice
 
 from .debug import get_logger
 
@@ -21,17 +22,6 @@ logger = get_logger("overlay")
 
 def _eprint(*a: object) -> None:
     logger.info(" ".join(str(part) for part in a))
-
-def _env_choice(name: str) -> bool | None:
-    v = os.getenv(name)
-    if v is None:
-        return None
-    text = v.strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off"):
-        return False
-    return None
 
 def _append_env_flags(name: str, flags: list[str]) -> None:
     current = (os.getenv(name) or "").strip()

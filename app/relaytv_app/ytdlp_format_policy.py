@@ -2,14 +2,8 @@
 import os
 import platform
 import re
+from .config import env_bool as _env_bool
 from typing import Any
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 def normalize_quality_mode(value: object) -> str:

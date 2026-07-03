@@ -2,6 +2,7 @@
 import os
 import platform
 import re
+from .config import env_bool as _env_bool
 import subprocess
 import threading
 import time
@@ -12,13 +13,6 @@ from . import devices
 _CACHE_LOCK = threading.Lock()
 _CACHE_TS = 0.0
 _CACHE_PROFILE: dict[str, Any] | None = None
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _cache_ttl_sec() -> float:
