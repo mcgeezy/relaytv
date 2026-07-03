@@ -18,6 +18,8 @@ Use this directory as a small operator/product doc set for the public release br
 - `ARCHITECTURE_PHASE_2_ROADMAP.md`: living Phase 2 branch roadmap for the runtime config service
 - `ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`: machine-checked env variable inventory and settings-bus classification
 - `ARCHITECTURE_PHASE_3_ROADMAP.md`: living Phase 3 branch roadmap for the playback transition service
+- `ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`: machine-checked playback transition writer inventory and containment contract
+- `ARCHITECTURE_PHASE_4_ROADMAP.md`: living Phase 4 branch roadmap for the Jellyfin product service
 
 ## Module Ownership Snapshot
 
