@@ -339,6 +339,32 @@ Validation: gates; full suite green.
 
 ### M8: Phase 3 Final Validation
 
+Status: complete (2026-07-03)
+
+Live validation on the running appliance (image
+`ghcr.io/mcgeezy/relaytv:codex-architecture-phase-3`, built from the branch
+and force-recreated; `.env` `RELAYTV_IMAGE_REF` updated; startup clean, only
+the pre-existing Chromium dbus warning):
+
+- Play-now interruption: playing item was preserved to the queue front with
+  `_relaytv_interrupt_preserved` and its resume position (11.2s) while the
+  interrupting item took over — through `preserve_current_to_queue_front`.
+- Close retaining queue: `close_current` returned closed/resumable with
+  position 9.5s, kept the Qt shell (`kept_player_shell: true`), queue intact.
+- Close not restarting interrupted media: session held closed for 8s with the
+  queued interrupted item untouched (auto-next hold effective).
+- App restart resume: container restart restored the persisted closed session
+  (state closed, resume available, queue intact); `/resume_session` resumed
+  at the persisted position (13.3s observed ≈ 9.5s + elapsed), not from zero.
+- Natural end (bonus, exercised organically): when the resumed item ended,
+  `natural_end` auto-advanced to the interrupted queue item and resumed it
+  from its preserved position (28s observed ≈ 11.2s + elapsed).
+- Idle dashboard enabled/disabled transitions: setting toggled on and off via
+  the live API, reflected in `/status` both ways.
+- Cleanup: `stop_current` returned a resumable stop, `/resume/clear`
+  (`clear_session`) returned the appliance to a clean idle matching the
+  pre-smoke baseline.
+
 Required before merging to `main`:
 
 - `ruff check app tests`
@@ -364,3 +390,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M5: close/resume transition cores moved into the service (close_current, resume_session, resume-in-place, play-now preserve/rollback, can-preserve predicate); routes keep guards, response shaping, and UI/Jellyfin side effects. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no behavior-test edits); `git diff --check` | M6 queue advancement and natural end. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M6: `natural_end` service command owns the end-of-playback decision; the autoplay monitor keeps detection only; advance outcome exceptions re-exported via the service. Advance mechanics stay in player.py by design (see M6 notes). | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M7 writer containment and test reshape. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M7: stop/clear-session cores and pause/resume marks moved into the service; `routes/playback.py` now writes zero transition globals; remaining writers pinned as documented exceptions. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M8 final validation (live smoke with the user). |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M8: live container rebuilt on the phase-3 image and all five review scenarios validated on the appliance (play-now interruption, close retaining queue, closed-session hold, app-restart resume at position, idle dashboard toggles), plus organic natural-end auto-advance of the interrupted item. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check`; live smoke per the M8 section | Merge PR #22 (Phase 2), rebase this branch onto `main`, open the final Phase 3 PR. |
