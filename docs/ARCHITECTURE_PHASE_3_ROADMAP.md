@@ -123,6 +123,23 @@ Validation:
 
 ### M1: Transition Inventory And Guardrail Baseline
 
+Status: complete (2026-07-03)
+
+Findings:
+
+- Measured baseline: 137 write sites across 7 modules.
+  `AUTO_NEXT_SUPPRESS_UNTIL` has 20 writers in four modules; `QUEUE` has six
+  writer modules including `upload_store.py` retention pruning and
+  `routes/uploads.py`, so queue containment must account for non-playback
+  writers.
+- `routes/jellyfin.py` writes `NOW_PLAYING`/`SESSION_STATE` directly (not just
+  suppression), so the M2 facade must cover the Jellyfin command paths too.
+- Scenario coverage: four of the five review scenarios were already guarded by
+  Phase 1 route tests and `test_smoke.py`; app-restart resume was untested and
+  is now guarded by `tests/test_playback_transitions.py`
+  (`test_app_restart_restores_resumable_closed_session`). The coverage map
+  lives in the inventory doc.
+
 Deliverables:
 
 - `docs/ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`: machine-generated
@@ -236,3 +253,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 
 | Date | PR | Base | Summary | Validation | Next step |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M1: machine-checked transition writer inventory (137 write sites, 7 modules) with pinned per-global writer sets, plus the previously missing app-restart resume guardrail. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M2 playback service facade. |
