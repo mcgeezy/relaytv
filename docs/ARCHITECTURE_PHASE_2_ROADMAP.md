@@ -340,7 +340,7 @@ coverage. Rendered browser validation stays manual for now.
 
 ### M8: Phase 2 Final Validation
 
-Status: in progress
+Status: complete (2026-07-03)
 
 Progress:
 
@@ -360,9 +360,32 @@ Progress:
 - Smoke note: `quality_cap` accepts numeric strings only ("1080"); "1080p"
   normalizes to "" — pre-existing behavior, verified unchanged from before
   Phase 2.
-- Remaining (needs the live environment and the user): live container rebuild
-  and smoke, manual settings apply in the live UI covering each variable
-  class, and the playback smoke.
+- Live validation completed 2026-07-03 on the running appliance: built
+  `ghcr.io/mcgeezy/relaytv:codex-architecture-phase-2` from the branch,
+  pointed `.env` `RELAYTV_IMAGE_REF` at it, and force-recreated the `relaytv`
+  container. Startup clean (no errors; only the pre-existing host zeroconf
+  multicast warning), Qt shell reattached, and `/status` returned the same
+  state and `effective_ytdlp_format` as the pre-swap baseline.
+- Live endpoint smoke: `/status`, `/settings`, `/ui`, `/idle`,
+  `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`,
+  `/pwa/brand/banner.png`, `/runtime/capabilities` all 200;
+  `/integrations/jellyfin/status` shows enabled/running/connected with a
+  fresh heartbeat and successful registration; `/jellyfin/home` (5 rows) and
+  `/jellyfin/movies` return real catalog items through the snapshot-migrated
+  auth/config reads.
+- Live settings apply, one variable per class, each applied via
+  POST `/settings` (the same endpoint the settings UI posts to) and reverted:
+  in-process — quality mode/cap `auto`/`720` changed
+  `effective_ytdlp_format` to `height<=720` and reverted cleanly;
+  subprocess-mirrored — `device_name` applied and read back (mDNS
+  re-advertises only at startup by pre-existing design; the fresh container
+  start advertised the persisted name through the migrated `_device_name()`
+  path); Jellyfin — receiver healthy under snapshot reads (validated via
+  status/browse above rather than toggling the live connection).
+- Live playback smoke: `POST /play` of a YouTube URL resolved and played
+  (position advancing), `POST /enqueue` accepted a second item which
+  auto-advanced when the first ended, and `POST /close` returned the
+  appliance to idle with `now_playing` cleared.
 
 Required before merging to `main`:
 
@@ -393,6 +416,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4b-M4f: migrated resolver, jellyfin_receiver, routes, player, and x11_overlay settings-bus reads to snapshots; reclassified `state.py` defaults-path reads as intentionally direct; added the allowed-reader guardrail test and refreshed affected tests for lockstep. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (266 passed); `git diff --check` | Begin M5 env write containment. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M5 and core M6: `set_value` contains env writes to the pinned `RELAYTV_DEVICE_NAME` mirror, and the settings sync/routes/CEC tests now assert snapshot state plus the env containment contract and operator-default precedence. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (268 passed); `git diff --check` | Decide M7 browser smoke; then M8 final validation. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Deferred M7 browser smoke (tooling cost, revisit in Phase 3+) and started M8: automated gates plus an ephemeral local-server HTTP smoke passed, including an end-to-end settings apply that flowed through the RuntimeConfig snapshot into `effective_ytdlp_format`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (268 passed); `git diff --check`; ephemeral `GET /health`, `/status`, `/settings`, `/ui`, `/idle`, static UI assets, brand assets, `/runtime/capabilities`; ephemeral `POST /settings` applies | Live container rebuild plus manual settings/playback smoke with the user, then the final Phase 2 to `main` PR (after PR #21 merges and a rebase onto `main`). |
+| 2026-07-03 | local | `codex/architecture-phase-2` | Completed M8 live validation: rebuilt and force-recreated the live container on the phase-2 image, smoked all UI/asset/status endpoints, applied and reverted one settings variable per class over the live API (quality cap flowed through the snapshot into `effective_ytdlp_format`; device name applied and read back; Jellyfin receiver connected/registered and catalog browse returned items), and ran the playback smoke (play, enqueue with auto-advance, close-to-idle). | `ruff check app tests`; `PYTHONPATH=app pytest -q` (268 passed); `git diff --check`; live smoke per the M8 section | Merge PR #21, rebase this branch onto `main`, open the final Phase 2 PR. |
 
 ## Open Questions
 
