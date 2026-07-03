@@ -86,13 +86,12 @@ EXPECTED_JELLYFIN_ROUTE_FUNCTIONS: dict[str, set[str]] = {
     # selection/transcode policy and playable-item resolution, M4 the track
     # preference/runtime track switching family, and M5 the progress/stopped
     # hint and snapshot family to integrations/jellyfin_service.py; routes
-    # keeps assignment aliases.
+    # keeps assignment aliases. M6 moved the command ingress (dedupe state and
+    # handle_command); _jellyfin_integration_command_impl remains here as the
+    # thin adapter wrapper that owns route-side control dispatch and UI-event
+    # seams.
     "routes/__init__.py": {
         "_jellyfin_integration_command_impl",
-        "_jellyfin_is_duplicate_command",
-        "_jellyfin_should_suppress_duplicate_play",
-        "_jellyfin_should_suppress_duplicate_ui_action",
-        "_reset_jellyfin_command_state",
         "_ui_event_push_jellyfin",
     },
     # Static asset endpoints — permanent HTTP surface, not migration targets.

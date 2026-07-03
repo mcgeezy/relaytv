@@ -422,7 +422,7 @@ def test_jellyfin_resume_command_preserves_existing_queue(monkeypatch) -> None:
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jellyfin.local"})
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: None)
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: None)
-    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos})
+    monkeypatch.setattr(jellyfin_service, "smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos})
     monkeypatch.setattr(routes.state, "QUEUE", [queue_item], raising=False)
     monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
     monkeypatch.setattr(routes.state, "set_now_playing", lambda value: setattr(routes.state, "NOW_PLAYING", value))
@@ -618,7 +618,7 @@ def test_jellyfin_command_pause_dispatches_playback_control(monkeypatch) -> None
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: receiver_events.append(("command", action)))
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: receiver_events.append(("heartbeat", True)))
     monkeypatch.setattr(routes, "pause", lambda: pauses.append(True) or {"paused": True})
-    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: progress_hints.append(True))
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: progress_hints.append(True))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/command", json={"action": "Pause"})

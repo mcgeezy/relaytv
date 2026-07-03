@@ -121,14 +121,13 @@ def test_transition_inventory_doc_matches_source() -> None:
 # non-service writer is a documented exception:
 # - player.py: the process adapter updating session bookkeeping inside
 #   commands the service invoked (play_item, monitors, handoff mechanics).
-# - the routes/__init__.py Jellyfin command impl: Jellyfin product path,
-#   extracted in Phase 4 M6 (routes/jellyfin.py stopped writing in M4).
 # - routes/__init__.py _status_payload: status-side session reconciliation
 #   (self-healing on read); candidate for a service reconcile command later.
 # - routes/queue.py, routes/uploads.py, upload_store.py: queue CRUD and
 #   upload retention — queue content management, not playback transitions.
 # - integrations/jellyfin_service.py: queue URL retargeting after language
-#   preference changes (Phase 4 M4) — content rewrite, not a transition.
+#   preference changes (M4) and command-ingress playlist enqueues (M6) —
+#   queue content management; transitions go through playback_service.
 # - _TEMP_PLAYBACK_STACK compat aliases/wrappers: retained so existing tests
 #   can observe the live stack via the routes module.
 EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
@@ -148,7 +147,6 @@ EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
         "integrations/jellyfin_service.py",
         "playback_service.py",
         "player.py",
-        "routes/__init__.py",
         "routes/queue.py",
         "routes/uploads.py",
         "upload_store.py",

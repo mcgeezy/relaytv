@@ -142,7 +142,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_CATALOG_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_CLIENT_NAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_CLIENT_VERSION` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_COMMAND_ID_TTL_SEC` | `routes/__init__.py` | - | static env |
+| `RELAYTV_JELLYFIN_COMMAND_ID_TTL_SEC` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_COMPLETE_RATIO` | `integrations/jellyfin_receiver.py`<br>`integrations/jellyfin_service.py`<br>`player.py` | - | static env |
 | `RELAYTV_JELLYFIN_COMPLETE_REMAINING_SEC` | `integrations/jellyfin_receiver.py`<br>`integrations/jellyfin_service.py`<br>`player.py` | - | static env |
 | `RELAYTV_JELLYFIN_DETAIL_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
@@ -156,7 +156,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_PASSWORD` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_PLAY_DEBOUNCE_SEC` | `routes/__init__.py` | - | static env |
+| `RELAYTV_JELLYFIN_PLAY_DEBOUNCE_SEC` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_RECENT_STOP_SUPPRESS_SEC` | `player.py` | - | static env |
@@ -170,7 +170,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_STOPPED_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_SUB_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_UI_ACTION_DEDUPE_SEC` | `routes/__init__.py` | - | static env |
+| `RELAYTV_JELLYFIN_UI_ACTION_DEDUPE_SEC` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_USERNAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_USER_ID` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_LOGO_IMAGE` | `qt_shell_app.py` | - | child process input |

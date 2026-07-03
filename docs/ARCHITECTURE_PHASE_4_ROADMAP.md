@@ -221,16 +221,24 @@ Status: complete
 
 ### M6: Command Ingress Migration
 
-Status: planned
+Status: complete
 
-- Move `_jellyfin_integration_command_impl`, duplicate-command and duplicate
-  play/UI-action suppression, and command-state reset into the service.
-- Playback transitions inside the command impl go through existing
-  `playback_service` commands; remaining direct writes become pinned
-  exceptions with rationale.
-- Tighten the Phase 3 transition-inventory pins: drop `routes/jellyfin.py`
-  from all writer sets; `routes/__init__.py` keeps only the
-  `_status_payload` reconciliation writes.
+- `handle_command(req, *, controls, ui)` owns the command ingress in the
+  service. Route-facing side effects are injected seams: `controls` maps the
+  playback control actions to route callables (late-binding lambdas in the
+  `routes/__init__.py` wrapper, so existing monkeypatches keep
+  intercepting), and `ui` provides toast/queue-event/jellyfin-event
+  callbacks. The wrapper `_jellyfin_integration_command_impl` stays in
+  routes as the adapter builder.
+- The dedupe state (play debounce, command-id TTL, UI-action dedupe) and its
+  four functions moved to the service; `smart_item_from_url` and the api-key
+  URL extractor moved with the play path.
+- The play path's `set_now_playing` goes through
+  `playback_service.update_now_playing`; playlist enqueues stay direct QUEUE
+  content writes under the pinned service exception.
+- Transition pins after M6: `routes/__init__.py` is out of the QUEUE writer
+  set entirely and keeps only `_status_payload` reconciliation writes for
+  NOW_PLAYING/SESSION_STATE.
 
 ### M7: Service Tests, Writer Containment, And Docs
 
