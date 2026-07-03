@@ -158,6 +158,26 @@ the unmodified code.
 
 ### M2: Playback Service Facade
 
+Status: complete (2026-07-03)
+
+Notes:
+
+- Facade commands landed: `play_now`, `queue_item`, `advance_queue`,
+  `stop_all`, `stop_keep_shell`, plus the M3-ready suppression API
+  (`suppress_auto_next` / `clear_auto_next_suppression`, no callers yet).
+- 17 route call sites migrated (9 `play_item` in playback.py, 2 in
+  jellyfin.py, 2 in routes/__init__.py, 1 threadpool call in uploads.py, 2
+  advance sites, plus the enqueue and smart queue-append cores through
+  `queue_item`). No test changed: the facade delegates through player module
+  attributes so existing monkeypatches keep intercepting.
+- Optional-parameter contract: `play_now` forwards `start_pos` and `stop_all`
+  forwards `restart_splash` only when specified, because existing test
+  doubles for `player.play_item`/`player.stop_mpv` don't all accept them and
+  omission is behavior-identical to the callee defaults.
+- Deliberately left for later milestones: suppression writes at call sites
+  (M3), `player.MPV_LOCK` usage around stop/load in routes (M5),
+  `except player.QueueAdvanceEmptyError` type references (M6).
+
 Deliverables:
 
 - `app/relaytv_app/playback_service.py` exposing the review command
@@ -254,3 +274,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 | Date | PR | Base | Summary | Validation | Next step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M1: machine-checked transition writer inventory (137 write sites, 7 modules) with pinned per-global writer sets, plus the previously missing app-restart resume guardrail. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M2 playback service facade. |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M2: `playback_service` facade with the review command vocabulary; 17 route transition call sites migrated with zero test changes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M3 auto-next suppression ownership. |

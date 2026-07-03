@@ -20,7 +20,7 @@ import socket
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .. import state, resolver, player, discovery_mdns, video_profile, upload_store, x11_overlay
+from .. import state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import jellyfin_receiver
@@ -2205,7 +2205,7 @@ def _restore_playback_state(snapshot: dict) -> None:
     state.persist_queue()
 
     start_pos = snapshot.get("position")
-    resumed = player.play_item(
+    resumed = playback_service.play_now(
         now,
         use_resolver=True,
         cec=False,
@@ -4436,7 +4436,7 @@ def _sync_idle_visual_surfaces_after_settings() -> None:
         _ensure_notification_surface(wait_for_subscriber=False)
     else:
         try:
-            player.stop_mpv(restart_splash=False)
+            playback_service.stop_all(restart_splash=False)
         except Exception:
             pass
 
@@ -4880,7 +4880,7 @@ def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
             state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
             play_item_payload = _smart_item_from_url(source_url, start_pos=start_sec)
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
-            now = player.play_item(
+            now = playback_service.play_now(
                 play_target,
                 use_resolver=bool(req.use_ytdlp),
                 cec=False,

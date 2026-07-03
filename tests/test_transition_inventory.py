@@ -131,12 +131,14 @@ EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
     },
     "SESSION_POSITION": {"player.py", "routes/playback.py"},
     "AUTO_NEXT_SUPPRESS_UNTIL": {
+        "playback_service.py",
         "player.py",
         "routes/__init__.py",
         "routes/jellyfin.py",
         "routes/playback.py",
     },
     "QUEUE": {
+        "playback_service.py",
         "player.py",
         "routes/__init__.py",
         "routes/playback.py",

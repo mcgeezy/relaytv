@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import player, state, upload_store
+from .. import player, playback_service, state, upload_store
 from ..debug import get_logger
 
 
@@ -101,7 +101,7 @@ def _progressive_fallback_toast() -> None:
 
 
 async def _play_uploaded_item(item: dict, *, mode: str) -> dict:
-    return await run_in_threadpool(player.play_item, item, False, False, False, mode)
+    return await run_in_threadpool(playback_service.play_now, item, False, False, False, mode)
 
 
 def _enqueue_uploaded_media_url(url: str) -> dict:
