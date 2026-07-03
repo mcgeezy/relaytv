@@ -17,7 +17,9 @@ roadmap section)
 
 Branch base note: this branch was cut from `codex/architecture-phase-2` while
 the final Phase 2 PR (https://github.com/mcgeezy/relaytv/pull/22) was still
-open. After PR #22 merges, rebase this branch onto `main` before continuing.
+open. PR #22 merged on 2026-07-03 and this branch was rebased onto `main`
+(dropping the now-squashed Phase 2 commits) the same day, with exact content
+parity.
 
 ## Working Rules
 
@@ -105,7 +107,9 @@ Out of scope for Phase 3:
 
 ### M0: Roadmap Foundation And Branch Setup
 
-Status: in progress
+Status: complete (rebased onto `main` 2026-07-03 after PR #22's squash merge
+via `git rebase --onto origin/main <phase-2 head>`; exact content parity
+verified)
 
 Deliverables:
 
