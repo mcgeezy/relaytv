@@ -139,7 +139,7 @@ Status: complete
 
 ### M2: Service Skeleton And Pure Helper Migration
 
-Status: planned
+Status: complete
 
 - Create `integrations/jellyfin_service.py` with module logger and section
   layout.

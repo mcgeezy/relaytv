@@ -71,35 +71,10 @@ Service-level tests with fake receiver/player adapters are added in M7
 ## Jellyfin Function Listing
 
 <!-- BEGIN GENERATED JELLYFIN ROUTE LISTING (tests/test_jellyfin_inventory.py) -->
-### `routes/__init__.py` (63)
+### `routes/__init__.py` (31)
 
-- `_apply_jellyfin_media_source_param`
-- `_apply_jellyfin_stream_params`
-- `_build_jellyfin_item_stream_url`
-- `_build_jellyfin_item_transcode_url`
-- `_canonical_jellyfin_item_id`
-- `_canonical_jellyfin_media_source_id`
-- `_canonical_jellyfin_url_key`
 - `_effective_jellyfin_playback_mode`
-- `_extract_jellyfin_audio_stream_index`
-- `_extract_jellyfin_audio_stream_index_from_url`
-- `_extract_jellyfin_command_id`
-- `_extract_jellyfin_item_id`
-- `_extract_jellyfin_item_id_from_url`
-- `_extract_jellyfin_item_id_from_url_raw`
-- `_extract_jellyfin_item_ids`
-- `_extract_jellyfin_media_source_id`
-- `_extract_jellyfin_media_source_id_from_url`
-- `_extract_jellyfin_play_mode`
-- `_extract_jellyfin_play_url`
-- `_extract_jellyfin_playlist_items`
-- `_extract_jellyfin_seek_seconds`
-- `_extract_jellyfin_start_seconds`
-- `_extract_jellyfin_subtitle_stream_index`
-- `_extract_jellyfin_subtitle_stream_index_from_url`
-- `_extract_jellyfin_volume`
 - `_first_playable_jellyfin_episode`
-- `_jellyfin_access_token`
 - `_jellyfin_auto_prefers_transcode`
 - `_jellyfin_complete_ratio`
 - `_jellyfin_complete_remaining_sec`
@@ -119,17 +94,10 @@ Service-level tests with fake receiver/player adapters are added in M7
 - `_jellyfin_stopped_snapshot`
 - `_jellyfin_stopped_snapshot_from_now`
 - `_jellyfin_target_max_streaming_bitrate`
-- `_jellyfin_ticks_to_seconds`
-- `_jellyfin_track_type_is_subtitle`
 - `_jellyfin_try_set_mpv_audio_track`
 - `_jellyfin_try_set_mpv_subtitle_track`
-- `_jellyfin_url_origin`
-- `_looks_like_jellyfin_media_url`
 - `_merge_jellyfin_playback_metadata`
 - `_native_jellyfin_auto_transcode_guard_active`
-- `_normalize_jellyfin_action`
-- `_normalize_jellyfin_playback_mode`
-- `_normalize_jellyfin_source_url`
 - `_preferred_jellyfin_stream_indices`
 - `_reset_jellyfin_command_state`
 - `_resolve_jellyfin_playable_item`
