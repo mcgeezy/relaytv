@@ -16,6 +16,8 @@ Use this directory as a small operator/product doc set for the public release br
 - `ARCHITECTURE_PHASE_1_ROADMAP.md`: living Phase 1 branch roadmap, milestones, and PR log
 - `ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md`: Phase 1 route inventory and alias guardrail
 - `ARCHITECTURE_PHASE_2_ROADMAP.md`: living Phase 2 branch roadmap for the runtime config service
+- `ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`: machine-checked env variable inventory and settings-bus classification
+- `ARCHITECTURE_PHASE_3_ROADMAP.md`: living Phase 3 branch roadmap for the playback transition service
 
 ## Module Ownership Snapshot
 
