@@ -131,15 +131,16 @@ EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
         "routes/jellyfin.py",
         "routes/playback.py",
     },
-    "SESSION_POSITION": {"player.py", "routes/playback.py"},
+    "SESSION_POSITION": {"playback_service.py", "player.py", "routes/playback.py"},
     # Tightened in M3: all suppression writes go through
     # playback_service.suppress_auto_next / clear_auto_next_suppression.
     "AUTO_NEXT_SUPPRESS_UNTIL": {"playback_service.py"},
+    # M5 ratchet: routes/playback.py no longer mutates the queue at all
+    # (play-now preserve/rollback moved into the service).
     "QUEUE": {
         "playback_service.py",
         "player.py",
         "routes/__init__.py",
-        "routes/playback.py",
         "routes/queue.py",
         "routes/uploads.py",
         "upload_store.py",

@@ -4226,17 +4226,7 @@ def _jellyfin_emit_stopped_hint(position_sec: float | None = None, duration_sec:
     _jellyfin_emit_stopped_payload(_jellyfin_stopped_snapshot(position_sec, duration_sec))
 
 
-def _can_preserve_closed_session() -> bool:
-    """Return True only when user stop/close should keep a resumable item."""
-    try:
-        if bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)()):
-            return False
-    except Exception:
-        pass
-    try:
-        return bool(player.is_playing()) and isinstance(state.NOW_PLAYING, dict)
-    except Exception:
-        return False
+_can_preserve_closed_session = playback_service.can_preserve_closed_session
 
 
 def _idle_dashboard_enabled_for_player() -> bool:
@@ -5122,24 +5112,9 @@ def _control_result_or_raise(result: dict | None, *, action: str) -> dict[str, o
 
 
 def _resume_paused_current_session_in_place(*, action: str = "resume") -> dict[str, object] | None:
-    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
-    now = getattr(state, "NOW_PLAYING", None)
-    if sess != "paused" or not isinstance(now, dict):
+    result = playback_service.resume_paused_in_place()
+    if result is None:
         return None
-
-    try:
-        result = player.mpv_set_result("pause", False)
-    except Exception:
-        return None
-    if not isinstance(result, dict) or result.get("error") != "success":
-        return None
-
-    resumed = dict(now)
-    resumed["closed"] = False
-    playback_service.suppress_auto_next(2.0)
-    state.set_now_playing(resumed)
-    state.set_session_state("playing")
-    state.set_pause_reason(None)
     return {
         "ok": True,
         "action": action,

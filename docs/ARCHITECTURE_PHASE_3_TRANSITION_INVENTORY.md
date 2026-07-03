@@ -69,9 +69,9 @@ The five Phase 3 review scenarios and where they are guarded at phase start:
 | Transition global | Writers outside `state.py` (write sites) |
 | --- | --- |
 | `AUTO_NEXT_SUPPRESS_UNTIL` | `playback_service.py` (2) |
-| `NOW_PLAYING` | `playback_service.py` (1)<br>`player.py` (9)<br>`routes/__init__.py` (3)<br>`routes/jellyfin.py` (4)<br>`routes/playback.py` (10) |
-| `QUEUE` | `playback_service.py` (2)<br>`player.py` (5)<br>`routes/__init__.py` (4)<br>`routes/playback.py` (3)<br>`routes/queue.py` (5)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
-| `SESSION_POSITION` | `player.py` (8)<br>`routes/playback.py` (9) |
-| `SESSION_STATE` | `playback_service.py` (2)<br>`player.py` (11)<br>`routes/__init__.py` (5)<br>`routes/jellyfin.py` (2)<br>`routes/playback.py` (13) |
+| `NOW_PLAYING` | `playback_service.py` (5)<br>`player.py` (9)<br>`routes/__init__.py` (2)<br>`routes/jellyfin.py` (4)<br>`routes/playback.py` (7) |
+| `QUEUE` | `playback_service.py` (5)<br>`player.py` (5)<br>`routes/__init__.py` (4)<br>`routes/queue.py` (5)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
+| `SESSION_POSITION` | `playback_service.py` (3)<br>`player.py` (8)<br>`routes/playback.py` (6) |
+| `SESSION_STATE` | `playback_service.py` (5)<br>`player.py` (11)<br>`routes/__init__.py` (4)<br>`routes/jellyfin.py` (2)<br>`routes/playback.py` (11) |
 | `_TEMP_PLAYBACK_STACK` | `playback_service.py` (8)<br>`routes/__init__.py` (2)<br>`routes/playback.py` (2) |
 <!-- END GENERATED TRANSITION TABLE -->

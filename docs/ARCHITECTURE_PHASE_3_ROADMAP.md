@@ -245,6 +245,22 @@ Validation: gates; temporary-playback guardrails green.
 
 ### M5: Close And Resume Semantics
 
+Status: complete (2026-07-03)
+
+Notes:
+
+- Service now owns the transition cores as real implementations:
+  `can_preserve_closed_session`, `preserve_current_to_queue_front`,
+  `rollback_play_now_preserve`, `resume_paused_in_place`, `close_current`,
+  and `resume_session`.
+- Altitude split established: HTTP guards, `_control_ack_payload` response
+  shaping, UI queue events, notification-surface calls, and the Jellyfin
+  stopped hint stay with the route handlers; `close_current` takes the
+  visual-surface decisions (`idle_surface_enabled`, `keep_shell_allowed`) as
+  parameters so surface policy stays out of the service.
+- Ratchet: `routes/playback.py` no longer mutates `QUEUE` at all; the service
+  is now a writer of `SESSION_POSITION`. No behavior-test edits were needed.
+
 Deliverables:
 
 - `close_current`, `resume_session`, preserve/rollback for play-now,
@@ -307,3 +323,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M2: `playback_service` facade with the review command vocabulary; 17 route transition call sites migrated with zero test changes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M3 auto-next suppression ownership. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M3: all 20 auto-next suppression writes migrated to the service API; writer set for `AUTO_NEXT_SUPPRESS_UNTIL` tightened to `{playback_service.py}`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M4 temporary playback stack relocation. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M4: temporary playback stack and helpers moved into `playback_service` with routes-side compat aliases; two restore monkeypatches repointed to the service. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M5 close and resume semantics. |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M5: close/resume transition cores moved into the service (close_current, resume_session, resume-in-place, play-now preserve/rollback, can-preserve predicate); routes keep guards, response shaping, and UI/Jellyfin side effects. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no behavior-test edits); `git diff --check` | M6 queue advancement and natural end. |

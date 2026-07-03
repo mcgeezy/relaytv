@@ -134,6 +134,295 @@ def clear_auto_next_suppression() -> None:
     state.AUTO_NEXT_SUPPRESS_UNTIL = 0.0
 
 
+# --- close / resume semantics (Phase 3 M5) ---------------------------------
+#
+# Transition cores moved from routes; HTTP guards, response shaping
+# (_control_ack_payload), UI events, and the Jellyfin stopped hint stay with
+# the route handlers.
+
+
+def can_preserve_closed_session() -> bool:
+    """Return True only when user stop/close should keep a resumable item."""
+    try:
+        if bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)()):
+            return False
+    except Exception:
+        pass
+    try:
+        return bool(player.is_playing()) and isinstance(state.NOW_PLAYING, dict)
+    except Exception:
+        return False
+
+
+def preserve_current_to_queue_front() -> dict | None:
+    """If something is playing, capture it and insert at front of queue with resume_pos."""
+    if not player.is_playing():
+        return None
+    now = state.NOW_PLAYING
+    if not isinstance(now, dict):
+        return None
+    with state.QUEUE_LOCK:
+        queue_head = state.QUEUE[0] if state.QUEUE else None
+    if isinstance(queue_head, dict) and queue_head.get("_relaytv_interrupt_preserved") is True:
+        return None
+
+    pos = None
+    dur = None
+    with player.MPV_LOCK:
+        try:
+            pos = player.mpv_get("time-pos")
+        except Exception:
+            pos = None
+        try:
+            dur = player.mpv_get("duration")
+        except Exception:
+            dur = None
+    try:
+        pos_f = float(pos) if pos is not None else None
+    except Exception:
+        pos_f = None
+
+    url = now.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+
+    preserved = {
+        "url": url.strip(),
+        "title": now.get("title") or url.strip(),
+        "provider": now.get("provider"),
+        "_relaytv_interrupt_preserved": True,
+        "_relaytv_interrupt_preserved_at": int(time.time()),
+    }
+    if isinstance(now.get("channel"), str) and now.get("channel"):
+        preserved["channel"] = now.get("channel")
+    if isinstance(now.get("thumbnail"), str) and now.get("thumbnail"):
+        preserved["thumbnail"] = now.get("thumbnail")
+    if isinstance(now.get("thumbnail_local"), str) and now.get("thumbnail_local"):
+        preserved["thumbnail_local"] = now.get("thumbnail_local")
+    if isinstance(now.get("jellyfin_item_id"), str) and now.get("jellyfin_item_id"):
+        preserved["jellyfin_item_id"] = now.get("jellyfin_item_id")
+    if isinstance(now.get("jellyfin_media_source_id"), str) and now.get("jellyfin_media_source_id"):
+        preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
+    if isinstance(now.get("history_id"), str) and now.get("history_id"):
+        preserved["history_id"] = now.get("history_id")
+    resolved_stream = str(now.get("_resolved_stream") or "").strip()
+    if not resolved_stream:
+        now_stream = str(now.get("stream") or "").strip()
+        if now_stream and now_stream != url.strip():
+            resolved_stream = now_stream
+    if resolved_stream:
+        preserved["_resolved_source_url"] = url.strip()
+        preserved["_resolved_stream"] = resolved_stream
+        resolved_audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip()
+        if resolved_audio:
+            preserved["_resolved_audio"] = resolved_audio
+        try:
+            preserved["_resolved_at"] = float(now.get("_resolved_at") or time.time())
+        except Exception:
+            preserved["_resolved_at"] = time.time()
+    if pos_f is not None:
+        preserved["resume_pos"] = pos_f
+    player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.insert(0, preserved)
+        snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
+    try:
+        state.persist_queue_payload(snapshot)
+    except Exception:
+        logger.warning("queue_persist_failed route=play_now_preserve")
+    return preserved
+
+
+def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:
+    """Remove a preserved queue-front item after a failed play-now.
+
+    Returns the post-rollback queue snapshot when something was removed (the
+    caller pushes the UI event), else None.
+    """
+    if preserved is None:
+        return None
+    removed = False
+    with state.QUEUE_LOCK:
+        if state.QUEUE and state.QUEUE[0] is preserved:
+            state.QUEUE.pop(0)
+            removed = True
+        elif state.QUEUE and state.QUEUE[0] == preserved:
+            state.QUEUE.pop(0)
+            removed = True
+        if not removed:
+            return None
+        snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
+    try:
+        state.persist_queue_payload(snapshot)
+    except Exception:
+        logger.warning("queue_persist_failed route=play_now_preserve_rollback")
+    return list(snapshot["queue"])
+
+
+def resume_paused_in_place() -> dict[str, Any] | None:
+    """Unpause the current paused session in place.
+
+    Returns the successful mpv control result (for the caller's ack payload),
+    or None when there is nothing to resume or the unpause failed.
+    """
+    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
+    now = getattr(state, "NOW_PLAYING", None)
+    if sess != "paused" or not isinstance(now, dict):
+        return None
+
+    try:
+        result = player.mpv_set_result("pause", False)
+    except Exception:
+        return None
+    if not isinstance(result, dict) or result.get("error") != "success":
+        return None
+
+    resumed = dict(now)
+    resumed["closed"] = False
+    suppress_auto_next(2.0)
+    state.set_now_playing(resumed)
+    state.set_session_state("playing")
+    state.set_pause_reason(None)
+    return result
+
+
+def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> dict[str, Any]:
+    """Close the player, retaining a resumable session when possible.
+
+    ``idle_surface_enabled`` and ``keep_shell_allowed`` are the caller's
+    visual-surface decisions (idle dashboard/notification config and Qt shell
+    backend availability) — surface policy stays out of the service. Returns
+    the transition outcome; response shaping and notification/Jellyfin side
+    effects stay with the caller.
+    """
+    # Prevent the autoplay worker from immediately advancing.
+    suppress_auto_next(3600 * 24)
+    discard_interrupted_playback_state("close")
+
+    pos = None
+    dur = None
+    preserve_resume = can_preserve_closed_session() or isinstance(state.NOW_PLAYING, dict)
+    try:
+        if bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)()):
+            preserve_resume = False
+    except Exception:
+        pass
+    if preserve_resume:
+        with player.MPV_LOCK:
+            try:
+                pos = player.mpv_get("time-pos")
+            except Exception:
+                pos = None
+            try:
+                dur = player.mpv_get("duration")
+            except Exception:
+                dur = None
+        if pos is None and isinstance(state.NOW_PLAYING, dict):
+            pos = state.NOW_PLAYING.get("resume_pos")
+        try:
+            state.set_session_position(float(pos) if pos is not None else None)
+        except Exception:
+            state.set_session_position(None)
+
+        try:
+            if isinstance(state.NOW_PLAYING, dict) and pos is not None:
+                np = dict(state.NOW_PLAYING)
+                np["resume_pos"] = float(pos)
+                np["closed"] = True
+                np["closed_at"] = int(time.time())
+                state.set_now_playing(np)
+        except Exception:
+            pass
+    elif getattr(state, "SESSION_STATE", "idle") != "closed":
+        try:
+            state.set_now_playing(None)
+        except Exception:
+            pass
+        try:
+            state.set_session_position(None)
+        except Exception:
+            pass
+
+    state.set_session_state("closed" if preserve_resume else "idle")
+    keep_qt_shell = bool(preserve_resume and idle_surface_enabled and keep_shell_allowed)
+    stopped_in_place = False
+    if keep_qt_shell:
+        with player.MPV_LOCK:
+            stopped_in_place = bool(stop_keep_shell())
+    if not stopped_in_place:
+        with player.MPV_LOCK:
+            stop_all(restart_splash=idle_surface_enabled)
+
+    if preserve_resume:
+        player.update_history_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+            position_sec=pos,
+            duration_sec=dur,
+            force=True,
+        )
+    return {
+        "preserve_resume": preserve_resume,
+        "position": pos,
+        "duration": dur,
+        "stopped_in_place": stopped_in_place,
+    }
+
+
+def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Resume the closed session (best-effort).
+
+    The caller validates that a closed session with an item exists. Returns
+    ``(resumed_now_playing, resume_control_result_or_None)``.
+    """
+    now = state.NOW_PLAYING
+    suppress_auto_next(2.0)
+
+    stream = now.get("stream")
+    audio = now.get("audio")
+    pos = now.get("resume_pos")
+    if pos is None:
+        pos = getattr(state, "SESSION_POSITION", None)
+    start_pos = None
+    try:
+        start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
+    except Exception:
+        start_pos = None
+
+    if not isinstance(stream, str) or not stream.strip():
+        resumed = play_now(
+            now,
+            use_resolver=True,
+            cec=False,
+            clear_queue=False,
+            mode="resume",
+            start_pos=start_pos,
+        )
+    else:
+        with player.MPV_LOCK:
+            stream_url = stream.strip()
+            audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
+            if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url, start_pos=start_pos):
+                player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
+        resumed = dict(now)
+        resumed["started"] = int(time.time())
+        resumed["mode"] = "resume"
+        resumed["closed"] = False
+        state.set_now_playing(resumed)
+        state.set_session_state("playing")
+
+    resume_result: dict[str, Any] | None = None
+    if start_pos is not None:
+        try:
+            result = player.mpv_set_result("pause", False)
+            if isinstance(result, dict) and result.get("error") == "success":
+                resume_result = dict(result)
+        except Exception:
+            resume_result = None
+
+    return resumed, resume_result
+
+
 # --- temporary playback (picture-in-place interruptions with restore) ------
 #
 # Moved from routes/__init__.py in Phase 3 M4. The stack holds restore frames
