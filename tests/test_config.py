@@ -136,6 +136,57 @@ def test_runtime_config_snapshots_are_immutable_point_in_time_views(
     monkeypatch.delenv("RELAYTV_QUALITY_CAP", raising=False)
 
 
+def _set_bus_var(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    """Drive a settings-bus var through the production write path.
+
+    monkeypatch.setenv registers env restoration; the conftest lockstep
+    fixture re-syncs the global runtime_config from env at teardown.
+    """
+    monkeypatch.setenv(name, value)
+    config.runtime_config.set_env(name, value)
+
+
+def test_ytdlp_format_policy_reads_settings_bus_from_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from relaytv_app import ytdlp_format_policy
+
+    monkeypatch.delenv("YTDLP_FORMAT_YOUTUBE", raising=False)
+    monkeypatch.setattr("relaytv_app.ytdlp_format_policy.platform.machine", lambda: "x86_64")
+    _set_bus_var(monkeypatch, "RELAYTV_QUALITY_MODE", "manual")
+    _set_bus_var(monkeypatch, "YTDLP_FORMAT", "best[height<=480]")
+
+    fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider="youtube")
+
+    assert fmt == "best[height<=480]"
+
+
+def test_ytdlp_format_policy_quality_cap_from_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from relaytv_app import ytdlp_format_policy
+
+    monkeypatch.delenv("YTDLP_FORMAT_YOUTUBE", raising=False)
+    monkeypatch.setattr("relaytv_app.ytdlp_format_policy.platform.machine", lambda: "x86_64")
+    _set_bus_var(monkeypatch, "RELAYTV_QUALITY_MODE", "auto")
+    _set_bus_var(monkeypatch, "RELAYTV_QUALITY_CAP", "720")
+
+    fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider="youtube")
+
+    assert "height<=720" in fmt
+
+
+def test_discovery_device_name_reads_settings_bus_from_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from relaytv_app import discovery_mdns
+
+    monkeypatch.setattr(discovery_mdns.state, "get_settings", lambda: {})
+    _set_bus_var(monkeypatch, "RELAYTV_DEVICE_NAME", "Snapshot TV")
+
+    assert discovery_mdns._device_name() == "Snapshot TV"
+
+
 def test_snapshot_typed_accessors_mirror_env_helpers() -> None:
     snap = config.SettingsSnapshot(
         values={

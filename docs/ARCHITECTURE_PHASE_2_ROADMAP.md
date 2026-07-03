@@ -214,19 +214,33 @@ Notes:
 
 ### M4: Consumer Migration By Domain
 
-Status: not started
+Status: in progress (M4a complete)
+
+Scope refinement (2026-07-02, after M3): only reads of **settings bus**
+variables migrate to snapshot reads. **Static env** variables are
+operator-provided, never mutated at runtime, and their live reads through the
+shared `config` helpers already have correct semantics — migrating them to
+startup-captured snapshots would change behavior (frozen values, broken
+monkeypatch-based tests) for no benefit. This shrinks M4 substantially: most
+of `player.py`'s 104 env reads are static tuning knobs and stay as-is; the
+migration targets are the settings-bus read sites per the inventory table.
 
 Deliverables, ordered lowest risk first, one sub-milestone each:
 
-- M4a: leaf policy modules — `ytdlp_format_policy.py`, `video_profile.py`,
-  `thumb_cache.py`, `discovery_mdns.py`, `debug.py`.
-- M4b: `resolver.py` and `upload_store.py`.
-- M4c: `state.py` idle/session env reads.
-- M4d: `integrations/jellyfin_receiver.py`.
-- M4e: `routes/` (status payload construction, app info, remaining
-  `routes/__init__.py` glue).
-- M4f: `player.py` (largest reader, 104 sites at phase start) — split further
-  by concern (backend selection, mpv args, resolver knobs) as needed.
+- M4a: leaf modules with settings-bus reads — `ytdlp_format_policy.py`
+  (`RELAYTV_QUALITY_MODE`, `RELAYTV_QUALITY_CAP`, `YTDLP_FORMAT`) and
+  `discovery_mdns.py` (`RELAYTV_DEVICE_NAME`). `video_profile.py`,
+  `thumb_cache.py`, and `debug.py` read only static env and need no changes.
+- M4b: `resolver.py` (`INVIDIOUS_BASE`, `USE_INVIDIOUS`,
+  `RELAYTV_YTDLP_COOKIES`); `upload_store.py` reads only static env.
+- M4c: `state.py` settings-bus fallback reads.
+- M4d: `integrations/jellyfin_receiver.py` Jellyfin settings-bus reads.
+- M4e: `routes/` (`routes/__init__.py` `RELAYTV_VIDEO_MODE` and
+  `RELAYTV_JELLYFIN_PLAYBACK_MODE`; `routes/settings.py` own reads).
+- M4f: `player.py` settings-bus reads (`MPV_AUDIO_DEVICE`, `RELAYTV_CEC`,
+  `RELAYTV_CEC_ENABLED`, `RELAYTV_DRM_CONNECTOR`, `RELAYTV_IDLE_*`,
+  `RELAYTV_SUB_LANG`, `RELAYTV_VIDEO_MODE`) and `x11_overlay.py`
+  (`RELAYTV_IDLE_*`).
 
 Guardrails:
 
@@ -319,6 +333,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M1: generated the machine-checked env inventory (246 variables), pinned the settings-bus/child-process contract (`RELAYTV_DEVICE_NAME` only, dormant fallback), and added settings-apply/startup env sync guardrail tests. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (232 passed); `git diff --check` | Begin M2 shared env parsing module. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M2: added `config.py` typed env helpers, replaced all 13 duplicated `_env_*` copies with aliased imports (extended `_env_choice` spellings preserved via wrappers), and deleted the dead `resolver._env_bool`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (257 passed); `git diff --check`; `py_compile` on child-process modules | Begin M3 RuntimeConfig and SettingsSnapshot. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M3: added `RuntimeConfig`/`SettingsSnapshot` with `set_env` owning the env+snapshot dual-write, converted all 52 runtime env write sites 1:1, added startup `refresh_from_env`, and taught the inventory scanner about `set_env` writes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (262 passed); `git diff --check` | Begin M4 consumer migration (M4a leaf modules first). |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4a: refined M4 scope to settings-bus reads only, migrated `ytdlp_format_policy` (quality mode/cap, `YTDLP_FORMAT`) and `discovery_mdns` (device name) to snapshot reads, and added the conftest lockstep fixture that re-syncs the global RuntimeConfig from env around each test. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (265 passed); `git diff --check` | Continue M4b resolver migration. |
 
 ## Open Questions
 

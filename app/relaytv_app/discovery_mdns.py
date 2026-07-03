@@ -5,6 +5,7 @@ import os
 import socket
 import threading
 from .config import env_bool as _env_bool
+from .config import runtime_config
 
 try:
     from zeroconf import ServiceInfo, Zeroconf
@@ -70,7 +71,7 @@ def _device_name() -> str:
         settings = {}
     name = str((settings or {}).get("device_name") or "").strip()
     if not name:
-        name = (os.getenv("RELAYTV_DEVICE_NAME") or "RelayTV").strip() or "RelayTV"
+        name = runtime_config.snapshot().text("RELAYTV_DEVICE_NAME") or "RelayTV"
     if len(name) > 63:
         name = name[:63].strip() or "RelayTV"
     return name
