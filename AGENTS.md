@@ -29,11 +29,51 @@ Do not manually edit `CHANGELOG.md` for normal feature, fix, docs, or dependency
 changes. Release Please owns version bumps, release pull requests, changelog
 generation, Git tags, GitHub Releases, and immutable release image tags.
 
-## Architecture Phase 3 Discipline
+## Architecture Phase 4 Discipline
 
-When working on the Phase 3 architecture effort (playback transition service),
-keep work on `codex/architecture-phase-3` unless the user explicitly directs
+When working on the Phase 4 architecture effort (Jellyfin product service),
+keep work on `codex/architecture-phase-4` unless the user explicitly directs
 otherwise.
+
+Keep `docs/ARCHITECTURE_PHASE_4_ROADMAP.md` current when milestones start,
+complete, change scope, or uncover important follow-up work.
+
+Phase 4 scope:
+
+- extract Jellyfin product logic (command interpretation and ingress, stream
+  URL construction, direct/transcode policy, playable item resolution, track
+  preference handling, metadata enrichment, stopped/progress payloads) into
+  `integrations/jellyfin_service.py`
+- keep `integrations/jellyfin_receiver.py` as the transport/session/catalog
+  adapter and the routes modules as HTTP guards, request models, ack shaping,
+  and UI events; the service never imports the routes package
+- route playback transitions inside migrated code through `playback_service`
+  commands; document any remaining direct writes as pinned exceptions
+- machine-checked Jellyfin route-surface inventory
+  (`tests/test_jellyfin_inventory.py`) that tightens per milestone
+- service-level tests with fake receiver/player adapters
+  (`tests/test_jellyfin_service.py`)
+
+Do not start Phase 5+ work on this branch unless the user explicitly expands
+the scope. Out of scope for Phase 4:
+
+- optional API token auth
+- frontend framework or build pipeline
+- endpoint removals or compatibility-breaking API changes
+- rewriting `jellyfin_receiver.py` transport/cache/auth internals
+- changing persisted file formats
+- Jellyfin behavior changes — document discovered bugs in the roadmap instead
+
+Prefer small PRs into `codex/architecture-phase-4`, not directly into `main`.
+No release until the architecture roadmap completes: phases ship as
+`refactor:` PRs that intentionally do not trigger release-please.
+
+## Architecture Phase 3 Discipline (complete)
+
+Phase 3 (playback transition service) completed on
+`codex/architecture-phase-3`; final PR:
+https://github.com/mcgeezy/relaytv/pull/23. The full record lives in
+`docs/ARCHITECTURE_PHASE_3_ROADMAP.md`.
 
 Keep `docs/ARCHITECTURE_PHASE_3_ROADMAP.md` current when milestones start,
 complete, change scope, or uncover important follow-up work.

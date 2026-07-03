@@ -242,15 +242,22 @@ Status: complete
 
 ### M7: Service Tests, Writer Containment, And Docs
 
-Status: planned
+Status: complete
 
-- `tests/test_jellyfin_service.py`: service-level tests with fake
-  receiver/player adapters covering command normalization, stream selection
-  policy (direct vs transcode), track preference resolution, and
-  stopped/progress payload creation.
-- Final Jellyfin surface inventory pin tightening to the end-state contract.
-- Docs: `AGENTS.md` phase discipline update, `docs/README.md` module
-  ownership note, API/ops doc touch-ups where behavior location moved.
+- `tests/test_jellyfin_service.py` added: 15 service-level tests with fake
+  receiver/player adapters — command normalization and ticks conversion,
+  direct/transcode selection policy (healthy-direct, AV1 guard, no-detail
+  fallback, forced mode), language-preference indices, mpv track scoring,
+  stopped/progress payload construction, and `handle_command` ingress with
+  fake control/UI adapters.
+- Pruned the 12 dead delegation shims that the migrations orphaned in
+  `routes/jellyfin.py` (819 lines now, from 1,377) and tightened the
+  inventory pins to the end-state contract documented in
+  `docs/ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`.
+- Docs: inventory containment contract finalized; `AGENTS.md` Phase 4
+  discipline added (Phase 3 marked complete); `docs/README.md` module
+  ownership snapshot refreshed with `playback_service` and
+  `jellyfin_service`.
 
 ### M8: Phase 4 Final Validation
 

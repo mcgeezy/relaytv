@@ -20,6 +20,7 @@ Use this directory as a small operator/product doc set for the public release br
 - `ARCHITECTURE_PHASE_3_ROADMAP.md`: living Phase 3 branch roadmap for the playback transition service
 - `ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`: machine-checked playback transition writer inventory and containment contract
 - `ARCHITECTURE_PHASE_4_ROADMAP.md`: living Phase 4 branch roadmap for the Jellyfin product service
+- `ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`: machine-checked Jellyfin route-surface inventory and containment contract
 
 ## Module Ownership Snapshot
 
@@ -28,13 +29,18 @@ Use this directory as a small operator/product doc set for the public release br
   package still owns shared route helpers and cross-domain glue.
 - `app/relaytv_app/static/ui/`: main web UI stylesheet and JavaScript loaded by
   `/ui`.
-- `app/relaytv_app/player.py`: playback process/runtime adapter plus remaining
-  playback policy that should move behind a transition service in a later
-  phase.
+- `app/relaytv_app/playback_service.py`: playback transition commands
+  (play-now, queue, close, advance, resume, natural end, stop) — the writer
+  of playback session state outside `state.py`.
+- `app/relaytv_app/player.py`: playback process/runtime adapter (mpv
+  lifecycle, Qt shell, CEC, track/property control).
 - `app/relaytv_app/state.py`: persisted queue, history, session, and settings
   data.
 - `app/relaytv_app/resolver.py`: URL validation, provider classification, and
   stream resolution.
+- `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin product
+  behavior — command ingress, stream selection and transcode policy, track
+  preferences, metadata enrichment, stopped/progress payloads.
 - `app/relaytv_app/integrations/jellyfin_receiver.py`: Jellyfin transport,
   auth, status, catalog cache, and progress/stopped calls.
 - `scripts/`: install, doctor, host operations, and release support scripts.

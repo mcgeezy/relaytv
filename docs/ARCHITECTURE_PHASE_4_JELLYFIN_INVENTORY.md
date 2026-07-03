@@ -37,18 +37,28 @@ concentrations:
   one copy and `player.py` carries a parallel
   `_emit_jellyfin_stopped_from_now` path with its own dedupe state.
 
-## Containment Contract (Phase 4 end state)
+## Containment Contract (Phase 4 end state, M7)
 
-To be finalized in M7. Intended end state:
+`integrations/jellyfin_service.py` owns command normalization and ingress
+(`handle_command`), playable item resolution, direct/transcode policy
+(`select_playback_url`), track preference handling and runtime track
+switching (`switch_audio_track`/`switch_subtitle_track`), metadata
+enrichment, and stopped/progress payload creation. Its playback transitions
+go through `playback_service` commands. What remains in the routes package
+(`tests/test_jellyfin_inventory.py::EXPECTED_JELLYFIN_ROUTE_FUNCTIONS`):
 
-- `integrations/jellyfin_service.py` owns command normalization, playable
-  item resolution, direct/transcode policy, track preference handling,
-  metadata enrichment, and stopped/progress payload creation.
-- `routes/jellyfin.py` keeps endpoint handlers, request models, HTTP guards
-  (`_require_jellyfin_catalog_ready*`), and UI-event pushes.
-- `routes/__init__.py` keeps only compatibility aliases that existing tests
-  observe, each a direct assignment to the service function.
-- `routes/assets.py` keeps its two static-asset endpoints.
+- `routes/jellyfin.py`: endpoint handlers, request models, HTTP guards
+  (`_require_jellyfin_catalog_ready*`), UI-event pushes, and the shims still
+  called by endpoint handlers (options pickers, snapshots, dedupe reset).
+  Dead delegation shims left behind by the migrations were pruned in M7.
+- `routes/__init__.py`: assignment aliases to the service functions (kept so
+  existing tests and cross-module late imports keep resolving) plus one thin
+  def — `_jellyfin_integration_command_impl`, the adapter wrapper that
+  injects route-side control dispatch and UI-event seams into
+  `handle_command`.
+- `routes/assets.py`: two static-asset endpoints.
+- `player.py` (outside this scan) keeps its parallel stopped-hint dedupe
+  path — see the Phase 4 roadmap M5 deferral note.
 
 ## Review Scenario Coverage Baseline
 
@@ -65,8 +75,13 @@ Jellyfin behaviors guarded at phase start (route-level, via
   emission.
 - Connect lifecycle: connect/register/disconnect/heartbeat/push-deprecated.
 
-Service-level tests with fake receiver/player adapters are added in M7
-(`tests/test_jellyfin_service.py`).
+Service-level tests with fake receiver/player adapters were added in M7
+(`tests/test_jellyfin_service.py`): command normalization and ticks
+conversion, direct/transcode selection policy (healthy-direct, AV1 guard,
+no-detail fallback, forced mode), language-preference stream indices, mpv
+track selection scoring, stopped/progress payload construction, and
+`handle_command` ingress with fake control/UI adapters (pause dispatch,
+duplicate command-id suppression, play through `playback_service`).
 
 ## Jellyfin Function Listing
 
@@ -81,18 +96,12 @@ Service-level tests with fake receiver/player adapters are added in M7
 - `_jellyfin_svg`
 - `pwa_jellyfin_svg`
 
-### `routes/jellyfin.py` (51)
+### `routes/jellyfin.py` (40)
 
-- `_apply_jellyfin_stream_params`
-- `_build_jellyfin_item_stream_url`
 - `_extract_jellyfin_audio_stream_index_from_url`
 - `_extract_jellyfin_item_id_from_url_raw`
-- `_extract_jellyfin_media_source_id_from_url`
 - `_extract_jellyfin_subtitle_stream_index_from_url`
-- `_jellyfin_access_token`
 - `_jellyfin_command_req`
-- `_jellyfin_emit_progress_hint`
-- `_jellyfin_enrich_now_stream_metadata`
 - `_jellyfin_integration_command`
 - `_jellyfin_integration_command_impl`
 - `_jellyfin_progress_snapshot`
@@ -100,14 +109,9 @@ Service-level tests with fake receiver/player adapters are added in M7
 - `_jellyfin_runtime_selected_subtitle_stream`
 - `_jellyfin_should_suppress_duplicate_ui_action`
 - `_jellyfin_stopped_snapshot`
-- `_jellyfin_try_set_mpv_audio_track`
-- `_jellyfin_try_set_mpv_subtitle_track`
-- `_normalize_jellyfin_source_url`
 - `_require_jellyfin_catalog_ready`
 - `_require_jellyfin_catalog_ready_for_playback`
 - `_reset_jellyfin_command_state`
-- `_retarget_jellyfin_queue_stream_preferences`
-- `_select_jellyfin_playback_url`
 - `_ui_event_push_jellyfin`
 - `jellyfin_audio_options`
 - `jellyfin_audio_select`
