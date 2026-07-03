@@ -13,9 +13,12 @@ from fastapi.testclient import TestClient
 from relaytv_app.main import create_app
 from relaytv_app import container_entrypoint
 from relaytv_app import player
+from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
 from relaytv_app import upload_store
+from relaytv_app import ytdlp_format_policy
+from relaytv_app.routes import app_info as app_info_routes
 from relaytv_app.qt_shell_app import (
     _cursor_hidden_refresh_ms,
     _cursor_mode,
@@ -37,9 +40,22 @@ def test_ui_smoke() -> None:
     client = TestClient(app)
 
     response = client.get('/ui')
+    css_response = client.get('/static/ui/app.css')
+    js_response = client.get('/static/ui/app.js')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
+    assert '<link rel="stylesheet" href="/static/ui/app.css" />' in response.text
+    assert '<script src="/static/ui/app.js" defer></script>' in response.text
+    assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
+    assert '<style>' not in response.text
+    assert css_response.status_code == 200
+    assert 'text/css' in css_response.headers['content-type']
+    css = css_response.text
+    assert js_response.status_code == 200
+    assert 'javascript' in js_response.headers['content-type']
+    js = js_response.text
+    assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
@@ -56,9 +72,9 @@ def test_ui_smoke() -> None:
     assert 'id="setTvTakeoverEnabled"' in response.text
     assert 'id="setTvPauseOnInputChange"' in response.text
     assert 'id="setTvAutoResumeOnReturn"' in response.text
-    assert "fetch('/tv/status')" in response.text
-    assert "SETTINGS_TV_CONTROL_BASELINE" in response.text
-    assert "Object.entries(tvControl).forEach" in response.text
+    assert "fetch('/tv/status')" in js
+    assert "SETTINGS_TV_CONTROL_BASELINE" in js
+    assert "Object.entries(tvControl).forEach" in js
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text
@@ -69,9 +85,9 @@ def test_ui_smoke() -> None:
     assert 'id="aboutSupportLink"' in response.text
     assert 'https://buymeacoffee.com/relaytv' in response.text
     assert 'img.buymeacoffee.com/button-api' in response.text
-    assert 'function openAbout' in response.text
-    assert "async function loadAboutInfo" in response.text
-    assert "fetch('/app/info'" in response.text
+    assert 'function openAbout' in js
+    assert "async function loadAboutInfo" in js
+    assert "fetch('/app/info'" in js
     assert 'id="notifySection"' in response.text
     assert 'id="notifyTextInput"' in response.text
     assert 'id="notifyImageInput"' in response.text
@@ -82,10 +98,10 @@ def test_ui_smoke() -> None:
     assert '<option value="top-left" selected>Top left</option>' in response.text
     assert 'id="notifyDurationInput"' in response.text
     assert 'id="notifySendBtn"' in response.text
-    assert "async function submitNotificationToast()" in response.text
-    assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in response.text
-    assert "await _fetchWithTimeout('/overlay'" in response.text
-    assert 'bindAboutUi();' in response.text
+    assert "async function submitNotificationToast()" in js
+    assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in js
+    assert "await _fetchWithTimeout('/overlay'" in js
+    assert 'bindAboutUi();' in js
     assert 'class="nowSubRow"' in response.text
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
@@ -104,54 +120,54 @@ def test_ui_smoke() -> None:
     assert 'id="setJfEnabled"' in response.text
     assert 'id="setJfClearPassword"' in response.text
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
-    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in response.text
+    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in js
     assert 'class="toggleSwitch"' in response.text
-    assert 'data-idle-enable="${key}"' in response.text
+    assert 'data-idle-enable="${key}"' in js
     assert 'class="chk"' not in response.text
-    assert '.settingsBody input.input:not([type])' in response.text
-    assert '.settingsBody select.input{' in response.text
-    assert 'appearance:none;' in response.text
+    assert '.settingsBody input.input:not([type])' in css
+    assert '.settingsBody select.input{' in css
+    assert 'appearance:none;' in css
     assert 'Show idle dashboard between plays' in response.text
     assert 'Use Invidious server for YouTube playback' in response.text
     assert 'Show connect QR in idle' in response.text
     assert 'Enable Jellyfin integration' in response.text
-    assert 'function _uploadBadge(item)' in response.text
-    assert 'function _uploadSummary(item)' in response.text
-    assert 'function _formatUploadSize(bytes)' in response.text
-    assert 'mediaBadge' in response.text
-    assert 'isUnavailable' in response.text
-    assert 'Playback unavailable: stored upload was removed' in response.text
+    assert 'function _uploadBadge(item)' in js
+    assert 'function _uploadSummary(item)' in js
+    assert 'function _formatUploadSize(bytes)' in js
+    assert 'mediaBadge' in js
+    assert 'isUnavailable' in js
+    assert 'Playback unavailable: stored upload was removed' in js
     assert 'onclick="post(\'/close\')"' in response.text
-    assert "await post('/now_playing/clear');" in response.text
+    assert "await post('/now_playing/clear');" in js
     assert 'id="jfSearchBtn"' not in response.text
     assert 'id="jfRefreshBtn"' not in response.text
     assert 'id="jfReconnectBtn"' not in response.text
-    assert 'function _jfSetActionStatus' in response.text
-    assert 'function _jfSetLaunchVisible' in response.text
-    assert 'function _jfCloseDetailPanel' in response.text
-    assert 'function _labelNowSubtitleLanguage' in response.text
-    assert 'function _renderNowSubtitleButton' in response.text
-    assert 'function _fetchNowSubtitleOptions' in response.text
-    assert 'function _renderNowSubtitleOptions' in response.text
-    assert 'function openNowSubtitleModal' in response.text
-    assert 'function bindNowSubtitleUi' in response.text
-    assert 'const shellRect = shell.getBoundingClientRect();' in response.text
-    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in response.text
-    assert 'function loadJellyfinMovies' in response.text
-    assert 'function loadJellyfinTvSeries' in response.text
-    assert 'function _jfPlayAllSeries' in response.text
-    assert 'function _jfSyncTabControls' in response.text
-    assert 'function _jfScheduleSearch' in response.text
-    assert 'function _jfBuildRowItemCard' in response.text
-    assert 'const __JF_REQ_TIMEOUT_MS' in response.text
-    assert 'function _jfFetchWithTimeout' in response.text
-    assert 'function _applyQueueSnapshot' in response.text
-    assert 'touch-action: none;' in response.text
-    assert "_applyQueueSnapshot(payload);" in response.text
-    assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in response.text
-    assert "play.disabled = !available;" in response.text
-    assert "queue.disabled = !available;" in response.text
-    assert "await fetch('/jellyfin/subtitle/select'" in response.text
+    assert 'function _jfSetActionStatus' in js
+    assert 'function _jfSetLaunchVisible' in js
+    assert 'function _jfCloseDetailPanel' in js
+    assert 'function _labelNowSubtitleLanguage' in js
+    assert 'function _renderNowSubtitleButton' in js
+    assert 'function _fetchNowSubtitleOptions' in js
+    assert 'function _renderNowSubtitleOptions' in js
+    assert 'function openNowSubtitleModal' in js
+    assert 'function bindNowSubtitleUi' in js
+    assert 'const shellRect = shell.getBoundingClientRect();' in js
+    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in js
+    assert 'function loadJellyfinMovies' in js
+    assert 'function loadJellyfinTvSeries' in js
+    assert 'function _jfPlayAllSeries' in js
+    assert 'function _jfSyncTabControls' in js
+    assert 'function _jfScheduleSearch' in js
+    assert 'function _jfBuildRowItemCard' in js
+    assert 'const __JF_REQ_TIMEOUT_MS' in js
+    assert 'function _jfFetchWithTimeout' in js
+    assert 'function _applyQueueSnapshot' in js
+    assert 'touch-action: none;' in css
+    assert "_applyQueueSnapshot(payload);" in js
+    assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
+    assert "play.disabled = !available;" in js
+    assert "queue.disabled = !available;" in js
+    assert "await fetch('/jellyfin/subtitle/select'" in js
     assert 'id="setAboutGithubLink"' not in response.text
     assert 'id="setAboutSupportLink"' not in response.text
 
@@ -172,7 +188,7 @@ def test_app_info_endpoint_reports_version_and_update_status(monkeypatch: pytest
     monkeypatch.setenv("RELAYTV_IMAGE_CREATED", "2026-06-28T00:00:00Z")
     monkeypatch.setenv("RELAYTV_IMAGE_SOURCE", "https://github.com/mcgeezy/relaytv")
     monkeypatch.setattr(
-        routes,
+        app_info_routes,
         "_latest_release_from_github",
         lambda: (
             {
@@ -1140,9 +1156,27 @@ def test_x11_overlay_enabled_by_idle_notifications_default(monkeypatch: pytest.M
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
-    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {"idle_notifications_enabled": True, "idle_dashboard_enabled": False},
+    )
 
     assert x11_overlay.overlay_enabled() is True
+
+
+def test_x11_overlay_default_disabled_when_idle_dashboard_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import x11_overlay
+
+    monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
+    monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {"idle_notifications_enabled": True, "idle_dashboard_enabled": True},
+    )
+
+    assert x11_overlay.overlay_enabled() is False
 
 
 def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1150,7 +1184,11 @@ def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.setenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "0")
-    monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {"idle_notifications_enabled": True, "idle_dashboard_enabled": False},
+    )
 
     assert x11_overlay.overlay_enabled() is False
 
@@ -1199,6 +1237,7 @@ def test_x11_overlay_launch_forces_xcb_with_clickthrough(monkeypatch: pytest.Mon
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     monkeypatch.setenv("QT_QPA_PLATFORM", "wayland")
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("RELAYTV_X11_OVERLAY", "1")
     monkeypatch.setenv("RELAYTV_OVERLAY_LOG", str(tmp_path / "overlay.log"))
 
     x11_overlay.start_overlay()
@@ -1239,6 +1278,7 @@ def test_x11_overlay_launch_repairs_stale_xauthority(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("XAUTHORITY", str(stale_xauthority))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("RELAYTV_X11_OVERLAY", "1")
     monkeypatch.setenv("RELAYTV_OVERLAY_LOG", str(tmp_path / "overlay.log"))
 
     x11_overlay.start_overlay()
@@ -1256,6 +1296,80 @@ def test_pwa_brand_banner_png_asset_resolves_with_logo_fallback() -> None:
 
     assert response.status_code == 200
     assert response.headers['content-type'].startswith(('image/png', 'image/svg+xml'))
+
+
+def test_pi_ytdlp_defaults_prefer_1080p_non_av1_without_progressive_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        'YTDLP_FORMAT',
+        'YTDLP_FORMAT_YOUTUBE',
+        'YTDLP_FORMAT_RUMBLE',
+        'RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT',
+        'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST',
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr('relaytv_app.ytdlp_format_policy.platform.machine', lambda: 'aarch64')
+    profile = {'decode_profile': 'arm_safe', 'display_cap_height': 1080, 'av1_allowed': False}
+
+    youtube_fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='youtube', profile=profile)
+    rumble_fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='rumble', profile=profile)
+
+    assert youtube_fmt == 'bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best[vcodec!*=av01][height<=1080]/best'
+    assert rumble_fmt == 'best*[height<=1080][fps<=60]/best*[height<=1080]/best[height<=1080][fps<=60]/best'
+    assert ytdlp_format_policy.youtube_progressive_startup_enabled(profile) is False
+
+
+def test_pi_ytdlp_safe_selector_remains_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ('YTDLP_FORMAT', 'YTDLP_FORMAT_YOUTUBE', 'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT', '1')
+    monkeypatch.setattr('relaytv_app.ytdlp_format_policy.platform.machine', lambda: 'aarch64')
+    profile = {'decode_profile': 'arm_safe', 'display_cap_height': 1080, 'av1_allowed': False}
+
+    fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='youtube', profile=profile)
+
+    assert fmt == 'best[height<=1080][fps<=30][vcodec^=avc1]/best[height<=1080][fps<=30]/best[height<=1080]/best'
+
+
+def test_pi_youtube_resolver_does_not_fall_back_to_auto_when_av1_disallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    class Proc:
+        returncode = 0
+        stdout = 'https://video.example/stream.mp4\nhttps://audio.example/stream.m4a\n'
+        stderr = ''
+
+    for key in (
+        'YTDLP_FORMAT',
+        'YTDLP_FORMAT_YOUTUBE',
+        'RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT',
+        'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST',
+        'YTDLP_ARGS',
+        'RELAYTV_YTDLP_JS_RUNTIME',
+        'YTDLP_JS_RUNTIME',
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr('relaytv_app.ytdlp_format_policy.platform.machine', lambda: 'aarch64')
+    monkeypatch.setattr('relaytv_app.resolver.platform.machine', lambda: 'aarch64')
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr(
+        'relaytv_app.video_profile.get_profile',
+        lambda: {'decode_profile': 'arm_safe', 'display_cap_height': 1080, 'av1_allowed': False},
+    )
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+
+    def fake_run(cmd, check=False):
+        calls.append(list(cmd))
+        return Proc()
+
+    monkeypatch.setattr(resolver, 'run', fake_run)
+
+    stream, audio = resolver.resolve_streams_ytdlp('https://www.youtube.com/watch?v=abc123')
+
+    assert stream == 'https://video.example/stream.mp4'
+    assert audio == 'https://audio.example/stream.m4a'
+    assert calls
+    assert '-f' in calls[0]
+    assert 'vcodec!*=av01' in calls[0][calls[0].index('-f') + 1]
 
 
 def test_jellyfin_plugin_ingress_is_deprecated() -> None:
@@ -1403,6 +1517,31 @@ def test_settings_apply_now_does_not_restart_closed_session(monkeypatch: pytest.
     assert body['apply_succeeded'] is False
 
 
+def test_idle_settings_sync_starts_dashboard_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    ensure_calls: list[dict[str, object]] = []
+    notification_calls: list[bool] = []
+    overlay_stops: list[bool] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
+    monkeypatch.setattr(routes, '_idle_dashboard_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes, '_idle_notifications_enabled_for_player', lambda: False)
+    monkeypatch.setattr(routes, '_idle_visual_surface_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, 'ensure_qt_shell_idle', lambda **kwargs: ensure_calls.append(dict(kwargs)))
+    monkeypatch.setattr(
+        routes,
+        '_ensure_notification_surface',
+        lambda wait_for_subscriber=False: notification_calls.append(bool(wait_for_subscriber)),
+    )
+    monkeypatch.setattr(routes.x11_overlay, 'stop_overlay', lambda: overlay_stops.append(True))
+
+    routes._sync_idle_visual_surfaces_after_settings()
+
+    assert ensure_calls == [{'force': True}]
+    assert notification_calls == [False]
+    assert overlay_stops == [True]
+
+
 def test_native_idle_weather_layout_normalizes_to_supported_values() -> None:
     assert _native_idle_weather_layout({}) == 'split'
     assert _native_idle_weather_layout({'idle_panels': {'weather': {'layout': 'minimal'}}}) == 'minimal'
@@ -1422,6 +1561,9 @@ def test_qt_runtime_defaults_prefer_libmpv_and_overlay_toasts_on_x86(monkeypatch
     monkeypatch.delenv('RELAYTV_QT_LIBMPV', raising=False)
     monkeypatch.delenv('RELAYTV_QT_NATIVE_TOASTS', raising=False)
     monkeypatch.delenv('RELAYTV_QT_OVERLAY_SOFTWARE', raising=False)
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'xcb')
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'x11')
+    monkeypatch.delenv('RELAYTV_HOST_SESSION_TYPE', raising=False)
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'x86_64')
 
     assert _libmpv_enabled() is True
@@ -1429,8 +1571,19 @@ def test_qt_runtime_defaults_prefer_libmpv_and_overlay_toasts_on_x86(monkeypatch
     assert _overlay_software_mode_enabled() is False
 
 
+def test_qt_overlay_software_mode_defaults_on_for_wayland(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_SOFTWARE', raising=False)
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'wayland')
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'wayland')
+    monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'x86_64')
+
+    assert _overlay_software_mode_enabled() is True
+
+
 def test_qt_overlay_software_mode_defaults_on_for_pi(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('RELAYTV_QT_OVERLAY_SOFTWARE', raising=False)
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'xcb')
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'x11')
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
 
     assert _overlay_software_mode_enabled() is True
@@ -1483,6 +1636,28 @@ def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
 
     assert _libmpv_enabled() is False
+
+
+def test_pi_qt_mpv_args_do_not_use_fast_profile_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_ARM_FAST_PROFILE', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+    monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
+
+    args = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+
+    assert '--profile=fast' not in args
+
+
+def test_pi_qt_mpv_args_allow_explicit_fast_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_ARM_FAST_PROFILE', '1')
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+    monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
+
+    args = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+
+    assert '--profile=fast' in args
 
 
 def test_qt_libmpv_initial_stream_waits_for_render_context() -> None:
@@ -1542,6 +1717,17 @@ def test_youtube_strategies_prefer_quality_retries_before_plain_default(monkeypa
     assert '--remote-components' in strategies[0][0]
     assert strategies[0][1] == ['', 'best']
     assert (['yt-dlp', '--no-playlist'], ['fmt1', 'best']) in strategies
+
+
+def test_youtube_cookie_strategies_do_not_use_android_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resolver, '_preferred_js_runtime_spec', lambda: 'node')
+
+    strategies = resolver._build_youtube_strategies(
+        ['yt-dlp', '--cookies', '/data/cookies.txt', '--js-runtimes', 'node', '--no-playlist'],
+        ['best'],
+    )
+
+    assert all('youtube:player_client=android' not in args for args, _candidates in strategies)
 
 
 def test_repair_orphan_runtime_playback_ignores_idle_core_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1732,6 +1918,132 @@ def test_playback_runtime_idle_or_ended_ignores_active_play_transition(monkeypat
     monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
 
     assert player._playback_runtime_idle_or_ended() is False
+
+
+def test_playback_runtime_idle_or_ended_holds_incomplete_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 12.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setenv('RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC', '1.0')
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', player.time.time() - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_holds_implausible_completed_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 120.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setenv('RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC', '1.0')
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_recovers_completed_runtime_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 119.0, 'duration_sec': 120.0, 'started': now_ts - 121.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setenv('RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC', '1.0')
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', 0.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', player.time.time() - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is True
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_runtime_gap_completion_uses_started_position_for_resumed_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    now = {
+        'title': 'Resumed movie',
+        'resume_pos': 120.0,
+        'duration_sec': 120.0,
+        'started': now_ts - 11.0,
+        '_playback_started_pos': 110.0,
+    }
+
+    assert player._runtime_gap_completion_plausible(now) is True
+
+
+def test_playback_runtime_idle_or_ended_holds_implausible_qt_eof(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 120.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: {
+            'core-idle': True,
+            'eof-reached': True,
+            'pause': False,
+            'path': '',
+            'time-pos': 120.0,
+            'duration': 120.0,
+        },
+    )
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_holds_implausible_native_qt_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'title': 'Shared stream', 'resume_pos': 120.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: True)
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
 
 
 def test_is_playing_ignores_idle_qt_socket_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2031,6 +2343,23 @@ def test_close_uses_overlay_not_qt_shell_for_idle_notifications_on_x11(monkeypat
     assert stop_shell_calls == [True]
     assert stop_mpv_calls == [True]
     assert ensure_surface_calls == [False]
+
+
+def test_notification_surface_does_not_start_x11_overlay_when_qt_shell_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(routes, '_idle_notifications_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes, '_idle_dashboard_enabled_for_player', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(routes.x11_overlay, 'start_overlay', lambda: calls.append('start_overlay'))
+    monkeypatch.setattr(routes.x11_overlay, 'stop_overlay', lambda: calls.append('stop_overlay'))
+    monkeypatch.setattr(routes.x11_overlay, 'overlay_running', lambda: False)
+    monkeypatch.setattr(routes.player, 'ensure_qt_shell_idle', lambda **kwargs: calls.append('ensure_qt'))
+
+    routes._ensure_notification_surface(wait_for_subscriber=False)
+
+    assert calls == ['stop_overlay', 'ensure_qt']
 
 
 def test_clear_now_playing_advances_queue_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2342,6 +2671,31 @@ def test_preserve_current_marks_interrupt_queue_entry(monkeypatch: pytest.Monkey
     assert persisted[-1]['queue'] == [preserved]
 
 
+def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    original_resume = {
+        'url': 'https://jellyfin.example/title.m3u8',
+        'title': 'Interrupted Jellyfin Title',
+        'provider': 'jellyfin',
+        '_relaytv_interrupt_preserved': True,
+        'resume_pos': 120.0,
+    }
+    remaining = {'url': 'https://jellyfin.example/next.m3u8', 'title': 'Next Jellyfin Title', 'provider': 'jellyfin'}
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 12.0 if prop == 'time-pos' else 60.0)
+    monkeypatch.setattr(routes.player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'url': 'https://example.com/temporary-share.mp4', 'title': 'Temporary Share'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [original_resume, remaining], raising=False)
+    monkeypatch.setattr(routes.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+
+    preserved = routes._preserve_current_to_queue_front()
+
+    assert preserved is None
+    assert routes.state.QUEUE == [original_resume, remaining]
+    assert persisted == []
+
+
 def test_persisted_queue_item_keeps_interrupt_preserved_marker() -> None:
     item = {
         'url': 'https://example.com/interrupted.mp4',
@@ -2370,6 +2724,154 @@ def test_interrupt_preserved_queue_item_is_not_mpv_primed() -> None:
             '_resolved_stream': 'https://cdn.example.com/interrupted.mp4',
         }
     ) is None
+
+
+def test_auto_next_does_not_dequeue_interrupted_item_after_incomplete_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[object] = []
+    now_ts = player.time.time()
+
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/share.mp4', 'resume_pos': 15.0, 'duration_sec': 120.0, 'started': now_ts - 20.0},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        player.state,
+        'QUEUE',
+        [{'url': 'https://example.com/interrupted.mp4', '_relaytv_interrupt_preserved': True}],
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'play_item', lambda *args, **kwargs: play_calls.append(args) or {})
+
+    with pytest.raises(player.QueueAdvanceSuppressedError):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == [{'url': 'https://example.com/interrupted.mp4', '_relaytv_interrupt_preserved': True}]
+    assert persisted == []
+    assert play_calls == []
+
+
+def test_manual_next_can_dequeue_interrupted_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', {'url': 'https://example.com/share.mp4'}, raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'QUEUE',
+        [{'url': 'https://example.com/interrupted.mp4', '_relaytv_interrupt_preserved': True, 'resume_pos': 12.5}],
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(
+        player,
+        'play_item',
+        lambda item, **kwargs: play_calls.append({'item': item, **kwargs}) or {'url': item['url']},
+    )
+
+    result = player.advance_queue_playback(mode='next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert player.state.QUEUE == []
+    assert persisted[-1]['queue'] == []
+    assert play_calls[-1]['item']['url'] == 'https://example.com/interrupted.mp4'
+    assert play_calls[-1]['start_pos'] == 12.5
+
+
+def test_auto_next_worker_prefers_mpv_playlist_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    sleep_calls = 0
+
+    def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            raise RuntimeError('stop worker')
+
+    def fake_advance(**kwargs):
+        calls.append(dict(kwargs))
+        raise RuntimeError('stop worker')
+
+    monkeypatch.setattr(player.time, 'sleep', fake_sleep)
+    monkeypatch.setattr(player, '_SESSION_RESTORE_ATTEMPTED', True, raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [{'url': 'https://example.com/next.mp4'}], raising=False)
+    monkeypatch.setattr(player, '_playback_runtime_idle_or_ended', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_set_auto_next_transition', lambda value: None)
+    monkeypatch.setattr(player, 'advance_queue_playback', fake_advance)
+
+    with pytest.raises(RuntimeError, match='stop worker'):
+        player._autoplay_next_worker()
+
+    assert calls == [{'mode': 'auto_next', 'prefer_playlist_next': True}]
+
+
+def test_auto_next_playlist_handoff_uses_armed_item_after_eof(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[object]] = []
+
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(
+        player,
+        'prime_mpv_up_next_from_queue',
+        lambda force=False: (_ for _ in ()).throw(AssertionError('already armed EOF handoff should not re-prime')),
+    )
+    monkeypatch.setattr(player.state, 'QUEUE', [{'url': 'https://example.com/next.mp4'}], raising=False)
+    monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_ID', player._queue_item_identity(player.state.QUEUE[0]), raising=False)
+    monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_URL', 'https://example.com/next.mp4', raising=False)
+    monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_AT', 123.0, raising=False)
+    monkeypatch.setattr(player, 'mpv_command', lambda command: commands.append(list(command)) or {'error': 'success'})
+    monkeypatch.setattr(player, 'mpv_get_many', lambda props: {'playlist-pos': 0, 'playlist-count': 2, 'time-pos': None, 'path': '', 'pause': False})
+
+    method = player._attempt_playlist_next_handoff(poll_sleep=lambda _seconds: None)
+
+    assert method == 'mpv_playlist_next_pending'
+    assert commands == [['playlist-next', 'force']]
+
+
+def test_auto_next_resumes_interrupted_item_without_dropping_queue_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[dict[str, object]] = []
+    resumed = {'url': 'https://jellyfin.example/title.m3u8', '_relaytv_interrupt_preserved': True, 'resume_pos': 120.0}
+    remaining = {'url': 'https://jellyfin.example/next.m3u8', 'title': 'Next Jellyfin Title'}
+    now_ts = player.time.time()
+
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/share.mp4', 'resume_pos': 119.0, 'duration_sec': 120.0, 'started': now_ts - 119.0},
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, 'QUEUE', [resumed, remaining], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(
+        player,
+        'play_item',
+        lambda item, **kwargs: play_calls.append({'item': item, **kwargs}) or {'url': item['url']},
+    )
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert player.state.QUEUE == [remaining]
+    assert persisted[-1]['queue'] == [remaining]
+    assert play_calls[-1]['item'] == resumed
+    assert play_calls[-1]['clear_queue'] is False
+    assert play_calls[-1]['start_pos'] == 120.0
 
 
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2711,6 +3213,200 @@ def test_status_endpoint_includes_native_qt_deprecation_metadata() -> None:
     assert payload['native_qt_idle_status'] == 'override_only'
     assert payload['native_qt_toasts_deprecated'] is True
     assert payload['native_qt_toasts_status'] == 'override_only'
+    assert 'qt_shell_supervisor_enabled' in payload
+    assert 'qt_shell_supervisor_last_action' in payload
+    assert 'qt_shell_display_boot_grace_remaining_sec' in payload
+
+
+def test_qt_shell_supervisor_repairs_stale_idle_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_BOOT_GRACE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_THREAD_STARTED', True, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_display_available', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {'selected': True, 'available': False, 'freshness': 'stale', 'alive': False},
+    )
+    monkeypatch.setattr(player, '_stop_qt_shell', lambda: calls.append('stop_shell'))
+    monkeypatch.setattr(player, 'ensure_qt_shell_idle', lambda force=False: calls.append(f'ensure:{force}'))
+
+    assert player._qt_shell_supervisor_tick() is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls == ['stop_shell', 'ensure:True']
+    assert supervisor['last_action'] == 'restarted_idle_shell'
+    assert supervisor['last_reason'] == 'idle_telemetry_stale'
+
+
+def test_qt_shell_supervisor_repairs_idle_overlay_load_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_BOOT_GRACE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_THREAD_STARTED', True, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_display_available', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {
+            'selected': True,
+            'available': True,
+            'freshness': 'fresh',
+            'alive': True,
+            'qt_overlay_enabled': True,
+            'qt_overlay_load_ok': False,
+        },
+    )
+    monkeypatch.setattr(player, '_stop_qt_shell', lambda: calls.append('stop_shell'))
+    monkeypatch.setattr(player, 'ensure_qt_shell_idle', lambda force=False: calls.append(f'ensure:{force}'))
+
+    assert player._qt_shell_supervisor_tick() is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls == ['stop_shell', 'ensure:True']
+    assert supervisor['last_action'] == 'restarted_idle_shell'
+    assert supervisor['last_reason'] == 'idle_overlay_load_failed'
+
+
+def test_ensure_qt_shell_idle_waits_for_boot_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda allow_notification_fallback=False: True)
+    monkeypatch.setattr(player, '_has_x11_display', lambda: False)
+    monkeypatch.setattr(player, '_has_wayland_display', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_boot_grace_remaining', lambda: 30.0)
+    monkeypatch.setattr(player, '_start_qt_shell', lambda *args, **kwargs: calls.append('start'))
+
+    player.ensure_qt_shell_idle()
+
+    assert calls == []
+    assert player.qt_shell_supervisor_state()['display_ready'] is False
+
+
+def test_ensure_qt_shell_idle_starts_after_boot_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_idle_qt_shell_enabled', lambda allow_notification_fallback=False: True)
+    monkeypatch.setattr(player, '_has_x11_display', lambda: False)
+    monkeypatch.setattr(player, '_has_wayland_display', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_boot_grace_remaining', lambda: 0.0)
+    monkeypatch.setattr(player, '_start_qt_shell', lambda *args, **kwargs: calls.append('start'))
+
+    player.ensure_qt_shell_idle()
+
+    assert calls == ['start']
+
+
+def test_qt_shell_supervisor_recovers_active_audio_without_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object]] = []
+    now = {
+        'url': 'https://jellyfin.example/items/1/stream',
+        'title': 'Movie',
+        'stream': 'https://jellyfin.example/resolved/video.m3u8',
+        'audio': 'https://jellyfin.example/resolved/audio.m4a',
+        'started': player.time.time() - 30,
+        'resume_pos': 12.0,
+    }
+
+    monkeypatch.setenv('RELAYTV_QT_SHELL_BOOT_GRACE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC', '0')
+    monkeypatch.setenv('RELAYTV_QT_SHELL_VIDEO_GRACE_SEC', '0')
+    monkeypatch.setattr(player, '_QT_SHELL_DISPLAY_READY_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC', 0.0, raising=False)
+    monkeypatch.setattr(player, '_QT_SHELL_SUPERVISOR_THREAD_STARTED', True, raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', dict(now), raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_display_available', lambda: True)
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **_: {'selected': True, 'available': True, 'freshness': 'fresh', 'alive': True},
+    )
+    monkeypatch.setattr(
+        player,
+        '_qt_shell_runtime_output_state',
+        lambda max_age_sec=2.0: {
+            'path': 'https://jellyfin.example/resolved/video.m3u8',
+            'current_vo': '',
+            'current_ao': 'pulse',
+            'aid': 1,
+            'playback_active': True,
+            'stream_loaded': True,
+            'playback_started': True,
+            'sample_detail': '',
+        },
+    )
+    monkeypatch.setattr(player, 'mpv_get', lambda prop: 42.5 if prop == 'time-pos' else False)
+
+    def fake_start_mpv(stream: str, audio_url: str | None = None, start_pos: float | None = None):
+        calls.append(('start_mpv', {'stream': stream, 'audio': audio_url, 'start_pos': start_pos}))
+
+    def fake_set_now_playing(payload: dict):
+        player.state.NOW_PLAYING = dict(payload)
+        calls.append(('now', dict(payload)))
+
+    monkeypatch.setattr(player, 'start_mpv', fake_start_mpv)
+    monkeypatch.setattr(player.state, 'set_now_playing', fake_set_now_playing)
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: calls.append(('state', value)))
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: calls.append(('position', value)))
+
+    assert player._qt_shell_supervisor_tick() is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls[0] == (
+        'start_mpv',
+        {
+            'stream': 'https://jellyfin.example/resolved/video.m3u8',
+            'audio': 'https://jellyfin.example/resolved/audio.m4a',
+            'start_pos': 42.5,
+        },
+    )
+    assert player.state.NOW_PLAYING['mode'] == 'supervisor_recover'
+    assert player.state.NOW_PLAYING['resume_pos'] == 42.5
+    assert supervisor['last_action'] == 'restarted_active_playback'
+    assert supervisor['last_reason'] == 'active_audio_without_video'
 
 
 def test_stop_mpv_persists_live_runtime_volume(monkeypatch: pytest.MonkeyPatch) -> None:

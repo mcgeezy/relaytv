@@ -6,11 +6,20 @@ RelayTV serves its HTTP API from the root path. Most endpoints return JSON. HTML
 
 This file is the active endpoint reference for the native Qt runtime. Historical compat-only endpoints are removed from the active tree and are not documented here.
 
+## Network trust model
+
+RelayTV's API is intended for trusted LAN use. Write endpoints can control
+playback, mutate queue/history state, upload local media, change settings, send
+TV notifications, and interact with Jellyfin. Do not expose RelayTV directly to
+the public internet. Use a VPN, trusted reverse proxy, or Home Assistant access
+layer if remote access is required.
+
 ## UI and utility endpoints
 
 - `GET /ui`: main web UI HTML
 - `GET /ui/events`
   - Server-Sent Events stream for the main web UI
+- `GET /static/ui/{asset_name}`: static CSS/JavaScript used by `/ui`
 - `GET /idle`: idle dashboard HTML
 - `GET /`: redirects to `/ui`
 - `GET /health`: `{"ok": true}`
@@ -357,6 +366,8 @@ These X11 overlay endpoints remain active for overlay/runtime diagnostics and br
     - `tv_pause_on_input_change`
     - `tv_auto_resume_on_return`
     - `volume`
+    - `idle_dashboard_enabled`
+    - `idle_notifications_enabled`
     - `idle_qr_enabled`
     - `idle_qr_size`
     - `idle_panels`
@@ -384,6 +395,12 @@ These X11 overlay endpoints remain active for overlay/runtime diagnostics and br
     - `live_apply_failed`
     - `restart_sensitive_pending`
     - `restart_recommended`
+  - idle visual settings are applied live when playback is idle:
+    - enabling `idle_dashboard_enabled` starts the idle dashboard immediately
+    - disabling `idle_dashboard_enabled` can still leave a transparent
+      notification surface active when `idle_notifications_enabled` is true
+    - disabling both idle dashboard and idle notifications stops idle visual
+      surfaces and returns control to the desktop/session background
 
 Upload settings shape:
 
@@ -405,7 +422,14 @@ YouTube cookie helpers:
 
 - `POST /settings/youtube/cookies`
   - body: `{"cookies_text", "filename"?}`
+  - stores a Netscape-format cookies file and updates `youtube_cookies_path`
+  - responses mask the stored path and expose `youtube_cookies_configured`
 - `POST /settings/youtube/cookies/clear`
+  - removes RelayTV's uploaded cookies file when it owns that path and clears
+    `youtube_cookies_path`
+
+When YouTube cookies are configured, RelayTV passes them to yt-dlp and avoids
+yt-dlp client fallbacks that do not support cookie auth.
 
 ## Jellyfin integration and browse API
 

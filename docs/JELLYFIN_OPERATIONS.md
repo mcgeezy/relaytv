@@ -30,7 +30,19 @@ Shared URL behavior:
 
 - `RELAYTV_JELLYFIN_ENABLED=1`
 - `RELAYTV_JELLYFIN_SERVER_URL=http://<jellyfin-host>:8096`
+
+Preferred authentication:
+
+- `RELAYTV_JELLYFIN_AUTH_ENABLED=1` (default enabled)
+- `RELAYTV_JELLYFIN_USERNAME=<jellyfin-user>`
+- `RELAYTV_JELLYFIN_PASSWORD=<jellyfin-password>`
+
+Optional fallback authentication:
+
 - `RELAYTV_JELLYFIN_API_KEY=<token>`
+  - Supported for compatibility and for API-key-only deployments.
+  - The Settings UI path prefers username/password auth and masks the password
+    on reads.
 
 Optional identity:
 
@@ -51,11 +63,8 @@ Recommended:
 - Set device names in RelayTV Settings UI (`device_name`) per TV instance.
 - RelayTV propagates this name to Jellyfin client/session identity so each TV appears distinctly.
 
-Optional Jellyfin user session auth (recommended for controllable client presence):
+Optional catalog profile override:
 
-- `RELAYTV_JELLYFIN_AUTH_ENABLED=1` (default enabled)
-- `RELAYTV_JELLYFIN_USERNAME=<jellyfin-user>`
-- `RELAYTV_JELLYFIN_PASSWORD=<jellyfin-password>`
 - `RELAYTV_JELLYFIN_USER_ID=<optional-jellyfin-user-id>`
   - Optional per-device catalog profile override.
   - When set, RelayTV browses Jellyfin catalog rows/detail/search as this user profile instead of the authenticated session user.
@@ -113,8 +122,11 @@ Episode adjacency resilience:
 
 `GET /integrations/jellyfin/status` includes:
 
+- `enabled`
+- `running`
 - `connected`
 - `last_error`
+- `api_key_configured`
 - `last_register_ts`, `last_register_ok`, `last_register_error`
 - `last_progress_ts`, `last_progress_ok`, `last_progress_error`
 - `register_retry_failures`
@@ -140,7 +152,8 @@ Discovery runtime status:
 
 1. Registration failing repeatedly:
    - Verify `RELAYTV_JELLYFIN_SERVER_URL` is reachable from container.
-   - Verify `RELAYTV_JELLYFIN_API_KEY` is valid.
+   - Verify username/password auth is valid, or verify
+     `RELAYTV_JELLYFIN_API_KEY` when using the optional fallback.
    - Check `last_register_error` and `register_retry_failures` in status.
 2. Connected flips false after startup:
    - Inspect `last_progress_error`; progress posts can mark receiver disconnected on transport errors.

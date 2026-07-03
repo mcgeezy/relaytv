@@ -13,6 +13,7 @@ from .player import (
     start_autoplay_worker,
     start_cec_monitor,
     start_qt_audio_watchdog_worker,
+    start_qt_shell_supervisor_worker,
     start_session_tracker_worker,
     start_splash_screen,
     stop_splash_screen,
@@ -76,6 +77,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             start_autoplay_worker()
             start_session_tracker_worker()
             start_qt_audio_watchdog_worker()
+            start_qt_shell_supervisor_worker()
             start_cec_monitor()
             start_thumb_worker()
             upload_store.start_cleanup_worker()
