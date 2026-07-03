@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import threading
 from ..config import env_bool as _env_bool
+from ..config import runtime_config
 import time
 import json
 import hashlib
@@ -243,18 +244,18 @@ def _read_config() -> dict[str, object]:
         configured_name = ""
     device_name = (
         configured_name
-        or (os.getenv("RELAYTV_DEVICE_NAME") or "").strip()
-        or (os.getenv("RELAYTV_JELLYFIN_DEVICE_NAME") or "RelayTV").strip()
+        or (runtime_config.snapshot().raw("RELAYTV_DEVICE_NAME") or "").strip()
+        or (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_DEVICE_NAME") or "RelayTV").strip()
         or "RelayTV"
     )
     if len(device_name) > 80:
         device_name = device_name[:80].strip() or "RelayTV"
     return {
-        "enabled": _env_bool("RELAYTV_JELLYFIN_ENABLED", False),
-        "server_url": (os.getenv("RELAYTV_JELLYFIN_SERVER_URL") or "").strip(),
+        "enabled": runtime_config.snapshot().flag("RELAYTV_JELLYFIN_ENABLED", False),
+        "server_url": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_URL") or "").strip(),
         "device_name": device_name,
         "device_id": (os.getenv("RELAYTV_JELLYFIN_DEVICE_ID") or f"relaytv-{device_name.lower().replace(' ', '-')}-{platform.node() or 'host'}").strip(),
-        "client_name": (os.getenv("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name).strip() or device_name,
+        "client_name": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name).strip() or device_name,
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
     }
@@ -270,7 +271,7 @@ def _preferred_catalog_user_id() -> str:
             return pref
     except Exception:
         pass
-    return str(os.getenv("RELAYTV_JELLYFIN_USER_ID") or "").strip()
+    return str(runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USER_ID") or "").strip()
 
 
 def _effective_catalog_user(st: dict[str, object]) -> tuple[str, str]:
@@ -296,9 +297,9 @@ def start() -> None:
         _STATUS["client_name"] = str(cfg["client_name"])
         _STATUS["client_version"] = str(cfg["client_version"])
         _STATUS["heartbeat_sec"] = int(cfg["heartbeat_sec"])
-        _API_KEY = (os.getenv("RELAYTV_JELLYFIN_API_KEY") or "").strip()
-        _AUTH_USERNAME = (os.getenv("RELAYTV_JELLYFIN_USERNAME") or "").strip()
-        _AUTH_PASSWORD = (os.getenv("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
+        _API_KEY = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_API_KEY") or "").strip()
+        _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
+        _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
         _ACCESS_TOKEN = ""
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
@@ -472,8 +473,8 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
             _STATUS["heartbeat_sec"] = max(2, int(heartbeat_sec))
         if api_key is not None:
             _API_KEY = str(api_key or "").strip()
-        _AUTH_USERNAME = (os.getenv("RELAYTV_JELLYFIN_USERNAME") or "").strip()
-        _AUTH_PASSWORD = (os.getenv("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
+        _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
+        _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
         _ACCESS_TOKEN = ""
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
@@ -2475,7 +2476,7 @@ def _ensure_registration(now_ts: float | None = None) -> None:
 
 
 def _ensure_authentication() -> None:
-    if not _env_bool("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
+    if not runtime_config.snapshot().flag("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
         return
     st = status()
     if not bool(st.get("enabled")) or not bool(st.get("running")):

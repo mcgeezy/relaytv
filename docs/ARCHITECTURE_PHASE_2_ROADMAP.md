@@ -214,7 +214,33 @@ Notes:
 
 ### M4: Consumer Migration By Domain
 
-Status: in progress (M4a complete)
+Status: complete
+
+Results:
+
+- M4a: `ytdlp_format_policy` and `discovery_mdns` migrated; conftest lockstep
+  fixture added.
+- M4b: `resolver` migrated (`USE_INVIDIOUS`, `INVIDIOUS_BASE`,
+  `RELAYTV_YTDLP_COOKIES`); `upload_store` had no settings-bus reads.
+- M4c: reclassified — `state.py`'s settings-bus reads all live in the
+  settings-defaults path and deliberately stay direct env reads (operator env
+  is the correct default source; applied settings are always persisted before
+  the env sync). Documented in the inventory doc with the accepted M5 nuance.
+- M4d: `jellyfin_receiver` migrated (enabled, server URL, client/device name
+  fallbacks, user id, api key, username/password, auth-enabled gate).
+- M4e: `routes/__init__.py` (`RELAYTV_VIDEO_MODE`,
+  `RELAYTV_JELLYFIN_PLAYBACK_MODE`) and `routes/settings.py` own reads
+  migrated.
+- M4f: `player.py` (idle flags, video mode, sub lang, DRM connector, audio
+  device, CEC flag pair via `_env_any_flag`) and `x11_overlay.py` (idle
+  flags) migrated. CEC migration is required for M5 correctness: with a live
+  env read, removing the settings-apply env write would let operator env
+  permanently override the UI setting.
+- New guardrail: `test_settings_bus_env_reads_stay_in_allowed_modules` pins
+  the allowed direct-reader set (`state.py`, child processes, entrypoint,
+  `config.py`).
+- Tests that mutate migrated vars mid-test now call
+  `runtime_config.refresh_from_env()` after the mutation (13 insertions).
 
 Scope refinement (2026-07-02, after M3): only reads of **settings bus**
 variables migrate to snapshot reads. **Static env** variables are
@@ -334,6 +360,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M2: added `config.py` typed env helpers, replaced all 13 duplicated `_env_*` copies with aliased imports (extended `_env_choice` spellings preserved via wrappers), and deleted the dead `resolver._env_bool`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (257 passed); `git diff --check`; `py_compile` on child-process modules | Begin M3 RuntimeConfig and SettingsSnapshot. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M3: added `RuntimeConfig`/`SettingsSnapshot` with `set_env` owning the env+snapshot dual-write, converted all 52 runtime env write sites 1:1, added startup `refresh_from_env`, and taught the inventory scanner about `set_env` writes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (262 passed); `git diff --check` | Begin M4 consumer migration (M4a leaf modules first). |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4a: refined M4 scope to settings-bus reads only, migrated `ytdlp_format_policy` (quality mode/cap, `YTDLP_FORMAT`) and `discovery_mdns` (device name) to snapshot reads, and added the conftest lockstep fixture that re-syncs the global RuntimeConfig from env around each test. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (265 passed); `git diff --check` | Continue M4b resolver migration. |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4b-M4f: migrated resolver, jellyfin_receiver, routes, player, and x11_overlay settings-bus reads to snapshots; reclassified `state.py` defaults-path reads as intentionally direct; added the allowed-reader guardrail test and refreshed affected tests for lockstep. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (266 passed); `git diff --check` | Begin M5 env write containment. |
 
 ## Open Questions
 

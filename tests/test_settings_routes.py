@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from relaytv_app import routes
 from relaytv_app.main import create_app
+from relaytv_app.config import runtime_config
 
 
 def test_get_settings_route_sanitizes_secret_values(monkeypatch, tmp_path) -> None:
@@ -82,6 +83,7 @@ def test_update_settings_route_syncs_runtime_env_and_live_settings(monkeypatch) 
     idle_syncs: list[bool] = []
 
     monkeypatch.setenv("RELAYTV_CEC", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(routes.state, "get_settings", lambda: {"cec_enabled": "1"})
     monkeypatch.setattr(
         routes.state,

@@ -100,7 +100,7 @@ def _sync_upload_env_from_settings(updated: dict | None) -> None:
 def _youtube_cookie_target_path() -> str:
     return (
         os.getenv("RELAYTV_YTDLP_COOKIES_UPLOAD_PATH")
-        or os.getenv("RELAYTV_YTDLP_COOKIES")
+        or runtime_config.snapshot().raw("RELAYTV_YTDLP_COOKIES")
         or os.getenv("YTDLP_COOKIES")
         or "/data/cookies.txt"
     ).strip()
@@ -204,7 +204,7 @@ def update_settings(req: SettingsReq):
         elif "ytdlp_format" in requested_keys:
             qmode = "manual"
         else:
-            qmode = str(updated.get("quality_mode") or os.getenv("RELAYTV_QUALITY_MODE") or "").strip().lower()
+            qmode = str(updated.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE") or "").strip().lower()
         if qmode in ("auto", "auto_profile", "profile"):
             runtime_config.set_env("YTDLP_FORMAT", "")
         elif updated.get("ytdlp_format") is not None:
@@ -287,7 +287,7 @@ def update_settings(req: SettingsReq):
             live_apply_failed.append("volume")
         try:
             if "audio_device" in requested_keys and updated.get("audio_device") is not None:
-                cur_audio = str(os.getenv("MPV_AUDIO_DEVICE") or "").strip()
+                cur_audio = str(runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip()
                 if not cur_audio:
                     try:
                         cur_audio = str(getattr(player, "_effective_audio_device", lambda s=None: "")() or "").strip()

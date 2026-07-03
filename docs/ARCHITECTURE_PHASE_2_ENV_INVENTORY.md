@@ -64,9 +64,19 @@ Nuances the migration must preserve:
 - `player.py` builds child-process command lines (mpv, splash, idle browser)
   from env-derived values in-process; those become snapshot reads, not env
   mirroring.
-- `state.py` reads many settings-bus variables as fallback defaults when
-  persisted settings lack a key; snapshot construction must keep the same
-  env-then-settings precedence.
+- `state.py` reads many settings-bus variables in its settings-defaults path
+  (`_default_settings`, `_default_ytdlp_format`). These deliberately stay
+  direct env reads: operator env is the intended default source for keys
+  missing from the persisted settings file, and applied settings are always
+  persisted before the env sync runs, so defaults never need the runtime bus.
+  Accepted M5 nuance: if an operator hand-deletes a key from the settings
+  file after changing it in the UI, the default will come from operator env
+  rather than the last applied value.
+
+M4 status: all other in-process settings-bus env reads have been migrated to
+`RuntimeConfig` snapshot reads; `tests/test_env_inventory.py` pins the allowed
+direct-reader set (`state.py` defaults, child processes, entrypoint,
+`config.py` itself).
 
 ## Inventory
 

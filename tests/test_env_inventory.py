@@ -154,6 +154,52 @@ def test_runtime_env_bus_child_process_contract_is_pinned() -> None:
     assert actual == EXPECTED_SETTINGS_BUS_CHILD_READS
 
 
+# M4 completion guardrail: modules allowed to read settings-bus variables
+# straight from the environment.
+# - state.py: the settings-defaults path; operator env is the intended default
+#   source for keys missing from the persisted settings file, and applied
+#   settings always exist in the file, so these reads survive M5 unchanged.
+# - qt_shell_app.py / overlay_app.py: runtime child processes reading their
+#   own inherited environment.
+# - container_entrypoint.py: pre-app launcher.
+# - config.py: owns the bus.
+_SETTINGS_BUS_ENV_READERS_ALLOWED = {
+    "state.py",
+    "qt_shell_app.py",
+    "overlay_app.py",
+    "container_entrypoint.py",
+    "config.py",
+}
+
+_ENV_READ = re.compile(
+    r"""(?:os\.getenv|os\.environ\.get|_env_bool|_env_choice)\(\s*["']([A-Z][A-Z0-9_]*)["']"""
+)
+
+
+def test_settings_bus_env_reads_stay_in_allowed_modules() -> None:
+    """In-process consumers read settings-bus config via RuntimeConfig snapshots.
+
+    Direct env reads of settings-bus variables are only allowed in the
+    documented modules above. A failure means a new consumer bypassed the
+    runtime config service; migrate it to ``runtime_config.snapshot()`` reads.
+    """
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "app"))
+    from relaytv_app.config import SETTINGS_BUS_VARS
+
+    violations: list[str] = []
+    for path in sorted(APP_DIR.rglob("*.py")):
+        module = _module_name(path)
+        if module in _SETTINGS_BUS_ENV_READERS_ALLOWED:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in _ENV_READ.finditer(line):
+                if match.group(1) in SETTINGS_BUS_VARS:
+                    violations.append(f"{module}:{lineno}: {match.group(1)}")
+    assert violations == []
+
+
 def _write_doc() -> None:
     text = INVENTORY_DOC.read_text(encoding="utf-8")
     begin = text.index(TABLE_BEGIN) + len(TABLE_BEGIN)

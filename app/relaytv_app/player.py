@@ -41,7 +41,7 @@ def _idle_dashboard_enabled() -> bool:
         settings = {}
     if isinstance(settings, dict) and settings.get("idle_dashboard_enabled") is False:
         return False
-    raw = (os.getenv("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
+    raw = (runtime_config.snapshot().raw("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
     return True
@@ -54,7 +54,7 @@ def _idle_notifications_enabled() -> bool:
         settings = {}
     if isinstance(settings, dict) and settings.get("idle_notifications_enabled") is False:
         return False
-    raw = (os.getenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
+    raw = (runtime_config.snapshot().raw("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
     return True
@@ -166,7 +166,7 @@ def _env_enabled(name: str, default: bool = False) -> bool:
 
 def _env_any_flag(names: tuple[str, ...]) -> bool | None:
     for name in names:
-        raw = os.getenv(name)
+        raw = runtime_config.snapshot().raw(name)
         if raw is not None and str(raw).strip() != "":
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
     return None
@@ -781,7 +781,7 @@ def _splash_process_running() -> bool:
 
 def _splash_video_mode() -> str:
     settings = getattr(state, "get_settings", lambda: {})()
-    return ((settings.get("video_mode")) or os.getenv("RELAYTV_VIDEO_MODE", "auto") or "auto").strip().lower()
+    return ((settings.get("video_mode")) or runtime_config.snapshot().raw("RELAYTV_VIDEO_MODE", "auto") or "auto").strip().lower()
 
 
 def _idle_browser_process_running() -> bool:
@@ -966,7 +966,7 @@ def _start_qt_shell(stream_url: str | None = None, audio_url: str | None = None,
         pass
     ipc_path = (os.getenv("MPV_IPC_PATH") or IPC_PATH).strip() or IPC_PATH
     audio_dev = _effective_audio_device(settings)
-    sub_lang = (settings.get("sub_lang") or os.getenv("RELAYTV_SUB_LANG") or "").strip()
+    sub_lang = (settings.get("sub_lang") or runtime_config.snapshot().raw("RELAYTV_SUB_LANG") or "").strip()
     startup_volume = _configured_start_volume()
     ytdl_enabled = _env_bool("RELAYTV_MPV_YTDL", True)
     provider_hint = _provider_hint_for_stream(stream_url or "", fallback_now_playing=True)
@@ -1336,7 +1336,7 @@ def _build_splash_args(image_path: str, mode: str) -> list[str]:
         args.append("--log-file=/tmp/mpv-splash.log")
     if mode == "drm":
         args += ["--vo=gpu", "--gpu-context=drm"]
-        conn = (settings.get("drm_connector") or os.getenv("RELAYTV_DRM_CONNECTOR") or "").strip()
+        conn = (settings.get("drm_connector") or runtime_config.snapshot().raw("RELAYTV_DRM_CONNECTOR") or "").strip()
         if conn:
             args.append(f"--drm-connector={conn}")
     args += extra
@@ -2385,7 +2385,7 @@ def _x11_mode_active(selected_mode: str | None = None) -> bool:
     if not mode:
         mode = (
             (getattr(state, "get_settings", lambda: {})().get("video_mode"))
-            or os.getenv("RELAYTV_VIDEO_MODE", "")
+            or runtime_config.snapshot().raw("RELAYTV_VIDEO_MODE", "")
             or os.getenv("RELAYTV_MODE", "")
             or ""
         ).strip().lower()
@@ -2507,11 +2507,11 @@ def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str, start_pos
             "--vo=gpu",
             "--gpu-context=drm",
         ]
-        conn = (settings.get("drm_connector") or os.getenv("RELAYTV_DRM_CONNECTOR") or "").strip()
+        conn = (settings.get("drm_connector") or runtime_config.snapshot().raw("RELAYTV_DRM_CONNECTOR") or "").strip()
         if conn:
             mpv_args.append(f"--drm-connector={conn}")
 
-    sub_lang = (settings.get("sub_lang") or os.getenv("RELAYTV_SUB_LANG") or "").strip()
+    sub_lang = (settings.get("sub_lang") or runtime_config.snapshot().raw("RELAYTV_SUB_LANG") or "").strip()
     if sub_lang:
         mpv_args.append("--sub-auto=fuzzy")
         mpv_args.append(f"--slang={sub_lang}")
@@ -2586,11 +2586,11 @@ def _effective_audio_device(settings: dict[str, Any] | None = None) -> str:
       3) Best-effort hardware detect from `devices.detect_audio_device()`
     """
     s = settings if isinstance(settings, dict) else getattr(state, "get_settings", lambda: {})()
-    explicit = (s.get("audio_device") or os.getenv("MPV_AUDIO_DEVICE") or "").strip()
+    explicit = (s.get("audio_device") or runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip()
     if explicit:
         return explicit
 
-    connector = (s.get("drm_connector") or os.getenv("RELAYTV_DRM_CONNECTOR") or "").strip()
+    connector = (s.get("drm_connector") or runtime_config.snapshot().raw("RELAYTV_DRM_CONNECTOR") or "").strip()
     try:
         detected = (devices.detect_audio_device(connector) or "").strip()
     except Exception:
@@ -2600,7 +2600,7 @@ def _effective_audio_device(settings: dict[str, Any] | None = None) -> str:
 
 def _audio_device_explicitly_configured(settings: dict[str, Any] | None = None) -> bool:
     s = settings if isinstance(settings, dict) else getattr(state, "get_settings", lambda: {})()
-    return bool((s.get("audio_device") or os.getenv("MPV_AUDIO_DEVICE") or "").strip())
+    return bool((s.get("audio_device") or runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip())
 
 
 def _audio_output_ready() -> bool:
@@ -2792,7 +2792,7 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
     _cleanup_ipc_socket()
 
     settings = getattr(state, "get_settings", lambda: {})()
-    mode = ((settings.get("video_mode")) or os.getenv("RELAYTV_VIDEO_MODE", "auto") or "auto").strip().lower()
+    mode = ((settings.get("video_mode")) or runtime_config.snapshot().raw("RELAYTV_VIDEO_MODE", "auto") or "auto").strip().lower()
     debug = _env_bool("MPV_DEBUG") or _env_bool("RELAYTV_DEBUG")
     if _overlay_osd_debug_enabled():
         debug_log("osd", f"start_mpv requested_mode={mode!r} display={os.getenv('DISPLAY')!r} xdg_session_type={os.getenv('XDG_SESSION_TYPE')!r}")

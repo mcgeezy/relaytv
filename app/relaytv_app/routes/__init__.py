@@ -22,7 +22,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .. import state, resolver, player, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
-from ..config import env_choice
+from ..config import env_choice, runtime_config
 from ..integrations import jellyfin_receiver
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
@@ -308,7 +308,7 @@ def _x11_mode_notifications() -> bool:
         return True
 
     env_mode = (
-        os.getenv("RELAYTV_VIDEO_MODE", "")
+        runtime_config.snapshot().raw("RELAYTV_VIDEO_MODE", "")
         or os.getenv("RELAYTV_MODE", "")
         or ""
     ).strip().lower()
@@ -2897,7 +2897,7 @@ def _effective_jellyfin_playback_mode(settings: dict | None = None) -> str:
     src = settings if isinstance(settings, dict) else (state.get_settings() if hasattr(state, "get_settings") else {})
     val = src.get("jellyfin_playback_mode") if isinstance(src, dict) else None
     if val is None or str(val).strip() == "":
-        val = os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE", "auto")
+        val = runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PLAYBACK_MODE", "auto")
     return _normalize_jellyfin_playback_mode(val)
 
 
