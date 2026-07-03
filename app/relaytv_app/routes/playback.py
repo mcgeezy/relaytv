@@ -509,13 +509,7 @@ def clear_now_playing():
     playback_service.suppress_auto_next(3600 * 24)
     with player.MPV_LOCK:
         stopped_in_place = _stop_current_for_idle_or_desktop()
-    state.set_now_playing(None)
-    state.set_session_position(None)
-    state.set_session_state("idle")
-    try:
-        state.persist_queue()
-    except Exception:
-        pass
+    playback_service.clear_session()
     return {"status": "cleared", "resume_available": False, "kept_player_shell": bool(stopped_in_place)}
 
 
@@ -547,13 +541,7 @@ def clear_resumable_session():
     _discard_interrupted_playback_state("resume_clear")
     with player.MPV_LOCK:
         playback_service.stop_all()
-    state.set_now_playing(None)
-    state.set_session_position(None)
-    state.set_session_state("idle")
-    try:
-        state.persist_queue()
-    except Exception:
-        pass
+    playback_service.clear_session()
     return {"status": "cleared", "resume_available": False}
 
 
@@ -572,87 +560,31 @@ def resume_session():
 @router.post("/stop")
 def stop():
     """User stop with resume support; always return to idle visuals."""
-    playback_service.suppress_auto_next(3600 * 24)
-    _discard_interrupted_playback_state("stop")
-
-    pos = None
-    dur = None
     stop_hint_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     emit_stopped_hint = isinstance(stop_hint_now, dict) and bool(stop_hint_now.get("jellyfin_item_id"))
-    preserve_resume = _can_preserve_closed_session()
-    if preserve_resume:
-        with player.MPV_LOCK:
-            pos = player.mpv_get("time-pos")
-            dur = player.mpv_get("duration")
-        try:
-            state.set_session_position(float(pos) if pos is not None else None)
-        except Exception:
-            state.set_session_position(None)
 
-    if preserve_resume:
-        try:
-            if isinstance(state.NOW_PLAYING, dict):
-                np = dict(state.NOW_PLAYING)
-                if pos is not None:
-                    np["resume_pos"] = float(pos)
-                np["closed"] = True
-                np["closed_at"] = int(time.time())
-                state.set_now_playing(np)
-        except Exception:
-            pass
-    elif getattr(state, "SESSION_STATE", "idle") != "closed":
-        try:
-            state.set_now_playing(None)
-        except Exception:
-            pass
-        try:
-            state.set_session_position(None)
-        except Exception:
-            pass
-
-    if preserve_resume:
-        state.set_session_state("closed")
-        with player.MPV_LOCK:
-            playback_service.stop_all()
-        player.update_history_progress(
-            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
-            position_sec=pos,
-            duration_sec=dur,
-            force=True,
-        )
-        _jellyfin_emit_stopped_hint(pos, dur)
+    result = playback_service.stop_current()
+    pos = result["position"]
+    if result["preserve_resume"]:
+        _jellyfin_emit_stopped_hint(pos, result["duration"])
         return {"status": "stopped", "resume_available": bool(state.NOW_PLAYING), "position": pos}
 
     if emit_stopped_hint:
-        _jellyfin_emit_stopped_hint(pos, dur)
-    if getattr(state, "SESSION_STATE", "idle") != "closed":
-        try:
-            state.set_now_playing(None)
-        except Exception:
-            pass
-        try:
-            state.set_session_position(None)
-        except Exception:
-            pass
-    state.set_session_state("idle")
-    with player.MPV_LOCK:
-        playback_service.stop_all()
+        _jellyfin_emit_stopped_hint(pos, result["duration"])
     return {"status": ("stopped" if emit_stopped_hint else "idle"), "resume_available": False, "position": pos}
 
 
 @router.post("/pause")
 def pause():
     result = _control_result_or_raise(player.mpv_set_result("pause", True), action="pause")
-    state.set_session_state("paused")
-    state.set_pause_reason("user")
+    playback_service.mark_paused(True)
     return {"ok": True, "paused": True, **_control_ack_payload(result)}
 
 
 @router.post("/resume")
 def resume():
     result = _control_result_or_raise(player.mpv_set_result("pause", False), action="resume")
-    state.set_session_state("playing")
-    state.set_pause_reason(None)
+    playback_service.mark_paused(False)
     return {"ok": True, "paused": False, **_control_ack_payload(result)}
 
 
@@ -661,8 +593,7 @@ def toggle_pause():
     cur = bool(player.mpv_get("pause"))
     target = not cur
     result = _control_result_or_raise(player.mpv_set_result("pause", target), action="toggle_pause")
-    state.set_session_state("paused" if target else "playing")
-    state.set_pause_reason("user" if target else None)
+    playback_service.mark_paused(target)
     return {"ok": True, "paused": target, **_control_ack_payload(result)}
 
 
@@ -680,8 +611,7 @@ def playback_play():
         cur = bool(player.mpv_get("pause"))
         target = not cur
         result = _control_result_or_raise(player.mpv_set_result("pause", target), action="playback_play")
-        state.set_session_state("paused" if target else "playing")
-        state.set_pause_reason("user" if target else None)
+        playback_service.mark_paused(target)
         return {
             "ok": True,
             "action": ("pause" if target else "resume"),
@@ -727,9 +657,7 @@ def playback_play():
             resumed["started"] = int(time.time())
             resumed["mode"] = "resume"
             resumed["closed"] = False
-            state.set_now_playing(resumed)
-            state.set_session_state("playing")
-            state.set_pause_reason(None)
+            playback_service.mark_resumed_now_playing(resumed)
             return {"ok": True, "action": "resume_session", "now_playing": state.NOW_PLAYING, **_control_ack_payload(resume_result)}
 
         # Fallback: re-resolve/play via play_item
@@ -742,9 +670,7 @@ def playback_play():
             start_pos=(float(pos) if pos is not None else None),
         )
         resumed["closed"] = False
-        state.set_now_playing(resumed)
-        state.set_session_state("playing")
-        state.set_pause_reason(None)
+        playback_service.mark_resumed_now_playing(resumed)
         return {"ok": True, "action": "resume_session", "now_playing": state.NOW_PLAYING}
 
     # Else: play next queue item.
@@ -766,8 +692,7 @@ def playback_toggle():
         cur = bool(player.mpv_get("pause"))
         target = not cur
         result = _control_result_or_raise(player.mpv_set_result("pause", target), action="toggle_pause")
-        state.set_session_state("paused" if target else "playing")
-        state.set_pause_reason("user" if target else None)
+        playback_service.mark_paused(target)
         return {"ok": True, "action": "toggle_pause", "paused": target, **_control_ack_payload(result)}
     return playback_play()
 

@@ -309,6 +309,24 @@ before merging this milestone into the branch is encouraged.
 
 ### M7: Writer Containment And Test Reshape
 
+Status: complete (2026-07-03)
+
+Notes:
+
+- Final route migrations: `stop_current` and `clear_session` transition cores
+  moved into the service; pause/unpause/toggle session marks go through
+  `mark_paused`; resume fallbacks through `mark_resumed_now_playing`.
+- End state reached: `routes/playback.py` writes zero transition globals. The
+  remaining non-service writers are pinned as documented exceptions (player
+  process adapter, Jellyfin paths for Phase 4, status reconciliation, queue
+  CRUD/retention, temp-stack compat aliases) — rationale in the inventory
+  doc's Containment Contract section and in the pinned test.
+- Test reshape assessment: route-level tests already exercise every service
+  command through the public HTTP contract (they were written that way in
+  Phase 1); dedicated service-level unit tests would duplicate them, so the
+  reshape is limited to the M4 monkeypatch repoints. Revisit only if service
+  commands gain callers outside the routes.
+
 Deliverables:
 
 - Inventory test reaches its end state: `playback_service` and `state.py` are
@@ -345,3 +363,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M4: temporary playback stack and helpers moved into `playback_service` with routes-side compat aliases; two restore monkeypatches repointed to the service. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M5 close and resume semantics. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M5: close/resume transition cores moved into the service (close_current, resume_session, resume-in-place, play-now preserve/rollback, can-preserve predicate); routes keep guards, response shaping, and UI/Jellyfin side effects. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no behavior-test edits); `git diff --check` | M6 queue advancement and natural end. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M6: `natural_end` service command owns the end-of-playback decision; the autoplay monitor keeps detection only; advance outcome exceptions re-exported via the service. Advance mechanics stay in player.py by design (see M6 notes). | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M7 writer containment and test reshape. |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M7: stop/clear-session cores and pause/resume marks moved into the service; `routes/playback.py` now writes zero transition globals; remaining writers pinned as documented exceptions. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M8 final validation (live smoke with the user). |

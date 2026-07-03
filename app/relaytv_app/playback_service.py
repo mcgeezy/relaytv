@@ -468,6 +468,99 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     return resumed, resume_result
 
 
+def clear_session() -> None:
+    """Reset the session to idle: no current item, no resume position."""
+    state.set_now_playing(None)
+    state.set_session_position(None)
+    state.set_session_state("idle")
+    try:
+        state.persist_queue()
+    except Exception:
+        pass
+
+
+def mark_paused(paused: bool) -> None:
+    """Record a user pause/unpause of the current session."""
+    state.set_session_state("paused" if paused else "playing")
+    state.set_pause_reason("user" if paused else None)
+
+
+def mark_resumed_now_playing(resumed: dict) -> None:
+    """Record a successfully resumed item as the playing session."""
+    state.set_now_playing(resumed)
+    state.set_session_state("playing")
+    state.set_pause_reason(None)
+
+
+def stop_current() -> dict[str, Any]:
+    """User stop with resume support; always returns to idle visuals.
+
+    Mirrors ``close_current``'s split: the transition core lives here, the
+    caller owns response shaping and the Jellyfin stopped hint.
+    """
+    suppress_auto_next(3600 * 24)
+    discard_interrupted_playback_state("stop")
+
+    pos = None
+    dur = None
+    preserve_resume = can_preserve_closed_session()
+    if preserve_resume:
+        with player.MPV_LOCK:
+            pos = player.mpv_get("time-pos")
+            dur = player.mpv_get("duration")
+        try:
+            state.set_session_position(float(pos) if pos is not None else None)
+        except Exception:
+            state.set_session_position(None)
+
+    if preserve_resume:
+        try:
+            if isinstance(state.NOW_PLAYING, dict):
+                np = dict(state.NOW_PLAYING)
+                if pos is not None:
+                    np["resume_pos"] = float(pos)
+                np["closed"] = True
+                np["closed_at"] = int(time.time())
+                state.set_now_playing(np)
+        except Exception:
+            pass
+    elif getattr(state, "SESSION_STATE", "idle") != "closed":
+        try:
+            state.set_now_playing(None)
+        except Exception:
+            pass
+        try:
+            state.set_session_position(None)
+        except Exception:
+            pass
+
+    if preserve_resume:
+        state.set_session_state("closed")
+        with player.MPV_LOCK:
+            stop_all()
+        player.update_history_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+            position_sec=pos,
+            duration_sec=dur,
+            force=True,
+        )
+        return {"preserve_resume": True, "position": pos, "duration": dur}
+
+    if getattr(state, "SESSION_STATE", "idle") != "closed":
+        try:
+            state.set_now_playing(None)
+        except Exception:
+            pass
+        try:
+            state.set_session_position(None)
+        except Exception:
+            pass
+    state.set_session_state("idle")
+    with player.MPV_LOCK:
+        stop_all()
+    return {"preserve_resume": False, "position": pos, "duration": dur}
+
+
 # --- temporary playback (picture-in-place interruptions with restore) ------
 #
 # Moved from routes/__init__.py in Phase 3 M4. The stack holds restore frames

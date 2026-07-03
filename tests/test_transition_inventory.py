@@ -116,27 +116,34 @@ def test_transition_inventory_doc_matches_source() -> None:
 # service and REMOVE modules from these sets; nothing may be added without a
 # deliberate roadmap decision. Counts are tracked in the generated doc table;
 # this pin tracks the module sets, which is what the migration changes.
+# Phase 3 end-state contract (M7). routes/playback.py — the module hosting
+# every playback HTTP command — writes NOTHING here anymore. Each remaining
+# non-service writer is a documented exception:
+# - player.py: the process adapter updating session bookkeeping inside
+#   commands the service invoked (play_item, monitors, handoff mechanics).
+# - routes/jellyfin.py and the routes/__init__.py Jellyfin command impl:
+#   Jellyfin product paths, extracted in Phase 4.
+# - routes/__init__.py _status_payload: status-side session reconciliation
+#   (self-healing on read); candidate for a service reconcile command later.
+# - routes/queue.py, routes/uploads.py, upload_store.py: queue CRUD and
+#   upload retention — queue content management, not playback transitions.
+# - _TEMP_PLAYBACK_STACK compat aliases/wrappers: retained so existing tests
+#   can observe the live stack via the routes module.
 EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
     "NOW_PLAYING": {
         "playback_service.py",
         "player.py",
         "routes/__init__.py",
         "routes/jellyfin.py",
-        "routes/playback.py",
     },
     "SESSION_STATE": {
         "playback_service.py",
         "player.py",
         "routes/__init__.py",
         "routes/jellyfin.py",
-        "routes/playback.py",
     },
-    "SESSION_POSITION": {"playback_service.py", "player.py", "routes/playback.py"},
-    # Tightened in M3: all suppression writes go through
-    # playback_service.suppress_auto_next / clear_auto_next_suppression.
+    "SESSION_POSITION": {"playback_service.py", "player.py"},
     "AUTO_NEXT_SUPPRESS_UNTIL": {"playback_service.py"},
-    # M5 ratchet: routes/playback.py no longer mutates the queue at all
-    # (play-now preserve/rollback moved into the service).
     "QUEUE": {
         "playback_service.py",
         "player.py",
@@ -145,9 +152,6 @@ EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
         "routes/uploads.py",
         "upload_store.py",
     },
-    # M4: the stack lives in playback_service; routes/__init__.py keeps a
-    # single compat alias line and routes/playback.py thin wrappers until the
-    # M7 test reshape retires them.
     "_TEMP_PLAYBACK_STACK": {
         "playback_service.py",
         "routes/__init__.py",
