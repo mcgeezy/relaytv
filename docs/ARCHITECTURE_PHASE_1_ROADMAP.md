@@ -441,7 +441,7 @@ Progress:
 
 ### M8: Phase 1 Final Validation
 
-Status: in progress
+Status: complete
 
 Required before merging to `main`:
 
@@ -524,8 +524,19 @@ Progress:
   logging window-stack assertions; idle Qt shell startup now waits through a
   boot-grace/display-stability gate instead of launching immediately at app
   startup.
-- Manual settings apply plus playback/Jellyfin play and queue actions still
-  need explicit confirmation before opening the final Phase 1 to `main` PR.
+- Full automated gates re-passed on 2026-07-02 (`ruff check app tests`, full
+  `PYTHONPATH=app pytest -q` with 221 passed, `git diff --check`) with the
+  updated `banner.png` and removed `banner.svg` in the tree; the live container
+  serves the new PNG on both banner endpoints and the `.svg` endpoints fall
+  back to the generated inline SVG as designed.
+- Read-only credentialed live smoke re-passed on 2026-07-02 against the
+  running container: `/health`, `/status`, `/ui`, `/idle`, `/settings`,
+  `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`,
+  `/pwa/brand/banner.png`, `/assets/banner.svg`,
+  `/integrations/jellyfin/status`, `/jellyfin/home`, `/jellyfin/movies`,
+  `/jellyfin/search`.
+- Manual settings apply plus playback/Jellyfin play and queue smoke were
+  confirmed by the user on 2026-07-02, closing M8.
 
 ## PR And Milestone Log
 
@@ -571,6 +582,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 | 2026-07-02 | local | `codex/architecture-phase-1` | Updated Raspberry Pi playback defaults after live validation: ARM no longer enables mpv `--profile=fast` by default, ARM yt-dlp no longer forces the old fps<=30 AVC-safe selector or YouTube progressive-first stage unless explicitly requested, YouTube/Rumble defaults prefer capped 1080p non-AV1 streams, and YouTube resolver retries no longer fall back to unconstrained auto when AV1 is disallowed. | `PYTHONPATH=app pytest -q tests/test_smoke.py -k 'pi_qt_mpv_args or pi_ytdlp or pi_youtube_resolver'`; live `/status` confirmed `effective_ytdlp_format` uses the 1080p non-AV1 YouTube selector on the Pi; mpv IPC showed current old-session playback was 1080p AV1 with `decoder-frame-drop-count=0` and presentation `frame-drop-count` increasing, motivating the resolver fallback guard. | Recheck full Phase 1 gates before the next push. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Fixed idle settings sync so enabling the dashboard while idle starts the dashboard surface immediately instead of waiting for close or playback end. | `PYTHONPATH=app pytest -q tests/test_smoke.py -k "idle_settings_sync or settings_apply_now"`; `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `git diff --check` | Rebuild live container and manually confirm settings apply. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Reviewed and refreshed the full public/engineering doc set for current Phase 1 state, trusted-LAN assumptions, Jellyfin auth, release/install wording, route inventory count, and future-agent validation guidance. | Markdown fence sanity; `git diff --check`; full Phase 1 gates before push | Keep docs in sync with any remaining M8 manual validation results. |
+| 2026-07-02 | local | `codex/architecture-phase-1` | Closed M8 after the user confirmed manual settings apply and playback/Jellyfin play/queue smoke in the live environment; marked Phase 1 complete and opened the final Phase 1 PR to `main`. | User-confirmed manual smoke; prior 2026-07-02 automated gates and read-only live smoke | Plan Phase 2 on a fresh branch after merge. |
+| 2026-07-02 | local | `codex/architecture-phase-1` | Re-ran full Phase 1 gates and read-only credentialed live smoke with the updated `banner.png` (SVG banner removed; endpoints fall back to the generated inline SVG). | `ruff check app tests`; `PYTHONPATH=app pytest -q` (221 passed); `git diff --check`; live `GET /health`, `/status`, `/ui`, `/idle`, `/settings`, `/static/ui/app.css`, `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`, `/assets/banner.svg`, `/integrations/jellyfin/status`, `/jellyfin/home?limit=6&refresh=1`, `/jellyfin/movies?limit=6&refresh=1`, `/jellyfin/search?q=the&limit=3` | Manual settings apply and playback/Jellyfin play/queue smoke with the user, then open the final Phase 1 to `main` PR. |
 | 2026-07-01 | local | `codex/architecture-phase-1` | Added Qt shell supervisor recovery for display-startup races, stale idle shell telemetry, active native Qt audio-without-video playback, suppressed the X11 notification overlay while native Qt owns the surface, defaulted the embedded overlay to software rendering on Wayland with overlay health telemetry, and deferred idle Qt shell launch during fresh host boots. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py -k 'x11_overlay or notification_surface_does_not_start_x11_overlay or qt_shell_supervisor or qt_overlay_software or ensure_qt_shell_idle'`; `PYTHONPATH=app pytest -q tests/test_smoke.py tests/test_route_inventory.py`; `git diff --check` | Recheck live boot behavior after next host restart. |
 
 ## Open Questions
@@ -580,8 +593,8 @@ Add entries here as PRs land into `codex/architecture-phase-1`.
 
 ## Current Recommendation
 
-Complete the remaining M8 manual settings apply and playback action checks in
-the live environment. The automated gates, rendered browser view review, and
-credentialed live HTTP/Jellyfin browse smoke have passed; do not merge Phase 1
-to `main` until settings apply plus playback/Jellyfin play and queue actions
-are explicitly confirmed.
+Phase 1 is complete. All milestones (M0-M8) are closed: automated gates,
+rendered browser view review, credentialed live HTTP/Jellyfin smoke, and the
+user-confirmed manual settings apply plus playback/Jellyfin play and queue
+smoke have all passed. Merge the Phase 1 PR into `main` and plan Phase 2 work
+on a fresh branch.
