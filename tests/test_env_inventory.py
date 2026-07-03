@@ -30,10 +30,12 @@ _CONFIG_VAR = re.compile(
 )
 
 # Runtime writes to the process environment (the in-process config bus).
+# RuntimeConfig.set_env dual-writes os.environ and the settings snapshot.
 _WRITE_PATTERNS = (
     re.compile(r"""os\.environ\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]\s*=(?!=)"""),
     re.compile(r"""os\.environ\.setdefault\(\s*["']([A-Z][A-Z0-9_]*)["']"""),
     re.compile(r"""os\.environ\.pop\(\s*["']([A-Z][A-Z0-9_]*)["']"""),
+    re.compile(r"""runtime_config\.set_env\(\s*["']([A-Z][A-Z0-9_]*)["']"""),
 )
 
 # Pre-app launcher: mutates its own env dict/os.environ before exec'ing the

@@ -160,6 +160,43 @@ def test_settings_apply_syncs_jellyfin_env(quiet_settings_apply) -> None:
     assert os.environ["RELAYTV_JELLYFIN_AUTH_ENABLED"] == "1"
 
 
+def test_settings_apply_keeps_runtime_config_in_lockstep_with_env(quiet_settings_apply) -> None:
+    from relaytv_app.config import SETTINGS_BUS_VARS, runtime_config
+
+    _apply(
+        quality_mode="manual",
+        quality_cap="1080p",
+        ytdlp_format="bv*+ba/b",
+        youtube_cookies_path="/data/cookies.txt",
+        youtube_use_invidious=True,
+        youtube_invidious_base="https://invidious.example",
+        uploads={"max_size_gb": 5.0, "retention_hours": 24},
+        audio_device="auto",
+        video_mode="drm",
+        device_name="Lockstep TV",
+        drm_connector="HDMI-A-1",
+        sub_lang="en",
+        cec_enabled="1",
+        idle_dashboard_enabled=True,
+        idle_notifications_enabled=True,
+        idle_qr_enabled=False,
+        idle_qr_size=200,
+        jellyfin_enabled=True,
+        jellyfin_server_url="https://jf.example",
+        jellyfin_username="mark",
+        jellyfin_password="hunter2",
+        jellyfin_user_id="uid-1",
+        jellyfin_audio_lang="eng",
+        jellyfin_sub_lang="off",
+        jellyfin_playback_mode="auto",
+    )
+
+    snapshot = runtime_config.snapshot()
+    for name in sorted(SETTINGS_BUS_VARS):
+        if name in os.environ:
+            assert snapshot.raw(name) == os.environ[name], name
+
+
 def test_startup_sync_mirrors_persisted_settings_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
     persisted = {
         "youtube_cookies_path": "/data/cookies.txt",
@@ -181,7 +218,12 @@ def test_startup_sync_mirrors_persisted_settings_to_env(monkeypatch: pytest.Monk
     monkeypatch.setattr("relaytv_app.main.load_state_from_disk", lambda: None)
     monkeypatch.setattr("relaytv_app.upload_store.cleanup_uploads", lambda settings: None)
 
+    from relaytv_app.config import runtime_config
+
     with TestClient(create_app(testing=True)):
+        snapshot = runtime_config.snapshot()
+        assert snapshot.raw("RELAYTV_JELLYFIN_SERVER_URL") == "https://jf.example"
+        assert snapshot.number("RELAYTV_UPLOAD_MAX_SIZE_GB", 0.0) == 12.5
         assert os.environ["RELAYTV_YTDLP_COOKIES"] == "/data/cookies.txt"
         assert os.environ["USE_INVIDIOUS"] == "true"
         assert os.environ["INVIDIOUS_BASE"] == "https://invidious.example"

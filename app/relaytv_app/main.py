@@ -19,6 +19,7 @@ from .player import (
     stop_splash_screen,
 )
 from .x11_overlay import start_overlay as start_x11_overlay, stop_overlay as stop_x11_overlay
+from .config import runtime_config
 from .routes import router
 from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
@@ -41,22 +42,22 @@ def create_app(*, testing: bool = False) -> FastAPI:
             s = {}
         if not isinstance(s, dict):
             return
-        os.environ["RELAYTV_YTDLP_COOKIES"] = str(s.get("youtube_cookies_path") or "").strip()
-        os.environ["USE_INVIDIOUS"] = "true" if bool(s.get("youtube_use_invidious")) else "false"
-        os.environ["INVIDIOUS_BASE"] = str(s.get("youtube_invidious_base") or "").strip()
-        os.environ["RELAYTV_JELLYFIN_ENABLED"] = "1" if bool(s.get("jellyfin_enabled")) else "0"
-        os.environ["RELAYTV_JELLYFIN_SERVER_URL"] = str(s.get("jellyfin_server_url") or "").strip()
-        os.environ["RELAYTV_JELLYFIN_API_KEY"] = str(s.get("jellyfin_api_key") or "").strip()
-        os.environ["RELAYTV_JELLYFIN_AUTH_ENABLED"] = "1" if bool(s.get("jellyfin_auth_enabled", True)) else "0"
-        os.environ["RELAYTV_JELLYFIN_USERNAME"] = str(s.get("jellyfin_username") or "").strip()
-        os.environ["RELAYTV_JELLYFIN_PASSWORD"] = str(s.get("jellyfin_password") or "").strip()
-        os.environ["RELAYTV_JELLYFIN_USER_ID"] = str(s.get("jellyfin_user_id") or "").strip()
-        os.environ["RELAYTV_JELLYFIN_AUDIO_LANG"] = str(s.get("jellyfin_audio_lang") or "").strip().lower()
-        os.environ["RELAYTV_JELLYFIN_SUB_LANG"] = str(s.get("jellyfin_sub_lang") or "").strip().lower()
-        os.environ["RELAYTV_JELLYFIN_PLAYBACK_MODE"] = str(s.get("jellyfin_playback_mode") or "auto").strip().lower()
+        runtime_config.set_env("RELAYTV_YTDLP_COOKIES", str(s.get("youtube_cookies_path") or "").strip())
+        runtime_config.set_env("USE_INVIDIOUS", "true" if bool(s.get("youtube_use_invidious")) else "false")
+        runtime_config.set_env("INVIDIOUS_BASE", str(s.get("youtube_invidious_base") or "").strip())
+        runtime_config.set_env("RELAYTV_JELLYFIN_ENABLED", "1" if bool(s.get("jellyfin_enabled")) else "0")
+        runtime_config.set_env("RELAYTV_JELLYFIN_SERVER_URL", str(s.get("jellyfin_server_url") or "").strip())
+        runtime_config.set_env("RELAYTV_JELLYFIN_API_KEY", str(s.get("jellyfin_api_key") or "").strip())
+        runtime_config.set_env("RELAYTV_JELLYFIN_AUTH_ENABLED", "1" if bool(s.get("jellyfin_auth_enabled", True)) else "0")
+        runtime_config.set_env("RELAYTV_JELLYFIN_USERNAME", str(s.get("jellyfin_username") or "").strip())
+        runtime_config.set_env("RELAYTV_JELLYFIN_PASSWORD", str(s.get("jellyfin_password") or "").strip())
+        runtime_config.set_env("RELAYTV_JELLYFIN_USER_ID", str(s.get("jellyfin_user_id") or "").strip())
+        runtime_config.set_env("RELAYTV_JELLYFIN_AUDIO_LANG", str(s.get("jellyfin_audio_lang") or "").strip().lower())
+        runtime_config.set_env("RELAYTV_JELLYFIN_SUB_LANG", str(s.get("jellyfin_sub_lang") or "").strip().lower())
+        runtime_config.set_env("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(s.get("jellyfin_playback_mode") or "auto").strip().lower())
         uploads = s.get("uploads") if isinstance(s.get("uploads"), dict) else {}
-        os.environ["RELAYTV_UPLOAD_MAX_SIZE_GB"] = str(uploads.get("max_size_gb") or 5.0)
-        os.environ["RELAYTV_UPLOAD_RETENTION_HOURS"] = str(uploads.get("retention_hours") or 24)
+        runtime_config.set_env("RELAYTV_UPLOAD_MAX_SIZE_GB", str(uploads.get("max_size_gb") or 5.0))
+        runtime_config.set_env("RELAYTV_UPLOAD_RETENTION_HOURS", str(uploads.get("retention_hours") or 24))
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -66,6 +67,9 @@ def create_app(*, testing: bool = False) -> FastAPI:
         except Exception:
             pass
         load_state_from_disk()
+        # Capture operator-provided settings-bus env before the persisted
+        # settings sync overwrites its subset; set_env keeps both in lockstep.
+        runtime_config.refresh_from_env()
         _sync_jellyfin_env_from_settings()
         upload_store.cleanup_uploads(get_settings() if callable(get_settings) else {})
         if not testing:

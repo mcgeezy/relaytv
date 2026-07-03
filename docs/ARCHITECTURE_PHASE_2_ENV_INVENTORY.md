@@ -73,8 +73,8 @@ Nuances the migration must preserve:
 <!-- BEGIN GENERATED ENV TABLE (tests/test_env_inventory.py) -->
 | Variable | Referenced in | Runtime writers | Classification |
 | --- | --- | --- | --- |
-| `INVIDIOUS_BASE` | `main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `MPV_AUDIO_DEVICE` | `player.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `INVIDIOUS_BASE` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `MPV_AUDIO_DEVICE` | `config.py`<br>`player.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_ACCESS_LOG` | `debug.py` | - | static env |
 | `RELAYTV_ACCESS_LOG_HOT_PATHS` | `debug.py` | - | static env |
 | `RELAYTV_ACCESS_LOG_LEVEL` | `debug.py` | - | static env |
@@ -83,19 +83,19 @@ Nuances the migration must preserve:
 | `RELAYTV_ARM_FAST_PROFILE` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_AUTO_STREAM_PROFILE` | `state.py`<br>`ytdlp_format_policy.py` | - | static env |
 | `RELAYTV_BANNER_PATH` | `qt_shell_app.py`<br>`routes/assets.py` | - | child process input |
-| `RELAYTV_CEC` | `player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_CEC` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE` | `player.py` | - | static env |
 | `RELAYTV_CEC_AUTO_ON_SWITCH` | `player.py` | - | static env |
-| `RELAYTV_CEC_ENABLED` | `player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_CEC_ENABLED` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_CEC_MONITOR` | `player.py` | - | static env |
 | `RELAYTV_CEC_PHYS_ADDR` | `player.py` | - | static env |
 | `RELAYTV_CURSOR_MODE` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEBUG` | `debug.py`<br>`player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEFAULT_VOLUME` | `state.py` | - | static env |
-| `RELAYTV_DEVICE_NAME` | `discovery_mdns.py`<br>`integrations/jellyfin_receiver.py`<br>`qt_shell_app.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus, child process input |
+| `RELAYTV_DEVICE_NAME` | `config.py`<br>`discovery_mdns.py`<br>`integrations/jellyfin_receiver.py`<br>`qt_shell_app.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus, child process input |
 | `RELAYTV_DISABLE_WORKERS` | `main.py` | - | static env |
 | `RELAYTV_DISPLAY_CAP_HEIGHT` | `video_profile.py`<br>`ytdlp_format_policy.py` | - | static env |
-| `RELAYTV_DRM_CONNECTOR` | `player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_DRM_CONNECTOR` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_DRM_VIDEO_FALLBACK_TO_X11` | `player.py` | - | static env |
 | `RELAYTV_FORCE_RESOLVE_PROVIDERS` | `player.py` | - | static env |
 | `RELAYTV_HEADLESS_REMOTE_DISPLAY` | `container_entrypoint.py` | - | pre-app entrypoint |
@@ -112,39 +112,39 @@ Nuances the migration must preserve:
 | `RELAYTV_HOST_PROFILE` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_HOST_SESSION_TYPE` | `player.py`<br>`qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
 | `RELAYTV_IDLE_BROWSER` | `player.py` | - | static env |
-| `RELAYTV_IDLE_DASHBOARD_ENABLED` | `player.py`<br>`routes/settings.py`<br>`state.py`<br>`x11_overlay.py` | `routes/settings.py` | settings bus |
-| `RELAYTV_IDLE_NOTIFICATIONS_ENABLED` | `player.py`<br>`routes/settings.py`<br>`state.py`<br>`x11_overlay.py` | `routes/settings.py` | settings bus |
-| `RELAYTV_IDLE_QR_ENABLED` | `routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
-| `RELAYTV_IDLE_QR_SIZE` | `routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_IDLE_DASHBOARD_ENABLED` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py`<br>`x11_overlay.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_IDLE_NOTIFICATIONS_ENABLED` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py`<br>`x11_overlay.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_IDLE_QR_ENABLED` | `config.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_IDLE_QR_SIZE` | `config.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_IDLE_URL` | `player.py` | - | static env |
 | `RELAYTV_IMAGE_CREATED` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_REVISION` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_SOURCE` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_VERSION` | `routes/app_info.py` | - | static env |
 | `RELAYTV_JELLYFIN_ADJACENT_SEASON_PROBE_MAX` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_API_KEY` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`state.py` | `main.py` | settings bus |
-| `RELAYTV_JELLYFIN_AUDIO_LANG` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_AUTH_ENABLED` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_API_KEY` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`state.py` | `main.py` | settings bus |
+| `RELAYTV_JELLYFIN_AUDIO_LANG` | `config.py`<br>`main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_AUTH_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUTH_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_AUTO_REGISTER` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_CATALOG_MAX_ENTRIES` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_CATALOG_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_CLIENT_NAME` | `integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_CLIENT_NAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_CLIENT_VERSION` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_COMMAND_ID_TTL_SEC` | `routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_COMPLETE_RATIO` | `integrations/jellyfin_receiver.py`<br>`player.py`<br>`routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_COMPLETE_REMAINING_SEC` | `integrations/jellyfin_receiver.py`<br>`player.py`<br>`routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_DETAIL_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_DEVICE_ID` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_DEVICE_NAME` | `integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_ENABLED` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_DEVICE_NAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_HEARTBEAT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_MAX_STREAMING_BITRATE` | `routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_METADATA_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE` | `routes/__init__.py` | - | static env |
-| `RELAYTV_JELLYFIN_PASSWORD` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `main.py`<br>`routes/__init__.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_PASSWORD` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`main.py`<br>`routes/__init__.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_PLAY_DEBOUNCE_SEC` | `routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
@@ -154,14 +154,14 @@ Nuances the migration must preserve:
 | `RELAYTV_JELLYFIN_REGISTER_RETRY_MAX_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_SEARCH_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_SERVER_URL` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_SERVER_URL` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_STOPPED_DEDUPE_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_SUB_LANG` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_SUB_LANG` | `config.py`<br>`main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_UI_ACTION_DEDUPE_SEC` | `routes/__init__.py` | - | static env |
-| `RELAYTV_JELLYFIN_USERNAME` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_USER_ID` | `integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_USERNAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_USER_ID` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_LOGO_IMAGE` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_LOGO_PATH` | `routes/__init__.py`<br>`routes/assets.py` | - | static env |
 | `RELAYTV_LOG_LEVEL` | `debug.py` | - | static env |
@@ -246,8 +246,8 @@ Nuances the migration must preserve:
 | `RELAYTV_QT_SHELL_SUPERVISOR_INTERVAL` | `player.py` | - | static env |
 | `RELAYTV_QT_SHELL_VIDEO_GRACE_SEC` | `player.py` | - | static env |
 | `RELAYTV_QT_TRACKLIST_REFRESH_SEC` | `qt_shell_app.py` | - | child process input |
-| `RELAYTV_QUALITY_CAP` | `routes/settings.py`<br>`state.py`<br>`ytdlp_format_policy.py` | `routes/settings.py` | settings bus |
-| `RELAYTV_QUALITY_MODE` | `routes/settings.py`<br>`state.py`<br>`ytdlp_format_policy.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_QUALITY_CAP` | `config.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_format_policy.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_QUALITY_MODE` | `config.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_format_policy.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_QUEUE_FILE` | `state.py` | - | static env |
 | `RELAYTV_QUEUE_HANDOFF_CONFIRM_POLLS` | `player.py` | - | static env |
 | `RELAYTV_QUEUE_HANDOFF_CONFIRM_POLL_INTERVAL_SEC` | `player.py` | - | static env |
@@ -273,7 +273,7 @@ Nuances the migration must preserve:
 | `RELAYTV_STATE_DIR` | `state.py` | - | static env |
 | `RELAYTV_STATIC_DIR` | `routes/assets.py` | - | static env |
 | `RELAYTV_STATUS_INCLUDE_MPV_LOG` | `routes/__init__.py` | - | static env |
-| `RELAYTV_SUB_LANG` | `player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_SUB_LANG` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_THUMB_DIR` | `qt_shell_app.py`<br>`thumb_cache.py` | - | child process input |
 | `RELAYTV_THUMB_JPEG_Q` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_MAX_BYTES` | `thumb_cache.py` | - | static env |
@@ -287,13 +287,13 @@ Nuances the migration must preserve:
 | `RELAYTV_UPDATE_CHECK_DISABLED` | `routes/app_info.py` | - | static env |
 | `RELAYTV_UPDATE_CHECK_TTL_SEC` | `routes/app_info.py` | - | static env |
 | `RELAYTV_UPLOADS_DIR` | `upload_store.py` | - | static env |
-| `RELAYTV_UPLOAD_MAX_SIZE_GB` | `main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_UPLOAD_MAX_SIZE_GB` | `config.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_UPLOAD_PROGRESSIVE_MAX_STALL_SEC` | `upload_store.py` | - | static env |
 | `RELAYTV_UPLOAD_PROGRESSIVE_MIN_THROUGHPUT_KBPS` | `upload_store.py` | - | static env |
 | `RELAYTV_UPLOAD_PROGRESSIVE_MP4_READY_MB` | `upload_store.py` | - | static env |
 | `RELAYTV_UPLOAD_PROGRESSIVE_WEBM_READY_MB` | `upload_store.py` | - | static env |
-| `RELAYTV_UPLOAD_RETENTION_HOURS` | `main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_VIDEO_MODE` | `player.py`<br>`routes/__init__.py`<br>`routes/settings.py`<br>`state.py` | `player.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_UPLOAD_RETENTION_HOURS` | `config.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_VIDEO_MODE` | `config.py`<br>`player.py`<br>`routes/__init__.py`<br>`routes/settings.py`<br>`state.py` | `player.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_VIDEO_PROFILE_ALLOW_AV1` | `video_profile.py` | - | static env |
 | `RELAYTV_VIDEO_PROFILE_TTL_SEC` | `video_profile.py` | - | static env |
 | `RELAYTV_X11_OVERLAY` | `player.py`<br>`routes/__init__.py`<br>`x11_overlay.py` | - | static env |
@@ -302,16 +302,16 @@ Nuances the migration must preserve:
 | `RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC` | `container_entrypoint.py` | - | pre-app entrypoint |
-| `RELAYTV_YTDLP_COOKIES` | `main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_YTDLP_COOKIES` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_YTDLP_COOKIES_FROM_BROWSER` | `resolver.py` | - | static env |
 | `RELAYTV_YTDLP_COOKIES_UPLOAD_PATH` | `routes/settings.py` | - | static env |
 | `RELAYTV_YTDLP_JS_RUNTIME` | `resolver.py` | - | static env |
 | `RELAYTV_YTDLP_USE_NODE` | `resolver.py` | - | static env |
-| `USE_INVIDIOUS` | `main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `USE_INVIDIOUS` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `YTDLP_ARGS` | `resolver.py` | - | static env |
 | `YTDLP_COOKIES` | `resolver.py`<br>`routes/settings.py`<br>`state.py` | - | static env |
 | `YTDLP_COOKIES_FROM_BROWSER` | `resolver.py` | - | static env |
-| `YTDLP_FORMAT` | `routes/settings.py`<br>`state.py`<br>`ytdlp_format_policy.py` | `routes/settings.py` | settings bus |
+| `YTDLP_FORMAT` | `config.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_format_policy.py` | `routes/settings.py` | settings bus |
 | `YTDLP_FORMAT_BITCHUTE` | `ytdlp_format_policy.py` | - | static env |
 | `YTDLP_FORMAT_RUMBLE` | `ytdlp_format_policy.py` | - | static env |
 | `YTDLP_FORMAT_TIKTOK` | `ytdlp_format_policy.py` | - | static env |

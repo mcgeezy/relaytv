@@ -174,7 +174,27 @@ Notes:
 
 ### M3: RuntimeConfig And SettingsSnapshot
 
-Status: not started
+Status: complete
+
+Results:
+
+- `config.py` now owns `SETTINGS_BUS_VARS` (31 variables), an immutable
+  `SettingsSnapshot` with typed accessors (`raw`/`text`/`flag`/`integer`/
+  `number`) that mirror the env parse helpers, and a `RuntimeConfig` service
+  with a module-level `runtime_config` instance.
+- Instead of duplicating sync logic, `RuntimeConfig.set_env()` owns the
+  dual-write: it mutates `os.environ` exactly as the legacy writers did and
+  keeps the snapshot in lockstep. All 52 runtime env write sites across
+  `routes/settings.py`, `main.py`, `routes/jellyfin.py`, and `player.py` were
+  converted 1:1 to `set_env` calls; the M1 guardrail tests prove env behavior
+  is unchanged.
+- Startup captures operator-provided settings-bus env via
+  `refresh_from_env()` before the persisted-settings sync runs.
+- Lockstep is asserted after a full settings apply and after startup sync in
+  `tests/test_settings_env_sync.py`; snapshot immutability, dual-write, and
+  typed accessor behavior are covered in `tests/test_config.py`.
+- The env inventory scanner now counts `runtime_config.set_env` as a runtime
+  write, so the settings-bus classification is preserved.
 
 Deliverables:
 
@@ -298,6 +318,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | 2026-07-02 | local | `codex/architecture-phase-2` | Created the Phase 2 branch and roadmap with env-inventory-first milestones. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Rebase onto `main` after PR #21 merges; begin M1 env inventory. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M1: generated the machine-checked env inventory (246 variables), pinned the settings-bus/child-process contract (`RELAYTV_DEVICE_NAME` only, dormant fallback), and added settings-apply/startup env sync guardrail tests. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (232 passed); `git diff --check` | Begin M2 shared env parsing module. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M2: added `config.py` typed env helpers, replaced all 13 duplicated `_env_*` copies with aliased imports (extended `_env_choice` spellings preserved via wrappers), and deleted the dead `resolver._env_bool`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (257 passed); `git diff --check`; `py_compile` on child-process modules | Begin M3 RuntimeConfig and SettingsSnapshot. |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Completed M3: added `RuntimeConfig`/`SettingsSnapshot` with `set_env` owning the env+snapshot dual-write, converted all 52 runtime env write sites 1:1, added startup `refresh_from_env`, and taught the inventory scanner about `set_env` writes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (262 passed); `git diff --check` | Begin M4 consumer migration (M4a leaf modules first). |
 
 ## Open Questions
 
