@@ -329,23 +329,40 @@ Deliverables (original):
 
 ### M7: Browser Smoke (Optional Stretch)
 
-Status: not started
+Status: deferred (decision recorded 2026-07-02)
 
-Deliverables:
-
-- One Playwright (or equivalent) smoke path: `/ui` loads, settings modal opens
-  and applies, queue shell renders, Jellyfin shell visibility.
-- Wire it as an optional local/manual gate first; CI adoption is a separate
-  decision.
-
-Notes:
-
-- Carried over from the Phase 1 open question. Skip without blocking the phase
-  if tooling cost is too high; record the decision here.
+Playwright is not installed on the development host and would require
+downloading a browser toolchain (~300MB) for an optional stretch goal.
+Deferred without blocking the phase; the Phase 1 open question about
+browser-automation smoke remains open for Phase 3+, where the playback
+transition service will benefit more directly from UI-level regression
+coverage. Rendered browser validation stays manual for now.
 
 ### M8: Phase 2 Final Validation
 
-Status: not started
+Status: in progress
+
+Progress:
+
+- Automated gates pass on 2026-07-02: `ruff check app tests`, full
+  `PYTHONPATH=app pytest -q` (268 passed), `git diff --check`, env inventory
+  snapshot test green with the doc current.
+- Ephemeral local-server smoke passed (uvicorn on 127.0.0.1:8899 with
+  temporary state/upload/thumb/snapshot dirs and workers disabled): `/health`,
+  `/status`, `/settings`, `/ui`, `/idle`, `/static/ui/app.css`,
+  `/static/ui/app.js`, `/assets/banner.png`, `/pwa/brand/banner.png`,
+  `/runtime/capabilities` all 200.
+- End-to-end settings apply validated over HTTP on the ephemeral server:
+  POST `/settings` (device name, quality mode/cap, sub lang, idle QR size)
+  persisted, read back correctly, and flowed through the RuntimeConfig
+  snapshot into `effective_ytdlp_format` in `/status` (1080 cap applied by
+  the snapshot-reading format policy).
+- Smoke note: `quality_cap` accepts numeric strings only ("1080"); "1080p"
+  normalizes to "" — pre-existing behavior, verified unchanged from before
+  Phase 2.
+- Remaining (needs the live environment and the user): live container rebuild
+  and smoke, manual settings apply in the live UI covering each variable
+  class, and the playback smoke.
 
 Required before merging to `main`:
 
@@ -375,6 +392,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4a: refined M4 scope to settings-bus reads only, migrated `ytdlp_format_policy` (quality mode/cap, `YTDLP_FORMAT`) and `discovery_mdns` (device name) to snapshot reads, and added the conftest lockstep fixture that re-syncs the global RuntimeConfig from env around each test. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (265 passed); `git diff --check` | Continue M4b resolver migration. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4b-M4f: migrated resolver, jellyfin_receiver, routes, player, and x11_overlay settings-bus reads to snapshots; reclassified `state.py` defaults-path reads as intentionally direct; added the allowed-reader guardrail test and refreshed affected tests for lockstep. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (266 passed); `git diff --check` | Begin M5 env write containment. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M5 and core M6: `set_value` contains env writes to the pinned `RELAYTV_DEVICE_NAME` mirror, and the settings sync/routes/CEC tests now assert snapshot state plus the env containment contract and operator-default precedence. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (268 passed); `git diff --check` | Decide M7 browser smoke; then M8 final validation. |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Deferred M7 browser smoke (tooling cost, revisit in Phase 3+) and started M8: automated gates plus an ephemeral local-server HTTP smoke passed, including an end-to-end settings apply that flowed through the RuntimeConfig snapshot into `effective_ytdlp_format`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (268 passed); `git diff --check`; ephemeral `GET /health`, `/status`, `/settings`, `/ui`, `/idle`, static UI assets, brand assets, `/runtime/capabilities`; ephemeral `POST /settings` applies | Live container rebuild plus manual settings/playback smoke with the user, then the final Phase 2 to `main` PR (after PR #21 merges and a rebase onto `main`). |
 
 ## Open Questions
 
