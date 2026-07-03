@@ -87,7 +87,7 @@ sites.
 
 ### M0: Roadmap Foundation And Branch Setup
 
-Status: in progress
+Status: complete (rebase onto `main` still pending PR #21 merge)
 
 Deliverables:
 
@@ -105,7 +105,21 @@ Validation:
 
 ### M1: Env Inventory And Test Baseline
 
-Status: not started
+Status: complete
+
+Results:
+
+- 246 app-config variables inventoried in
+  `docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`, generated from source and
+  guarded by `tests/test_env_inventory.py` (regenerate with
+  `PYTHONPATH=app python3 tests/test_env_inventory.py --write`).
+- The settings-bus/child-process overlap is exactly one variable:
+  `RELAYTV_DEVICE_NAME`, a dormant legacy fallback in `qt_shell_app.py` that
+  prefers persisted settings. The guardrail test pins this contract, so M5 can
+  remove runtime env writes outright once M4 migrates in-process readers.
+- `tests/test_settings_env_sync.py` pins today's settings-apply and startup
+  env sync behavior (normalization, clamping, flag encoding, the device-name
+  trio, and the Jellyfin auth force-enable).
 
 Deliverables:
 
@@ -268,6 +282,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | Date | PR | Target | Summary | Validation | Follow-ups |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Created the Phase 2 branch and roadmap with env-inventory-first milestones. | `ruff check app tests`; `PYTHONPATH=app pytest -q tests/test_smoke.py`; `git diff --check` | Rebase onto `main` after PR #21 merges; begin M1 env inventory. |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Completed M1: generated the machine-checked env inventory (246 variables), pinned the settings-bus/child-process contract (`RELAYTV_DEVICE_NAME` only, dormant fallback), and added settings-apply/startup env sync guardrail tests. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (232 passed); `git diff --check` | Begin M2 shared env parsing module. |
 
 ## Open Questions
 
