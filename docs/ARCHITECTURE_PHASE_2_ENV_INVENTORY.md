@@ -134,7 +134,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_IMAGE_VERSION` | `routes/app_info.py` | - | static env |
 | `RELAYTV_JELLYFIN_ADJACENT_SEASON_PROBE_MAX` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_API_KEY` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`state.py` | `main.py` | settings bus |
-| `RELAYTV_JELLYFIN_AUDIO_LANG` | `config.py`<br>`main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_AUDIO_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUTH_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUTH_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_AUTO_REGISTER` | `integrations/jellyfin_receiver.py` | - | static env |
@@ -169,7 +169,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_STOPPED_DEDUPE_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_SUB_LANG` | `config.py`<br>`main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/jellyfin.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_SUB_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_UI_ACTION_DEDUPE_SEC` | `routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_USERNAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_USER_ID` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |

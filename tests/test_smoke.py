@@ -18,6 +18,7 @@ from relaytv_app import playback_service
 from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
+from relaytv_app.integrations import jellyfin_service
 from relaytv_app import upload_store
 from relaytv_app import ytdlp_format_policy
 from relaytv_app.routes import app_info as app_info_routes
@@ -1467,13 +1468,13 @@ def test_jellyfin_subtitle_select_can_turn_subtitles_off_in_place(monkeypatch: p
         },
     )
     monkeypatch.setattr(routes.state, "update_settings", lambda patch: patch)
-    monkeypatch.setattr(routes, "_retarget_jellyfin_queue_stream_preferences", lambda: 0)
+    monkeypatch.setattr(jellyfin_service, "retarget_queue_stream_preferences", lambda: 0)
     monkeypatch.setattr(routes.player, "is_playing", lambda: False)
     monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {})
-    monkeypatch.setattr(routes, "_jellyfin_try_set_mpv_subtitle_track", lambda **kwargs: True)
+    monkeypatch.setattr(jellyfin_service, "try_set_mpv_subtitle_track", lambda **kwargs: True)
     captured_now: dict[str, object] = {}
     monkeypatch.setattr(routes.state, "set_now_playing", lambda now: captured_now.update(now))
-    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: None)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
 
     app = create_app(testing=True)
     client = TestClient(app)

@@ -51,9 +51,10 @@ writers are deliberate, pinned exceptions
 - `player.py`: the process adapter updating session bookkeeping inside
   commands the service itself invoked (`play_item`, monitors, mpv handoff
   mechanics under `ADVANCE_LOCK`).
-- `routes/jellyfin.py` and the Jellyfin command implementation inside
-  `routes/__init__.py`: Jellyfin product paths — Phase 4 extracts them; only
-  their suppression writes migrated in Phase 3.
+- the Jellyfin command implementation inside `routes/__init__.py`: Jellyfin
+  product path — Phase 4 M6 extracts it (`routes/jellyfin.py` stopped writing
+  transition globals in Phase 4 M4; its track-switch writes now go through
+  `playback_service.update_now_playing`/`mark_paused`).
 - `routes/__init__.py` `_status_payload`: status-side session reconciliation
   (self-healing on read); candidate for a future service reconcile command.
 - `routes/queue.py`, `routes/uploads.py`, `upload_store.py`: queue CRUD and
@@ -94,9 +95,9 @@ The five Phase 3 review scenarios and where they are guarded at phase start:
 | Transition global | Writers outside `state.py` (write sites) |
 | --- | --- |
 | `AUTO_NEXT_SUPPRESS_UNTIL` | `playback_service.py` (2) |
-| `NOW_PLAYING` | `playback_service.py` (10)<br>`player.py` (9)<br>`routes/__init__.py` (2)<br>`routes/jellyfin.py` (4) |
+| `NOW_PLAYING` | `playback_service.py` (11)<br>`player.py` (9)<br>`routes/__init__.py` (2) |
 | `QUEUE` | `integrations/jellyfin_service.py` (1)<br>`playback_service.py` (5)<br>`player.py` (5)<br>`routes/__init__.py` (3)<br>`routes/queue.py` (5)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
 | `SESSION_POSITION` | `playback_service.py` (8)<br>`player.py` (8) |
-| `SESSION_STATE` | `playback_service.py` (10)<br>`player.py` (11)<br>`routes/__init__.py` (4)<br>`routes/jellyfin.py` (2) |
+| `SESSION_STATE` | `playback_service.py` (10)<br>`player.py` (11)<br>`routes/__init__.py` (4) |
 | `_TEMP_PLAYBACK_STACK` | `playback_service.py` (8)<br>`routes/__init__.py` (2)<br>`routes/playback.py` (2) |
 <!-- END GENERATED TRANSITION TABLE -->

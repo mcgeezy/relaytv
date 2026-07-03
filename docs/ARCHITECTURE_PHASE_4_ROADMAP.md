@@ -167,7 +167,21 @@ Status: complete
 
 ### M4: Track Preference And Runtime Track Switching
 
-Status: planned
+Status: complete
+
+- Landed in two commits: the helper family move, then the audio/subtitle
+  select handler cores as `switch_audio_track`/`switch_subtitle_track`
+  service commands.
+- `playback_service` gained `update_now_playing(now)` (in-place metadata
+  refresh) and an optional `reason` on `mark_paused`, so the switch commands
+  write no transition globals directly; `routes/jellyfin.py` left the
+  NOW_PLAYING/SESSION_STATE writer pins entirely (originally promised for
+  M6).
+- `emit_progress_hint` moved early (M5 family) because the switch commands
+  call it service-internally.
+- The queue retarget write moved with its function; the transition QUEUE pin
+  gained `integrations/jellyfin_service.py` as a documented
+  content-management exception.
 
 - Move `_preferred_jellyfin_stream_indices`,
   `_retarget_jellyfin_queue_stream_preferences`,

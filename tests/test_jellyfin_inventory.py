@@ -89,7 +89,6 @@ EXPECTED_JELLYFIN_ROUTE_FUNCTIONS: dict[str, set[str]] = {
     "routes/__init__.py": {
         "_jellyfin_complete_ratio",
         "_jellyfin_complete_remaining_sec",
-        "_jellyfin_emit_progress_hint",
         "_jellyfin_emit_stopped_hint",
         "_jellyfin_emit_stopped_payload",
         "_jellyfin_integration_command_impl",

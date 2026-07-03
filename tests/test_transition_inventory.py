@@ -121,8 +121,8 @@ def test_transition_inventory_doc_matches_source() -> None:
 # non-service writer is a documented exception:
 # - player.py: the process adapter updating session bookkeeping inside
 #   commands the service invoked (play_item, monitors, handoff mechanics).
-# - routes/jellyfin.py and the routes/__init__.py Jellyfin command impl:
-#   Jellyfin product paths, extracted in Phase 4.
+# - the routes/__init__.py Jellyfin command impl: Jellyfin product path,
+#   extracted in Phase 4 M6 (routes/jellyfin.py stopped writing in M4).
 # - routes/__init__.py _status_payload: status-side session reconciliation
 #   (self-healing on read); candidate for a service reconcile command later.
 # - routes/queue.py, routes/uploads.py, upload_store.py: queue CRUD and
@@ -136,13 +136,11 @@ EXPECTED_TRANSITION_WRITERS: dict[str, set[str]] = {
         "playback_service.py",
         "player.py",
         "routes/__init__.py",
-        "routes/jellyfin.py",
     },
     "SESSION_STATE": {
         "playback_service.py",
         "player.py",
         "routes/__init__.py",
-        "routes/jellyfin.py",
     },
     "SESSION_POSITION": {"playback_service.py", "player.py"},
     "AUTO_NEXT_SUPPRESS_UNTIL": {"playback_service.py"},

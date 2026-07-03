@@ -2,6 +2,7 @@
 from fastapi.testclient import TestClient
 
 from relaytv_app import routes
+from relaytv_app.integrations import jellyfin_service
 from relaytv_app.main import create_app
 
 
@@ -258,12 +259,12 @@ def test_jellyfin_audio_select_switches_runtime_track_in_place(monkeypatch) -> N
         },
     )
     monkeypatch.setattr(routes.state, "update_settings", lambda data: settings_updates.append(dict(data)))
-    monkeypatch.setattr(routes, "_retarget_jellyfin_queue_stream_preferences", lambda: 2)
+    monkeypatch.setattr(jellyfin_service, "retarget_queue_stream_preferences", lambda: 2)
     monkeypatch.setattr(routes.player, "is_playing", lambda: True)
     monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {"time-pos": 45.5, "pause": False})
-    monkeypatch.setattr(routes, "_jellyfin_try_set_mpv_audio_track", lambda language="", display="": True)
+    monkeypatch.setattr(jellyfin_service, "try_set_mpv_audio_track", lambda language="", display="": True)
     monkeypatch.setattr(routes.state, "set_now_playing", lambda data: now_playing.append(dict(data)))
-    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: emitted.append(True))
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: emitted.append(True))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/jellyfin/audio/select", json={"index": 1})

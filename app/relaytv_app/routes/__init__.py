@@ -2551,18 +2551,7 @@ def _smart_item_from_url(url: str, *, start_pos: float | None = None, lightweigh
         return resolver.make_item(shared)
 
 
-def _jellyfin_emit_progress_hint() -> None:
-    """Trigger an immediate best-effort progress push without blocking request paths."""
-    def _run() -> None:
-        try:
-            jellyfin_receiver.send_progress_once()
-        except Exception:
-            pass
-
-    try:
-        threading.Thread(target=_run, daemon=True, name="relaytv-jellyfin-progress-hint").start()
-    except Exception:
-        pass
+_jellyfin_emit_progress_hint = jellyfin_service.emit_progress_hint
 
 
 def _jellyfin_complete_ratio() -> float:
