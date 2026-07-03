@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import player, state, upload_store
+from ..config import runtime_config
 from ..debug import get_logger
 from ..integrations import jellyfin_receiver
 
@@ -92,14 +93,14 @@ def _sync_upload_env_from_settings(updated: dict | None) -> None:
         retention_hours = int(uploads.get("retention_hours", 24))
     except Exception:
         retention_hours = 24
-    os.environ["RELAYTV_UPLOAD_MAX_SIZE_GB"] = str(max(0.25, min(500.0, round(max_size_gb, 2))))
-    os.environ["RELAYTV_UPLOAD_RETENTION_HOURS"] = str(max(1, min(24 * 90, retention_hours)))
+    runtime_config.set_value("RELAYTV_UPLOAD_MAX_SIZE_GB", str(max(0.25, min(500.0, round(max_size_gb, 2)))))
+    runtime_config.set_value("RELAYTV_UPLOAD_RETENTION_HOURS", str(max(1, min(24 * 90, retention_hours))))
 
 
 def _youtube_cookie_target_path() -> str:
     return (
         os.getenv("RELAYTV_YTDLP_COOKIES_UPLOAD_PATH")
-        or os.getenv("RELAYTV_YTDLP_COOKIES")
+        or runtime_config.snapshot().raw("RELAYTV_YTDLP_COOKIES")
         or os.getenv("YTDLP_COOKIES")
         or "/data/cookies.txt"
     ).strip()
@@ -157,7 +158,7 @@ def upload_youtube_cookies(req: YouTubeCookiesUploadReq):
         raise HTTPException(status_code=500, detail=f"Failed writing cookies file: {exc}")
 
     updated = state.update_settings({"youtube_cookies_path": target}) if hasattr(state, "update_settings") else {"youtube_cookies_path": target}
-    os.environ["RELAYTV_YTDLP_COOKIES"] = target
+    runtime_config.set_value("RELAYTV_YTDLP_COOKIES", target)
     return {
         "ok": True,
         "settings": _settings_for_client(updated),
@@ -167,7 +168,7 @@ def upload_youtube_cookies(req: YouTubeCookiesUploadReq):
 @router.post("/settings/youtube/cookies/clear")
 def clear_youtube_cookies():
     updated = state.update_settings({"youtube_cookies_path": ""}) if hasattr(state, "update_settings") else {"youtube_cookies_path": ""}
-    os.environ["RELAYTV_YTDLP_COOKIES"] = ""
+    runtime_config.set_value("RELAYTV_YTDLP_COOKIES", "")
     return {
         "ok": True,
         "settings": _settings_for_client(updated),
@@ -194,51 +195,51 @@ def update_settings(req: SettingsReq):
 
     updated = state.update_settings(patch) if hasattr(state, "update_settings") else patch
     if "quality_mode" in requested_keys and updated.get("quality_mode") is not None:
-        os.environ["RELAYTV_QUALITY_MODE"] = str(updated.get("quality_mode") or "").strip()
+        runtime_config.set_value("RELAYTV_QUALITY_MODE", str(updated.get("quality_mode") or "").strip())
     if "quality_cap" in requested_keys and updated.get("quality_cap") is not None:
-        os.environ["RELAYTV_QUALITY_CAP"] = str(updated.get("quality_cap") or "").strip()
+        runtime_config.set_value("RELAYTV_QUALITY_CAP", str(updated.get("quality_cap") or "").strip())
     if requested_keys.intersection({"ytdlp_format", "quality_mode"}):
         if "quality_mode" in requested_keys:
             qmode = str(updated.get("quality_mode") or "").strip().lower()
         elif "ytdlp_format" in requested_keys:
             qmode = "manual"
         else:
-            qmode = str(updated.get("quality_mode") or os.getenv("RELAYTV_QUALITY_MODE") or "").strip().lower()
+            qmode = str(updated.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE") or "").strip().lower()
         if qmode in ("auto", "auto_profile", "profile"):
-            os.environ["YTDLP_FORMAT"] = ""
+            runtime_config.set_value("YTDLP_FORMAT", "")
         elif updated.get("ytdlp_format") is not None:
-            os.environ["YTDLP_FORMAT"] = str(updated.get("ytdlp_format") or "")
+            runtime_config.set_value("YTDLP_FORMAT", str(updated.get("ytdlp_format") or ""))
     if "youtube_cookies_path" in requested_keys and updated.get("youtube_cookies_path") is not None:
-        os.environ["RELAYTV_YTDLP_COOKIES"] = str(updated.get("youtube_cookies_path") or "").strip()
+        runtime_config.set_value("RELAYTV_YTDLP_COOKIES", str(updated.get("youtube_cookies_path") or "").strip())
     if requested_keys.intersection({"youtube_use_invidious", "youtube_invidious_base"}):
         use_invid = bool(updated.get("youtube_use_invidious"))
         invid_base = str(updated.get("youtube_invidious_base") or "").strip()
-        os.environ["USE_INVIDIOUS"] = "true" if use_invid else "false"
-        os.environ["INVIDIOUS_BASE"] = invid_base
+        runtime_config.set_value("USE_INVIDIOUS", "true" if use_invid else "false")
+        runtime_config.set_value("INVIDIOUS_BASE", invid_base)
     if "uploads" in requested_keys:
         _sync_upload_env_from_settings(updated)
         upload_store.cleanup_uploads(updated)
     if "audio_device" in requested_keys and updated.get("audio_device") is not None:
         configured_audio = str(updated.get("audio_device") or "").strip()
         if not configured_audio:
-            os.environ["MPV_AUDIO_DEVICE"] = ""
+            runtime_config.set_value("MPV_AUDIO_DEVICE", "")
         else:
-            os.environ["MPV_AUDIO_DEVICE"] = configured_audio
+            runtime_config.set_value("MPV_AUDIO_DEVICE", configured_audio)
     if "video_mode" in requested_keys and updated.get("video_mode") is not None:
-        os.environ["RELAYTV_VIDEO_MODE"] = str(updated.get("video_mode") or "auto")
+        runtime_config.set_value("RELAYTV_VIDEO_MODE", str(updated.get("video_mode") or "auto"))
     if "device_name" in requested_keys and updated.get("device_name") is not None:
         clean_name = str(updated.get("device_name") or "RelayTV")
-        os.environ["RELAYTV_DEVICE_NAME"] = clean_name
-        os.environ["RELAYTV_JELLYFIN_DEVICE_NAME"] = clean_name
-        os.environ["RELAYTV_JELLYFIN_CLIENT_NAME"] = clean_name
+        runtime_config.set_value("RELAYTV_DEVICE_NAME", clean_name)
+        runtime_config.set_value("RELAYTV_JELLYFIN_DEVICE_NAME", clean_name)
+        runtime_config.set_value("RELAYTV_JELLYFIN_CLIENT_NAME", clean_name)
     if "drm_connector" in requested_keys and updated.get("drm_connector") is not None:
-        os.environ["RELAYTV_DRM_CONNECTOR"] = str(updated.get("drm_connector") or "")
+        runtime_config.set_value("RELAYTV_DRM_CONNECTOR", str(updated.get("drm_connector") or ""))
     if "sub_lang" in requested_keys and updated.get("sub_lang") is not None:
-        os.environ["RELAYTV_SUB_LANG"] = str(updated.get("sub_lang") or "")
+        runtime_config.set_value("RELAYTV_SUB_LANG", str(updated.get("sub_lang") or ""))
     if "cec_enabled" in requested_keys and updated.get("cec_enabled") is not None:
         cec_on = _settings_flag(updated.get("cec_enabled"))
-        os.environ["RELAYTV_CEC"] = "1" if cec_on else "0"
-        os.environ["RELAYTV_CEC_ENABLED"] = "1" if cec_on else "0"
+        runtime_config.set_value("RELAYTV_CEC", "1" if cec_on else "0")
+        runtime_config.set_value("RELAYTV_CEC_ENABLED", "1" if cec_on else "0")
         try:
             if cec_on:
                 player.start_cec_monitor()
@@ -247,31 +248,31 @@ def update_settings(req: SettingsReq):
         except Exception as exc:
             logger.warning("cec_monitor_settings_apply_failed error=%s", exc)
     if "idle_dashboard_enabled" in requested_keys and updated.get("idle_dashboard_enabled") is not None:
-        os.environ["RELAYTV_IDLE_DASHBOARD_ENABLED"] = "1" if bool(updated.get("idle_dashboard_enabled")) else "0"
+        runtime_config.set_value("RELAYTV_IDLE_DASHBOARD_ENABLED", "1" if bool(updated.get("idle_dashboard_enabled")) else "0")
     if "idle_notifications_enabled" in requested_keys and updated.get("idle_notifications_enabled") is not None:
-        os.environ["RELAYTV_IDLE_NOTIFICATIONS_ENABLED"] = "1" if bool(updated.get("idle_notifications_enabled")) else "0"
+        runtime_config.set_value("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "1" if bool(updated.get("idle_notifications_enabled")) else "0")
     if "idle_qr_enabled" in requested_keys and updated.get("idle_qr_enabled") is not None:
-        os.environ["RELAYTV_IDLE_QR_ENABLED"] = "1" if bool(updated.get("idle_qr_enabled")) else "0"
+        runtime_config.set_value("RELAYTV_IDLE_QR_ENABLED", "1" if bool(updated.get("idle_qr_enabled")) else "0")
     if "idle_qr_size" in requested_keys and updated.get("idle_qr_size") is not None:
-        os.environ["RELAYTV_IDLE_QR_SIZE"] = str(int(updated.get("idle_qr_size")))
+        runtime_config.set_value("RELAYTV_IDLE_QR_SIZE", str(int(updated.get("idle_qr_size"))))
     if "jellyfin_enabled" in requested_keys and updated.get("jellyfin_enabled") is not None:
-        os.environ["RELAYTV_JELLYFIN_ENABLED"] = "1" if bool(updated.get("jellyfin_enabled")) else "0"
+        runtime_config.set_value("RELAYTV_JELLYFIN_ENABLED", "1" if bool(updated.get("jellyfin_enabled")) else "0")
     if "jellyfin_server_url" in requested_keys and updated.get("jellyfin_server_url") is not None:
-        os.environ["RELAYTV_JELLYFIN_SERVER_URL"] = str(updated.get("jellyfin_server_url") or "").strip()
+        runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_URL", str(updated.get("jellyfin_server_url") or "").strip())
     if "jellyfin_username" in requested_keys and updated.get("jellyfin_username") is not None:
-        os.environ["RELAYTV_JELLYFIN_USERNAME"] = str(updated.get("jellyfin_username") or "").strip()
+        runtime_config.set_value("RELAYTV_JELLYFIN_USERNAME", str(updated.get("jellyfin_username") or "").strip())
     if "jellyfin_password" in requested_keys and updated.get("jellyfin_password") is not None:
-        os.environ["RELAYTV_JELLYFIN_PASSWORD"] = str(updated.get("jellyfin_password") or "").strip()
+        runtime_config.set_value("RELAYTV_JELLYFIN_PASSWORD", str(updated.get("jellyfin_password") or "").strip())
     if "jellyfin_user_id" in requested_keys and updated.get("jellyfin_user_id") is not None:
-        os.environ["RELAYTV_JELLYFIN_USER_ID"] = str(updated.get("jellyfin_user_id") or "").strip()
+        runtime_config.set_value("RELAYTV_JELLYFIN_USER_ID", str(updated.get("jellyfin_user_id") or "").strip())
     if "jellyfin_audio_lang" in requested_keys and updated.get("jellyfin_audio_lang") is not None:
-        os.environ["RELAYTV_JELLYFIN_AUDIO_LANG"] = str(updated.get("jellyfin_audio_lang") or "").strip().lower()
+        runtime_config.set_value("RELAYTV_JELLYFIN_AUDIO_LANG", str(updated.get("jellyfin_audio_lang") or "").strip().lower())
     if "jellyfin_sub_lang" in requested_keys and updated.get("jellyfin_sub_lang") is not None:
-        os.environ["RELAYTV_JELLYFIN_SUB_LANG"] = str(updated.get("jellyfin_sub_lang") or "").strip().lower()
+        runtime_config.set_value("RELAYTV_JELLYFIN_SUB_LANG", str(updated.get("jellyfin_sub_lang") or "").strip().lower())
     if "jellyfin_playback_mode" in requested_keys and updated.get("jellyfin_playback_mode") is not None:
-        os.environ["RELAYTV_JELLYFIN_PLAYBACK_MODE"] = str(updated.get("jellyfin_playback_mode") or "auto").strip().lower()
+        runtime_config.set_value("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(updated.get("jellyfin_playback_mode") or "auto").strip().lower())
     if requested_keys.intersection({"jellyfin_enabled", "jellyfin_server_url", "jellyfin_username", "jellyfin_password"}):
-        os.environ["RELAYTV_JELLYFIN_AUTH_ENABLED"] = "1"
+        runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1")
 
     live_applied: list[str] = []
     live_apply_failed: list[str] = []
@@ -286,7 +287,7 @@ def update_settings(req: SettingsReq):
             live_apply_failed.append("volume")
         try:
             if "audio_device" in requested_keys and updated.get("audio_device") is not None:
-                cur_audio = str(os.getenv("MPV_AUDIO_DEVICE") or "").strip()
+                cur_audio = str(runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip()
                 if not cur_audio:
                     try:
                         cur_audio = str(getattr(player, "_effective_audio_device", lambda s=None: "")() or "").strip()

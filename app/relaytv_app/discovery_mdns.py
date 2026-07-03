@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import socket
 import threading
+from .config import env_bool as _env_bool
+from .config import runtime_config
 
 try:
     from zeroconf import ServiceInfo, Zeroconf
@@ -18,13 +20,6 @@ _ZEROCONF = None
 _SERVICE_INFO = None
 _LAST_ERROR: str | None = None
 _START_THREAD: threading.Thread | None = None
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _enabled() -> bool:
@@ -76,7 +71,7 @@ def _device_name() -> str:
         settings = {}
     name = str((settings or {}).get("device_name") or "").strip()
     if not name:
-        name = (os.getenv("RELAYTV_DEVICE_NAME") or "RelayTV").strip() or "RelayTV"
+        name = runtime_config.snapshot().text("RELAYTV_DEVICE_NAME") or "RelayTV"
     if len(name) > 63:
         name = name[:63].strip() or "RelayTV"
     return name

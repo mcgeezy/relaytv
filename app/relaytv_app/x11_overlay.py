@@ -12,6 +12,8 @@ The overlay loads a RelayTV-served page and subscribes to SSE notifications.
 from __future__ import annotations
 
 import os
+
+from .config import runtime_config
 import subprocess
 import sys
 import threading
@@ -65,7 +67,7 @@ def overlay_enabled() -> bool:
             return True
         if value in ("0", "false", "no", "off"):
             return False
-    raw = (os.getenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
+    raw = (runtime_config.snapshot().raw("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
     dashboard_disabled = False
@@ -83,7 +85,7 @@ def overlay_enabled() -> bool:
         pass
     if dashboard_disabled:
         return True
-    raw_dashboard = (os.getenv("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
+    raw_dashboard = (runtime_config.snapshot().raw("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
     if raw_dashboard not in ("0", "false", "no", "off"):
         return False
     return True

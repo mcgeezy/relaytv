@@ -1,6 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import pytest
 
+from relaytv_app.config import runtime_config
+
+
+@pytest.fixture(autouse=True)
+def _runtime_config_env_lockstep():
+    """Keep the global RuntimeConfig snapshot in lockstep with the test env.
+
+    Production guarantees env/snapshot lockstep because every settings-bus
+    write goes through RuntimeConfig.set_value. Tests mutate os.environ directly
+    (monkeypatch), so re-sync the snapshot from env at test start (discarding
+    leftovers from earlier tests) and after teardown (once monkeypatch has
+    restored the environment). Tests that change a settings-bus variable
+    mid-test and exercise a snapshot-reading consumer must call
+    runtime_config.refresh_from_env() themselves after the change.
+    """
+    runtime_config.refresh_from_env()
+    yield
+    runtime_config.refresh_from_env()
+
 
 _YTDLP_PROVIDER_KEYS = (
     "YTDLP_FORMAT_YOUTUBE",

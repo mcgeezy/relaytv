@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app.main import create_app
+from relaytv_app.config import runtime_config
 from relaytv_app import container_entrypoint
 from relaytv_app import player
 from relaytv_app import qt_shell_app
@@ -399,6 +400,7 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
         raise AssertionError("one-shot cec-client should not run when controller is alive")
 
     monkeypatch.setenv("RELAYTV_CEC", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setenv("RELAYTV_CEC_MONITOR", "1")
     monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", FakeProc())
     monkeypatch.setattr(player, "cec_probe_status", lambda force=False: {"available": True})
@@ -427,6 +429,7 @@ def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.
         return Result()
 
     monkeypatch.setenv("RELAYTV_CEC", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setenv("RELAYTV_CEC_MONITOR", "0")
     monkeypatch.setattr(player, "_CEC_CONTROLLER_PROC", None)
     monkeypatch.setattr(player.subprocess, "run", fake_run)
@@ -470,6 +473,7 @@ def test_share_requests_cec_takeover_by_default(monkeypatch: pytest.MonkeyPatch)
 def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RELAYTV_CEC", raising=False)
     monkeypatch.delenv("RELAYTV_CEC_ENABLED", raising=False)
+    runtime_config.refresh_from_env()
     monkeypatch.delenv("RELAYTV_CEC_ALLOW_REQUEST_OVERRIDE", raising=False)
     monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
 
@@ -484,12 +488,14 @@ def test_cec_request_flag_does_not_bypass_disabled_policy(monkeypatch: pytest.Mo
 
 def test_cec_env_controls_runtime_policy_over_stale_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RELAYTV_CEC", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
 
     assert player.cec_enabled(False) is True
     assert player.cec_monitor_enabled() is True
 
     monkeypatch.setenv("RELAYTV_CEC", "0")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "1"})
 
     assert player.cec_enabled(False) is False
@@ -499,6 +505,7 @@ def test_cec_env_controls_runtime_policy_over_stale_setting(monkeypatch: pytest.
 def test_cec_setting_controls_runtime_policy_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RELAYTV_CEC", raising=False)
     monkeypatch.delenv("RELAYTV_CEC_ENABLED", raising=False)
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(player.state, "get_settings", lambda: {"cec_enabled": "0"})
 
     assert player.cec_enabled(False) is False
@@ -513,6 +520,7 @@ def test_cec_setting_controls_runtime_policy_without_env(monkeypatch: pytest.Mon
 def test_cec_legacy_enabled_env_is_runtime_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RELAYTV_CEC", raising=False)
     monkeypatch.setenv("RELAYTV_CEC_ENABLED", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(player.state, "get_settings", lambda: {})
 
     assert player.cec_enabled(False) is True
@@ -538,6 +546,7 @@ def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.Mon
     stopped: list[bool] = []
 
     monkeypatch.setenv("RELAYTV_CEC", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(routes.state, "get_settings", lambda: {"cec_enabled": "1"})
     monkeypatch.setattr(routes.state, "update_settings", lambda patch: {**{"cec_enabled": "1"}, **patch})
     monkeypatch.setattr(routes.player, "is_playing", lambda: False)
@@ -546,8 +555,8 @@ def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.Mon
 
     response = routes.update_settings(routes.SettingsReq(cec_enabled="0"))
 
-    assert os.environ["RELAYTV_CEC"] == "0"
-    assert os.environ["RELAYTV_CEC_ENABLED"] == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_CEC") == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_CEC_ENABLED") == "0"
     assert stopped == [True]
     assert "cec_enabled" in response["live_applied"]
 
@@ -1156,6 +1165,7 @@ def test_x11_overlay_enabled_by_idle_notifications_default(monkeypatch: pytest.M
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(
         routes.state,
         "get_settings",
@@ -1170,6 +1180,7 @@ def test_x11_overlay_default_disabled_when_idle_dashboard_enabled(monkeypatch: p
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.delenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", raising=False)
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(
         routes.state,
         "get_settings",
@@ -1184,6 +1195,7 @@ def test_x11_overlay_can_be_disabled_with_idle_notifications_setting(monkeypatch
 
     monkeypatch.delenv("RELAYTV_X11_OVERLAY", raising=False)
     monkeypatch.setenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "0")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(
         routes.state,
         "get_settings",
@@ -1198,6 +1210,7 @@ def test_x11_overlay_honors_explicit_disable(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setenv("RELAYTV_X11_OVERLAY", "0")
     monkeypatch.setenv("RELAYTV_IDLE_NOTIFICATIONS_ENABLED", "1")
+    runtime_config.refresh_from_env()
     monkeypatch.setattr(routes.state, "get_settings", lambda: {"idle_notifications_enabled": True})
 
     assert x11_overlay.overlay_enabled() is False

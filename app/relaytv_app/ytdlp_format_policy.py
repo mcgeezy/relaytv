@@ -2,14 +2,9 @@
 import os
 import platform
 import re
+from .config import env_bool as _env_bool
+from .config import runtime_config
 from typing import Any
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 def normalize_quality_mode(value: object) -> str:
@@ -62,7 +57,7 @@ def _user_cap(settings: dict[str, Any] | None) -> int | None:
     cap = _parse_cap(s.get("quality_cap"))
     if cap is not None:
         return cap
-    cap = _parse_cap(os.getenv("RELAYTV_QUALITY_CAP"))
+    cap = _parse_cap(runtime_config.snapshot().raw("RELAYTV_QUALITY_CAP"))
     if cap is not None:
         return cap
     return extract_quality_cap_from_format(s.get("ytdlp_format"))
@@ -122,7 +117,7 @@ def youtube_progressive_startup_format(
     profile: dict[str, Any] | None = None,
 ) -> str:
     s = settings if isinstance(settings, dict) else {}
-    mode = normalize_quality_mode(s.get("quality_mode") or os.getenv("RELAYTV_QUALITY_MODE"))
+    mode = normalize_quality_mode(s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE"))
     cap = _target_cap(s, profile, mode)
     if cap <= 0:
         cap = 720
@@ -140,7 +135,7 @@ def youtube_progressive_startup_candidates(
 ) -> list[str]:
     strict = youtube_progressive_startup_format(settings, profile=profile)
     s = settings if isinstance(settings, dict) else {}
-    mode = normalize_quality_mode(s.get("quality_mode") or os.getenv("RELAYTV_QUALITY_MODE"))
+    mode = normalize_quality_mode(s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE"))
     cap = _target_cap(s, profile, mode)
     if cap <= 0:
         cap = 720
@@ -191,14 +186,14 @@ def effective_ytdlp_format(
     profile: dict[str, Any] | None = None,
 ) -> str:
     s = settings if isinstance(settings, dict) else {}
-    mode = normalize_quality_mode(s.get("quality_mode") or os.getenv("RELAYTV_QUALITY_MODE"))
+    mode = normalize_quality_mode(s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE"))
     cap = _target_cap(s, profile, mode)
 
     provider_override = _provider_specific_env(provider)
     if provider_override:
         return _arm_safe_if_needed(provider_override, mode=mode, cap=cap)
 
-    explicit = (s.get("ytdlp_format") or os.getenv("YTDLP_FORMAT") or "").strip()
+    explicit = (s.get("ytdlp_format") or runtime_config.snapshot().raw("YTDLP_FORMAT") or "").strip()
     if mode == "manual" and explicit:
         return _arm_safe_if_needed(explicit, mode=mode, cap=cap)
 

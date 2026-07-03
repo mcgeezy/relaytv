@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-only
-import os
 import time
 
 from fastapi import APIRouter, HTTPException
@@ -7,6 +6,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .. import player, state
+from ..config import runtime_config
 from ..integrations import jellyfin_receiver
 
 
@@ -992,7 +992,7 @@ def jellyfin_audio_select(req: JellyfinAudioSelectReq):
         except Exception:
             pass
         try:
-            os.environ["RELAYTV_JELLYFIN_AUDIO_LANG"] = preferred_audio_lang
+            runtime_config.set_value("RELAYTV_JELLYFIN_AUDIO_LANG", preferred_audio_lang)
         except Exception:
             pass
         try:
@@ -1205,7 +1205,7 @@ def jellyfin_subtitle_select(req: JellyfinSubtitleSelectReq):
     except Exception:
         pass
     try:
-        os.environ["RELAYTV_JELLYFIN_SUB_LANG"] = preferred_subtitle_lang
+        runtime_config.set_value("RELAYTV_JELLYFIN_SUB_LANG", preferred_subtitle_lang)
     except Exception:
         pass
     try:

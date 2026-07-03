@@ -7,6 +7,8 @@ import json
 import time
 import urllib.request
 import shutil
+
+from .config import runtime_config
 import platform
 import threading
 from urllib.parse import urlparse, parse_qs, urlencode
@@ -218,13 +220,6 @@ def run(argv: list[str], check: bool = True, timeout: int | None = None) -> subp
         detail = stderr or f"Command timed out after {timeout}s"
         return subprocess.CompletedProcess(argv, 124, stdout, detail)
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.getenv(name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
-
 def _truthy(v: object) -> bool:
     return str(v or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -243,14 +238,14 @@ def _invidious_enabled(settings: dict | None = None) -> bool:
     s = settings if isinstance(settings, dict) else _runtime_settings()
     if "youtube_use_invidious" in s:
         return bool(s.get("youtube_use_invidious"))
-    return _truthy(os.getenv("USE_INVIDIOUS"))
+    return _truthy(runtime_config.snapshot().raw("USE_INVIDIOUS"))
 
 
 def _invidious_base(settings: dict | None = None) -> str:
     s = settings if isinstance(settings, dict) else _runtime_settings()
     base = str(s.get("youtube_invidious_base") or "").strip()
     if not base:
-        base = str(os.getenv("INVIDIOUS_BASE") or "").strip()
+        base = runtime_config.snapshot().text("INVIDIOUS_BASE")
     return base.rstrip("/")
 
 
@@ -459,7 +454,7 @@ def build_ytdlp_base_args() -> list[str]:
 
     settings = _runtime_settings()
     cookies_file = (
-        os.getenv("RELAYTV_YTDLP_COOKIES")
+        runtime_config.snapshot().raw("RELAYTV_YTDLP_COOKIES")
         or os.getenv("YTDLP_COOKIES")
         or str(settings.get("youtube_cookies_path") or "").strip()
     )

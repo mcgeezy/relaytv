@@ -135,15 +135,29 @@ EXPECTED_ALIAS_GROUPS = {
 }
 
 
+def _collect_api_routes(routes, prefix: str = "") -> set[tuple[str, str, str]]:
+    """Flatten APIRoutes across FastAPI versions.
+
+    FastAPI >= 0.129 keeps included routers as lazy `_IncludedRouter` entries
+    instead of flattening them into `app.routes`, so recurse through them.
+    """
+    out: set[tuple[str, str, str]] = set()
+    for route in routes:
+        if isinstance(route, APIRoute):
+            for method in sorted(route.methods or []):
+                out.add((method, prefix + route.path, route.name))
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            context = getattr(route, "include_context", None)
+            included_prefix = str(getattr(context, "prefix", "") or "")
+            out |= _collect_api_routes(included.routes, prefix + included_prefix)
+    return out
+
+
 def _route_inventory() -> set[tuple[str, str, str]]:
     app = create_app(testing=True)
-    out: set[tuple[str, str, str]] = set()
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        for method in sorted(route.methods or []):
-            out.add((method, route.path, route.name))
-    return out
+    return _collect_api_routes(app.routes)
 
 
 def test_public_route_inventory_is_stable() -> None:

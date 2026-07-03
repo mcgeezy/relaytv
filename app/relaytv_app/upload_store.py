@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import uuid
+from .config import env_float as _env_float
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -210,14 +211,6 @@ def write_session(upload_id: str, session: dict) -> None:
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
-
-
-def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
-    try:
-        value = float(os.getenv(name, str(default)))
-    except Exception:
-        value = float(default)
-    return max(minimum, min(maximum, value))
 
 
 def progressive_ready_threshold_bytes(content_type: object) -> int | None:
