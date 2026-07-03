@@ -20,7 +20,7 @@ import socket
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .. import state, resolver, player, discovery_mdns, video_profile, upload_store, x11_overlay
+from .. import state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import jellyfin_receiver
@@ -2150,111 +2150,17 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
 </body>
 </html>"""
 
-_TEMP_PLAYBACK_LOCK = threading.Lock()
-_TEMP_PLAYBACK_STACK: list[dict] = []
-
-
-def _discard_temporary_playback(reason: str) -> int:
-    """Discard temporary restore frames after an explicit user stop/close."""
-    with _TEMP_PLAYBACK_LOCK:
-        count = len(_TEMP_PLAYBACK_STACK)
-        _TEMP_PLAYBACK_STACK.clear()
-    if count:
-        try:
-            logger.info("temporary_playback_discarded reason=%s count=%s", reason, count)
-        except Exception:
-            pass
-    return count
-
-
-def _discard_interrupted_playback_state(reason: str) -> None:
-    _discard_temporary_playback(reason)
-
-
-def _capture_current_playback_state() -> dict | None:
-    if not player.is_playing() or not isinstance(state.NOW_PLAYING, dict):
-        return None
-
-    with player.MPV_LOCK:
-        props = player.mpv_get_many(["time-pos", "pause"])
-    pos = props.get("time-pos")
-    paused = bool(props.get("pause"))
-    try:
-        pos_f = float(pos) if pos is not None else None
-    except Exception:
-        pos_f = None
-
-    with state.QUEUE_LOCK:
-        queue_snapshot = list(state.QUEUE)
-
-    return {
-        "now_playing": dict(state.NOW_PLAYING),
-        "position": pos_f,
-        "paused": paused,
-        "queue": queue_snapshot,
-    }
-
-
-def _restore_playback_state(snapshot: dict) -> None:
-    now = snapshot.get("now_playing") if isinstance(snapshot, dict) else None
-    if not isinstance(now, dict):
-        return
-
-    with state.QUEUE_LOCK:
-        state.QUEUE[:] = list(snapshot.get("queue") or [])
-    state.persist_queue()
-
-    start_pos = snapshot.get("position")
-    resumed = player.play_item(
-        now,
-        use_resolver=True,
-        cec=False,
-        clear_queue=False,
-        mode="temporary_resume",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
-    if snapshot.get("paused"):
-        try:
-            player.mpv_set("pause", True)
-            state.set_session_state("paused")
-            state.set_pause_reason("temporary")
-        except Exception:
-            pass
-    else:
-        state.set_session_state("playing")
-        state.set_pause_reason(None)
-    state.set_now_playing(resumed)
-
-
-def _complete_temporary_playback(frame_id: str, reason: str) -> bool:
-    with _TEMP_PLAYBACK_LOCK:
-        if not _TEMP_PLAYBACK_STACK or _TEMP_PLAYBACK_STACK[-1].get("id") != frame_id:
-            return False
-        frame = _TEMP_PLAYBACK_STACK.pop()
-
-    if frame.get("resume") and isinstance(frame.get("snapshot"), dict):
-        try:
-            _restore_playback_state(frame["snapshot"])
-        except Exception as e:
-            logger.warning("temporary_restore_failed frame_id=%s error=%s", frame_id, e)
-            return False
-    return True
-
-
-def _temporary_watchdog(frame_id: str, timeout_sec: float | None) -> None:
-    started = time.time()
-    while True:
-        time.sleep(0.25)
-        with _TEMP_PLAYBACK_LOCK:
-            is_top = bool(_TEMP_PLAYBACK_STACK) and _TEMP_PLAYBACK_STACK[-1].get("id") == frame_id
-        if not is_top:
-            return
-        if timeout_sec is not None and (time.time() - started) >= float(timeout_sec):
-            _complete_temporary_playback(frame_id, reason="timeout")
-            return
-        if not player.is_playing():
-            _complete_temporary_playback(frame_id, reason="ended")
-            return
+# Temporary playback moved to playback_service (Phase 3 M4). These aliases
+# keep existing callers and tests working: the stack/lock are the same
+# objects, so in-place mutation is shared with the service.
+_TEMP_PLAYBACK_LOCK = playback_service._TEMP_PLAYBACK_LOCK
+_TEMP_PLAYBACK_STACK = playback_service._TEMP_PLAYBACK_STACK
+_discard_temporary_playback = playback_service.discard_temporary_playback
+_discard_interrupted_playback_state = playback_service.discard_interrupted_playback_state
+_capture_current_playback_state = playback_service.capture_current_playback_state
+_restore_playback_state = playback_service.restore_playback_state
+_complete_temporary_playback = playback_service.complete_temporary_playback
+_temporary_watchdog = playback_service.temporary_watchdog
 
 # =========================
 # API Endpoints
@@ -4320,17 +4226,7 @@ def _jellyfin_emit_stopped_hint(position_sec: float | None = None, duration_sec:
     _jellyfin_emit_stopped_payload(_jellyfin_stopped_snapshot(position_sec, duration_sec))
 
 
-def _can_preserve_closed_session() -> bool:
-    """Return True only when user stop/close should keep a resumable item."""
-    try:
-        if bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)()):
-            return False
-    except Exception:
-        pass
-    try:
-        return bool(player.is_playing()) and isinstance(state.NOW_PLAYING, dict)
-    except Exception:
-        return False
+_can_preserve_closed_session = playback_service.can_preserve_closed_session
 
 
 def _idle_dashboard_enabled_for_player() -> bool:
@@ -4436,7 +4332,7 @@ def _sync_idle_visual_surfaces_after_settings() -> None:
         _ensure_notification_surface(wait_for_subscriber=False)
     else:
         try:
-            player.stop_mpv(restart_splash=False)
+            playback_service.stop_all(restart_splash=False)
         except Exception:
             pass
 
@@ -4877,10 +4773,10 @@ def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
                             dur = None
                         stopped_payload = _jellyfin_stopped_snapshot_from_now(cur_copy, pos, dur)
             clear_queue_for_play = play_mode == "playnow"
-            state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+            playback_service.suppress_auto_next(2.0)
             play_item_payload = _smart_item_from_url(source_url, start_pos=start_sec)
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
-            now = player.play_item(
+            now = playback_service.play_now(
                 play_target,
                 use_resolver=bool(req.use_ytdlp),
                 cec=False,
@@ -5216,24 +5112,9 @@ def _control_result_or_raise(result: dict | None, *, action: str) -> dict[str, o
 
 
 def _resume_paused_current_session_in_place(*, action: str = "resume") -> dict[str, object] | None:
-    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
-    now = getattr(state, "NOW_PLAYING", None)
-    if sess != "paused" or not isinstance(now, dict):
+    result = playback_service.resume_paused_in_place()
+    if result is None:
         return None
-
-    try:
-        result = player.mpv_set_result("pause", False)
-    except Exception:
-        return None
-    if not isinstance(result, dict) or result.get("error") != "success":
-        return None
-
-    resumed = dict(now)
-    resumed["closed"] = False
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-    state.set_now_playing(resumed)
-    state.set_session_state("playing")
-    state.set_pause_reason(None)
     return {
         "ok": True,
         "action": action,

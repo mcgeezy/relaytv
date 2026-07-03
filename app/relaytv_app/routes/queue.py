@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, state, upload_store
+from .. import player, playback_service, state, upload_store
 from ..debug import get_logger
 
 
@@ -78,19 +78,7 @@ def enqueue(req: EnqueueReq):
         from . import _smart_item_from_url as build_item
 
         item = build_item(req.url or "")
-    with state.QUEUE_LOCK:
-        state.QUEUE.append(item)
-        qlen = len(state.QUEUE)
-        queue_snapshot = list(state.QUEUE)
-    state.persist_queue()
-    try:
-        player.prefetch_queue_item_stream(item)
-    except Exception:
-        pass
-    try:
-        player.prime_mpv_up_next_from_queue(force=True)
-    except Exception:
-        pass
+    qlen, queue_snapshot = playback_service.queue_item(item)
     try:
         _push_queue_added_toast_async(item, req.url or "item")
     except Exception:

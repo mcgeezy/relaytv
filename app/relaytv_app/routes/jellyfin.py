@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import player, state
+from .. import player, playback_service, state
 from ..config import runtime_config
 from ..integrations import jellyfin_receiver
 
@@ -1112,8 +1111,8 @@ def jellyfin_audio_select(req: JellyfinAudioSelectReq):
         **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
     }
 
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-    switched = player.play_item(
+    playback_service.suppress_auto_next(2.0)
+    switched = playback_service.play_now(
         play_payload,
         use_resolver=False,
         cec=False,
@@ -1331,8 +1330,8 @@ def jellyfin_subtitle_select(req: JellyfinSubtitleSelectReq):
         **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
     }
 
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
-    switched = player.play_item(
+    playback_service.suppress_auto_next(2.0)
+    switched = playback_service.play_now(
         play_payload,
         use_resolver=False,
         cec=False,
