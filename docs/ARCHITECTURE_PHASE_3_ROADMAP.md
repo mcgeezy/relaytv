@@ -192,6 +192,20 @@ Validation: gates; `tests/test_playback_routes.py` unchanged and green.
 
 ### M3: Auto-Next Suppression Ownership
 
+Status: complete (2026-07-03)
+
+Notes:
+
+- All 20 scattered writes migrated: plain guards (2s), close/clear holds
+  (24h), seek-transition holds and player handoff guards (extend-only max
+  semantics) map onto `suppress_auto_next(seconds, extend_only=...)`;
+  behavior byte-identical.
+- `player.py` reaches the service through function-level imports to avoid a
+  module-level import cycle (service imports player); the M6 policy move
+  retires those call sites anyway.
+- Inventory ratchet tightened: `AUTO_NEXT_SUPPRESS_UNTIL` writer set is now
+  exactly `{playback_service.py}`.
+
 Deliverables:
 
 - One service API for suppression (e.g. `suppress_auto_next(seconds)` /
@@ -275,3 +289,4 @@ Add entries here as PRs land into `codex/architecture-phase-3`.
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M1: machine-checked transition writer inventory (137 write sites, 7 modules) with pinned per-global writer sets, plus the previously missing app-restart resume guardrail. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed); `git diff --check` | M2 playback service facade. |
 | 2026-07-03 | local | `codex/architecture-phase-3` | Completed M2: `playback_service` facade with the review command vocabulary; 17 route transition call sites migrated with zero test changes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M3 auto-next suppression ownership. |
+| 2026-07-03 | local | `codex/architecture-phase-3` | Completed M3: all 20 auto-next suppression writes migrated to the service API; writer set for `AUTO_NEXT_SUPPRESS_UNTIL` tightened to `{playback_service.py}`. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (271 passed, no test edits); `git diff --check` | M4 temporary playback stack relocation. |

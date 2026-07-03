@@ -3814,8 +3814,10 @@ def advance_queue_playback(
     poll_sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     """Advance playback to the next queue item using one shared handoff path."""
+    from . import playback_service
+
     handoff_guard = queue_handoff_suppress_sec()
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + handoff_guard
+    playback_service.suppress_auto_next(handoff_guard)
     allow_skip_unplayable = mode in {"next", "play_next"}
     skipped_unplayable = 0
 
@@ -3825,10 +3827,7 @@ def advance_queue_playback(
         if prefer_playlist_next:
             method = _attempt_playlist_next_handoff(poll_sleep=poll_sleep)
             if method:
-                state.AUTO_NEXT_SUPPRESS_UNTIL = max(
-                    float(state.AUTO_NEXT_SUPPRESS_UNTIL or 0.0),
-                    time.time() + handoff_guard,
-                )
+                playback_service.suppress_auto_next(handoff_guard, extend_only=True)
                 return {
                     "status": "playing_next",
                     "now_playing": state.NOW_PLAYING,
@@ -3903,10 +3902,7 @@ def advance_queue_playback(
                     logger.warning("queue_rollback_persist_failed source=advance_queue_exception error=%s", persist_exc)
                 raise
 
-            state.AUTO_NEXT_SUPPRESS_UNTIL = max(
-                float(state.AUTO_NEXT_SUPPRESS_UNTIL or 0.0),
-                time.time() + handoff_guard,
-            )
+            playback_service.suppress_auto_next(handoff_guard, extend_only=True)
             result = {
                 "status": "playing_next",
                 "now_playing": now,
@@ -4667,7 +4663,9 @@ def _autoplay_next_worker():
             continue
         except Exception as exc:
             logger.warning("auto_next_failed error=%s", exc)
-            state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3.0
+            from . import playback_service
+
+            playback_service.suppress_auto_next(3.0)
         finally:
             _set_auto_next_transition(False)
 

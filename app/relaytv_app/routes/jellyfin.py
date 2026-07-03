@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-only
-import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -1112,7 +1111,7 @@ def jellyfin_audio_select(req: JellyfinAudioSelectReq):
         **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
     }
 
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
     switched = playback_service.play_now(
         play_payload,
         use_resolver=False,
@@ -1331,7 +1330,7 @@ def jellyfin_subtitle_select(req: JellyfinSubtitleSelectReq):
         **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
     }
 
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
     switched = playback_service.play_now(
         play_payload,
         use_resolver=False,

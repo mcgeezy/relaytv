@@ -347,7 +347,7 @@ def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
 @router.post("/play")
 def play(req: PlayReq):
     """Immediate play; clears queue."""
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
     item = _smart_item_from_url(req.url or "")
     start_pos = item.get("resume_pos") if isinstance(item, dict) else None
     now = playback_service.play_now(
@@ -375,7 +375,7 @@ def next_track():
 @router.post("/play_now")
 def play_now(req: PlayNowReq):
     """Play immediately, optionally preserving the currently playing item."""
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
 
     preserved = None
     if req.preserve_current and req.preserve_to == "queue_front" and req.resume_current:
@@ -437,7 +437,7 @@ def play_now(req: PlayNowReq):
 
 @router.post("/play_temporary")
 def play_temporary(req: PlayTemporaryReq):
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
     snapshot = _capture_current_playback_state()
     frame_id = str(uuid.uuid4())
     frame = {
@@ -563,7 +563,7 @@ def share(url: str | None = None, link: str | None = None, cec: bool = True):
 
 @router.post("/smart")
 def smart(req: PlayReq):
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
     if player.is_playing():
         item = _smart_item_from_url(req.url or "", lightweight=True)
         qlen, _queue_snapshot = playback_service.queue_item(item)
@@ -595,7 +595,7 @@ def clear_now_playing():
     if has_queue:
         return _next_track()
 
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    playback_service.suppress_auto_next(3600 * 24)
     with player.MPV_LOCK:
         stopped_in_place = _stop_current_for_idle_or_desktop()
     state.set_now_playing(None)
@@ -612,7 +612,7 @@ def clear_now_playing():
 def close():
     """Close the player but keep session resumable (queue preserved)."""
     # Prevent the autoplay worker from immediately advancing.
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    playback_service.suppress_auto_next(3600 * 24)
     _discard_interrupted_playback_state("close")
 
     pos = None
@@ -693,7 +693,7 @@ def close():
 @router.post("/resume/clear")
 def clear_resumable_session():
     """Clear retained now-playing/resume state and return to idle."""
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    playback_service.suppress_auto_next(3600 * 24)
     _discard_interrupted_playback_state("resume_clear")
     with player.MPV_LOCK:
         playback_service.stop_all()
@@ -717,7 +717,7 @@ def resume_session():
     if not now:
         raise HTTPException(status_code=400, detail="No item to resume")
 
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
 
     stream = now.get("stream")
     audio = now.get("audio")
@@ -765,7 +765,7 @@ def resume_session():
 @router.post("/stop")
 def stop():
     """User stop with resume support; always return to idle visuals."""
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 3600 * 24
+    playback_service.suppress_auto_next(3600 * 24)
     _discard_interrupted_playback_state("stop")
 
     pos = None
@@ -903,7 +903,7 @@ def playback_play():
             start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
         except Exception:
             start_pos = None
-        state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+        playback_service.suppress_auto_next(2.0)
 
         if isinstance(stream, str) and stream.strip():
             resume_result: dict[str, object] | None = None
@@ -968,7 +968,7 @@ def playback_toggle():
 @router.post("/seek")
 def seek(req: SeekReq):
     hold_sec = _seek_transition_hold_sec()
-    state.AUTO_NEXT_SUPPRESS_UNTIL = max(float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0), time.time() + hold_sec)
+    playback_service.suppress_auto_next(hold_sec, extend_only=True)
     try:
         player._mark_playback_transition(hold_sec)
     except Exception:
@@ -980,7 +980,7 @@ def seek(req: SeekReq):
 @router.post("/seek_abs")
 def seek_abs(req: SeekAbsReq):
     hold_sec = _seek_transition_hold_sec()
-    state.AUTO_NEXT_SUPPRESS_UNTIL = max(float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0), time.time() + hold_sec)
+    playback_service.suppress_auto_next(hold_sec, extend_only=True)
     try:
         player._mark_playback_transition(hold_sec)
     except Exception:

@@ -4877,7 +4877,7 @@ def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
                             dur = None
                         stopped_payload = _jellyfin_stopped_snapshot_from_now(cur_copy, pos, dur)
             clear_queue_for_play = play_mode == "playnow"
-            state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+            playback_service.suppress_auto_next(2.0)
             play_item_payload = _smart_item_from_url(source_url, start_pos=start_sec)
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
             now = playback_service.play_now(
@@ -5230,7 +5230,7 @@ def _resume_paused_current_session_in_place(*, action: str = "resume") -> dict[s
 
     resumed = dict(now)
     resumed["closed"] = False
-    state.AUTO_NEXT_SUPPRESS_UNTIL = time.time() + 2.0
+    playback_service.suppress_auto_next(2.0)
     state.set_now_playing(resumed)
     state.set_session_state("playing")
     state.set_pause_reason(None)
