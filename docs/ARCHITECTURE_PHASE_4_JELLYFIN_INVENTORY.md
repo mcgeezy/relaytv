@@ -71,31 +71,23 @@ Service-level tests with fake receiver/player adapters are added in M7
 ## Jellyfin Function Listing
 
 <!-- BEGIN GENERATED JELLYFIN ROUTE LISTING (tests/test_jellyfin_inventory.py) -->
-### `routes/__init__.py` (24)
+### `routes/__init__.py` (16)
 
 - `_jellyfin_complete_ratio`
 - `_jellyfin_complete_remaining_sec`
 - `_jellyfin_emit_progress_hint`
 - `_jellyfin_emit_stopped_hint`
 - `_jellyfin_emit_stopped_payload`
-- `_jellyfin_enrich_now_stream_metadata`
 - `_jellyfin_integration_command_impl`
 - `_jellyfin_is_duplicate_command`
 - `_jellyfin_played_percentage`
 - `_jellyfin_progress_snapshot`
-- `_jellyfin_runtime_selected_audio_stream`
-- `_jellyfin_runtime_selected_subtitle_stream`
 - `_jellyfin_should_suppress_duplicate_play`
 - `_jellyfin_should_suppress_duplicate_ui_action`
 - `_jellyfin_snap_position_ticks`
 - `_jellyfin_stopped_snapshot`
 - `_jellyfin_stopped_snapshot_from_now`
-- `_jellyfin_try_set_mpv_audio_track`
-- `_jellyfin_try_set_mpv_subtitle_track`
-- `_merge_jellyfin_playback_metadata`
-- `_preferred_jellyfin_stream_indices`
 - `_reset_jellyfin_command_state`
-- `_retarget_jellyfin_queue_stream_preferences`
 - `_ui_event_push_jellyfin`
 
 ### `routes/assets.py` (2)

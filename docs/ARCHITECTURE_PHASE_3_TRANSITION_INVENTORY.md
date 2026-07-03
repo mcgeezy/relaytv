@@ -58,6 +58,9 @@ writers are deliberate, pinned exceptions
   (self-healing on read); candidate for a future service reconcile command.
 - `routes/queue.py`, `routes/uploads.py`, `upload_store.py`: queue CRUD and
   upload retention — queue content management, not playback transitions.
+- `integrations/jellyfin_service.py`: queue URL retargeting after Jellyfin
+  language preference changes (Phase 4 M4) — a content rewrite of queued
+  entries, not a playback transition.
 - `_TEMP_PLAYBACK_STACK` aliases in `routes/__init__.py` and thin wrappers in
   `routes/playback.py`: kept so existing tests observe the live stack through
   the routes module.
@@ -92,7 +95,7 @@ The five Phase 3 review scenarios and where they are guarded at phase start:
 | --- | --- |
 | `AUTO_NEXT_SUPPRESS_UNTIL` | `playback_service.py` (2) |
 | `NOW_PLAYING` | `playback_service.py` (10)<br>`player.py` (9)<br>`routes/__init__.py` (2)<br>`routes/jellyfin.py` (4) |
-| `QUEUE` | `playback_service.py` (5)<br>`player.py` (5)<br>`routes/__init__.py` (4)<br>`routes/queue.py` (5)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
+| `QUEUE` | `integrations/jellyfin_service.py` (1)<br>`playback_service.py` (5)<br>`player.py` (5)<br>`routes/__init__.py` (3)<br>`routes/queue.py` (5)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
 | `SESSION_POSITION` | `playback_service.py` (8)<br>`player.py` (8) |
 | `SESSION_STATE` | `playback_service.py` (10)<br>`player.py` (11)<br>`routes/__init__.py` (4)<br>`routes/jellyfin.py` (2) |
 | `_TEMP_PLAYBACK_STACK` | `playback_service.py` (8)<br>`routes/__init__.py` (2)<br>`routes/playback.py` (2) |
