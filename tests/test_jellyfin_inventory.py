@@ -83,23 +83,15 @@ def test_jellyfin_inventory_doc_matches_source() -> None:
 # migration inventory. Phase-start baseline: 117 definitions.
 EXPECTED_JELLYFIN_ROUTE_FUNCTIONS: dict[str, set[str]] = {
     # M2 moved the 32 pure parse/normalize/URL helpers, M3 the stream
-    # selection/transcode policy and playable-item resolution, and M4 the
-    # track preference/runtime track switching family to
-    # integrations/jellyfin_service.py; routes keeps assignment aliases.
+    # selection/transcode policy and playable-item resolution, M4 the track
+    # preference/runtime track switching family, and M5 the progress/stopped
+    # hint and snapshot family to integrations/jellyfin_service.py; routes
+    # keeps assignment aliases.
     "routes/__init__.py": {
-        "_jellyfin_complete_ratio",
-        "_jellyfin_complete_remaining_sec",
-        "_jellyfin_emit_stopped_hint",
-        "_jellyfin_emit_stopped_payload",
         "_jellyfin_integration_command_impl",
         "_jellyfin_is_duplicate_command",
-        "_jellyfin_played_percentage",
-        "_jellyfin_progress_snapshot",
         "_jellyfin_should_suppress_duplicate_play",
         "_jellyfin_should_suppress_duplicate_ui_action",
-        "_jellyfin_snap_position_ticks",
-        "_jellyfin_stopped_snapshot",
-        "_jellyfin_stopped_snapshot_from_now",
         "_reset_jellyfin_command_state",
         "_ui_event_push_jellyfin",
     },

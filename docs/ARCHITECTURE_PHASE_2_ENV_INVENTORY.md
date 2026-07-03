@@ -143,8 +143,8 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_CLIENT_NAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_CLIENT_VERSION` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_COMMAND_ID_TTL_SEC` | `routes/__init__.py` | - | static env |
-| `RELAYTV_JELLYFIN_COMPLETE_RATIO` | `integrations/jellyfin_receiver.py`<br>`player.py`<br>`routes/__init__.py` | - | static env |
-| `RELAYTV_JELLYFIN_COMPLETE_REMAINING_SEC` | `integrations/jellyfin_receiver.py`<br>`player.py`<br>`routes/__init__.py` | - | static env |
+| `RELAYTV_JELLYFIN_COMPLETE_RATIO` | `integrations/jellyfin_receiver.py`<br>`integrations/jellyfin_service.py`<br>`player.py` | - | static env |
+| `RELAYTV_JELLYFIN_COMPLETE_REMAINING_SEC` | `integrations/jellyfin_receiver.py`<br>`integrations/jellyfin_service.py`<br>`player.py` | - | static env |
 | `RELAYTV_JELLYFIN_DETAIL_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_DEVICE_ID` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_DEVICE_NAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |

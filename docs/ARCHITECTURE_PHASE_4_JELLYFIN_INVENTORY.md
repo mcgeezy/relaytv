@@ -71,21 +71,12 @@ Service-level tests with fake receiver/player adapters are added in M7
 ## Jellyfin Function Listing
 
 <!-- BEGIN GENERATED JELLYFIN ROUTE LISTING (tests/test_jellyfin_inventory.py) -->
-### `routes/__init__.py` (15)
+### `routes/__init__.py` (6)
 
-- `_jellyfin_complete_ratio`
-- `_jellyfin_complete_remaining_sec`
-- `_jellyfin_emit_stopped_hint`
-- `_jellyfin_emit_stopped_payload`
 - `_jellyfin_integration_command_impl`
 - `_jellyfin_is_duplicate_command`
-- `_jellyfin_played_percentage`
-- `_jellyfin_progress_snapshot`
 - `_jellyfin_should_suppress_duplicate_play`
 - `_jellyfin_should_suppress_duplicate_ui_action`
-- `_jellyfin_snap_position_ticks`
-- `_jellyfin_stopped_snapshot`
-- `_jellyfin_stopped_snapshot_from_now`
 - `_reset_jellyfin_command_state`
 - `_ui_event_push_jellyfin`
 

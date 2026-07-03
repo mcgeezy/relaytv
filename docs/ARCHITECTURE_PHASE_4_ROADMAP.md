@@ -194,7 +194,20 @@ Status: complete
 
 ### M5: Progress And Stopped Hint Family
 
-Status: planned
+Status: complete
+
+- `emit_progress_hint` had already moved in M4 (service-internal caller);
+  this milestone moved the remaining nine functions and the
+  `register_progress_provider` registration (now at service import time —
+  the routes package imports the service, so ordering is unchanged).
+- Assessed and deferred: consolidating `player.py`'s parallel stopped-hint
+  path (`_emit_jellyfin_stopped_from_now`, `_jellyfin_should_snap_complete`,
+  `_canonical_jellyfin_url_key`, `_RECENT_JELLYFIN_STOP` dedupe). The player
+  copies differ subtly from the service versions (URL-key canonicalization
+  lowercases media-source ids and resolves item ids through the receiver;
+  the snap helper returns a bool rather than snapped ticks), so unifying
+  them is a behavior change, not a move. Left as review Finding 10 drift
+  with the player pinned as a transition-writer exception.
 
 - Move `_jellyfin_emit_progress_hint`, `_jellyfin_progress_snapshot`,
   `_jellyfin_complete_ratio`/`_jellyfin_complete_remaining_sec`,

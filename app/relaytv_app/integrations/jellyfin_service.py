@@ -2006,3 +2006,227 @@ def switch_subtitle_track(requested_index: object, *, server_status: dict) -> di
         "queued_items_retargeted": queue_retargeted,
         "now_playing": now_out,
     }
+
+
+def complete_ratio() -> float:
+    try:
+        ratio = float(os.getenv("RELAYTV_JELLYFIN_COMPLETE_RATIO", "0.98"))
+    except Exception:
+        ratio = 0.98
+    return min(0.999, max(0.0, ratio))
+
+
+def complete_remaining_sec() -> float:
+    try:
+        sec = float(os.getenv("RELAYTV_JELLYFIN_COMPLETE_REMAINING_SEC", "0"))
+    except Exception:
+        sec = 0.0
+    return max(0.0, sec)
+
+
+def snap_position_ticks(pos_ticks: int, run_ticks: int | None = None) -> int:
+    pos = max(0, int(pos_ticks or 0))
+    try:
+        run = int(run_ticks) if run_ticks is not None else None
+    except Exception:
+        run = None
+    if run is None or run <= 0:
+        return pos
+    if pos >= run:
+        return run
+    if pos >= int(run * complete_ratio()):
+        return run
+    remain_sec = complete_remaining_sec()
+    if remain_sec > 0.0:
+        remain_ticks = int(remain_sec * 10_000_000)
+        if (run - pos) <= max(0, remain_ticks):
+            return run
+    return pos
+
+
+def played_percentage(pos_ticks: int, run_ticks: int | None = None) -> float | None:
+    try:
+        run = int(run_ticks) if run_ticks is not None else None
+    except Exception:
+        run = None
+    if run is None or run <= 0:
+        return None
+    try:
+        pct = (float(max(0, int(pos_ticks or 0))) / float(run)) * 100.0
+    except Exception:
+        return None
+    if pct < 0.0:
+        pct = 0.0
+    if pct > 100.0:
+        pct = 100.0
+    return round(pct, 3)
+
+
+def stopped_snapshot_from_now(
+    now: dict | None,
+    position_sec: float | None = None,
+    duration_sec: float | None = None,
+) -> dict | None:
+    if not isinstance(now, dict):
+        return None
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        return None
+    pos_f = None
+    if position_sec is not None:
+        try:
+            pos_f = float(position_sec)
+        except Exception:
+            pos_f = None
+    if pos_f is None:
+        try:
+            rp = now.get("resume_pos")
+            pos_f = float(rp) if rp is not None else None
+        except Exception:
+            pos_f = None
+    if pos_f is None:
+        try:
+            pos_f = float(getattr(state, "SESSION_POSITION", 0.0) or 0.0)
+        except Exception:
+            pos_f = 0.0
+    dur_f = None
+    if duration_sec is not None:
+        try:
+            dur_f = float(duration_sec)
+        except Exception:
+            dur_f = None
+    if dur_f is None:
+        try:
+            d = now.get("duration")
+            dur_f = float(d) if d is not None else None
+        except Exception:
+            dur_f = None
+    payload = {
+        "ItemId": item_id,
+        "IsPaused": False,
+    }
+    pos_ticks = max(0, int((pos_f or 0.0) * 10_000_000))
+    if dur_f is not None and dur_f >= 0:
+        run_ticks = int(dur_f * 10_000_000)
+        payload["RunTimeTicks"] = run_ticks
+        pos_ticks = snap_position_ticks(pos_ticks, run_ticks)
+        played_pct = played_percentage(pos_ticks, run_ticks)
+        if played_pct is not None:
+            payload["PlayedPercentage"] = played_pct
+    payload["PositionTicks"] = pos_ticks
+    play_session_id = str(now.get("jellyfin_play_session_id") or "").strip()
+    if play_session_id:
+        payload["PlaySessionId"] = play_session_id
+    media_source_id = _first_nonempty_str(
+        [
+            now.get("jellyfin_media_source_id"),
+            extract_media_source_id_from_url(str(now.get("url") or "")),
+        ]
+    )
+    if media_source_id:
+        payload["MediaSourceId"] = media_source_id
+    return payload
+
+
+def stopped_snapshot(position_sec: float | None = None, duration_sec: float | None = None) -> dict | None:
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    return stopped_snapshot_from_now(now, position_sec, duration_sec)
+
+
+def emit_stopped_payload(payload: dict | None) -> None:
+    if not isinstance(payload, dict) or not payload:
+        return
+
+    def _run() -> None:
+        try:
+            jellyfin_receiver.send_progress_payload_once(payload)
+        except Exception:
+            pass
+        try:
+            jellyfin_receiver.send_playback_stopped_once(payload)
+        except Exception:
+            pass
+
+    try:
+        threading.Thread(target=_run, daemon=True, name="relaytv-jellyfin-stopped-hint").start()
+    except Exception:
+        pass
+
+
+def emit_stopped_hint(position_sec: float | None = None, duration_sec: float | None = None) -> None:
+    try:
+        player.remember_recent_jellyfin_stop(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None)
+    except Exception:
+        pass
+    emit_stopped_payload(stopped_snapshot(position_sec, duration_sec))
+
+
+def progress_snapshot() -> dict | None:
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if not now:
+        return None
+    item_id = str(now.get("jellyfin_item_id") or "").strip()
+    if not item_id:
+        return None
+    is_playing = bool(player.is_playing())
+    props = player.mpv_get_many(["pause", "time-pos", "duration", "mute", "volume"]) if is_playing else {}
+
+    pos = props.get("time-pos") if isinstance(props, dict) else None
+    dur = props.get("duration") if isinstance(props, dict) else None
+    muted = props.get("mute") if isinstance(props, dict) else None
+    volume = props.get("volume") if isinstance(props, dict) else None
+
+    try:
+        if pos is not None:
+            pos_f = float(pos)
+        elif now.get("resume_pos") is not None:
+            pos_f = float(now.get("resume_pos"))
+        else:
+            pos_f = float(state.SESSION_POSITION or 0.0)
+    except Exception:
+        pos_f = 0.0
+    try:
+        if dur is not None:
+            dur_f = float(dur)
+        elif now.get("duration") is not None:
+            dur_f = float(now.get("duration"))
+        else:
+            dur_f = None
+    except Exception:
+        dur_f = None
+
+    pos_ticks = max(0, int(pos_f * 10_000_000))
+    payload = {
+        "ItemId": item_id,
+        "IsPaused": bool(props.get("pause")) if is_playing and isinstance(props, dict) else (not is_playing),
+    }
+    play_session_id = str(now.get("jellyfin_play_session_id") or "").strip()
+    if play_session_id:
+        payload["PlaySessionId"] = play_session_id
+    media_source_id = _first_nonempty_str(
+        [
+            now.get("jellyfin_media_source_id"),
+            extract_media_source_id_from_url(str(now.get("url") or "")),
+        ]
+    )
+    if media_source_id:
+        payload["MediaSourceId"] = media_source_id
+    if dur_f is not None and dur_f >= 0:
+        run_ticks = int(dur_f * 10_000_000)
+        payload["RunTimeTicks"] = run_ticks
+        pos_ticks = snap_position_ticks(pos_ticks, run_ticks)
+        played_pct = played_percentage(pos_ticks, run_ticks)
+        if played_pct is not None:
+            payload["PlayedPercentage"] = played_pct
+    payload["PositionTicks"] = pos_ticks
+    if muted is not None:
+        payload["IsMuted"] = bool(muted)
+    if volume is not None:
+        try:
+            payload["VolumeLevel"] = int(float(volume))
+        except Exception:
+            pass
+    return payload
+
+
+jellyfin_receiver.register_progress_provider(progress_snapshot)
