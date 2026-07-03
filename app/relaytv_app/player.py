@@ -4643,31 +4643,11 @@ def _autoplay_next_worker():
             continue
         if playback_transitioning():
             continue
-        with state.QUEUE_LOCK:
-            has_queue = bool(state.QUEUE)
-        if not has_queue:
-            # Avoid flashing idle above video during native handoff gaps.
-            if playback_transitioning() or auto_next_transitioning():
-                continue
-            if _session_already_idle_without_queue():
-                continue
-            _handle_playback_idle_no_queue()
-            continue
+        # Ended without user intent: the transition decision (advance the
+        # queue or go idle) is playback_service policy.
+        from . import playback_service
 
-        _set_auto_next_transition(True)
-        try:
-            advance_queue_playback(mode="auto_next", prefer_playlist_next=True)
-        except QueueAdvanceEmptyError:
-            _handle_playback_idle_no_queue()
-        except QueueAdvanceSuppressedError:
-            continue
-        except Exception as exc:
-            logger.warning("auto_next_failed error=%s", exc)
-            from . import playback_service
-
-            playback_service.suppress_auto_next(3.0)
-        finally:
-            _set_auto_next_transition(False)
+        playback_service.natural_end()
 
 
 

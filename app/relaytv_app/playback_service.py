@@ -37,6 +37,11 @@ from .debug import get_logger
 
 logger = get_logger("playback")
 
+# The queue-advance outcome vocabulary routes catch; defined by the player's
+# advance mechanics, re-exported so callers need only the service.
+QueueAdvanceEmptyError = player.QueueAdvanceEmptyError
+QueueAdvanceSuppressedError = player.QueueAdvanceSuppressedError
+
 
 def play_now(
     item_or_text,
@@ -91,12 +96,52 @@ def advance_queue(
     prefer_playlist_next: bool = False,
     poll_sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
-    """Advance playback to the next queue item."""
-    return player.advance_queue_playback(
-        mode=mode,
-        prefer_playlist_next=prefer_playlist_next,
-        poll_sleep=poll_sleep,
-    )
+    """Advance playback to the next queue item.
+
+    ``poll_sleep`` is forwarded only when set (``None`` is the callee default
+    and existing test doubles assert the exact kwargs they receive).
+    """
+    kwargs: dict[str, Any] = {"mode": mode, "prefer_playlist_next": prefer_playlist_next}
+    if poll_sleep is not None:
+        kwargs["poll_sleep"] = poll_sleep
+    return player.advance_queue_playback(**kwargs)
+
+
+def natural_end() -> str:
+    """Handle a confirmed natural end of playback (Phase 3 M6).
+
+    Called by the player's autoplay monitor once its telemetry confirms
+    playback ended without user intent: advance the queue if there is one,
+    otherwise transition to the idle surface. Detection (idle confirmation,
+    transition guards, suppression window) stays with the monitor; this is
+    the decision policy. Returns the action taken, for logging/tests.
+    """
+    with state.QUEUE_LOCK:
+        has_queue = bool(state.QUEUE)
+    if not has_queue:
+        # Avoid flashing idle above video during native handoff gaps.
+        if player.playback_transitioning() or player.auto_next_transitioning():
+            return "hold_transition"
+        if player._session_already_idle_without_queue():
+            return "already_idle"
+        player._handle_playback_idle_no_queue()
+        return "idle"
+
+    player._set_auto_next_transition(True)
+    try:
+        advance_queue(mode="auto_next", prefer_playlist_next=True)
+        return "advanced"
+    except QueueAdvanceEmptyError:
+        player._handle_playback_idle_no_queue()
+        return "idle"
+    except QueueAdvanceSuppressedError:
+        return "suppressed"
+    except Exception as exc:
+        logger.warning("auto_next_failed error=%s", exc)
+        suppress_auto_next(3.0)
+        return "failed"
+    finally:
+        player._set_auto_next_transition(False)
 
 
 def stop_all(*, restart_splash: bool | None = None) -> None:

@@ -276,7 +276,7 @@ def play(req: PlayReq):
 def next_track():
     try:
         result = dict(playback_service.advance_queue(mode="next", prefer_playlist_next=True, poll_sleep=time.sleep))
-    except player.QueueAdvanceEmptyError:
+    except playback_service.QueueAdvanceEmptyError:
         raise HTTPException(status_code=400, detail="Queue is empty")
     if result.get("method") == "dequeue_play_item":
         result.pop("method", None)
@@ -750,7 +750,7 @@ def playback_play():
     # Else: play next queue item.
     try:
         handoff = playback_service.advance_queue(mode="play_next", prefer_playlist_next=False)
-    except player.QueueAdvanceEmptyError:
+    except playback_service.QueueAdvanceEmptyError:
         raise HTTPException(status_code=400, detail="Queue is empty")
     return {"ok": True, "action": "play_next", "now_playing": handoff.get("now_playing")}
 
