@@ -151,11 +151,11 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_HEARTBEAT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_MAX_STREAMING_BITRATE` | `routes/__init__.py` | - | static env |
+| `RELAYTV_JELLYFIN_MAX_STREAMING_BITRATE` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_METADATA_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE` | `routes/__init__.py` | - | static env |
+| `RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_PASSWORD` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`main.py`<br>`routes/__init__.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_PLAY_DEBOUNCE_SEC` | `routes/__init__.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |

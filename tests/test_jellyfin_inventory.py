@@ -82,12 +82,10 @@ def test_jellyfin_inventory_doc_matches_source() -> None:
 # end-state residents; every leading-underscore product helper listed here is
 # migration inventory. Phase-start baseline: 117 definitions.
 EXPECTED_JELLYFIN_ROUTE_FUNCTIONS: dict[str, set[str]] = {
-    # M2 moved the 32 pure parse/normalize/URL helpers to
+    # M2 moved the 32 pure parse/normalize/URL helpers and M3 the stream
+    # selection/transcode policy and playable-item resolution to
     # integrations/jellyfin_service.py; routes keeps assignment aliases.
     "routes/__init__.py": {
-        "_effective_jellyfin_playback_mode",
-        "_first_playable_jellyfin_episode",
-        "_jellyfin_auto_prefers_transcode",
         "_jellyfin_complete_ratio",
         "_jellyfin_complete_remaining_sec",
         "_jellyfin_emit_progress_hint",
@@ -105,16 +103,12 @@ EXPECTED_JELLYFIN_ROUTE_FUNCTIONS: dict[str, set[str]] = {
         "_jellyfin_snap_position_ticks",
         "_jellyfin_stopped_snapshot",
         "_jellyfin_stopped_snapshot_from_now",
-        "_jellyfin_target_max_streaming_bitrate",
         "_jellyfin_try_set_mpv_audio_track",
         "_jellyfin_try_set_mpv_subtitle_track",
         "_merge_jellyfin_playback_metadata",
-        "_native_jellyfin_auto_transcode_guard_active",
         "_preferred_jellyfin_stream_indices",
         "_reset_jellyfin_command_state",
-        "_resolve_jellyfin_playable_item",
         "_retarget_jellyfin_queue_stream_preferences",
-        "_select_jellyfin_playback_url",
         "_ui_event_push_jellyfin",
     },
     # Static asset endpoints — permanent HTTP surface, not migration targets.

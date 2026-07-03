@@ -71,11 +71,8 @@ Service-level tests with fake receiver/player adapters are added in M7
 ## Jellyfin Function Listing
 
 <!-- BEGIN GENERATED JELLYFIN ROUTE LISTING (tests/test_jellyfin_inventory.py) -->
-### `routes/__init__.py` (31)
+### `routes/__init__.py` (24)
 
-- `_effective_jellyfin_playback_mode`
-- `_first_playable_jellyfin_episode`
-- `_jellyfin_auto_prefers_transcode`
 - `_jellyfin_complete_ratio`
 - `_jellyfin_complete_remaining_sec`
 - `_jellyfin_emit_progress_hint`
@@ -93,16 +90,12 @@ Service-level tests with fake receiver/player adapters are added in M7
 - `_jellyfin_snap_position_ticks`
 - `_jellyfin_stopped_snapshot`
 - `_jellyfin_stopped_snapshot_from_now`
-- `_jellyfin_target_max_streaming_bitrate`
 - `_jellyfin_try_set_mpv_audio_track`
 - `_jellyfin_try_set_mpv_subtitle_track`
 - `_merge_jellyfin_playback_metadata`
-- `_native_jellyfin_auto_transcode_guard_active`
 - `_preferred_jellyfin_stream_indices`
 - `_reset_jellyfin_command_state`
-- `_resolve_jellyfin_playable_item`
 - `_retarget_jellyfin_queue_stream_preferences`
-- `_select_jellyfin_playback_url`
 - `_ui_event_push_jellyfin`
 
 ### `routes/assets.py` (2)

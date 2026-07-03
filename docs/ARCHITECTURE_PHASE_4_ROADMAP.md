@@ -153,7 +153,11 @@ Status: complete
 
 ### M3: Stream Selection, Transcode Policy, And Playable Resolution
 
-Status: planned
+Status: complete
+
+- Note: `resolve_playable_item` keeps raising `HTTPException` (404) inside
+  the service so callers' behavior is unchanged; a service-level error type
+  is a candidate follow-up once the command ingress (M6) is the only caller.
 
 - Move `_select_jellyfin_playback_url`, `_jellyfin_auto_prefers_transcode`,
   `_jellyfin_target_max_streaming_bitrate`,

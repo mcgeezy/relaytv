@@ -13,9 +13,15 @@ through `playback_service`; mpv control goes through `player`.
 """
 from __future__ import annotations
 
+import os
+
+from fastapi import HTTPException
+
 from typing import Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from .. import player, state, video_profile
+from ..config import runtime_config
 from ..debug import get_logger
 from . import jellyfin_receiver
 
@@ -598,3 +604,319 @@ def looks_like_media_url(url: str) -> bool:
 
 def track_type_is_subtitle(raw_type: object) -> bool:
     return str(raw_type or "").strip().lower() in {"sub", "subtitle", "subtitles"}
+
+
+def effective_playback_mode(settings: dict | None = None) -> str:
+    src = settings if isinstance(settings, dict) else (state.get_settings() if hasattr(state, "get_settings") else {})
+    val = src.get("jellyfin_playback_mode") if isinstance(src, dict) else None
+    if val is None or str(val).strip() == "":
+        val = runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PLAYBACK_MODE", "auto")
+    return normalize_playback_mode(val)
+
+
+def native_auto_transcode_guard_active(*, profile: dict | None = None) -> bool:
+    # Native composed playback used to blanket-force transcode in auto mode.
+    # That was safe but too conservative, especially on healthy Intel/QSV and
+    # Intel/VAAPI hosts. Keep an override env, otherwise only force transcode
+    # for native runtimes with riskier decode profiles.
+    try:
+        native_active = bool(player.native_qt_runtime_active())
+    except Exception:
+        native_active = False
+    if not native_active:
+        return False
+
+    raw = str(os.getenv("RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+
+    vp = profile if isinstance(profile, dict) else {}
+    decode_profile = str(vp.get("decode_profile") or "").strip().lower()
+    if decode_profile in ("intel_amd64_qsv", "intel_amd64_vaapi", "nvidia_cuda"):
+        return False
+    if decode_profile in ("software", "arm_safe", "vaapi_generic", "vulkan_generic"):
+        return True
+    # Unknown native profile stays conservative.
+    return True
+
+
+def target_max_streaming_bitrate(
+    *,
+    profile: dict | None = None,
+    settings: dict | None = None,
+) -> int:
+    # Allow an explicit override for deployments that need tighter control.
+    try:
+        raw = int(float(os.getenv("RELAYTV_JELLYFIN_MAX_STREAMING_BITRATE", "0") or "0"))
+        if raw > 0:
+            return raw
+    except Exception:
+        pass
+
+    cap = 0
+    vp = profile if isinstance(profile, dict) else {}
+    if isinstance(settings, dict):
+        try:
+            qmode = str(settings.get("quality_mode") or "").strip().lower()
+            qcap = str(settings.get("quality_cap") or "").strip()
+            if qmode == "manual" and qcap and qcap.isdigit():
+                cap = int(qcap)
+        except Exception:
+            cap = 0
+    if cap <= 0:
+        try:
+            cap = int(vp.get("display_cap_height") or 0)
+        except Exception:
+            cap = 0
+
+    if cap <= 0:
+        return 18_000_000
+    if cap <= 360:
+        return 2_500_000
+    if cap <= 480:
+        return 4_000_000
+    if cap <= 720:
+        return 8_000_000
+    if cap <= 1080:
+        return 18_000_000
+    if cap <= 1440:
+        return 28_000_000
+    return 35_000_000
+
+
+def auto_prefers_transcode(
+    *,
+    item_detail: dict | None,
+    profile: dict | None,
+) -> tuple[bool, str]:
+    detail = item_detail if isinstance(item_detail, dict) else {}
+    vp = profile if isinstance(profile, dict) else {}
+    codec = str(detail.get("video_codec") or "").strip().lower()
+    try:
+        height = int(detail.get("video_height") or 0)
+    except Exception:
+        height = 0
+    try:
+        bit_depth = int(detail.get("video_bit_depth") or 0)
+    except Exception:
+        bit_depth = 0
+    try:
+        bitrate = int(detail.get("video_bitrate") or 0)
+    except Exception:
+        bitrate = 0
+
+    decode_profile = str(vp.get("decode_profile") or "").strip().lower()
+    av1_allowed = bool(vp.get("av1_allowed"))
+    try:
+        display_cap_height = int(vp.get("display_cap_height") or 0)
+    except Exception:
+        display_cap_height = 0
+
+    if codec in ("av1", "av01") and not av1_allowed:
+        return True, "av1_not_allowed"
+    if display_cap_height > 0 and height > 0 and height > display_cap_height:
+        return True, "exceeds_display_cap"
+    if decode_profile in ("software", "arm_safe"):
+        if codec in ("hevc", "h265", "av1", "vp9") and height >= 1080:
+            return True, "software_decode_high_cost"
+        if bit_depth > 8 and codec in ("hevc", "h265", "av1"):
+            return True, "software_decode_10bit"
+        if bitrate > 25_000_000:
+            return True, "software_decode_high_bitrate"
+    if codec in ("hevc", "h265") and bit_depth > 8 and decode_profile not in (
+        "intel_amd64_qsv",
+        "intel_amd64_vaapi",
+        "nvidia_cuda",
+    ):
+        return True, "limited_hevc_10bit_support"
+    return False, "direct_ok"
+
+
+def select_playback_url(
+    *,
+    item_id: str,
+    source_url: str,
+    server_url: str,
+    api_key: str,
+    media_source_id: str = "",
+    audio_stream_index: str = "",
+    subtitle_stream_index: str = "",
+    settings: dict | None = None,
+) -> dict[str, str]:
+    iid = str(item_id or "").strip()
+    src = str(source_url or "").strip()
+    base = str(server_url or "").strip()
+    tok = str(api_key or "").strip()
+    mid = str(media_source_id or "").strip()
+    aidx = str(audio_stream_index or "").strip()
+    sidx = str(subtitle_stream_index or "").strip()
+    mode = effective_playback_mode(settings)
+    if not iid:
+        return {"url": src, "mode": "direct", "reason": "no_item_id", "media_source_id": mid}
+
+    detail = {}
+    try:
+        detail = jellyfin_receiver.get_item_detail(iid)
+    except Exception:
+        detail = {}
+    profile = {}
+    try:
+        profile = video_profile.get_profile() or {}
+    except Exception:
+        profile = {}
+
+    prefer_transcode = False
+    reason = "direct_mode"
+    if mode == "transcode":
+        prefer_transcode = True
+        reason = "forced_transcode_mode"
+    elif mode == "auto":
+        if native_auto_transcode_guard_active(profile=profile):
+            prefer_transcode = True
+            reason = "native_auto_transcode"
+        elif not isinstance(detail, dict) or not detail:
+            # Compatibility-first fallback: if detail lookup fails, prefer
+            # transcode to avoid repeated direct-play failures on unknown codecs.
+            prefer_transcode = True
+            reason = "auto_no_detail"
+        else:
+            prefer_transcode, reason = auto_prefers_transcode(item_detail=detail, profile=profile)
+
+    if not src:
+        src = build_item_stream_url(
+            iid,
+            server_url=base,
+            api_key=tok,
+            media_source_id=mid,
+            audio_stream_index=aidx,
+            subtitle_stream_index=sidx,
+        )
+
+    if not prefer_transcode:
+        return {"url": src, "mode": "direct", "reason": reason, "media_source_id": mid}
+
+    try:
+        cap_height = int(profile.get("display_cap_height") or 0)
+    except Exception:
+        cap_height = 0
+    target_bitrate = target_max_streaming_bitrate(profile=profile, settings=settings if isinstance(settings, dict) else None)
+    selected = jellyfin_receiver.resolve_playback_url(
+        iid,
+        prefer_transcode=True,
+        media_source_id=mid,
+        audio_stream_index=aidx,
+        subtitle_stream_index=sidx,
+        max_height=(cap_height if cap_height > 0 else None),
+        max_streaming_bitrate=target_bitrate,
+    )
+    t_url = str((selected or {}).get("url") or "").strip()
+    t_method = str((selected or {}).get("method") or "").strip()
+    out_mid = _first_nonempty_str([str((selected or {}).get("media_source_id") or "").strip(), mid])
+    if not t_url:
+        t_url = build_item_transcode_url(
+            iid,
+            server_url=base,
+            api_key=tok,
+            media_source_id=out_mid,
+            audio_stream_index=aidx,
+            subtitle_stream_index=sidx,
+            max_height=(cap_height if cap_height > 0 else None),
+            max_streaming_bitrate=target_bitrate,
+        )
+        t_method = "fallback_master"
+    if t_url:
+        return {
+            "url": t_url,
+            "mode": "transcode",
+            "reason": reason if reason != "forced_transcode_mode" else "forced_transcode_mode",
+            "media_source_id": out_mid,
+            "method": t_method,
+        }
+    return {"url": src, "mode": "direct", "reason": "transcode_unavailable", "media_source_id": mid}
+
+
+def first_playable_episode(payload: dict | None) -> dict[str, object]:
+    episodes = payload.get("episodes") if isinstance(payload, dict) and isinstance(payload.get("episodes"), list) else []
+    for episode in episodes:
+        if not isinstance(episode, dict):
+            continue
+        episode_id = str(episode.get("item_id") or "").strip()
+        if not episode_id:
+            continue
+        episode_type = str(episode.get("type") or "").strip().lower()
+        if episode_type in ("", "episode"):
+            return episode
+    return {}
+
+
+def resolve_playable_item(item_id: str, *, media_source_id: str = "") -> dict[str, object]:
+    iid = str(item_id or "").strip()
+    if not iid:
+        return {"item_id": "", "detail": {}, "media_source_id": ""}
+
+    try:
+        detail = jellyfin_receiver.get_item_detail(iid)
+    except Exception:
+        detail = {}
+
+    item_type = str(detail.get("type") if isinstance(detail, dict) else "").strip().lower()
+    if item_type not in ("series", "season"):
+        return {
+            "item_id": iid,
+            "detail": detail if isinstance(detail, dict) else {},
+            "media_source_id": _first_nonempty_str([
+                str(media_source_id or "").strip(),
+                detail.get("media_source_id") if isinstance(detail, dict) else "",
+            ]),
+        }
+
+    series_id = ""
+    season_id = ""
+    season_number = None
+    if item_type == "series":
+        series_id = iid
+    else:
+        season_id = iid
+        series_id = _first_nonempty_str([
+            detail.get("series_id") if isinstance(detail, dict) else "",
+            detail.get("SeriesId") if isinstance(detail, dict) else "",
+        ])
+        try:
+            raw_season = detail.get("season_number") if isinstance(detail, dict) else None
+            season_number = int(raw_season) if raw_season is not None else None
+        except Exception:
+            season_number = None
+
+    if not series_id:
+        raise HTTPException(status_code=404, detail=f"jellyfin {item_type} is not directly playable")
+
+    episodes_payload = jellyfin_receiver.list_series_episodes(
+        series_id,
+        season_id=season_id,
+        season_number=season_number,
+    )
+    episode = first_playable_episode(episodes_payload)
+    resolved_item_id = str((episode.get("item_id") if isinstance(episode, dict) else "") or "").strip()
+    if not resolved_item_id:
+        raise HTTPException(status_code=404, detail=f"no playable episode available for jellyfin {item_type}")
+
+    resolved_detail = episode if isinstance(episode, dict) else {}
+    if resolved_item_id != iid:
+        try:
+            fetched = jellyfin_receiver.get_item_detail(resolved_item_id)
+        except Exception:
+            fetched = {}
+        if isinstance(fetched, dict) and fetched:
+            resolved_detail = fetched
+
+    return {
+        "item_id": resolved_item_id,
+        "detail": resolved_detail if isinstance(resolved_detail, dict) else {},
+        "media_source_id": _first_nonempty_str([
+            resolved_detail.get("media_source_id") if isinstance(resolved_detail, dict) else "",
+            episode.get("media_source_id") if isinstance(episode, dict) else "",
+            (str(media_source_id or "").strip() if resolved_item_id == iid else ""),
+        ]),
+    }
