@@ -555,8 +555,8 @@ def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.Mon
 
     response = routes.update_settings(routes.SettingsReq(cec_enabled="0"))
 
-    assert os.environ["RELAYTV_CEC"] == "0"
-    assert os.environ["RELAYTV_CEC_ENABLED"] == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_CEC") == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_CEC_ENABLED") == "0"
     assert stopped == [True]
     assert "cec_enabled" in response["live_applied"]
 

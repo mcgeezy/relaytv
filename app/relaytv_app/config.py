@@ -8,11 +8,12 @@ historical spelling sets behind the ``extended`` flag because the route-side
 copies accepted "enable(d)" / "disable(d)" while the child-process copies did
 not.
 
-``RuntimeConfig`` dual-writes: every settings-bus mutation goes through
-``set_env``, which updates both ``os.environ`` (the legacy in-process config
-bus, still read by unmigrated consumers) and an immutable
-``SettingsSnapshot``. Once all in-process readers use snapshots (M4), the env
-side of the write can be contained (M5).
+Every settings-bus mutation goes through ``RuntimeConfig.set_value``, which
+updates an immutable ``SettingsSnapshot`` and mirrors to ``os.environ`` only
+for the pinned subprocess contract (``MIRRORED_TO_ENV``). In-process
+consumers read snapshots; the process environment is an input at startup
+(``refresh_from_env``) and an output boundary for child processes, not an
+in-process config bus.
 """
 from __future__ import annotations
 
@@ -130,6 +131,13 @@ SETTINGS_BUS_VARS = frozenset(
     }
 )
 
+# Subprocess mirroring contract (docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md):
+# settings-bus variables still mirrored to os.environ because a runtime child
+# process reads them. qt_shell_app falls back to RELAYTV_DEVICE_NAME when
+# persisted settings are unavailable. tests/test_env_inventory.py pins the
+# child-reader set; extend this only together with that contract.
+MIRRORED_TO_ENV = frozenset({"RELAYTV_DEVICE_NAME"})
+
 _EMPTY_VALUES: Mapping[str, str] = MappingProxyType({})
 
 
@@ -198,12 +206,7 @@ class SettingsSnapshot:
 
 
 class RuntimeConfig:
-    """Single source of truth for settings-driven runtime configuration.
-
-    Dual-write phase (M3): ``set_env`` mutates ``os.environ`` exactly as the
-    legacy writers did and keeps the snapshot in lockstep, so env-reading
-    consumers and snapshot-reading consumers always agree.
-    """
+    """Single source of truth for settings-driven runtime configuration."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -211,7 +214,12 @@ class RuntimeConfig:
         self._snapshot = SettingsSnapshot()
 
     def refresh_from_env(self) -> SettingsSnapshot:
-        """Capture the current process environment for all settings-bus vars."""
+        """Capture the current process environment for all settings-bus vars.
+
+        Startup-only in production (before the persisted-settings sync):
+        calling this after ``set_value`` writes discards them, because applied
+        values are no longer mirrored to the environment.
+        """
         with self._lock:
             self._values = {
                 name: os.environ[name] for name in SETTINGS_BUS_VARS if name in os.environ
@@ -219,10 +227,15 @@ class RuntimeConfig:
             self._snapshot = SettingsSnapshot(MappingProxyType(dict(self._values)))
             return self._snapshot
 
-    def set_env(self, name: str, value: str) -> None:
-        """Write one settings-bus variable to the env bus and the snapshot."""
+    def set_value(self, name: str, value: str) -> None:
+        """Write one settings-bus variable to the snapshot.
+
+        Mirrors to ``os.environ`` only for the pinned subprocess contract in
+        ``MIRRORED_TO_ENV``.
+        """
         text = str(value)
-        os.environ[name] = text
+        if name in MIRRORED_TO_ENV:
+            os.environ[name] = text
         with self._lock:
             self._values[name] = text
             self._snapshot = SettingsSnapshot(MappingProxyType(dict(self._values)))

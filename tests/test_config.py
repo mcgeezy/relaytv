@@ -92,15 +92,28 @@ def test_env_str_strips_and_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.env_str("RELAYTV_TEST_STR", "fallback") == "fallback"
 
 
-def test_runtime_config_set_env_dual_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_config_set_value_updates_snapshot_without_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rc = config.RuntimeConfig()
     monkeypatch.delenv("RELAYTV_QUALITY_MODE", raising=False)
 
-    rc.set_env("RELAYTV_QUALITY_MODE", "manual")
+    rc.set_value("RELAYTV_QUALITY_MODE", "manual")
 
-    assert os.environ["RELAYTV_QUALITY_MODE"] == "manual"
     assert rc.snapshot().raw("RELAYTV_QUALITY_MODE") == "manual"
-    monkeypatch.delenv("RELAYTV_QUALITY_MODE", raising=False)
+    assert "RELAYTV_QUALITY_MODE" not in os.environ
+
+
+def test_runtime_config_mirrors_only_the_pinned_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rc = config.RuntimeConfig()
+    monkeypatch.delenv("RELAYTV_DEVICE_NAME", raising=False)
+
+    rc.set_value("RELAYTV_DEVICE_NAME", "Mirror TV")
+
+    assert rc.snapshot().raw("RELAYTV_DEVICE_NAME") == "Mirror TV"
+    assert os.environ["RELAYTV_DEVICE_NAME"] == "Mirror TV"
 
 
 def test_runtime_config_refresh_captures_operator_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,10 +135,10 @@ def test_runtime_config_snapshots_are_immutable_point_in_time_views(
 ) -> None:
     rc = config.RuntimeConfig()
     monkeypatch.delenv("RELAYTV_QUALITY_CAP", raising=False)
-    rc.set_env("RELAYTV_QUALITY_CAP", "1080p")
+    rc.set_value("RELAYTV_QUALITY_CAP", "1080p")
     before = rc.snapshot()
 
-    rc.set_env("RELAYTV_QUALITY_CAP", "720p")
+    rc.set_value("RELAYTV_QUALITY_CAP", "720p")
 
     assert before.raw("RELAYTV_QUALITY_CAP") == "1080p"
     assert rc.snapshot().raw("RELAYTV_QUALITY_CAP") == "720p"
@@ -143,7 +156,7 @@ def _set_bus_var(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None
     fixture re-syncs the global runtime_config from env at teardown.
     """
     monkeypatch.setenv(name, value)
-    config.runtime_config.set_env(name, value)
+    config.runtime_config.set_value(name, value)
 
 
 def test_ytdlp_format_policy_reads_settings_bus_from_snapshot(

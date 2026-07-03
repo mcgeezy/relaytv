@@ -25,11 +25,11 @@ environment inheritance.
 
 ## Classification
 
-- **settings bus**: written to `os.environ` at runtime by the app itself
-  (startup sync in `main.py`, settings apply in `routes/settings.py`,
-  `routes/jellyfin.py`, or `player.py`). These are the M4/M5 migration
-  targets: their in-process readers move to `RuntimeConfig` snapshots and the
-  runtime writes are then contained.
+- **settings bus**: written at runtime by the app itself through
+  `RuntimeConfig.set_value` (startup sync in `main.py`, settings apply in
+  `routes/settings.py`, `routes/jellyfin.py`, or `player.py`). Since M5,
+  these writes land in the RuntimeConfig snapshot only; `os.environ` receives
+  just the pinned `MIRRORED_TO_ENV` subset (`RELAYTV_DEVICE_NAME`).
 - **child process input**: referenced by `qt_shell_app.py` or
   `overlay_app.py`, which run as child processes spawned at runtime and
   inherit the server's environment. These define the subprocess mirroring
@@ -51,13 +51,14 @@ No other settings-bus variable has a child process reader; children otherwise
 consume operator-provided variables that are set before the server starts and
 never mutated at runtime. `tests/test_env_inventory.py` pins this contract.
 
-Consequence for M5: after all in-process readers migrate to `RuntimeConfig`
-snapshots (M4), the runtime `os.environ` writes can be removed outright rather
-than mirrored — with `RELAYTV_DEVICE_NAME` either kept as the single mirrored
-variable or its dormant fallback retired first. The mirroring boundary in
-`RuntimeConfig` therefore only needs to cover this pinned contract, and the
-guardrail test fails loudly if a settings-bus variable gains a child process
-reader without updating this document.
+M5 status: containment is complete. `RuntimeConfig.set_value` writes the
+snapshot and mirrors only `MIRRORED_TO_ENV` (`RELAYTV_DEVICE_NAME`, kept so
+the qt_shell fallback sees the latest applied name even if the persisted
+settings file is unreadable in the child). All other runtime writes no longer
+touch `os.environ`; the environment is startup input (`refresh_from_env`) and
+child-process inheritance only. The guardrail tests fail loudly if a
+settings-bus variable gains a child process reader or an in-process consumer
+reads the bus from env without updating this document.
 
 Nuances the migration must preserve:
 

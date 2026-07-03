@@ -9,7 +9,7 @@ def _runtime_config_env_lockstep():
     """Keep the global RuntimeConfig snapshot in lockstep with the test env.
 
     Production guarantees env/snapshot lockstep because every settings-bus
-    write goes through RuntimeConfig.set_env. Tests mutate os.environ directly
+    write goes through RuntimeConfig.set_value. Tests mutate os.environ directly
     (monkeypatch), so re-sync the snapshot from env at test start (discarding
     leftovers from earlier tests) and after teardown (once monkeypatch has
     restored the environment). Tests that change a settings-bus variable

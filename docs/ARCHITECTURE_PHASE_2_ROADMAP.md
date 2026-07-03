@@ -284,28 +284,41 @@ Notes:
 
 ### M5: Env Write Containment
 
-Status: not started
+Status: complete
 
-Deliverables:
+Results:
 
-- Move the `routes/settings.py` settings-apply env writes and the `main.py`
-  startup sync behind `RuntimeConfig`, mirroring only the M1-classified
-  subprocess-required subset to `os.environ`.
-- Remove now-dead env writes for in-process-only variables once all their M4
-  readers use snapshots.
-- Assert the mirroring contract in tests: the subprocess-required set is
-  exactly what still lands in the environment after a settings apply.
-
-Notes:
-
-- This milestone completes Finding 3's recommendation; after it, the
-  environment is an output boundary for children, not an in-process bus.
+- `RuntimeConfig.set_env` became `set_value`: it writes the snapshot and
+  mirrors to `os.environ` only for `MIRRORED_TO_ENV`
+  (`RELAYTV_DEVICE_NAME`, the pinned qt_shell fallback). All 52 runtime
+  writers were renamed mechanically; no writer logic changed.
+- The environment is now startup input (`refresh_from_env`) and
+  child-process inheritance only — Finding 3's recommendation is complete.
+- `test_settings_apply_does_not_write_env_beyond_mirror_contract` asserts a
+  full settings apply leaves every non-mirrored settings-bus env var
+  untouched; startup-sync tests assert the same for the startup path plus
+  operator-env default precedence.
 
 ### M6: Settings Behavior Test Reshape
 
-Status: not started
+Status: complete (core); remaining smoke-test moves deferred as optional
 
-Deliverables:
+Results:
+
+- `tests/test_settings_env_sync.py` became
+  `tests/test_settings_config_sync.py`: settings-apply and startup-sync
+  guardrails now assert snapshot values, the env containment contract, and
+  operator-env default precedence.
+- `tests/test_settings_routes.py` and the CEC smoke assertions now assert
+  snapshot state; the device-name mirror keeps a dedicated env assertion.
+- The conftest lockstep fixture plus 13 in-test refreshes keep
+  env-monkeypatching tests correct; new tests should prefer
+  `runtime_config.set_value` over `monkeypatch.setenv` for settings-bus
+  variables.
+- Moving further settings-domain tests out of `tests/test_smoke.py` into
+  focused files (review Finding 7) is deferred to Phase 3+ test hygiene.
+
+Deliverables (original):
 
 - Rework settings-apply tests to assert `RuntimeConfig` snapshot behavior
   rather than monkeypatched environment where possible.
@@ -361,6 +374,7 @@ Add entries here as PRs land into `codex/architecture-phase-2`.
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M3: added `RuntimeConfig`/`SettingsSnapshot` with `set_env` owning the env+snapshot dual-write, converted all 52 runtime env write sites 1:1, added startup `refresh_from_env`, and taught the inventory scanner about `set_env` writes. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (262 passed); `git diff --check` | Begin M4 consumer migration (M4a leaf modules first). |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4a: refined M4 scope to settings-bus reads only, migrated `ytdlp_format_policy` (quality mode/cap, `YTDLP_FORMAT`) and `discovery_mdns` (device name) to snapshot reads, and added the conftest lockstep fixture that re-syncs the global RuntimeConfig from env around each test. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (265 passed); `git diff --check` | Continue M4b resolver migration. |
 | 2026-07-02 | local | `codex/architecture-phase-2` | Completed M4b-M4f: migrated resolver, jellyfin_receiver, routes, player, and x11_overlay settings-bus reads to snapshots; reclassified `state.py` defaults-path reads as intentionally direct; added the allowed-reader guardrail test and refreshed affected tests for lockstep. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (266 passed); `git diff --check` | Begin M5 env write containment. |
+| 2026-07-02 | local | `codex/architecture-phase-2` | Completed M5 and core M6: `set_value` contains env writes to the pinned `RELAYTV_DEVICE_NAME` mirror, and the settings sync/routes/CEC tests now assert snapshot state plus the env containment contract and operator-default precedence. | `ruff check app tests`; `PYTHONPATH=app pytest -q` (268 passed); `git diff --check` | Decide M7 browser smoke; then M8 final validation. |
 
 ## Open Questions
 

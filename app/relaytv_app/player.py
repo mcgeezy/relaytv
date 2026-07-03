@@ -5576,7 +5576,7 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
         stop_mpv()
         # Use settings-driven video mode by default; apply_mode can force x11/drm.
         if apply_mode:
-            runtime_config.set_env("RELAYTV_VIDEO_MODE", apply_mode)
+            runtime_config.set_value("RELAYTV_VIDEO_MODE", apply_mode)
         now = play_item(inp, use_resolver=True, cec=False, clear_queue=False, mode="resume", start_pos=(float(pos) if pos is not None else None))
         return now
     except Exception as e:

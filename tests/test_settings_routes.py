@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-only
-import os
 
 from fastapi.testclient import TestClient
 
@@ -55,14 +54,14 @@ def test_youtube_cookies_routes_upload_and_clear(monkeypatch, tmp_path) -> None:
 
     assert upload.status_code == 200
     assert target.read_text(encoding="utf-8").endswith("name\tvalue\n")
-    assert os.environ["RELAYTV_YTDLP_COOKIES"] == str(target)
+    assert runtime_config.snapshot().raw("RELAYTV_YTDLP_COOKIES") == str(target)
     assert updates[-1] == {"youtube_cookies_path": str(target)}
     assert upload.json()["settings"]["youtube_cookies_path"] == ""
 
     clear = client.post("/settings/youtube/cookies/clear")
 
     assert clear.status_code == 200
-    assert os.environ["RELAYTV_YTDLP_COOKIES"] == ""
+    assert runtime_config.snapshot().raw("RELAYTV_YTDLP_COOKIES") == ""
     assert updates[-1] == {"youtube_cookies_path": ""}
 
 
@@ -119,13 +118,13 @@ def test_update_settings_route_syncs_runtime_env_and_live_settings(monkeypatch) 
     assert "cec_enabled" in body["live_applied"]
     assert "idle_dashboard_enabled" in body["live_applied"]
     assert updates[-1]["cec_enabled"] == "0"
-    assert os.environ["RELAYTV_CEC"] == "0"
-    assert os.environ["RELAYTV_CEC_ENABLED"] == "0"
-    assert os.environ["RELAYTV_QUALITY_MODE"] == "auto_profile"
-    assert os.environ["YTDLP_FORMAT"] == ""
-    assert os.environ["RELAYTV_UPLOAD_MAX_SIZE_GB"] == "2.5"
-    assert os.environ["RELAYTV_UPLOAD_RETENTION_HOURS"] == "48"
-    assert os.environ["RELAYTV_IDLE_DASHBOARD_ENABLED"] == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_CEC") == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_CEC_ENABLED") == "0"
+    assert runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE") == "auto_profile"
+    assert runtime_config.snapshot().raw("YTDLP_FORMAT") == ""
+    assert runtime_config.snapshot().raw("RELAYTV_UPLOAD_MAX_SIZE_GB") == "2.5"
+    assert runtime_config.snapshot().raw("RELAYTV_UPLOAD_RETENTION_HOURS") == "48"
+    assert runtime_config.snapshot().raw("RELAYTV_IDLE_DASHBOARD_ENABLED") == "0"
     assert cec_stops == [True]
     assert cleanup_calls
     assert idle_syncs == [True]
