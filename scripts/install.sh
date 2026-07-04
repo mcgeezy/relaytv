@@ -779,6 +779,12 @@ detect_nvidia_docker_toolkit() {
   printf "0"
 }
 
+# Devices every display/audio-capable host should pass through. The base
+# compose files carry no device mappings (a mapped-but-missing device makes
+# compose refuse to create the container), so the generated override is the
+# only device passthrough source and probes existence for each node.
+CORE_DEVICE_NODES="/dev/snd /dev/dri"
+
 ensure_host_device_override() {
   local pi_enabled="$1"
   local cec_enabled="$2"
@@ -791,6 +797,10 @@ ensure_host_device_override() {
   local node
   local gid
 
+  for node in $CORE_DEVICE_NODES; do
+    [ -e "$node" ] || continue
+    devices_block+="      - ${node}:${node}"$'\n'
+  done
   if [ "$pi_enabled" = "1" ]; then
     # Map only nodes the host actually exposes: docker compose refuses to
     # create a container whose device mapping points at a missing path, so an
@@ -904,6 +914,14 @@ ensure_host_device_override "$PI_VIDEO_DEVICES_ENABLED_VAL" "$CEC_ENABLED_VAL" "
 PI_VIDEO_NODES_MISSING=""
 if [ "$PI_VIDEO_DEVICES_ENABLED_VAL" = "1" ]; then
   PI_VIDEO_NODES_MISSING="$(check_pi_video_nodes)"
+fi
+DRI_NODE_MISSING="0"
+if [ ! -e /dev/dri ]; then
+  DRI_NODE_MISSING="1"
+fi
+SND_NODE_MISSING="0"
+if [ ! -e /dev/snd ]; then
+  SND_NODE_MISSING="1"
 fi
 CEC_NODES_MISSING="0"
 if [ "$CEC_ENABLED_VAL" = "1" ] && [ -z "$CEC_NODES_DETECTED" ]; then
@@ -1198,6 +1216,13 @@ if [ "$PI_VIDEO_DEVICES_ENABLED_VAL" = "1" ]; then
 fi
 if [ "$CEC_NODES_MISSING" = "1" ]; then
   say "  WARN: RELAYTV_CEC_ENABLED=1 but no CEC device node was found."
+fi
+if [ "$DRI_NODE_MISSING" = "1" ] && [ "$MODE" != "headless" ]; then
+  say "  WARN: /dev/dri (GPU/KMS) not found; playback will use software rendering."
+  say "        On Raspberry Pi enable KMS (dtoverlay=vc4-kms-v3d in config.txt), or re-run with --mode headless."
+fi
+if [ "$SND_NODE_MISSING" = "1" ]; then
+  say "  WARN: /dev/snd not found; container audio output will be unavailable."
 fi
 if [ "$NVIDIA_PASSTHROUGH_ENABLED" != "1" ]; then
   say "  WARN: NVIDIA decoder passthrough disabled; NVIDIA playback acceleration will not be used unless both an NVIDIA device and Docker NVIDIA toolkit are detected."
