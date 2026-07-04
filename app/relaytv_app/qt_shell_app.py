@@ -88,6 +88,9 @@ def _libmpv_enabled() -> bool:
     if override is not None:
         return bool(override)
     arch = (platform.machine() or "").strip().lower()
+    # ARM stays on the subprocess-mpv path: the QOpenGLWidget render loop
+    # leaks one DRM sync_file fd per frame on Pi Mesa/XWayland stacks
+    # (~60 fds/sec), exhausting the fd limit within minutes.
     return arch not in ("aarch64", "arm64", "armv7l", "armv6l")
 
 
@@ -514,6 +517,9 @@ def _build_mpv_args(
         "--no-terminal",
         "--force-window=yes",
         "--keep-open=no",
+        # Survive `stop`/EOF instead of exiting, so the Qt shell (whose
+        # heartbeat quits when mpv dies) stays up for the idle surface.
+        "--idle=yes",
         "--osc=no",
         "--osd-level=0",
         "--osd-playing-msg=",
@@ -2401,9 +2407,19 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 return False
         try:
-            return bool(mpv_proc and mpv_proc.poll() is None)
+            if not (mpv_proc and mpv_proc.poll() is None):
+                return False
         except Exception:
             return False
+        # mpv runs --idle=yes, so process liveness alone does not imply
+        # active playback; consult the IPC snapshot when available.
+        snap = _subprocess_runtime_snapshot()
+        if snap is None:
+            return True
+        if snap.get("mpv_runtime_playback_active") is True:
+            return True
+        path = str(snap.get("mpv_runtime_path") or "").strip()
+        return bool(path) and snap.get("mpv_runtime_eof_reached") is not True
 
     def _sync_idle_visibility() -> None:
         if native_idle_host is None:
@@ -2873,6 +2889,102 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
 
+    _subproc_snapshot_cache: dict[str, object] = {"ts": 0.0, "data": None}
+
+    def _subprocess_mpv_get_props(names: list[str], *, timeout_sec: float = 0.5) -> dict[str, object]:
+        if not ipc_path or not os.path.exists(ipc_path):
+            raise RuntimeError("mpv_ipc_unavailable")
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            client.settimeout(max(0.2, float(timeout_sec or 0.0)))
+            client.connect(ipc_path)
+            payload = b"".join(
+                json.dumps(
+                    {"command": ["get_property", name], "request_id": idx},
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                + b"\n"
+                for idx, name in enumerate(names)
+            )
+            client.sendall(payload)
+            results: dict[int, object] = {}
+            buf = b""
+            deadline = time.time() + max(0.2, float(timeout_sec or 0.0))
+            while len(results) < len(names) and time.time() < deadline:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line.decode("utf-8"))
+                    except Exception:
+                        continue
+                    if not isinstance(obj, dict):
+                        continue
+                    rid = obj.get("request_id")
+                    if isinstance(rid, int) and 0 <= rid < len(names):
+                        results[rid] = obj.get("data") if obj.get("error") == "success" else None
+            return {name: results.get(idx) for idx, name in enumerate(names)}
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def _subprocess_runtime_snapshot(max_age_sec: float = 0.25) -> dict[str, object] | None:
+        """IPC-backed runtime snapshot mirroring _QtLibMpvPlayer.runtime_snapshot().
+
+        With mpv running --idle=yes, process liveness no longer implies active
+        playback, so telemetry must reflect real player state.
+        """
+        now = time.time()
+        cached = _subproc_snapshot_cache.get("data")
+        if isinstance(cached, dict) and (now - float(_subproc_snapshot_cache.get("ts") or 0.0)) <= max_age_sec:
+            return cached
+        try:
+            props = _subprocess_mpv_get_props(
+                ["pause", "time-pos", "duration", "core-idle", "eof-reached", "path"]
+            )
+        except Exception:
+            return None
+
+        def _b(v: object) -> bool | None:
+            return v if isinstance(v, bool) else None
+
+        def _f(v: object) -> float | None:
+            return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+        paused = _b(props.get("pause"))
+        time_pos = _f(props.get("time-pos"))
+        duration = _f(props.get("duration"))
+        core_idle = _b(props.get("core-idle"))
+        eof_reached = _b(props.get("eof-reached"))
+        path = str(props.get("path") or "").strip()
+        playback_active = bool(path) and (core_idle is not True) and (eof_reached is not True)
+        playback_started = playback_active and ((time_pos or 0.0) > 0.0 or (duration or 0.0) > 0.0)
+        out: dict[str, object] = {
+            "mpv_runtime_initialized": True,
+            "mpv_runtime_error": "",
+            "mpv_runtime_paused": paused,
+            "mpv_runtime_time_pos": time_pos,
+            "mpv_runtime_duration": duration,
+            "mpv_runtime_core_idle": core_idle,
+            "mpv_runtime_eof_reached": eof_reached,
+            "mpv_runtime_path": path,
+            "mpv_runtime_playback_active": playback_active,
+            "mpv_runtime_stream_loaded": bool(path),
+            "mpv_runtime_playback_started": playback_started,
+            "mpv_runtime_sample_detail": "subprocess_runtime_ipc",
+        }
+        _subproc_snapshot_cache["ts"] = time.time()
+        _subproc_snapshot_cache["data"] = out
+        return out
+
     def _spawn_subprocess_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None) -> None:
         nonlocal mpv_proc
         if not stream_url:
@@ -3057,13 +3169,19 @@ def main(argv: list[str] | None = None) -> int:
         if libmpv_player is not None:
             payload.update(libmpv_player.runtime_snapshot())
         elif mpv_proc and mpv_proc.poll() is None:
-            payload.update(
-                {
-                    "mpv_runtime_initialized": True,
-                    "mpv_runtime_playback_active": True,
-                    "mpv_runtime_sample_detail": "subprocess_runtime_no_native_snapshot",
-                }
-            )
+            snap = _subprocess_runtime_snapshot()
+            if snap is not None:
+                payload.update(snap)
+            else:
+                # IPC can lag during mpv startup; keep the conservative
+                # "active" claim so launch isn't misread as idle.
+                payload.update(
+                    {
+                        "mpv_runtime_initialized": True,
+                        "mpv_runtime_playback_active": True,
+                        "mpv_runtime_sample_detail": "subprocess_runtime_no_native_snapshot",
+                    }
+                )
         _atomic_write_json(runtime_status_file, payload)
 
     def _tick() -> None:

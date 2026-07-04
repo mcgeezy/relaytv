@@ -1664,6 +1664,17 @@ def test_pi_qt_mpv_args_do_not_use_fast_profile_by_default(monkeypatch: pytest.M
     assert '--profile=fast' not in args
 
 
+def test_qt_subprocess_mpv_args_keep_player_alive_after_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+
+    args = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+
+    # mpv must survive `stop`/EOF so the Qt shell heartbeat (which quits when
+    # the mpv child dies) keeps the shell alive for the idle surface.
+    assert '--idle=yes' in args
+
+
 def test_pi_qt_mpv_args_allow_explicit_fast_profile(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('RELAYTV_ARM_FAST_PROFILE', '1')
     monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
