@@ -140,7 +140,7 @@ Status: complete
 
 ### M3: Phase 6 Final Validation
 
-Status: planned
+Status: complete
 
 - Full gates: `ruff check app tests`, `PYTHONPATH=app pytest -q`, CI-like
   fresh-venv run.
@@ -148,9 +148,27 @@ Status: planned
   match its matrix row (amd64 / Wayland / native Qt embed).
 - Open the final `codex/architecture-phase-6` to `main` PR — this completes
   the architecture roadmap.
+- Evidence: `ruff check app tests` clean and `PYTHONPATH=app pytest -q`
+  green (312 passed) on the branch and in a CI-like fresh venv. The phase
+  touches zero `app/` files (`git diff main..HEAD -- app/` is empty), so
+  the running Phase 5 image is content-identical to the Phase 6 runtime —
+  no rebuild/recreate needed for validation. The live appliance's
+  `/runtime/capabilities` matched the `amd64-wayland-native-qt-embed` row
+  field-by-field using the checklist's own cross-check command
+  (`player_backend=qt`, `qt_runtime_mode_configured/effective=embed`,
+  `player_runtime_engine=qt_shell`, `backend_ready=True`,
+  `backend_runtime_mismatch=False`, `host_session_type=wayland`,
+  `decode_profile=intel_amd64_qsv`, `av1_allowed=True`). The cross-check
+  also corrected a baseline error: the appliance runs a Wayland session,
+  not X11 as first assumed — the matrix row descriptions and the wayland
+  row's decode inputs were fixed to match before the final PR.
 
 ## PR And Milestone Log
 
 | Date | Item | Notes |
 | --- | --- | --- |
 | 2026-07-03 | Phase 6 started | Branch cut from `main` at `54081db` (Phase 5 squash merge); roadmap committed. |
+| 2026-07-03 | M0 complete | Roadmap, `AGENTS.md` Phase 6 discipline, `docs/README.md` link (`0c2c223`). |
+| 2026-07-04 | M1 complete | Machine-checked runtime profile matrix + generated decision table (`b321386`). |
+| 2026-07-04 | M2 complete | Per-profile validation checklists + docs wiring (`e036ba4`). |
+| 2026-07-04 | M3 complete | Gates green (312 passed, fresh venv), live appliance cross-check matched the wayland row (`1d295d1`); final PR opened. |
