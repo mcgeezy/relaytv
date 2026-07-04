@@ -94,7 +94,7 @@ Status: complete
 
 ### M1: Token Guard Middleware, Config Plumbing, And Tests
 
-Status: planned
+Status: complete
 
 - `RELAYTV_API_TOKEN` added to `SETTINGS_BUS_VARS` (snapshot-readable,
   env-only; excluded from `/settings` responses and settings persistence).
@@ -107,6 +107,8 @@ Status: planned
   wrong token 401, correct token accepted, reads and `/health`/`/ui`/static
   always open, `WWW-Authenticate` header shape, `/settings` never exposes
   the token.
+- Landed as designed; `docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`
+  regenerated for the new settings-bus variable. 299 tests green.
 
 ### M2: Web UI Token Support
 

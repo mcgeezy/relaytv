@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .player import (
     ensure_qt_shell_idle,
@@ -19,6 +20,7 @@ from .player import (
     stop_splash_screen,
 )
 from .x11_overlay import start_overlay as start_x11_overlay, stop_overlay as stop_x11_overlay
+from . import api_auth
 from .config import runtime_config
 from .routes import router
 from .state import get_settings, load_state_from_disk
@@ -101,6 +103,18 @@ def create_app(*, testing: bool = False) -> FastAPI:
             stop_splash_screen()
 
     app = FastAPI(lifespan=_lifespan)
+
+    # Registered before the slow-request logger so the logger middleware sits
+    # outermost and rejected writes still show up in request logging.
+    @app.middleware("http")
+    async def _api_token_guard(request: Request, call_next):
+        if api_auth.write_request_allowed(request.method, request.headers.get("authorization")):
+            return await call_next(request)
+        return JSONResponse(
+            {"detail": "api token required"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @app.middleware("http")
     async def _log_slow_requests(request: Request, call_next):

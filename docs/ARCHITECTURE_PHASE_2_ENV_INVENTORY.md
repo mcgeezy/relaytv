@@ -89,6 +89,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_ACCESS_LOG` | `debug.py` | - | static env |
 | `RELAYTV_ACCESS_LOG_HOT_PATHS` | `debug.py` | - | static env |
 | `RELAYTV_ACCESS_LOG_LEVEL` | `debug.py` | - | static env |
+| `RELAYTV_API_TOKEN` | `api_auth.py`<br>`config.py` | - | static env |
 | `RELAYTV_ARM_DEFAULT_QUALITY` | `state.py`<br>`ytdlp_format_policy.py` | - | static env |
 | `RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT` | `ytdlp_format_policy.py` | - | static env |
 | `RELAYTV_ARM_FAST_PROFILE` | `player.py`<br>`qt_shell_app.py` | - | child process input |

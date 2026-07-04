@@ -99,6 +99,7 @@ SETTINGS_BUS_VARS = frozenset(
     {
         "INVIDIOUS_BASE",
         "MPV_AUDIO_DEVICE",
+        "RELAYTV_API_TOKEN",
         "RELAYTV_CEC",
         "RELAYTV_CEC_ENABLED",
         "RELAYTV_DEVICE_NAME",
