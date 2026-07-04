@@ -14,6 +14,71 @@ TV notifications, and interact with Jellyfin. Do not expose RelayTV directly to
 the public internet. Use a VPN, trusted reverse proxy, or Home Assistant access
 layer if remote access is required.
 
+### Optional API token
+
+By default every endpoint is open (trusted LAN). Setting `RELAYTV_API_TOKEN`
+in `/opt/relaytv/.env` enables bearer auth for all write requests
+(`POST`/`PUT`/`PATCH`/`DELETE`):
+
+```bash
+# /opt/relaytv/.env
+RELAYTV_API_TOKEN=use-a-long-random-value
+```
+
+```bash
+docker compose up -d --force-recreate relaytv
+```
+
+With the token enabled:
+
+- Write requests must send the header, or they receive
+  `401 {"detail": "api token required"}` with `WWW-Authenticate: Bearer`:
+
+  ```bash
+  curl -X POST http://<host>:8787/pause \
+    -H "Authorization: Bearer use-a-long-random-value"
+  ```
+
+- Reads stay open: all `GET` endpoints (`/health`, `/status`, `/ui`, static
+  assets, SSE streams, Jellyfin browse) behave exactly as before, so
+  dashboards and health checks keep working.
+- The web UI prompts for the token on the first rejected control action and
+  stores it in browser localStorage (`relaytv_api_token`); it can also be
+  pre-set from the browser console with
+  `localStorage.setItem('relaytv_api_token', '<token>')`.
+- The token is env-only. It is never persisted with settings and never
+  returned by `/settings`.
+
+Unset or blank `RELAYTV_API_TOKEN` restores the fully open behavior.
+
+The token protects control actions; it is not transport security. For
+exposure beyond the trusted LAN, terminate TLS and (optionally) an extra
+auth layer at a reverse proxy. Example with Caddy:
+
+```caddyfile
+relay.example.com {
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+Example with nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name relay.example.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_set_header Host $host;
+        # Required for /ui/events (Server-Sent Events):
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
 ## UI and utility endpoints
 
 - `GET /ui`: main web UI HTML

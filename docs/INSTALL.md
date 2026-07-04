@@ -120,8 +120,15 @@ to the public internet.
 
 If remote access is needed, put RelayTV behind a VPN, trusted reverse proxy, or
 Home Assistant access layer that provides authentication and transport
-security. Optional built-in API token auth is not part of the current release
-branch.
+security.
+
+Optionally, set `RELAYTV_API_TOKEN` in `/opt/relaytv/.env` to require
+`Authorization: Bearer <token>` on all write requests (playback control,
+queue/settings changes, uploads, Jellyfin commands). Reads — `/health`,
+`/status`, the web UI, and static assets — stay open, and the web UI prompts
+for the token on first use. Leave it unset (the default) for the fully open
+trusted-LAN behavior. See `API.md` ("Optional API token") for details and
+reverse-proxy examples.
 
 ## Docker Build Bundles
 

@@ -127,12 +127,17 @@ Status: complete
 
 ### M3: Operator Docs
 
-Status: planned
+Status: complete
 
 - `INSTALL.md`/`API.md`: explicit "trusted LAN only" default posture,
   `RELAYTV_API_TOKEN` setup, curl examples with the bearer header, what
   stays open (reads, health, UI, static assets), UI token entry, and
   reverse-proxy exposure examples (TLS + auth at the proxy).
+- Landed: `API.md` gained an "Optional API token" subsection under the
+  network trust model (enable/curl/UI/localStorage, what stays open, Caddy
+  and nginx examples with the SSE proxy caveat); `INSTALL.md`'s stale "token
+  auth is not part of the current release branch" sentence replaced with
+  the `RELAYTV_API_TOKEN` summary and a pointer to `API.md`.
 
 ### M4: Phase 5 Final Validation
 
