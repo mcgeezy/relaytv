@@ -48,4 +48,97 @@ decode branches, and the `RELAYTV_VIDEO_PROFILE_ALLOW_AV1` override.
 
 ## Per-Profile Validation Checklists
 
-(Deferred to Phase 6 M2.)
+Hardware validation is manual. Every profile starts with the same three
+steps, then adds profile-specific checks.
+
+Common steps (all profiles):
+
+1. `PYTHONPATH=app pytest -q tests/test_runtime_matrix.py` — the decision
+   policy itself is green on the checkout being validated.
+2. `./scripts/doctor.sh` on the host — records session type, display
+   env, GPU/DRI state, and overlay caveats for the report.
+3. After bring-up, verify the profile's row against the live runtime:
+
+   ```bash
+   curl -sS http://127.0.0.1:8787/runtime/capabilities | python3 -c '
+   import json,sys
+   d=json.load(sys.stdin)
+   for k in ("player_backend","configured_player_backend","qt_runtime_mode_configured",
+             "qt_runtime_mode_effective","player_runtime_engine","backend_ready",
+             "backend_runtime_mismatch","host_session_type","decode_profile","av1_allowed"):
+       print(f"{k}: {d.get(k)}")'
+   ```
+
+   `backend_runtime_mismatch` must be `False` and the mode/decode fields
+   must match the profile's row in the decision table above.
+
+### `amd64-x11-native-qt-embed` (product default)
+
+- Bring-up: `./scripts/host-ops.sh up --x11-native --native-playback`
+- Gate: `./scripts/host-ops.sh native-ready --wait 25` exits 0.
+- Expect: `player_backend=qt`, `qt_runtime_mode_effective=embed`,
+  `player_runtime_engine=qt_shell`, `decode_profile=intel_amd64_qsv` (QSV
+  hosts) or `intel_amd64_vaapi`.
+- Contract: `./scripts/host-ops.sh acceptance --no-up` (native telemetry,
+  control acks, overlay deliverability, YouTube pipeline).
+- Telemetry deep-check when touching player/qt_shell code:
+  `./scripts/validate-native-qt-telemetry.sh`.
+- Soak: follow "Native Soak" and "Acceptance + Overnight Playbook" in
+  `NATIVE_RUNTIME_OPERATIONS.md`.
+
+### `amd64-wayland-native-qt-embed`
+
+- Bring-up: `./scripts/host-ops.sh up --wayland-native --stable-playback`
+- Gate: `native-ready --wait 25` exits 0.
+- Expect: same as the x11 row but `host_session_type=wayland`; note the
+  host X11 overlay fallback is disabled under Wayland (`doctor.sh` prints
+  the caveat) — native Qt overlay/toast is the only overlay path, so also
+  verify a toast renders (`POST /overlay/toast`).
+
+### `amd64-wayland-qt-external-mpv`
+
+- Enable: set `RELAYTV_QT_RUNTIME_MODE=external_mpv` in `.env`, then
+  recreate the container.
+- Expect: `qt_runtime_mode_effective=external_mpv`,
+  `player_runtime_engine=qt_external_mpv` during playback, `mpv_pid` set
+  and `ipc_socket_exists=True`.
+- Play/pause/seek/volume smoke via `/ui`, then remove the override and
+  confirm the profile returns to `embed`.
+
+### `amd64-unmanaged-wayland-auto`
+
+- Setup: leave `RELAYTV_MODE` unset on a Wayland session host.
+- Expect: `qt_runtime_mode_configured=auto`,
+  `qt_runtime_mode_effective=external_mpv` — pins the auto fallback that
+  protects unmanaged installs.
+
+### `headless-remote`
+
+- Bring-up: install with `--mode headless` (or `RELAYTV_MODE=headless`).
+- Expect: `headless_runtime=True`, `player_backend=mpv` when the classic
+  backend is selected, `RELAYTV_HEADLESS_REMOTE_ENABLED=1` in the container
+  env (`docker exec relaytv env | grep HEADLESS`), `GET /health` ok, `/ui`
+  reachable from another machine, playback controllable remotely.
+
+### `raspi-wayland-native-qt-embed`
+
+- Bring-up: `host-ops.sh up --wayland-native --stable-playback` on the Pi.
+- Expect: GLES mpv args injected
+  (`docker exec relaytv env | grep RELAYTV_QT_SHELL_MPV_ARGS` →
+  `--gpu-api=opengl --opengl-es=yes`), `decode_profile=arm_safe`,
+  `av1_allowed=False` (AV1 content must transcode or fall back), playback
+  smoke with a 1080p H.264 stream.
+- See also "Raspberry Pi Notes" in `INSTALL.md`.
+
+### `arm64-x11-native-qt-embed`
+
+- Bring-up: `host-ops.sh up --x11-native --native-playback` on the arm64
+  box.
+- Expect: `decode_profile=arm_safe`, `av1_allowed=False`, native Qt embed
+  fields as in the amd64 x11 row.
+
+## Reporting
+
+Record validation runs (date, image tag, host, profile, pass/fail plus
+`doctor.sh` output) in the release notes or the operations log for the
+deployment — this file defines the checks, it does not store results.

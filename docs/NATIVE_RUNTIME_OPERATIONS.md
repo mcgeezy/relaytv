@@ -7,6 +7,9 @@ This runbook is the first-line operator workflow for native Qt on desktop hosts.
 Primary docs:
 
 - `docs/INSTALL.md`
+- `docs/OPERATIONS_TEST_MATRIX.md`: per-profile expected runtime decisions
+  and validation checklists (x11, wayland, headless, native Qt embedded,
+  Qt external mpv, Raspberry Pi, arm64/amd64)
 
 ## Quick Health Snapshot
 

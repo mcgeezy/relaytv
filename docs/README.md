@@ -8,6 +8,7 @@ Use this directory as a small operator/product doc set for the public release br
 - `API.md`: HTTP endpoint reference
 - `JELLYFIN_OPERATIONS.md`: Jellyfin runtime config, verification, troubleshooting
 - `NATIVE_RUNTIME_OPERATIONS.md`: runtime operations, readiness checks, logging, and soak workflow
+- `OPERATIONS_TEST_MATRIX.md`: runtime profile decision table (machine-checked) and per-profile validation checklists
 - `RELEASE.md`: release inputs, image traceability, and compliance checklist
 
 ## Engineering Review Docs

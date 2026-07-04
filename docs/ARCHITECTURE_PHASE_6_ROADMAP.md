@@ -125,12 +125,18 @@ Status: complete
 
 ### M2: Operator Validation Checklists And Docs Wiring
 
-Status: planned
+Status: complete
 
 - Per-profile validation checklists in `docs/OPERATIONS_TEST_MATRIX.md`
   (bring-up, doctor, telemetry validation, expected capability/status
   fields, soak pointer).
 - Links from `docs/README.md` and `NATIVE_RUNTIME_OPERATIONS.md`.
+- Landed: common steps (matrix tests, `doctor.sh`, a
+  `/runtime/capabilities` field cross-check with
+  `backend_runtime_mismatch=False` as the hard gate) plus seven
+  profile-specific checklists referencing the existing tooling
+  (`host-ops.sh up/native-ready/acceptance`,
+  `validate-native-qt-telemetry.sh`, soak playbook) and a reporting note.
 
 ### M3: Phase 6 Final Validation
 
