@@ -112,13 +112,18 @@ Status: complete
 
 ### M2: Web UI Token Support
 
-Status: planned
+Status: complete
 
 - One global fetch wrapper in `static/ui/app.js` that attaches
   `Authorization: Bearer <token>` from `localStorage['relaytv_api_token']`
   when present, and on a `401` write response prompts once for the token,
   stores it, and retries.
 - No visual redesign; behavior with no token configured is unchanged.
+- Landed as a self-contained IIFE wrapping `window.fetch` at the top of
+  `app.js`: bearer header attached only to same-origin requests, prompt
+  fires at most once per page load and only when the `401` carries
+  `WWW-Authenticate: Bearer`, entered token stored and the request
+  retried once.
 
 ### M3: Operator Docs
 
