@@ -175,7 +175,17 @@ def _yt_dlp_version(env: dict[str, str]) -> str:
 def _yt_dlp_auto_update(env: dict[str, str]) -> None:
     if not _is_true(env.get("RELAYTV_YTDLP_AUTO_UPDATE"), False):
         return
+    run_yt_dlp_update(env)
 
+
+def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
+    """Run one yt-dlp pip-upgrade check; returns True when the check ran ok.
+
+    Shared by the entrypoint startup check and the backend's settings-driven
+    worker (relaytv_app.ytdlp_update); the interval gate lives in the state
+    file so both callers share one schedule. ``force`` bypasses the interval
+    (used when the settings toggle is switched on).
+    """
     interval_hours = max(0.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 24.0))
     timeout_sec = max(10.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC", 180.0))
     state_path_raw = (env.get("RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE") or "/data/.relaytv-ytdlp-update.json").strip()
@@ -187,11 +197,11 @@ def _yt_dlp_auto_update(env: dict[str, str]) -> None:
     state = _read_json_file(state_path)
     last_ts = float(state.get("last_check_ts") or 0.0)
     next_due_ts = last_ts + (interval_hours * 3600.0)
-    if interval_hours > 0 and last_ts > 0 and now < next_due_ts:
+    if (not force) and interval_hours > 0 and last_ts > 0 and now < next_due_ts:
         _eprint(
             f"entrypoint: yt-dlp auto-update skipped (next check in {int(next_due_ts - now)}s)"
         )
-        return
+        return False
 
     before = _yt_dlp_version(env)
     _eprint(f"entrypoint: yt-dlp auto-update check start (current={before or 'unknown'})")
@@ -245,6 +255,7 @@ def _yt_dlp_auto_update(env: dict[str, str]) -> None:
         _eprint(
             f"entrypoint: yt-dlp auto-update failed (before={before or 'unknown'} rc={rc} error={err or 'unknown'})"
         )
+    return ok
 
 
 def _display_alive(display: str) -> bool:

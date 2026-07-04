@@ -254,8 +254,12 @@ grep -nE 'RELAYTV_IMAGE_REF|RELAYTV_MODE|RELAYTV_VIDEO_MODE|RELAYTV_DRM_CONNECTO
 
 Published images still require the same Linux media-host integration as local builds:
 
-- `/dev/dri` passthrough for GPU acceleration
-- `/dev/snd` passthrough for audio
+- `/dev/dri` passthrough for GPU acceleration and `/dev/snd` passthrough for
+  audio. Both live in the generated `docker-compose.override.yml`, written by
+  `scripts/install.sh` from the devices the host actually exposes — the base
+  compose files map no devices, so hosts without KMS or audio hardware can
+  still start the container. Re-run `scripts/install.sh` after hardware or
+  kernel changes to refresh the override.
 - NVIDIA decode acceleration requires host NVIDIA drivers plus Docker NVIDIA
   Container Toolkit. When both an NVIDIA device and toolkit are detected,
   `scripts/install.sh` writes a generated compose override with `gpus: all` and
@@ -276,7 +280,10 @@ If you need to force a specific sink, set `MPV_AUDIO_DEVICE` manually in `.env`.
 
 ### yt-dlp Auto-Update
 
-Optional container-start behavior:
+Toggleable at runtime in the web UI (Settings -> YouTube -> "Keep yt-dlp up to
+date"): enabling it runs an immediate update check and then a daily background
+check, no container restart needed. The env values seed the toggle's default
+and tune the schedule:
 
 ```bash
 RELAYTV_YTDLP_AUTO_UPDATE=1

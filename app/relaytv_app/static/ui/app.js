@@ -3990,6 +3990,7 @@ async function loadSettingsUi(){
   const qual = document.getElementById('setQuality');
   const ytUseInvidious = document.getElementById('setYtUseInvidious');
   const ytInvidiousBase = document.getElementById('setYtInvidiousBase');
+  const ytdlpAutoUpdate = document.getElementById('setYtdlpAutoUpdate');
   const ytCookiesFile = document.getElementById('setYtCookiesFile');
   const ytCookiesState = document.getElementById('setYtCookiesState');
   const subs = document.getElementById('setSubs');
@@ -4023,6 +4024,7 @@ async function loadSettingsUi(){
   if (deviceName) deviceName.value = (cur.device_name || 'RelayTV');
   if (ytUseInvidious) ytUseInvidious.checked = !!cur.youtube_use_invidious;
   if (ytInvidiousBase) ytInvidiousBase.value = (cur.youtube_invidious_base || '');
+  if (ytdlpAutoUpdate) ytdlpAutoUpdate.checked = !!cur.ytdlp_auto_update_enabled;
   if (ytCookiesFile) ytCookiesFile.value = '';
   if (ytCookiesState) {
     ytCookiesState.classList.remove('ok', 'err');
@@ -4410,6 +4412,7 @@ function bindSettingsUi(){
     const qual = document.getElementById('setQuality')?.value || '';
     const ytUseInvidious = !!document.getElementById('setYtUseInvidious')?.checked;
     const ytInvidiousBase = (document.getElementById('setYtInvidiousBase')?.value || '').trim();
+    const ytdlpAutoUpdate = !!document.getElementById('setYtdlpAutoUpdate')?.checked;
     const subs = document.getElementById('setSubs')?.value || '';
     const cecEnabled = !!document.getElementById('setCecEnabled')?.checked;
     const tvTakeoverEnabled = document.getElementById('setTvTakeoverEnabled')?.checked !== false;
@@ -4458,6 +4461,7 @@ function bindSettingsUi(){
       ytdlp_format: (qual ? qualityToFormat(qual) : ''),
       youtube_use_invidious: ytUseInvidious,
       youtube_invidious_base: ytInvidiousBase,
+      ytdlp_auto_update_enabled: ytdlpAutoUpdate,
       sub_lang: subs,
       idle_dashboard_enabled: idleDashboardEnabled,
       idle_notifications_enabled: idleNotificationsEnabled,

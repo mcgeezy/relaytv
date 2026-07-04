@@ -358,6 +358,66 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "sort -u" in text
 
 
+def test_compose_device_passthrough_lives_in_generated_override() -> None:
+    # A device mapped in the base compose that the host lacks makes compose
+    # refuse to create the container, and overrides can add devices but never
+    # remove them — so the base files must map none and the installer probes
+    # existence for each node it writes into the override.
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+    release = (ROOT_DIR / "docker-compose.release.yml").read_text()
+    installer = (ROOT_DIR / "scripts/install.sh").read_text()
+
+    assert "devices:" not in compose
+    assert "devices:" not in release
+    assert 'CORE_DEVICE_NODES="/dev/snd /dev/dri"' in installer
+    assert "for node in $CORE_DEVICE_NODES" in installer
+    assert "/dev/dri (GPU/KMS) not found" in installer
+    assert "/dev/snd not found" in installer
+
+
+def test_yt_dlp_update_interval_gate_and_force(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import time as _time
+
+    pip_calls: list[object] = []
+    state_file = tmp_path / "update.json"
+    state_file.write_text(json.dumps({"last_check_ts": _time.time()}), encoding="utf-8")
+    env = {
+        "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE": str(state_file),
+        "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS": "24",
+    }
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda env: "2026.01.01")
+    monkeypatch.setattr(
+        container_entrypoint.subprocess,
+        "run",
+        lambda *args, **kwargs: pip_calls.append(args) or subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    assert container_entrypoint.run_yt_dlp_update(env) is False
+    assert pip_calls == []
+
+    assert container_entrypoint.run_yt_dlp_update(env, force=True) is True
+    assert len(pip_calls) == 1
+    assert json.loads(state_file.read_text(encoding="utf-8"))["ok"] is True
+
+
+def test_ytdlp_update_worker_gates_on_runtime_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import ytdlp_update
+
+    runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "1")
+    assert ytdlp_update.enabled() is True
+    runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "0")
+    assert ytdlp_update.enabled() is False
+
+    delegated: list[bool] = []
+    monkeypatch.setattr(
+        ytdlp_update.container_entrypoint,
+        "run_yt_dlp_update",
+        lambda env, *, force=False: delegated.append(force) or True,
+    )
+    assert ytdlp_update.run_update_check(force=True) is True
+    assert delegated == [True]
+
+
 def test_repo_installer_maps_only_existing_pi_video_nodes() -> None:
     # Pi 5 has no bcm2835-codec, so /dev/video10..13 do not exist there and an
     # unconditional device mapping makes docker compose fail to create the
