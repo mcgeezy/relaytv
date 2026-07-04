@@ -104,7 +104,7 @@ Status: complete
 
 ### M1: Machine-Checked Runtime Profile Matrix
 
-Status: planned
+Status: complete
 
 - `tests/test_runtime_matrix.py`: `RUNTIME_PROFILE_MATRIX` rows for the
   seven review profiles (plus the decision edge cases worth pinning:
@@ -115,6 +115,13 @@ Status: planned
   policy.
 - Doc-sync test + `--write` generator producing the decision table in
   `docs/OPERATIONS_TEST_MATRIX.md`.
+- Landed: seven matrix rows (amd64 x11/wayland embed, wayland external
+  mpv explicit, unmanaged-mode auto→external on a Wayland session,
+  headless-remote with classic mpv, Raspberry Pi wayland embed with GLES
+  args, generic arm64) plus five edge-case tests (host-profile override,
+  generic fallback, explicit backend selection, decode accel branches,
+  AV1 env override). 13 tests; matrix rows assert entrypoint defaults
+  exactly (added-keys equality, not subset).
 
 ### M2: Operator Validation Checklists And Docs Wiring
 
