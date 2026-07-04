@@ -358,6 +358,20 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "sort -u" in text
 
 
+def test_repo_installer_maps_only_existing_pi_video_nodes() -> None:
+    # Pi 5 has no bcm2835-codec, so /dev/video10..13 do not exist there and an
+    # unconditional device mapping makes docker compose fail to create the
+    # container. The installer must probe node existence for both the default
+    # and the generated override.
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+
+    assert "PI_VIDEO_DECODE_NODES=" in text
+    assert "detect_pi_video_default" in text
+    assert '[ -e "$node" ] || continue' in text
+    assert '- /dev/video10:/dev/video10"' not in text
+    assert text.count("for node in $PI_VIDEO_DECODE_NODES") >= 2
+
+
 def test_repo_installer_generates_nvidia_passthrough_when_supported() -> None:
     text = (ROOT_DIR / "scripts/install.sh").read_text()
     install_doc = (ROOT_DIR / "docs/INSTALL.md").read_text()

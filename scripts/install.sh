@@ -221,22 +221,31 @@ CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-auto}"
 CEC_RUNTIME_VAL="${RELAYTV_CEC:-}"
 CEC_MONITOR_VAL="${RELAYTV_CEC_MONITOR:-}"
 
-if [ -z "$PI_VIDEO_DEVICES_ENABLED_VAL" ]; then
+# bcm2835-codec V4L2 decode/encode nodes. Present on Pi 4 and earlier; the
+# Pi 5 dropped that codec block, so these nodes do not exist there.
+PI_VIDEO_DECODE_NODES="/dev/video10 /dev/video11 /dev/video12 /dev/video13"
+
+detect_pi_video_default() {
+  local node
   if [ "$HOST_PROFILE" = "raspi" ]; then
-    PI_VIDEO_DEVICES_ENABLED_VAL="1"
-  else
-    PI_VIDEO_DEVICES_ENABLED_VAL="0"
+    for node in $PI_VIDEO_DECODE_NODES; do
+      if [ -e "$node" ]; then
+        printf "1"
+        return 0
+      fi
+    done
   fi
+  printf "0"
+}
+
+if [ -z "$PI_VIDEO_DEVICES_ENABLED_VAL" ]; then
+  PI_VIDEO_DEVICES_ENABLED_VAL="$(detect_pi_video_default)"
 fi
 case "$PI_VIDEO_DEVICES_ENABLED_VAL" in
   0|1) ;;
   *)
     say "WARN: RELAYTV_PI_VIDEO_DEVICES_ENABLED must be 0 or 1. Falling back to auto."
-    if [ "$HOST_PROFILE" = "raspi" ]; then
-      PI_VIDEO_DEVICES_ENABLED_VAL="1"
-    else
-      PI_VIDEO_DEVICES_ENABLED_VAL="0"
-    fi
+    PI_VIDEO_DEVICES_ENABLED_VAL="$(detect_pi_video_default)"
     ;;
 esac
 case "$CEC_ENABLED_VAL" in
@@ -783,10 +792,13 @@ ensure_host_device_override() {
   local gid
 
   if [ "$pi_enabled" = "1" ]; then
-    devices_block+="      - /dev/video10:/dev/video10"$'\n'
-    devices_block+="      - /dev/video11:/dev/video11"$'\n'
-    devices_block+="      - /dev/video12:/dev/video12"$'\n'
-    devices_block+="      - /dev/video13:/dev/video13"$'\n'
+    # Map only nodes the host actually exposes: docker compose refuses to
+    # create a container whose device mapping points at a missing path, so an
+    # unconditional list breaks hosts without bcm2835-codec (e.g. Pi 5).
+    for node in $PI_VIDEO_DECODE_NODES; do
+      [ -e "$node" ] || continue
+      devices_block+="      - ${node}:${node}"$'\n'
+    done
   fi
   if [ "$cec_enabled" = "1" ]; then
     while IFS= read -r node; do
@@ -846,7 +858,7 @@ EOF
 check_pi_video_nodes() {
   local missing=""
   local node
-  for node in /dev/video10 /dev/video11 /dev/video12 /dev/video13; do
+  for node in $PI_VIDEO_DECODE_NODES; do
     if [ ! -e "$node" ]; then
       if [ -z "$missing" ]; then
         missing="$node"
