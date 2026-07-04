@@ -1,3 +1,58 @@
+// --- Optional API token support (RELAYTV_API_TOKEN, docs/API.md) -----------
+// When the operator enables the write-endpoint token, browsers must send
+// Authorization: Bearer <token>. The token lives in localStorage and is
+// attached transparently to same-origin requests; on the first rejected
+// write we prompt once, store the entered token, and retry.
+(function(){
+  const STORAGE_KEY = 'relaytv_api_token';
+  let promptedThisLoad = false;
+
+  function storedToken(){
+    try { return (window.localStorage.getItem(STORAGE_KEY) || '').trim(); } catch(_e) { return ''; }
+  }
+  function storeToken(value){
+    try {
+      const v = String(value || '').trim();
+      if (v) window.localStorage.setItem(STORAGE_KEY, v);
+      else window.localStorage.removeItem(STORAGE_KEY);
+    } catch(_e) {}
+  }
+  function isSameOrigin(input){
+    try {
+      const url = typeof input === 'string' ? input : ((input && input.url) || '');
+      return new URL(url, window.location.href).origin === window.location.origin;
+    } catch(_e) { return false; }
+  }
+  function withAuth(opts, token){
+    const out = Object.assign({}, opts || {});
+    const headers = new Headers((opts && opts.headers) || {});
+    headers.set('Authorization', 'Bearer ' + token);
+    out.headers = headers;
+    return out;
+  }
+
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async function(input, opts){
+    const sameOrigin = isSameOrigin(input);
+    const token = sameOrigin ? storedToken() : '';
+    let res = await nativeFetch(input, token ? withAuth(opts, token) : opts);
+    if (res.status === 401 && sameOrigin && !promptedThisLoad){
+      let wantsBearer = false;
+      try { wantsBearer = ((res.headers.get('www-authenticate') || '').toLowerCase().indexOf('bearer') === 0); } catch(_e) {}
+      if (wantsBearer){
+        promptedThisLoad = true;
+        const entered = window.prompt('This RelayTV server requires an API token for control actions.\nEnter the API token (RELAYTV_API_TOKEN):', '');
+        const v = String(entered || '').trim();
+        if (v){
+          storeToken(v);
+          res = await nativeFetch(input, withAuth(opts, v));
+        }
+      }
+    }
+    return res;
+  };
+})();
+
 function _fetchWithTimeout(url, opts, timeoutMs){
   const ms = Number(timeoutMs || 0);
   if (!(Number.isFinite(ms) && ms > 0) || typeof AbortController === 'undefined'){
