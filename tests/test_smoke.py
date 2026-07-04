@@ -18,6 +18,7 @@ from relaytv_app import playback_service
 from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
+from relaytv_app import state
 from relaytv_app.integrations import jellyfin_service
 from relaytv_app import upload_store
 from relaytv_app import ytdlp_format_policy
@@ -416,6 +417,83 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
     assert status["last_command_ok"] is True
     assert status["last_command_state"] == "sent"
     assert status["availability"]["available"] is True
+
+
+def test_cec_monitor_log_level_includes_traffic_and_notice() -> None:
+    # ERROR(1) | NOTICE(4) | TRAFFIC(8): the monitor parses ">>" traffic lines
+    # and learns our physical address from the NOTICE registration line.
+    level = int(player.CEC_MONITOR_LOG_LEVEL)
+    assert level & 8, "TRAFFIC bit required to see standby/source events"
+    assert level & 4, "NOTICE bit required to auto-detect physical address"
+
+
+def test_cec_parse_traffic_extracts_opcode_and_operands() -> None:
+    line = "TRAFFIC: [  123]\t>> 0f:82:10:00"
+    assert player._parse_cec_traffic(line) == ("82", ["10", "00"])
+    assert player._parse_cec_traffic("TRAFFIC: [ 5]\t<< 10:36") is None
+
+
+def test_cec_phys_addr_normalization_matches_traffic_operands(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert player._normalize_phys_addr("10", "00") == "1000"
+
+    for env_form in ("1000", "1.0.0.0", "10:00"):
+        monkeypatch.setenv("RELAYTV_CEC_PHYS_ADDR", env_form)
+        assert player._our_phys_addr() == "1000"
+
+    monkeypatch.delenv("RELAYTV_CEC_PHYS_ADDR", raising=False)
+    monkeypatch.setitem(player._CEC_CONTROLLER_STATUS, "phys_addr", "2000")
+    assert player._our_phys_addr() == "2000"
+
+
+def test_cec_phys_addr_detected_from_registration_line() -> None:
+    line = (
+        "NOTICE:  [   424]\tCEC client registered: libCEC version = 6.0.2, "
+        "client version = 6.0.2, firmware version = 4, "
+        "logical address(es) = Playback 1 (4) , physical address: 1.0.0.0"
+    )
+    assert player._detect_phys_addr_line(line) == "1000"
+    assert player._detect_phys_addr_line("TRAFFIC: [ 1]\t>> 0f:82:10:00") is None
+
+
+def test_cec_source_switch_pauses_away_and_resumes_on_return(monkeypatch: pytest.MonkeyPatch) -> None:
+    mpv_sets: list[tuple[str, object]] = []
+
+    monkeypatch.setenv("RELAYTV_CEC_PHYS_ADDR", "1000")
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda name: 12.5)
+    monkeypatch.setattr(player, "mpv_set", lambda name, value: mpv_sets.append((name, value)))
+    monkeypatch.setattr(
+        state,
+        "get_settings",
+        lambda: {"tv_pause_on_input_change": "1", "tv_auto_resume_on_return": "1"},
+    )
+
+    player._handle_tv_source_switch("2000", event="active_source")
+    assert mpv_sets == [("pause", True)]
+    assert state.get_pause_reason() == "input_changed"
+
+    player._handle_tv_source_switch("1000", event="set_stream_path")
+    assert mpv_sets == [("pause", True), ("pause", False)]
+    assert state.get_pause_reason() is None
+
+
+def test_cec_source_return_resumes_after_tv_standby_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    mpv_sets: list[tuple[str, object]] = []
+
+    monkeypatch.setenv("RELAYTV_CEC_PHYS_ADDR", "1000")
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_set", lambda name, value: mpv_sets.append((name, value)))
+    monkeypatch.setattr(
+        state,
+        "get_settings",
+        lambda: {"tv_auto_resume_on_return": "1"},
+    )
+    state.set_pause_reason("tv_standby")
+
+    player._handle_tv_source_switch("1000", event="set_stream_path")
+
+    assert mpv_sets == [("pause", False)]
+    assert state.get_pause_reason() is None
 
 
 def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.MonkeyPatch) -> None:
