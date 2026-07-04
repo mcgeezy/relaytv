@@ -89,8 +89,8 @@ Out of scope:
 - `docs/INSTALL.md` describes mode defaults in prose; there is no
   per-profile validation checklist for operators, and the review's seven
   target profiles are not enumerated anywhere.
-- The live appliance (amd64 NUC, X11 session, native Qt embed) is available
-  to cross-check one matrix row end-to-end.
+- The live appliance (amd64 NUC, Wayland session, native Qt embed) is
+  available to cross-check one matrix row end-to-end.
 
 ## Milestones
 
@@ -145,7 +145,7 @@ Status: planned
 - Full gates: `ruff check app tests`, `PYTHONPATH=app pytest -q`, CI-like
   fresh-venv run.
 - Live cross-check: the appliance's `/runtime/capabilities` and `/status`
-  match its matrix row (amd64 / X11 / native Qt embed).
+  match its matrix row (amd64 / Wayland / native Qt embed).
 - Open the final `codex/architecture-phase-6` to `main` PR — this completes
   the architecture roadmap.
 

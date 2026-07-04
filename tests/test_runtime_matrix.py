@@ -49,7 +49,7 @@ _MATRIX_ENV_VARS = (
 RUNTIME_PROFILE_MATRIX = [
     {
         "profile": "amd64-x11-native-qt-embed",
-        "description": "amd64 mini PC, X11 session, native Qt embedded (product default; live appliance)",
+        "description": "amd64 mini PC, X11 session, native Qt embedded (product default)",
         "env": {
             "RELAYTV_MODE": "x11",
             "RELAYTV_HOST_SESSION_TYPE": "x11",
@@ -69,21 +69,21 @@ RUNTIME_PROFILE_MATRIX = [
     },
     {
         "profile": "amd64-wayland-native-qt-embed",
-        "description": "amd64, Wayland session, native Qt embedded (installer default for wayland mode)",
+        "description": "amd64, Wayland session, native Qt embedded (installer default for wayland mode; live appliance)",
         "env": {
             "RELAYTV_MODE": "wayland",
             "RELAYTV_HOST_SESSION_TYPE": "wayland",
             "RELAYTV_PLAYER_BACKEND": "qt",
         },
         "host": {"machine": "x86_64", "model": "", "has_dri": True},
-        "decode": {"hwaccels": ["vaapi"], "av1_paths": ["libdav1d"]},
+        "decode": {"hwaccels": ["qsv", "vaapi"], "av1_paths": ["libdav1d"]},
         "expected": {
             "host_profile": "amd64",
             "entrypoint_defaults": {"RELAYTV_QT_RUNTIME_MODE": "embed"},
             "qt_backend_enabled": True,
             "qt_runtime_mode_configured": "embed",
             "qt_runtime_mode_effective": "embed",
-            "decode_profile": "intel_amd64_vaapi",
+            "decode_profile": "intel_amd64_qsv",
             "av1_allowed": True,
         },
     },

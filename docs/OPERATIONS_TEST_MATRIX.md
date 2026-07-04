@@ -20,15 +20,15 @@ Regenerate the decision table after intentional changes with:
 | Profile | `RELAYTV_MODE` | Session | Backend | Qt runtime mode | Host profile | Entrypoint defaults | Decode profile | AV1 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `amd64-x11-native-qt-embed` | `x11` | x11 | qt | embed | `amd64` | `RELAYTV_QT_RUNTIME_MODE=embed` | `intel_amd64_qsv` | yes |
-| `amd64-wayland-native-qt-embed` | `wayland` | wayland | qt | embed | `amd64` | `RELAYTV_QT_RUNTIME_MODE=embed` | `intel_amd64_vaapi` | yes |
+| `amd64-wayland-native-qt-embed` | `wayland` | wayland | qt | embed | `amd64` | `RELAYTV_QT_RUNTIME_MODE=embed` | `intel_amd64_qsv` | yes |
 | `amd64-wayland-qt-external-mpv` | `wayland` | wayland | qt | external_mpv | `amd64` | — | `intel_amd64_vaapi` | yes |
 | `amd64-unmanaged-wayland-auto` | `(unset)` | wayland | qt | auto → external_mpv | `amd64` | — | `intel_amd64_vaapi` | yes |
 | `headless-remote` | `headless` | (none) | classic mpv | n/a (classic mpv) | `amd64` | `RELAYTV_HEADLESS_REMOTE_ENABLED=1` | `software` | no |
 | `raspi-wayland-native-qt-embed` | `wayland` | wayland | qt | embed | `raspi` | `RELAYTV_QT_RUNTIME_MODE=embed`; `RELAYTV_QT_SHELL_MPV_ARGS=--gpu-api=opengl --opengl-es=yes` | `arm_safe` | no |
 | `arm64-x11-native-qt-embed` | `x11` | x11 | qt | embed | `arm` | `RELAYTV_QT_RUNTIME_MODE=embed` | `arm_safe` | no |
 
-- `amd64-x11-native-qt-embed`: amd64 mini PC, X11 session, native Qt embedded (product default; live appliance)
-- `amd64-wayland-native-qt-embed`: amd64, Wayland session, native Qt embedded (installer default for wayland mode)
+- `amd64-x11-native-qt-embed`: amd64 mini PC, X11 session, native Qt embedded (product default)
+- `amd64-wayland-native-qt-embed`: amd64, Wayland session, native Qt embedded (installer default for wayland mode; live appliance)
 - `amd64-wayland-qt-external-mpv`: amd64, Wayland session, Qt shell with external mpv (explicit operator opt-in)
 - `amd64-unmanaged-wayland-auto`: amd64, RELAYTV_MODE unset with a Wayland session: auto resolves to external mpv
 - `headless-remote`: Headless host, classic mpv backend, remote playback surface enabled by default
