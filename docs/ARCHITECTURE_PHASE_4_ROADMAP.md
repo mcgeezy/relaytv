@@ -287,8 +287,18 @@ Status: complete
     `last_stopped_ok: true` and `last_progress_ok: true`.
   - Series play-all: `POST /jellyfin/tv/series/{id}/play_all` on a
     10-episode series — episode 1 started `direct`, episodes 2–10 queued
-    in exact episode order; generic queue-title fallback verified
-    byte-identical to pre-phase behavior on `main`.
+    in exact episode order.
+- Pre-existing bug found during validation and fixed at user request:
+  playlist plays (series play-all, Jellyfin app casts) enqueued tail items
+  with generic `Jellyfin item <id>` titles and no channel/thumbnail because
+  playlist payloads carry bare item ids and the enqueue loop never consulted
+  the catalog (behavior byte-identical on pre-phase `main`). Fixed in the
+  service (`_playlist_entry_display_fields`): blank playlist entries now
+  enrich title/channel/thumbnail via `jellyfin_receiver.get_item_metadata`,
+  the same catalog source the single-item path uses. Covered by
+  `test_handle_command_playlist_enriches_queue_metadata` and re-validated
+  live (all 9 queued episodes showed series title, `S01Exx · <name>`
+  channel, and thumbnail).
 - Appliance returned to its pre-validation state (session closed, queue
   empty, playback mode `auto`).
 - Open the final `codex/architecture-phase-4` to `main` PR.
@@ -299,4 +309,5 @@ Status: complete
 | --- | --- | --- |
 | 2026-07-03 | Phase 4 started | Branch cut from `main` at `6fc7366` (Phase 3 squash merge); roadmap committed. |
 | 2026-07-03 | M0–M7 landed | `cf6b521` M0 docs, `bde89dc` M1 inventory ratchet, `c703c6d` M2 helpers, `038e13a` M3 stream policy, `39bdf4f`/`c636b9d` M4 track handling, `2bd2a9e` M5 hints, `bbfd6cb` M6 command ingress, `557ce6b` M7 service tests + docs. |
-| 2026-07-03 | M8 complete | Live appliance validation passed end-to-end (direct + forced-transcode play, track switching, command ingress, hints, series play-all); final PR opened. |
+| 2026-07-03 | M8 complete | Live appliance validation passed end-to-end (direct + forced-transcode play, track switching, command ingress, hints, series play-all); final PR opened (#24). |
+| 2026-07-03 | Playlist queue metadata fix | Pre-existing generic queue titles on playlist plays fixed in the service via catalog enrichment; service test added; live re-validated. |

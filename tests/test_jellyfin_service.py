@@ -330,3 +330,56 @@ def test_handle_command_play_uses_playback_service(monkeypatch) -> None:
     assert now_updates and now_updates[-1]["jellyfin_item_id"] == "item-1"
     assert events == ["play"]
     jellyfin_service.reset_command_state()
+
+
+def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
+    jellyfin_service.reset_command_state()
+    monkeypatch.setattr(jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jf.local"})
+    monkeypatch.setattr(jellyfin_receiver, "mark_command", lambda action: None)
+    monkeypatch.setattr(jellyfin_receiver, "mark_heartbeat", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail())
+    monkeypatch.setattr(jellyfin_receiver, "session_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "api_key", lambda: "")
+
+    metadata_calls: list[str] = []
+
+    def fake_metadata(iid, *, token_override="", server_url_override=""):
+        metadata_calls.append(iid)
+        return {
+            "title": f"Episode {iid}",
+            "channel": "Series · S01",
+            "thumbnail": f"http://jf.local/Items/{iid}/Images/Primary",
+        }
+
+    monkeypatch.setattr(jellyfin_receiver, "get_item_metadata", fake_metadata)
+    monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True})
+    monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
+    monkeypatch.setattr(player, "is_playing", lambda: False)
+    monkeypatch.setattr(player, "recent_jellyfin_stop_matches", lambda **kw: False)
+    monkeypatch.setattr(player, "prime_mpv_up_next_from_queue", lambda force=False: None)
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_playback_mode": "direct"})
+    monkeypatch.setattr(state, "QUEUE", [])
+    monkeypatch.setattr(state, "NOW_PLAYING", {})
+    monkeypatch.setattr(state, "persist_queue", lambda: None)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+    monkeypatch.setattr(
+        jellyfin_service, "smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Episode ep-1"}
+    )
+    monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lambda iid: ("", ""))
+    monkeypatch.setattr(playback_service, "suppress_auto_next", lambda sec, **kw: None)
+    monkeypatch.setattr(playback_service, "play_now", lambda item, **kw: dict(item))
+    monkeypatch.setattr(playback_service, "update_now_playing", lambda now: None)
+
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(action="Play", payload={"ItemIds": ["ep-1", "ep-2", "ep-3"], "PlayCommand": "PlayNow"}),
+        controls={},
+        ui=_noop_ui(),
+    )
+
+    assert out["ok"] is True and out["action"] == "play"
+    assert metadata_calls == ["ep-2", "ep-3"]
+    assert [q["jellyfin_item_id"] for q in state.QUEUE] == ["ep-2", "ep-3"]
+    assert [q["title"] for q in state.QUEUE] == ["Episode ep-2", "Episode ep-3"]
+    assert state.QUEUE[0]["channel"] == "Series · S01"
+    assert state.QUEUE[0]["thumbnail"] == "http://jf.local/Items/ep-2/Images/Primary"
+    jellyfin_service.reset_command_state()

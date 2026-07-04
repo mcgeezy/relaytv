@@ -2425,6 +2425,32 @@ def should_suppress_duplicate_ui_action(command: str, item_id: str, resume_pos: 
         return suppressed
 
 
+def _playlist_entry_display_fields(entry: dict, iid: str, *, api_key: str, server_url: str) -> dict[str, str]:
+    """
+    Return display metadata (title/channel/thumbnail) for a playlist queue
+    entry. Playlist payloads (series play-all, Jellyfin app casts) often carry
+    bare item ids, so fall back to the catalog like the single-item path does.
+    """
+    title = str(entry.get("title") or "").strip()
+    channel = ""
+    thumbnail = ""
+    if not title:
+        try:
+            meta = jellyfin_receiver.get_item_metadata(iid, token_override=api_key, server_url_override=server_url)
+        except Exception:
+            meta = None
+        if isinstance(meta, dict):
+            title = str(meta.get("title") or "").strip()
+            channel = str(meta.get("channel") or "").strip()
+            thumbnail = str(meta.get("thumbnail") or "").strip()
+    out = {"title": title or f"Jellyfin item {iid}"}
+    if channel:
+        out["channel"] = channel
+    if thumbnail:
+        out["thumbnail"] = thumbnail
+    return out
+
+
 def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
     """Normalized Jellyfin command ingress (v1: Play/Stop/Pause/Resume/Seek/Next).
 
@@ -2716,11 +2742,13 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
                     q_media_source_id = str(entry.get("media_source_id") or "").strip()
                     if _seen(iid, qurl, q_media_source_id):
                         continue
-                    qtitle = str(entry.get("title") or "").strip() or f"Jellyfin item {iid}"
+                    q_display = _playlist_entry_display_fields(
+                        entry, iid, api_key=auth_token, server_url=str(st.get("server_url") or "")
+                    )
                     queued.append(
                         {
                             "url": qurl,
-                            "title": qtitle,
+                            **q_display,
                             "provider": "jellyfin",
                             "jellyfin_item_id": iid,
                             **({"jellyfin_media_source_id": q_media_source_id} if q_media_source_id else {}),
@@ -2924,11 +2952,13 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
                     )
                     if _seen(iid, qurl, q_media_source_id):
                         continue
-                    qtitle = str(entry.get("title") or "").strip() or f"Jellyfin item {iid}"
+                    q_display = _playlist_entry_display_fields(
+                        entry, iid, api_key=auth_token, server_url=str(st.get("server_url") or "")
+                    )
                     queued.append(
                         {
                             "url": qurl,
-                            "title": qtitle,
+                            **q_display,
                             "provider": "jellyfin",
                             "jellyfin_item_id": iid,
                             **({"jellyfin_media_source_id": q_media_source_id} if q_media_source_id else {}),
