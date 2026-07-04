@@ -29,7 +29,49 @@ Do not manually edit `CHANGELOG.md` for normal feature, fix, docs, or dependency
 changes. Release Please owns version bumps, release pull requests, changelog
 generation, Git tags, GitHub Releases, and immutable release image tags.
 
-## Architecture Phase 4 Discipline
+## Architecture Phase 5 Discipline
+
+When working on the Phase 5 architecture effort (optional API token), keep
+work on `codex/architecture-phase-5` unless the user explicitly directs
+otherwise.
+
+Keep `docs/ARCHITECTURE_PHASE_5_ROADMAP.md` current when milestones start,
+complete, change scope, or uncover important follow-up work.
+
+Phase 5 scope:
+
+- optional bearer-token auth for write requests (`POST`/`PUT`/`PATCH`/
+  `DELETE`) via app middleware; disabled by default, enabled with
+  `RELAYTV_API_TOKEN`; reads, `/health`, `/ui`, and static assets stay open
+- the token is env-only: plumbed through `runtime_config`
+  (`SETTINGS_BUS_VARS`), never persisted to settings.json, never returned by
+  `/settings`, never logged
+- minimal web UI compatibility (one fetch wrapper attaching the bearer
+  token from localStorage) — no frontend framework or redesign
+- operator docs: trusted-LAN default posture, token setup, reverse-proxy
+  exposure examples
+- guardrail tests for the auth contract (`tests/test_api_auth.py`)
+
+Do not start Phase 6+ work on this branch unless the user explicitly expands
+the scope. Out of scope for Phase 5:
+
+- auth for read endpoints, sessions/users, or credential stores beyond the
+  single env token
+- TLS termination inside RelayTV
+- frontend framework or build pipeline
+- endpoint removals or compatibility-breaking API changes
+- with `RELAYTV_API_TOKEN` unset, any behavior change at all
+
+Prefer small PRs into `codex/architecture-phase-5`, not directly into `main`.
+No release until the architecture roadmap completes: phases ship as
+`refactor:` PRs that intentionally do not trigger release-please.
+
+## Architecture Phase 4 Discipline (complete)
+
+Phase 4 (Jellyfin product service) completed on
+`codex/architecture-phase-4`; final PR:
+https://github.com/mcgeezy/relaytv/pull/24. The full record lives in
+`docs/ARCHITECTURE_PHASE_4_ROADMAP.md`.
 
 When working on the Phase 4 architecture effort (Jellyfin product service),
 keep work on `codex/architecture-phase-4` unless the user explicitly directs
