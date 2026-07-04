@@ -22,6 +22,7 @@ Use this directory as a small operator/product doc set for the public release br
 - `ARCHITECTURE_PHASE_4_ROADMAP.md`: living Phase 4 branch roadmap for the Jellyfin product service
 - `ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`: machine-checked Jellyfin route-surface inventory and containment contract
 - `ARCHITECTURE_PHASE_5_ROADMAP.md`: living Phase 5 branch roadmap for the optional API token
+- `ARCHITECTURE_PHASE_6_ROADMAP.md`: living Phase 6 branch roadmap for the operations test matrix
 
 ## Module Ownership Snapshot
 
