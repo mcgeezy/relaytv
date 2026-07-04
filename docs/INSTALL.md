@@ -136,9 +136,14 @@ The default container build is now lean and native-Qt-first. Optional feature bu
 
 - `RELAYTV_INSTALL_X11_OVERLAY=1`: include GTK/WebKit packages for the legacy X11 overlay fallback
 - `RELAYTV_INSTALL_HEADLESS=1`: include `Xvfb` and `x11vnc` for headless remote mode
-- `RELAYTV_INSTALL_NODE=1`: include the yt-dlp JavaScript challenge runtime bundle
+- `RELAYTV_INSTALL_DENO=1`: include deno, yt-dlp's default-enabled JavaScript
+  challenge runtime (pinned static binary, sha256-verified; amd64/arm64 only)
+  - default is `1`; deno sandboxes the remote challenge code and needs no
+    per-invocation flags, so it also covers mpv's own ytdl hook
+- `RELAYTV_INSTALL_NODE=1`: include the nodejs fallback runtime for yt-dlp
   - default is now `1`
   - RelayTV prefers `deno` when available, otherwise uses explicit `--js-runtimes node`
+    (the only option on 32-bit ARM, which has no deno build)
 - `RELAYTV_INSTALL_IDLE_BROWSER=1`: include Chromium for the optional browser-backed idle dashboard
 - `RELAYTV_INSTALL_OPS_TOOLS=1`: include extra debug/ops tools (`mesa-utils`, `procps`, `socat`)
 

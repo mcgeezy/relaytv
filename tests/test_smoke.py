@@ -358,6 +358,24 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "sort -u" in text
 
 
+def test_image_bundles_pinned_deno_js_runtime() -> None:
+    # Deno is yt-dlp's only default-enabled JS runtime for YouTube challenge
+    # solving; shipping it covers every yt-dlp invocation (including mpv's
+    # ytdl hook) without per-call flags. Pin the version and verify sha256 so
+    # the image stays traceable; 32-bit ARM keeps the node fallback.
+    dockerfile = (ROOT_DIR / "app/Dockerfile").read_text()
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+    install_doc = (ROOT_DIR / "docs/INSTALL.md").read_text()
+
+    assert "ARG RELAYTV_INSTALL_DENO=1" in dockerfile
+    assert "ARG RELAYTV_DENO_VERSION=" in dockerfile
+    assert dockerfile.count('deno_sha256="') == 2
+    assert "sha256sum -c -" in dockerfile
+    assert 'deno-${deno_target}.zip' in dockerfile
+    assert "RELAYTV_INSTALL_DENO: ${RELAYTV_INSTALL_DENO:-1}" in compose
+    assert "RELAYTV_INSTALL_DENO=1" in install_doc
+
+
 def test_compose_device_passthrough_lives_in_generated_override() -> None:
     # A device mapped in the base compose that the host lacks makes compose
     # refuse to create the container, and overrides can add devices but never
