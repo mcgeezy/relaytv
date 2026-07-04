@@ -261,15 +261,36 @@ Status: complete
 
 ### M8: Phase 4 Final Validation
 
-Status: planned
+Status: complete
 
 - Full gates: `ruff check app tests`, `PYTHONPATH=app pytest -q`,
-  CI-like fresh-venv run.
-- Live validation on the appliance: build the branch image, deploy, and
-  smoke Jellyfin end-to-end — integration status/heartbeat, catalog browse,
-  item play (direct and forced-transcode), audio/subtitle runtime switch,
-  pause/resume/seek/stop command ingress, stopped/progress hint emission,
-  series play-all queueing.
+  CI-like fresh-venv run (FastAPI 0.139) — all green.
+- Live validation on the appliance (branch image deployed via
+  `RELAYTV_IMAGE_REF`, container recreated, `/health` ok). All passing:
+  - Integration lifecycle: connect, register, heartbeat, `sync_health: ok`;
+    the integration also recovered cleanly (reconnect + re-auth) after the
+    Jellyfin server itself went down mid-validation and came back.
+  - Catalog browse: home, search, movies, series listings.
+  - Direct play: movie item played `direct`/`direct_ok`, metadata enriched
+    in place (2 audio + 3 subtitle streams), pre-existing queue preserved.
+  - Forced transcode: `jellyfin_playback_mode: transcode` via settings →
+    same item selected `master.m3u8` with reason `forced_transcode_mode`
+    and played (position advancing); mode restored to `auto` afterward.
+  - Command ingress: resume (position advances), seek by ticks
+    (3000000000 → pos 301.593), pause, stop — all dispatched through
+    `handle_command` with the injected control seams.
+  - Runtime track switching: audio index 2 in-place (`mpv_runtime_aid`),
+    subtitle off (`-1`) then index 4 (`mpv_runtime_sid`), playback
+    uninterrupted; language settings preserved (`audio: eng, sub: eng`).
+  - Stopped/progress hints: `progress_snapshot` payload correct (ItemId,
+    IsPaused, PositionTicks, played pct); every stop reported
+    `last_stopped_ok: true` and `last_progress_ok: true`.
+  - Series play-all: `POST /jellyfin/tv/series/{id}/play_all` on a
+    10-episode series — episode 1 started `direct`, episodes 2–10 queued
+    in exact episode order; generic queue-title fallback verified
+    byte-identical to pre-phase behavior on `main`.
+- Appliance returned to its pre-validation state (session closed, queue
+  empty, playback mode `auto`).
 - Open the final `codex/architecture-phase-4` to `main` PR.
 
 ## PR And Milestone Log
@@ -277,3 +298,5 @@ Status: planned
 | Date | Item | Notes |
 | --- | --- | --- |
 | 2026-07-03 | Phase 4 started | Branch cut from `main` at `6fc7366` (Phase 3 squash merge); roadmap committed. |
+| 2026-07-03 | M0–M7 landed | `cf6b521` M0 docs, `bde89dc` M1 inventory ratchet, `c703c6d` M2 helpers, `038e13a` M3 stream policy, `39bdf4f`/`c636b9d` M4 track handling, `2bd2a9e` M5 hints, `bbfd6cb` M6 command ingress, `557ce6b` M7 service tests + docs. |
+| 2026-07-03 | M8 complete | Live appliance validation passed end-to-end (direct + forced-transcode play, track switching, command ingress, hints, series play-all); final PR opened. |
