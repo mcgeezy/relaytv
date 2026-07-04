@@ -3683,6 +3683,16 @@ def ui():
       <div class="settingsBody">
         <div class="toggleRow">
           <div class="toggleCopy">
+            <div class="toggleTitle">Keep yt-dlp up to date</div>
+            <div class="toggleHint">Check for yt-dlp updates daily (and right away when enabled). Recommended: stale yt-dlp is the most common cause of YouTube playback failures.</div>
+          </div>
+          <label class="toggleSwitch" for="setYtdlpAutoUpdate" title="Keep yt-dlp up to date">
+            <input type="checkbox" id="setYtdlpAutoUpdate" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="toggleRow">
+          <div class="toggleCopy">
             <div class="toggleTitle">Use Invidious server for YouTube playback</div>
             <div class="toggleHint">Resolve YouTube playback through the configured Invidious base URL.</div>
           </div>

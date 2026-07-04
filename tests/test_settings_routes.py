@@ -65,6 +65,43 @@ def test_youtube_cookies_routes_upload_and_clear(monkeypatch, tmp_path) -> None:
     assert updates[-1] == {"youtube_cookies_path": ""}
 
 
+def test_update_settings_ytdlp_auto_update_toggle_syncs_and_kicks(monkeypatch) -> None:
+    from relaytv_app import ytdlp_update
+
+    updates: list[dict[str, object]] = []
+    kicks: list[bool] = []
+
+    runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "0")
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {})
+    monkeypatch.setattr(
+        routes.state,
+        "update_settings",
+        lambda patch: updates.append(dict(patch)) or dict(patch),
+    )
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(ytdlp_update, "kick_async", lambda *, force=False: kicks.append(force))
+
+    client = TestClient(create_app(testing=True))
+    enable = client.post("/settings", json={"ytdlp_auto_update_enabled": True})
+
+    assert enable.status_code == 200
+    body = enable.json()
+    assert body["settings"]["ytdlp_auto_update_enabled"] is True
+    assert "ytdlp_auto_update_enabled" in body["live_applied"]
+    assert updates[-1] == {"ytdlp_auto_update_enabled": True}
+    assert runtime_config.snapshot().raw("RELAYTV_YTDLP_AUTO_UPDATE") == "1"
+    # Turning the toggle on runs an immediate forced check.
+    assert kicks == [True]
+
+    disable = client.post("/settings", json={"ytdlp_auto_update_enabled": False})
+
+    assert disable.status_code == 200
+    assert disable.json()["settings"]["ytdlp_auto_update_enabled"] is False
+    assert runtime_config.snapshot().raw("RELAYTV_YTDLP_AUTO_UPDATE") == "0"
+    # Disabling (or re-saving while already on) does not kick another check.
+    assert kicks == [True]
+
+
 def test_update_settings_route_rejects_invidious_without_server(monkeypatch) -> None:
     monkeypatch.setattr(routes.state, "get_settings", lambda: {})
 

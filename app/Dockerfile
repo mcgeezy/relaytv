@@ -4,6 +4,8 @@ ARG RELAYTV_INSTALL_QT=1
 ARG RELAYTV_INSTALL_X11_OVERLAY=0
 ARG RELAYTV_INSTALL_HEADLESS=0
 ARG RELAYTV_INSTALL_NODE=1
+ARG RELAYTV_INSTALL_DENO=1
+ARG RELAYTV_DENO_VERSION=2.9.1
 ARG RELAYTV_INSTALL_IDLE_BROWSER=0
 ARG RELAYTV_INSTALL_OPS_TOOLS=0
 ARG RELAYTV_IMAGE_SOURCE="https://github.com/mcgeezy/relaytv"
@@ -100,6 +102,29 @@ RUN set -eux; \
       ln -s "$libdir/dri" "$libdir/mesa"; \
     fi; \
     rm -rf /var/lib/apt/lists/*
+
+# Deno is yt-dlp's only default-enabled JavaScript runtime for YouTube
+# challenge solving and sandboxes the remote challenge code (no fs/network
+# permissions). Pinned static binary from the official release, verified by
+# sha256. 32-bit ARM has no deno build and falls back to the nodejs bundle,
+# which the resolver opts in via --js-runtimes.
+RUN set -eux; \
+    if [ "${RELAYTV_INSTALL_DENO}" = "1" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) deno_target="x86_64-unknown-linux-gnu"; deno_sha256="710c54d63477d1100844ef4818f19507ce0dbf40510903b1d883f19e394446a2" ;; \
+        arm64) deno_target="aarch64-unknown-linux-gnu"; deno_sha256="0a60d079fa79635a59803074dbbfe86ccc35746dc2c4f8d73f2e50338b3283a9" ;; \
+        *) deno_target="" ;; \
+      esac; \
+      if [ -n "$deno_target" ]; then \
+        curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/download/v${RELAYTV_DENO_VERSION}/deno-${deno_target}.zip"; \
+        echo "${deno_sha256}  /tmp/deno.zip" | sha256sum -c -; \
+        python3 -m zipfile -e /tmp/deno.zip /usr/local/bin/; \
+        chmod 0755 /usr/local/bin/deno; \
+        rm -f /tmp/deno.zip; \
+        deno --version; \
+      fi; \
+    fi
 
 ENV PYTHONPATH=/usr/lib/python3/dist-packages
 

@@ -18,6 +18,7 @@ from relaytv_app import playback_service
 from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
+from relaytv_app import state
 from relaytv_app.integrations import jellyfin_service
 from relaytv_app import upload_store
 from relaytv_app import ytdlp_format_policy
@@ -357,6 +358,98 @@ def test_repo_installer_generates_host_device_override_for_cec() -> None:
     assert "sort -u" in text
 
 
+def test_image_bundles_pinned_deno_js_runtime() -> None:
+    # Deno is yt-dlp's only default-enabled JS runtime for YouTube challenge
+    # solving; shipping it covers every yt-dlp invocation (including mpv's
+    # ytdl hook) without per-call flags. Pin the version and verify sha256 so
+    # the image stays traceable; 32-bit ARM keeps the node fallback.
+    dockerfile = (ROOT_DIR / "app/Dockerfile").read_text()
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+    install_doc = (ROOT_DIR / "docs/INSTALL.md").read_text()
+
+    assert "ARG RELAYTV_INSTALL_DENO=1" in dockerfile
+    assert "ARG RELAYTV_DENO_VERSION=" in dockerfile
+    assert dockerfile.count('deno_sha256="') == 2
+    assert "sha256sum -c -" in dockerfile
+    assert 'deno-${deno_target}.zip' in dockerfile
+    assert "RELAYTV_INSTALL_DENO: ${RELAYTV_INSTALL_DENO:-1}" in compose
+    assert "RELAYTV_INSTALL_DENO=1" in install_doc
+
+
+def test_compose_device_passthrough_lives_in_generated_override() -> None:
+    # A device mapped in the base compose that the host lacks makes compose
+    # refuse to create the container, and overrides can add devices but never
+    # remove them — so the base files must map none and the installer probes
+    # existence for each node it writes into the override.
+    compose = (ROOT_DIR / "docker-compose.yml").read_text()
+    release = (ROOT_DIR / "docker-compose.release.yml").read_text()
+    installer = (ROOT_DIR / "scripts/install.sh").read_text()
+
+    assert "devices:" not in compose
+    assert "devices:" not in release
+    assert 'CORE_DEVICE_NODES="/dev/snd /dev/dri"' in installer
+    assert "for node in $CORE_DEVICE_NODES" in installer
+    assert "/dev/dri (GPU/KMS) not found" in installer
+    assert "/dev/snd not found" in installer
+
+
+def test_yt_dlp_update_interval_gate_and_force(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import time as _time
+
+    pip_calls: list[object] = []
+    state_file = tmp_path / "update.json"
+    state_file.write_text(json.dumps({"last_check_ts": _time.time()}), encoding="utf-8")
+    env = {
+        "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE": str(state_file),
+        "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS": "24",
+    }
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda env: "2026.01.01")
+    monkeypatch.setattr(
+        container_entrypoint.subprocess,
+        "run",
+        lambda *args, **kwargs: pip_calls.append(args) or subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    assert container_entrypoint.run_yt_dlp_update(env) is False
+    assert pip_calls == []
+
+    assert container_entrypoint.run_yt_dlp_update(env, force=True) is True
+    assert len(pip_calls) == 1
+    assert json.loads(state_file.read_text(encoding="utf-8"))["ok"] is True
+
+
+def test_ytdlp_update_worker_gates_on_runtime_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import ytdlp_update
+
+    runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "1")
+    assert ytdlp_update.enabled() is True
+    runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "0")
+    assert ytdlp_update.enabled() is False
+
+    delegated: list[bool] = []
+    monkeypatch.setattr(
+        ytdlp_update.container_entrypoint,
+        "run_yt_dlp_update",
+        lambda env, *, force=False: delegated.append(force) or True,
+    )
+    assert ytdlp_update.run_update_check(force=True) is True
+    assert delegated == [True]
+
+
+def test_repo_installer_maps_only_existing_pi_video_nodes() -> None:
+    # Pi 5 has no bcm2835-codec, so /dev/video10..13 do not exist there and an
+    # unconditional device mapping makes docker compose fail to create the
+    # container. The installer must probe node existence for both the default
+    # and the generated override.
+    text = (ROOT_DIR / "scripts/install.sh").read_text()
+
+    assert "PI_VIDEO_DECODE_NODES=" in text
+    assert "detect_pi_video_default" in text
+    assert '[ -e "$node" ] || continue' in text
+    assert '- /dev/video10:/dev/video10"' not in text
+    assert text.count("for node in $PI_VIDEO_DECODE_NODES") >= 2
+
+
 def test_repo_installer_generates_nvidia_passthrough_when_supported() -> None:
     text = (ROOT_DIR / "scripts/install.sh").read_text()
     install_doc = (ROOT_DIR / "docs/INSTALL.md").read_text()
@@ -416,6 +509,83 @@ def test_cec_send_uses_running_controller(monkeypatch: pytest.MonkeyPatch) -> No
     assert status["last_command_ok"] is True
     assert status["last_command_state"] == "sent"
     assert status["availability"]["available"] is True
+
+
+def test_cec_monitor_log_level_includes_traffic_and_notice() -> None:
+    # ERROR(1) | NOTICE(4) | TRAFFIC(8): the monitor parses ">>" traffic lines
+    # and learns our physical address from the NOTICE registration line.
+    level = int(player.CEC_MONITOR_LOG_LEVEL)
+    assert level & 8, "TRAFFIC bit required to see standby/source events"
+    assert level & 4, "NOTICE bit required to auto-detect physical address"
+
+
+def test_cec_parse_traffic_extracts_opcode_and_operands() -> None:
+    line = "TRAFFIC: [  123]\t>> 0f:82:10:00"
+    assert player._parse_cec_traffic(line) == ("82", ["10", "00"])
+    assert player._parse_cec_traffic("TRAFFIC: [ 5]\t<< 10:36") is None
+
+
+def test_cec_phys_addr_normalization_matches_traffic_operands(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert player._normalize_phys_addr("10", "00") == "1000"
+
+    for env_form in ("1000", "1.0.0.0", "10:00"):
+        monkeypatch.setenv("RELAYTV_CEC_PHYS_ADDR", env_form)
+        assert player._our_phys_addr() == "1000"
+
+    monkeypatch.delenv("RELAYTV_CEC_PHYS_ADDR", raising=False)
+    monkeypatch.setitem(player._CEC_CONTROLLER_STATUS, "phys_addr", "2000")
+    assert player._our_phys_addr() == "2000"
+
+
+def test_cec_phys_addr_detected_from_registration_line() -> None:
+    line = (
+        "NOTICE:  [   424]\tCEC client registered: libCEC version = 6.0.2, "
+        "client version = 6.0.2, firmware version = 4, "
+        "logical address(es) = Playback 1 (4) , physical address: 1.0.0.0"
+    )
+    assert player._detect_phys_addr_line(line) == "1000"
+    assert player._detect_phys_addr_line("TRAFFIC: [ 1]\t>> 0f:82:10:00") is None
+
+
+def test_cec_source_switch_pauses_away_and_resumes_on_return(monkeypatch: pytest.MonkeyPatch) -> None:
+    mpv_sets: list[tuple[str, object]] = []
+
+    monkeypatch.setenv("RELAYTV_CEC_PHYS_ADDR", "1000")
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda name: 12.5)
+    monkeypatch.setattr(player, "mpv_set", lambda name, value: mpv_sets.append((name, value)))
+    monkeypatch.setattr(
+        state,
+        "get_settings",
+        lambda: {"tv_pause_on_input_change": "1", "tv_auto_resume_on_return": "1"},
+    )
+
+    player._handle_tv_source_switch("2000", event="active_source")
+    assert mpv_sets == [("pause", True)]
+    assert state.get_pause_reason() == "input_changed"
+
+    player._handle_tv_source_switch("1000", event="set_stream_path")
+    assert mpv_sets == [("pause", True), ("pause", False)]
+    assert state.get_pause_reason() is None
+
+
+def test_cec_source_return_resumes_after_tv_standby_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    mpv_sets: list[tuple[str, object]] = []
+
+    monkeypatch.setenv("RELAYTV_CEC_PHYS_ADDR", "1000")
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_set", lambda name, value: mpv_sets.append((name, value)))
+    monkeypatch.setattr(
+        state,
+        "get_settings",
+        lambda: {"tv_auto_resume_on_return": "1"},
+    )
+    state.set_pause_reason("tv_standby")
+
+    player._handle_tv_source_switch("1000", event="set_stream_path")
+
+    assert mpv_sets == [("pause", False)]
+    assert state.get_pause_reason() is None
 
 
 def test_cec_send_falls_back_to_one_shot_without_controller(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1664,6 +1834,17 @@ def test_pi_qt_mpv_args_do_not_use_fast_profile_by_default(monkeypatch: pytest.M
     assert '--profile=fast' not in args
 
 
+def test_qt_subprocess_mpv_args_keep_player_alive_after_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+
+    args = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+
+    # mpv must survive `stop`/EOF so the Qt shell heartbeat (which quits when
+    # the mpv child dies) keeps the shell alive for the idle surface.
+    assert '--idle=yes' in args
+
+
 def test_pi_qt_mpv_args_allow_explicit_fast_profile(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('RELAYTV_ARM_FAST_PROFILE', '1')
     monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
@@ -2887,6 +3068,119 @@ def test_auto_next_resumes_interrupted_item_without_dropping_queue_tail(monkeypa
     assert play_calls[-1]['item'] == resumed
     assert play_calls[-1]['clear_queue'] is False
     assert play_calls[-1]['start_pos'] == 120.0
+
+
+def test_resolver_botcheck_error_is_typed_http_400() -> None:
+    from fastapi import HTTPException
+
+    assert issubclass(resolver.YouTubeBotCheckError, HTTPException)
+    assert resolver._youtube_error_is_botcheck("sign in to confirm you're not a bot")
+    assert resolver._categorize_resolver_error("Sign in to confirm you're not a bot") == 'botcheck'
+
+
+def test_auto_next_skips_bot_checked_video_instead_of_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[dict] = []
+    toasted: list[object] = []
+    bot_item = {'url': 'https://www.youtube.com/watch?v=botcheck', 'title': 'Bot Checked'}
+    good_item = {'url': 'https://example.com/good.mp4', 'title': 'Good'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [bot_item, good_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_notify_bot_check_skip', lambda item: toasted.append(item))
+
+    def fake_play(item, **kwargs):
+        if item is bot_item:
+            raise player.YouTubeBotCheckError(
+                status_code=400,
+                detail='yt-dlp failed: YouTube requires anti-bot verification/cookies.',
+            )
+        play_calls.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert play_calls == [good_item]
+    # Skipped item must NOT be re-queued (re-queueing caused a retry loop).
+    assert player.state.QUEUE == []
+    assert toasted == [bot_item]
+
+
+def test_auto_next_drops_bot_checked_last_item_without_requeue(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot_item = {'url': 'https://www.youtube.com/watch?v=botcheck', 'title': 'Bot Checked'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [bot_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_notify_bot_check_skip', lambda item: None)
+
+    def fake_play(item, **kwargs):
+        raise player.YouTubeBotCheckError(status_code=400, detail='bot check')
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    with pytest.raises(player.QueueAdvanceEmptyError):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == []
+
+
+def test_auto_next_still_requeues_non_botcheck_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import HTTPException
+
+    flaky_item = {'url': 'https://example.com/flaky.mp4', 'title': 'Flaky'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [flaky_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+
+    def fake_play(item, **kwargs):
+        raise HTTPException(status_code=400, detail='yt-dlp failed: timed out')
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    with pytest.raises(HTTPException):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == [flaky_item]
+
+
+def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, '_push_overlay_toast', lambda **kwargs: toasts.append(dict(kwargs)))
+
+    class _SyncThread:
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(player.threading, 'Thread', _SyncThread)
+
+    player._notify_bot_check_skip({'url': 'https://www.youtube.com/watch?v=x', 'title': 'My Video'})
+
+    assert len(toasts) == 1
+    assert 'bot check' in toasts[0]['text'].lower()
+    assert 'My Video' in toasts[0]['text']
+    assert toasts[0]['level'] == 'warn'
 
 
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:

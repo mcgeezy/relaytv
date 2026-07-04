@@ -310,8 +310,9 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_VIDEO_PROFILE_TTL_SEC` | `video_profile.py` | - | static env |
 | `RELAYTV_X11_OVERLAY` | `player.py`<br>`routes/__init__.py`<br>`x11_overlay.py` | - | static env |
 | `RELAYTV_YOUTUBE_PROGRESSIVE_FIRST` | `ytdlp_format_policy.py` | - | static env |
-| `RELAYTV_YTDLP_AUTO_UPDATE` | `container_entrypoint.py` | - | pre-app entrypoint |
+| `RELAYTV_YTDLP_AUTO_UPDATE` | `container_entrypoint.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_update.py` | `main.py`<br>`routes/settings.py` | settings bus, entrypoint input |
 | `RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS` | `container_entrypoint.py` | - | pre-app entrypoint |
+| `RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC` | `ytdlp_update.py` | - | static env |
 | `RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_COOKIES` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |

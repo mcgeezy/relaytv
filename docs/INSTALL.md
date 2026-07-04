@@ -136,9 +136,14 @@ The default container build is now lean and native-Qt-first. Optional feature bu
 
 - `RELAYTV_INSTALL_X11_OVERLAY=1`: include GTK/WebKit packages for the legacy X11 overlay fallback
 - `RELAYTV_INSTALL_HEADLESS=1`: include `Xvfb` and `x11vnc` for headless remote mode
-- `RELAYTV_INSTALL_NODE=1`: include the yt-dlp JavaScript challenge runtime bundle
+- `RELAYTV_INSTALL_DENO=1`: include deno, yt-dlp's default-enabled JavaScript
+  challenge runtime (pinned static binary, sha256-verified; amd64/arm64 only)
+  - default is `1`; deno sandboxes the remote challenge code and needs no
+    per-invocation flags, so it also covers mpv's own ytdl hook
+- `RELAYTV_INSTALL_NODE=1`: include the nodejs fallback runtime for yt-dlp
   - default is now `1`
   - RelayTV prefers `deno` when available, otherwise uses explicit `--js-runtimes node`
+    (the only option on 32-bit ARM, which has no deno build)
 - `RELAYTV_INSTALL_IDLE_BROWSER=1`: include Chromium for the optional browser-backed idle dashboard
 - `RELAYTV_INSTALL_OPS_TOOLS=1`: include extra debug/ops tools (`mesa-utils`, `procps`, `socat`)
 
@@ -254,8 +259,12 @@ grep -nE 'RELAYTV_IMAGE_REF|RELAYTV_MODE|RELAYTV_VIDEO_MODE|RELAYTV_DRM_CONNECTO
 
 Published images still require the same Linux media-host integration as local builds:
 
-- `/dev/dri` passthrough for GPU acceleration
-- `/dev/snd` passthrough for audio
+- `/dev/dri` passthrough for GPU acceleration and `/dev/snd` passthrough for
+  audio. Both live in the generated `docker-compose.override.yml`, written by
+  `scripts/install.sh` from the devices the host actually exposes — the base
+  compose files map no devices, so hosts without KMS or audio hardware can
+  still start the container. Re-run `scripts/install.sh` after hardware or
+  kernel changes to refresh the override.
 - NVIDIA decode acceleration requires host NVIDIA drivers plus Docker NVIDIA
   Container Toolkit. When both an NVIDIA device and toolkit are detected,
   `scripts/install.sh` writes a generated compose override with `gpus: all` and
@@ -276,7 +285,10 @@ If you need to force a specific sink, set `MPV_AUDIO_DEVICE` manually in `.env`.
 
 ### yt-dlp Auto-Update
 
-Optional container-start behavior:
+Toggleable at runtime in the web UI (Settings -> YouTube -> "Keep yt-dlp up to
+date"): enabling it runs an immediate update check and then a daily background
+check, no container restart needed. The env values seed the toggle's default
+and tune the schedule:
 
 ```bash
 RELAYTV_YTDLP_AUTO_UPDATE=1

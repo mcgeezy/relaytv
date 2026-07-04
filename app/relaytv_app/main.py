@@ -29,6 +29,7 @@ from .integrations import jellyfin_receiver
 from . import discovery_mdns
 from . import video_profile
 from . import upload_store
+from . import ytdlp_update
 from .debug import configure_logging, get_logger, slow_request_threshold_ms, skip_slow_request_logging
 
 
@@ -45,6 +46,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         if not isinstance(s, dict):
             return
         runtime_config.set_value("RELAYTV_YTDLP_COOKIES", str(s.get("youtube_cookies_path") or "").strip())
+        runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "1" if bool(s.get("ytdlp_auto_update_enabled")) else "0")
         runtime_config.set_value("USE_INVIDIOUS", "true" if bool(s.get("youtube_use_invidious")) else "false")
         runtime_config.set_value("INVIDIOUS_BASE", str(s.get("youtube_invidious_base") or "").strip())
         runtime_config.set_value("RELAYTV_JELLYFIN_ENABLED", "1" if bool(s.get("jellyfin_enabled")) else "0")
@@ -87,6 +89,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             start_cec_monitor()
             start_thumb_worker()
             upload_store.start_cleanup_worker()
+            ytdlp_update.start_worker()
             start_x11_overlay()
             jellyfin_receiver.start()
             discovery_mdns.start_async()

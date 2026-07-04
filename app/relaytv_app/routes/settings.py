@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, state, upload_store
+from .. import player, state, upload_store, ytdlp_update
 from ..config import runtime_config
 from ..debug import get_logger
 from ..integrations import jellyfin_receiver
@@ -27,6 +27,7 @@ class SettingsReq(BaseModel):
     youtube_cookies_path: str | None = None
     youtube_use_invidious: bool | None = None
     youtube_invidious_base: str | None = None
+    ytdlp_auto_update_enabled: bool | None = None
     sub_lang: str | None = None
     cec_enabled: str | None = None
     tv_takeover_enabled: str | None = None
@@ -69,6 +70,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["youtube_cookies_configured"] = has_yt_cookies
     out["youtube_use_invidious"] = bool(out.get("youtube_use_invidious"))
     out["youtube_invidious_base"] = str(out.get("youtube_invidious_base") or "").strip()
+    out["ytdlp_auto_update_enabled"] = bool(out.get("ytdlp_auto_update_enabled"))
     out["idle_dashboard_enabled"] = bool(out.get("idle_dashboard_enabled", True))
     out["idle_notifications_enabled"] = bool(out.get("idle_notifications_enabled", True))
     return out
@@ -216,6 +218,15 @@ def update_settings(req: SettingsReq):
         invid_base = str(updated.get("youtube_invidious_base") or "").strip()
         runtime_config.set_value("USE_INVIDIOUS", "true" if use_invid else "false")
         runtime_config.set_value("INVIDIOUS_BASE", invid_base)
+    if "ytdlp_auto_update_enabled" in requested_keys and updated.get("ytdlp_auto_update_enabled") is not None:
+        auto_update_on = bool(updated.get("ytdlp_auto_update_enabled"))
+        was_on = ytdlp_update.enabled()
+        runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "1" if auto_update_on else "0")
+        if auto_update_on and not was_on:
+            try:
+                ytdlp_update.kick_async(force=True)
+            except Exception as exc:
+                logger.warning("ytdlp_auto_update_kick_failed error=%s", exc)
     if "uploads" in requested_keys:
         _sync_upload_env_from_settings(updated)
         upload_store.cleanup_uploads(updated)
@@ -375,6 +386,8 @@ def update_settings(req: SettingsReq):
                 live_apply_failed.append("jellyfin_user_id")
     if "jellyfin_playback_mode" in requested_keys and "jellyfin_playback_mode" not in live_applied:
         live_applied.append("jellyfin_playback_mode")
+    if "ytdlp_auto_update_enabled" in requested_keys and "ytdlp_auto_update_enabled" not in live_applied:
+        live_applied.append("ytdlp_auto_update_enabled")
     if requested_keys.intersection({"idle_dashboard_enabled", "idle_notifications_enabled"}):
         idle_keys = sorted(requested_keys.intersection({"idle_dashboard_enabled", "idle_notifications_enabled"}))
         try:

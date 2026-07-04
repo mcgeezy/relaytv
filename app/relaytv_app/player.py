@@ -24,7 +24,16 @@ from fastapi import HTTPException
 from . import state, devices, ytdlp_format_policy, video_profile
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
-from .resolver import enrich_item_metadata, is_youtube_url, make_item, provider_from_url, resolve_streams, validate_user_url, ytdlp_info
+from .resolver import (
+    YouTubeBotCheckError,
+    enrich_item_metadata,
+    is_youtube_url,
+    make_item,
+    provider_from_url,
+    resolve_streams,
+    validate_user_url,
+    ytdlp_info,
+)
 
 
 logger = get_logger("player")
@@ -131,6 +140,7 @@ _CEC_CONTROLLER_STATUS: dict[str, Any] = {
     "last_event_ts": 0.0,
     "restart_count": 0,
     "last_restart_ts": 0.0,
+    "phys_addr": "",
 }
 _CEC_AVAILABILITY_STATUS: dict[str, Any] = {
     "available": False,
@@ -146,7 +156,13 @@ CEC_OPCODE_STANDBY = "36"
 CEC_OPCODE_ROUTING_CHANGE = "80"
 CEC_OPCODE_ROUTING_INFORMATION = "81"
 CEC_OPCODE_ACTIVE_SOURCE = "82"
+CEC_OPCODE_SET_STREAM_PATH = "86"
 CEC_OPCODE_REPORT_POWER_STATUS = "90"
+
+# cec-client -d is a log-level bitmask (ERROR=1 NOTICE=4 TRAFFIC=8). The
+# monitor needs TRAFFIC lines (">> ..") to see standby/source events and the
+# NOTICE registration line to learn our own physical address.
+CEC_MONITOR_LOG_LEVEL = "13"
 
 
 def _setting_enabled(name: str, default: bool) -> bool:
@@ -184,9 +200,36 @@ def _setting_or_env_enabled(setting_name: str, env_name: str | tuple[str, ...], 
     return bool(default)
 
 
+def _normalize_phys_value(val: object) -> str | None:
+    """Normalize a physical address ("1.0.0.0", "10:00", "1000") to 4 hex chars."""
+    raw = str(val or "").strip().lower().replace(".", "").replace(":", "")
+    if len(raw) == 4 and all(c in "0123456789abcdef" for c in raw):
+        return raw
+    return None
+
+
 def _our_phys_addr() -> str | None:
-    val = (os.getenv("RELAYTV_CEC_PHYS_ADDR") or "").strip().lower()
-    return val or None
+    explicit = _normalize_phys_value(os.getenv("RELAYTV_CEC_PHYS_ADDR"))
+    if explicit:
+        return explicit
+    with _CEC_CONTROLLER_LOCK:
+        detected = _CEC_CONTROLLER_STATUS.get("phys_addr")
+    return _normalize_phys_value(detected)
+
+
+def _detect_phys_addr_line(line: str) -> str | None:
+    """Extract our physical address from cec-client registration output.
+
+    Matches the libcec NOTICE line:
+    "CEC client registered: ... , physical address: 1.0.0.0"
+    """
+    low = (line or "").strip().lower()
+    if "physical address" not in low:
+        return None
+    m = re.search(r"physical address[:=]\s*([0-9a-f](?:[.:][0-9a-f]){3}|[0-9a-f]{4})", low)
+    if not m:
+        return None
+    return _normalize_phys_value(m.group(1))
 
 
 def _parse_cec_traffic(line: str) -> tuple[str, list[str]] | None:
@@ -203,7 +246,8 @@ def _parse_cec_traffic(line: str) -> tuple[str, list[str]] | None:
 
 
 def _normalize_phys_addr(a: str, b: str) -> str:
-    return f"{a}{b}00"
+    """Two CEC operand bytes ("10", "00") -> 4-hex-char physical address ("1000")."""
+    return f"{a}{b}"
 
 
 
@@ -457,9 +501,45 @@ def _pause_for_tv_standby() -> None:
         logger.warning("cec_standby_handler_error error=%s", e)
 
 
+def _handle_tv_source_switch(phys: str, *, event: str) -> None:
+    """Pause/resume playback when the TV's active input moves away from or back to us."""
+    state.update_tv_state(active_source_phys_addr=phys, last_event=event)
+    ours = _our_phys_addr()
+    if not ours:
+        return
+    if phys != ours:
+        if _setting_enabled("tv_pause_on_input_change", True) and is_playing():
+            with MPV_LOCK:
+                try:
+                    pos = mpv_get("time-pos")
+                except Exception:
+                    pos = None
+                try:
+                    mpv_set("pause", True)
+                    state.set_session_state("paused")
+                    state.set_pause_reason("input_changed")
+                    if pos is not None:
+                        state.set_session_position(float(pos))
+                except Exception:
+                    pass
+        return
+    if (
+        _setting_enabled("tv_auto_resume_on_return", False)
+        and state.get_pause_reason() in ("input_changed", "tv_standby")
+        and is_playing()
+    ):
+        with MPV_LOCK:
+            try:
+                mpv_set("pause", False)
+                state.set_session_state("playing")
+                state.set_pause_reason(None)
+            except Exception:
+                pass
+
+
 def _cec_monitor_loop() -> None:
     """Own cec-client for both event monitoring and command writes."""
-    cmd = ["cec-client", "-d", "1"]
+    cmd = ["cec-client", "-d", CEC_MONITOR_LOG_LEVEL]
     restart_count = 0
     while not _CEC_MONITOR_STOP.is_set():
         logger.info("cec_controller_start cmd=%s", " ".join(cmd))
@@ -486,37 +566,19 @@ def _cec_monitor_loop() -> None:
                             continue
 
                         if opcode == CEC_OPCODE_ACTIVE_SOURCE and len(operands) >= 2:
-                            phys = _normalize_phys_addr(operands[0], operands[1])
-                            state.update_tv_state(active_source_phys_addr=phys, last_event="active_source")
-                            ours = _our_phys_addr()
-                            if _setting_enabled("tv_pause_on_input_change", True) and ours and phys != ours and is_playing():
-                                with MPV_LOCK:
-                                    try:
-                                        pos = mpv_get("time-pos")
-                                    except Exception:
-                                        pos = None
-                                    try:
-                                        mpv_set("pause", True)
-                                        state.set_session_state("paused")
-                                        state.set_pause_reason("input_changed")
-                                        if pos is not None:
-                                            state.set_session_position(float(pos))
-                                    except Exception:
-                                        pass
-                            if (
-                                _setting_enabled("tv_auto_resume_on_return", False)
-                                and ours
-                                and phys == ours
-                                and state.get_pause_reason() == "input_changed"
-                                and is_playing()
-                            ):
-                                with MPV_LOCK:
-                                    try:
-                                        mpv_set("pause", False)
-                                        state.set_session_state("playing")
-                                        state.set_pause_reason(None)
-                                    except Exception:
-                                        pass
+                            _handle_tv_source_switch(
+                                _normalize_phys_addr(operands[0], operands[1]),
+                                event="active_source",
+                            )
+                            continue
+
+                        # TVs announce a return to an input with <Set Stream Path>
+                        # more reliably than a fresh <Active Source> broadcast.
+                        if opcode == CEC_OPCODE_SET_STREAM_PATH and len(operands) >= 2:
+                            _handle_tv_source_switch(
+                                _normalize_phys_addr(operands[0], operands[1]),
+                                event="set_stream_path",
+                            )
                             continue
 
                         if opcode in (CEC_OPCODE_ROUTING_CHANGE, CEC_OPCODE_ROUTING_INFORMATION):
@@ -527,6 +589,12 @@ def _cec_monitor_loop() -> None:
                             status_map = {"00": "on", "01": "standby", "02": "in_transition_standby_to_on", "03": "in_transition_on_to_standby"}
                             state.update_tv_state(tv_power_status=status_map.get(operands[0], "unknown"), last_event="power_status")
                             continue
+
+                    detected_phys = _detect_phys_addr_line(line)
+                    if detected_phys:
+                        _update_cec_controller_status(phys_addr=detected_phys)
+                        logger.info("cec_phys_addr_detected phys_addr=%s", detected_phys)
+                        continue
 
                     low = line.strip().lower()
                     if "standby" in low and ("broadcast" in low or "received" in low or "traffic" in low):
@@ -3807,6 +3875,28 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
     return "mpv_playlist_next_pending"
 
 
+def _notify_bot_check_skip(item: object) -> None:
+    """Toast that a queue item was skipped because YouTube demanded a bot check.
+
+    Delivered from a daemon thread: the toast path can block on Qt shell IPC
+    and this is called while holding ADVANCE_LOCK.
+    """
+    label = ""
+    if isinstance(item, dict):
+        label = str(item.get("title") or item.get("url") or "").strip()
+    text = f"Skipped (YouTube bot check): {label}" if label else "Video skipped: YouTube bot check"
+
+    def _run() -> None:
+        try:
+            from .routes import _push_overlay_toast
+
+            _push_overlay_toast(text=text, duration=6.0, level="warn", icon="play")
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def advance_queue_playback(
     *,
     mode: str,
@@ -3878,7 +3968,10 @@ def advance_queue_playback(
                     start_pos=(float(start_pos) if start_pos is not None else None),
                 )
             except Exception as exc:
-                skip_unplayable = (
+                # A bot check will not clear on retry, so skip the item in
+                # every mode; re-queueing it makes auto-next retry it forever.
+                bot_check = isinstance(exc, YouTubeBotCheckError)
+                skip_unplayable = bot_check or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
                     and int(getattr(exc, "status_code", 0) or 0) == 400
@@ -3886,12 +3979,15 @@ def advance_queue_playback(
                 if skip_unplayable:
                     skipped_unplayable += 1
                     logger.warning(
-                        "queue_skip_unplayable mode=%s skipped=%s title=%s error=%s",
+                        "queue_skip_unplayable mode=%s skipped=%s bot_check=%s title=%s error=%s",
                         mode,
                         skipped_unplayable,
+                        bot_check,
                         str(next_item.get("title") or next_item.get("url") or "") if isinstance(next_item, dict) else str(next_item or ""),
                         exc,
                     )
+                    if bot_check:
+                        _notify_bot_check_skip(next_item)
                     continue
                 with state.QUEUE_LOCK:
                     state.QUEUE.insert(0, next_item)

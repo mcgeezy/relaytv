@@ -932,6 +932,7 @@ def _default_settings() -> dict:
         ).strip(),
         "youtube_use_invidious": _env_bool("USE_INVIDIOUS", False),
         "youtube_invidious_base": _normalize_invidious_base(os.getenv("INVIDIOUS_BASE")),
+        "ytdlp_auto_update_enabled": _env_bool("RELAYTV_YTDLP_AUTO_UPDATE", False),
         "sub_lang": (os.getenv("RELAYTV_SUB_LANG") or "").strip(),
         "cec_enabled": (os.getenv("RELAYTV_CEC") or os.getenv("RELAYTV_CEC_ENABLED") or "0").strip(),
         "tv_takeover_enabled": "1",
@@ -975,6 +976,7 @@ def load_settings() -> None:
     defaults["youtube_cookies_path"] = str(defaults.get("youtube_cookies_path") or "").strip()
     defaults["youtube_use_invidious"] = bool(defaults.get("youtube_use_invidious"))
     defaults["youtube_invidious_base"] = _normalize_invidious_base(defaults.get("youtube_invidious_base"))
+    defaults["ytdlp_auto_update_enabled"] = bool(defaults.get("ytdlp_auto_update_enabled"))
     defaults["volume"] = _normalize_volume(defaults.get("volume"), defaults.get("volume", 100.0))
     defaults["idle_dashboard_enabled"] = bool(defaults.get("idle_dashboard_enabled"))
     defaults["idle_notifications_enabled"] = bool(defaults.get("idle_notifications_enabled", True))
@@ -1008,6 +1010,7 @@ def update_settings(patch: dict) -> dict:
         "youtube_cookies_path",
         "youtube_use_invidious",
         "youtube_invidious_base",
+        "ytdlp_auto_update_enabled",
         "sub_lang",
         "cec_enabled",
         "tv_takeover_enabled",
@@ -1048,6 +1051,8 @@ def update_settings(patch: dict) -> dict:
         clean["youtube_cookies_path"] = str(clean.get("youtube_cookies_path") or "").strip()
     if "youtube_use_invidious" in clean:
         clean["youtube_use_invidious"] = bool(clean.get("youtube_use_invidious"))
+    if "ytdlp_auto_update_enabled" in clean:
+        clean["ytdlp_auto_update_enabled"] = bool(clean.get("ytdlp_auto_update_enabled"))
     if "youtube_invidious_base" in clean:
         clean["youtube_invidious_base"] = _normalize_invidious_base(clean.get("youtube_invidious_base"))
     if "volume" in clean:
