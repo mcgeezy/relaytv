@@ -141,16 +141,28 @@ Status: complete
 
 ### M4: Phase 5 Final Validation
 
-Status: planned
+Status: complete
 
-- Full gates: `ruff check app tests`, `PYTHONPATH=app pytest -q`, CI-like
-  fresh-venv run.
-- Live validation on the appliance: token unset → behavior identical
-  (playback, queue, settings, Jellyfin smoke); token set in `.env` →
-  writes rejected without the header and accepted with it, `GET`
-  endpoints/UI/healthcheck unaffected, Jellyfin receiver operation
-  unaffected, web UI works after storing the token; then restore the
-  token-off default.
+- Full gates green: `ruff check app tests`; `PYTHONPATH=app pytest -q`
+  (299 passed); CI-like fresh-venv run (pip install -e '.[dev]' → pytest +
+  ruff) green.
+- Live validation on the appliance (branch image deployed via
+  `RELAYTV_IMAGE_REF`). All passing:
+  - Token unset (default): writes open (`POST` 200 with no header),
+    behavior unchanged.
+  - Token set in `.env` + recreate: `POST` with no header → `401
+    {"detail": "api token required"}` with `WWW-Authenticate: Bearer`;
+    wrong token → 401; correct bearer token → 200.
+  - Reads stayed open with the token on: `/health`, `/status`, `/ui`,
+    `/static/ui/app.js`, `/settings` all 200 with no header; the token
+    value appears nowhere in the `/settings` response.
+  - Runtime unaffected with the token on: the active playback session
+    auto-resumed through the container recreate (`startup_resume`,
+    position advancing) and the outbound-polling Jellyfin receiver stayed
+    connected/authenticated with `sync_health: ok`.
+  - UI fetch wrapper confirmed in the served `app.js`.
+  - Token removed and container recreated: writes open again, playback
+    resumed, appliance restored to the token-off default.
 - Open the final `codex/architecture-phase-5` to `main` PR.
 
 ## PR And Milestone Log
@@ -158,3 +170,5 @@ Status: planned
 | Date | Item | Notes |
 | --- | --- | --- |
 | 2026-07-03 | Phase 5 started | Branch cut from `main` at `5ebebb3` (Phase 4 squash merge); roadmap committed. |
+| 2026-07-03 | M0–M3 landed | `80f6f8b` M0 docs, `e89152f` M1 token guard + config + tests, `cdc593a` M2 UI fetch wrapper, `a9afd76` M3 operator docs. |
+| 2026-07-03 | M4 complete | Live appliance validation passed (token off unchanged, token on guards writes only, runtime/Jellyfin unaffected); final PR opened. |
