@@ -29,7 +29,44 @@ Do not manually edit `CHANGELOG.md` for normal feature, fix, docs, or dependency
 changes. Release Please owns version bumps, release pull requests, changelog
 generation, Git tags, GitHub Releases, and immutable release image tags.
 
-## Architecture Phase 5 Discipline
+## Architecture Phase 6 Discipline
+
+When working on the Phase 6 architecture effort (operations test matrix),
+keep work on `codex/architecture-phase-6` unless the user explicitly directs
+otherwise.
+
+Keep `docs/ARCHITECTURE_PHASE_6_ROADMAP.md` current when milestones start,
+complete, change scope, or uncover important follow-up work.
+
+Phase 6 scope:
+
+- machine-checked runtime profile matrix (`tests/test_runtime_matrix.py`)
+  pinning host-profile, Qt-runtime-mode, entrypoint-default, and
+  decode-profile decisions per profile (x11, wayland, headless, native Qt
+  embedded, Qt external mpv, Raspberry Pi, amd64 mini PC)
+- generated decision table plus per-profile operator validation checklists
+  in `docs/OPERATIONS_TEST_MATRIX.md`
+- docs wiring only; tests drive the real decision functions with fake
+  env/host inputs
+
+Out of scope for Phase 6 (document findings in the roadmap instead):
+
+- changing any runtime decision, installer behavior, compose output, or
+  capability payload shape
+- rewriting `install.sh` or modeling its generated output in Python
+- CI hardware-in-the-loop testing
+- new endpoints or API changes
+
+This is the final roadmap phase: once it completes, the no-release hold
+lifts. Until then, phases ship as `refactor:` PRs that intentionally do not
+trigger release-please. Prefer small PRs into `codex/architecture-phase-6`,
+not directly into `main`.
+
+## Architecture Phase 5 Discipline (complete)
+
+Phase 5 (optional API token) completed on `codex/architecture-phase-5`;
+final PR: https://github.com/mcgeezy/relaytv/pull/25. The full record lives
+in `docs/ARCHITECTURE_PHASE_5_ROADMAP.md`.
 
 When working on the Phase 5 architecture effort (optional API token), keep
 work on `codex/architecture-phase-5` unless the user explicitly directs
