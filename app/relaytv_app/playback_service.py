@@ -479,10 +479,23 @@ def clear_session() -> None:
         pass
 
 
-def mark_paused(paused: bool) -> None:
-    """Record a user pause/unpause of the current session."""
+def mark_paused(paused: bool, *, reason: str | None = None) -> None:
+    """Record a user pause/unpause of the current session.
+
+    ``reason`` preserves a pre-existing pause reason across an in-place
+    restart (Jellyfin track switches); it defaults to a user pause.
+    """
     state.set_session_state("paused" if paused else "playing")
-    state.set_pause_reason("user" if paused else None)
+    state.set_pause_reason((reason if reason is not None else "user") if paused else None)
+
+
+def update_now_playing(now: dict) -> None:
+    """Refresh the current item's metadata in place — not a transition.
+
+    Used after in-place stream/track changes so NOW_PLAYING writes stay
+    behind service commands.
+    """
+    state.set_now_playing(now)
 
 
 def mark_resumed_now_playing(resumed: dict) -> None:

@@ -2,6 +2,7 @@
 from fastapi.testclient import TestClient
 
 from relaytv_app import routes
+from relaytv_app.integrations import jellyfin_service
 from relaytv_app.main import create_app
 
 
@@ -258,12 +259,12 @@ def test_jellyfin_audio_select_switches_runtime_track_in_place(monkeypatch) -> N
         },
     )
     monkeypatch.setattr(routes.state, "update_settings", lambda data: settings_updates.append(dict(data)))
-    monkeypatch.setattr(routes, "_retarget_jellyfin_queue_stream_preferences", lambda: 2)
+    monkeypatch.setattr(jellyfin_service, "retarget_queue_stream_preferences", lambda: 2)
     monkeypatch.setattr(routes.player, "is_playing", lambda: True)
     monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {"time-pos": 45.5, "pause": False})
-    monkeypatch.setattr(routes, "_jellyfin_try_set_mpv_audio_track", lambda language="", display="": True)
+    monkeypatch.setattr(jellyfin_service, "try_set_mpv_audio_track", lambda language="", display="": True)
     monkeypatch.setattr(routes.state, "set_now_playing", lambda data: now_playing.append(dict(data)))
-    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: emitted.append(True))
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: emitted.append(True))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/jellyfin/audio/select", json={"index": 1})
@@ -421,7 +422,7 @@ def test_jellyfin_resume_command_preserves_existing_queue(monkeypatch) -> None:
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jellyfin.local"})
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: None)
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: None)
-    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos})
+    monkeypatch.setattr(jellyfin_service, "smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos})
     monkeypatch.setattr(routes.state, "QUEUE", [queue_item], raising=False)
     monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
     monkeypatch.setattr(routes.state, "set_now_playing", lambda value: setattr(routes.state, "NOW_PLAYING", value))
@@ -617,7 +618,7 @@ def test_jellyfin_command_pause_dispatches_playback_control(monkeypatch) -> None
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: receiver_events.append(("command", action)))
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: receiver_events.append(("heartbeat", True)))
     monkeypatch.setattr(routes, "pause", lambda: pauses.append(True) or {"paused": True})
-    monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: progress_hints.append(True))
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: progress_hints.append(True))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/command", json={"action": "Pause"})
