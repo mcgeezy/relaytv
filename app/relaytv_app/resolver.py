@@ -23,6 +23,15 @@ from . import ytdlp_format_policy
 
 logger = get_logger("resolver")
 
+
+class YouTubeBotCheckError(HTTPException):
+    """YouTube refused resolution with an anti-bot challenge.
+
+    Subclasses HTTPException (status 400) so route error handling is
+    unchanged; queue advancement catches this type to skip the item instead
+    of retrying, since a bot check will not clear on its own.
+    """
+
 # Compact resolver runtime telemetry for /status and /runtime/capabilities.
 _RESOLVER_RUNTIME_LOCK = threading.Lock()
 _RESOLVER_RUNTIME_STATE: dict[str, object] = {
@@ -574,7 +583,7 @@ def resolve_streams_ytdlp(url: str):
         )
         logger.warning("ytdlp_failed provider=%s format=%s error=%s", provider or "unknown", selected_format, err[:1200])
         if is_youtube_url(u) and _youtube_error_is_botcheck(err.lower()):
-            raise HTTPException(
+            raise YouTubeBotCheckError(
                 status_code=400,
                 detail=(
                     "yt-dlp failed: YouTube requires anti-bot verification/cookies. "

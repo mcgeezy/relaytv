@@ -2978,6 +2978,119 @@ def test_auto_next_resumes_interrupted_item_without_dropping_queue_tail(monkeypa
     assert play_calls[-1]['start_pos'] == 120.0
 
 
+def test_resolver_botcheck_error_is_typed_http_400() -> None:
+    from fastapi import HTTPException
+
+    assert issubclass(resolver.YouTubeBotCheckError, HTTPException)
+    assert resolver._youtube_error_is_botcheck("sign in to confirm you're not a bot")
+    assert resolver._categorize_resolver_error("Sign in to confirm you're not a bot") == 'botcheck'
+
+
+def test_auto_next_skips_bot_checked_video_instead_of_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    play_calls: list[dict] = []
+    toasted: list[object] = []
+    bot_item = {'url': 'https://www.youtube.com/watch?v=botcheck', 'title': 'Bot Checked'}
+    good_item = {'url': 'https://example.com/good.mp4', 'title': 'Good'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [bot_item, good_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_notify_bot_check_skip', lambda item: toasted.append(item))
+
+    def fake_play(item, **kwargs):
+        if item is bot_item:
+            raise player.YouTubeBotCheckError(
+                status_code=400,
+                detail='yt-dlp failed: YouTube requires anti-bot verification/cookies.',
+            )
+        play_calls.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert play_calls == [good_item]
+    # Skipped item must NOT be re-queued (re-queueing caused a retry loop).
+    assert player.state.QUEUE == []
+    assert toasted == [bot_item]
+
+
+def test_auto_next_drops_bot_checked_last_item_without_requeue(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot_item = {'url': 'https://www.youtube.com/watch?v=botcheck', 'title': 'Bot Checked'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [bot_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_notify_bot_check_skip', lambda item: None)
+
+    def fake_play(item, **kwargs):
+        raise player.YouTubeBotCheckError(status_code=400, detail='bot check')
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    with pytest.raises(player.QueueAdvanceEmptyError):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == []
+
+
+def test_auto_next_still_requeues_non_botcheck_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import HTTPException
+
+    flaky_item = {'url': 'https://example.com/flaky.mp4', 'title': 'Flaky'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [flaky_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+
+    def fake_play(item, **kwargs):
+        raise HTTPException(status_code=400, detail='yt-dlp failed: timed out')
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    with pytest.raises(HTTPException):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == [flaky_item]
+
+
+def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, '_push_overlay_toast', lambda **kwargs: toasts.append(dict(kwargs)))
+
+    class _SyncThread:
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(player.threading, 'Thread', _SyncThread)
+
+    player._notify_bot_check_skip({'url': 'https://www.youtube.com/watch?v=x', 'title': 'My Video'})
+
+    assert len(toasts) == 1
+    assert 'bot check' in toasts[0]['text'].lower()
+    assert 'My Video' in toasts[0]['text']
+    assert toasts[0]['level'] == 'warn'
+
+
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
     monkeypatch.setattr(

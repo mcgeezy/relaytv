@@ -24,7 +24,16 @@ from fastapi import HTTPException
 from . import state, devices, ytdlp_format_policy, video_profile
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
-from .resolver import enrich_item_metadata, is_youtube_url, make_item, provider_from_url, resolve_streams, validate_user_url, ytdlp_info
+from .resolver import (
+    YouTubeBotCheckError,
+    enrich_item_metadata,
+    is_youtube_url,
+    make_item,
+    provider_from_url,
+    resolve_streams,
+    validate_user_url,
+    ytdlp_info,
+)
 
 
 logger = get_logger("player")
@@ -3866,6 +3875,28 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
     return "mpv_playlist_next_pending"
 
 
+def _notify_bot_check_skip(item: object) -> None:
+    """Toast that a queue item was skipped because YouTube demanded a bot check.
+
+    Delivered from a daemon thread: the toast path can block on Qt shell IPC
+    and this is called while holding ADVANCE_LOCK.
+    """
+    label = ""
+    if isinstance(item, dict):
+        label = str(item.get("title") or item.get("url") or "").strip()
+    text = f"Skipped (YouTube bot check): {label}" if label else "Video skipped: YouTube bot check"
+
+    def _run() -> None:
+        try:
+            from .routes import _push_overlay_toast
+
+            _push_overlay_toast(text=text, duration=6.0, level="warn", icon="play")
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def advance_queue_playback(
     *,
     mode: str,
@@ -3937,7 +3968,10 @@ def advance_queue_playback(
                     start_pos=(float(start_pos) if start_pos is not None else None),
                 )
             except Exception as exc:
-                skip_unplayable = (
+                # A bot check will not clear on retry, so skip the item in
+                # every mode; re-queueing it makes auto-next retry it forever.
+                bot_check = isinstance(exc, YouTubeBotCheckError)
+                skip_unplayable = bot_check or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
                     and int(getattr(exc, "status_code", 0) or 0) == 400
@@ -3945,12 +3979,15 @@ def advance_queue_playback(
                 if skip_unplayable:
                     skipped_unplayable += 1
                     logger.warning(
-                        "queue_skip_unplayable mode=%s skipped=%s title=%s error=%s",
+                        "queue_skip_unplayable mode=%s skipped=%s bot_check=%s title=%s error=%s",
                         mode,
                         skipped_unplayable,
+                        bot_check,
                         str(next_item.get("title") or next_item.get("url") or "") if isinstance(next_item, dict) else str(next_item or ""),
                         exc,
                     )
+                    if bot_check:
+                        _notify_bot_check_skip(next_item)
                     continue
                 with state.QUEUE_LOCK:
                     state.QUEUE.insert(0, next_item)
