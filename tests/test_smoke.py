@@ -3183,6 +3183,82 @@ def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyP
     assert toasts[0]['level'] == 'warn'
 
 
+def test_restart_current_keeps_playback_when_bot_check_blocks_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasts: list[str] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://www.youtube.com/watch?v=current', 'title': 'Current Video'},
+        raising=False,
+    )
+    monkeypatch.setattr(player, '_notify_bot_check_toast', lambda text: toasts.append(text))
+
+    def fake_resolve(url):
+        raise player.YouTubeBotCheckError(
+            status_code=400,
+            detail='yt-dlp failed: YouTube requires anti-bot verification/cookies.',
+        )
+
+    monkeypatch.setattr(player, 'resolve_streams', fake_resolve)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must not stop playback when resolve fails')))
+    monkeypatch.setattr(player, 'play_item', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must not replay when resolve fails')))
+
+    assert player.restart_current() is None
+    assert len(toasts) == 1
+    assert 'bot check' in toasts[0].lower()
+    assert 'Current Video' in toasts[0]
+
+
+def test_restart_current_resolves_before_stopping_and_reuses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    played: list[dict] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://www.youtube.com/watch?v=current', 'title': 'Current Video'},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'resolve_streams', lambda url: (calls.append('resolve'), ('https://stream.example/v', 'https://stream.example/a'))[1])
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: calls.append('stop'))
+
+    def fake_play(item, **kwargs):
+        calls.append('play')
+        played.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    now = player.restart_current()
+
+    assert now == {'url': 'https://www.youtube.com/watch?v=current'}
+    # Resolve must complete before the running player is torn down.
+    assert calls == ['resolve', 'stop', 'play']
+    assert played[0]['_resolved_stream'] == 'https://stream.example/v'
+    assert played[0]['_resolved_audio'] == 'https://stream.example/a'
+    assert played[0]['title'] == 'Current Video'
+
+
+def test_restart_current_non_youtube_does_not_preresolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    played: list[object] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/movie.mp4', 'title': 'Movie'},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'resolve_streams', lambda url: (_ for _ in ()).throw(AssertionError('non-YouTube restart must not pre-resolve')))
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, 'play_item', lambda target, **kwargs: played.append(target) or {'url': 'https://example.com/movie.mp4'})
+
+    assert player.restart_current() == {'url': 'https://example.com/movie.mp4'}
+    assert played == ['https://example.com/movie.mp4']
+
+
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
     monkeypatch.setattr(

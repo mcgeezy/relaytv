@@ -302,6 +302,47 @@ def test_play_now_route_rolls_back_preserved_current_when_start_fails(monkeypatc
     assert queue_events[-1]["queue"] == [existing]
 
 
+def test_play_now_bot_check_failure_pushes_warn_toast(monkeypatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))
+
+    def fake_play_item(*args, **kwargs):
+        raise routes.player.YouTubeBotCheckError(
+            status_code=400,
+            detail="yt-dlp failed: YouTube requires anti-bot verification/cookies.",
+        )
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post(
+        "/play_now",
+        json={"url": "https://www.youtube.com/watch?v=blocked", "title": "Blocked Video"},
+    )
+
+    assert response.status_code == 400
+    assert len(toasts) == 1
+    assert "bot check" in toasts[0]["text"].lower()
+    assert "Blocked Video" in toasts[0]["text"]
+    assert toasts[0]["level"] == "warn"
+
+
+def test_play_now_non_botcheck_failure_does_not_toast(monkeypatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))
+
+    def fake_play_item(*args, **kwargs):
+        raise routes.HTTPException(status_code=400, detail="yt-dlp failed: timed out")
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play_now", json={"url": "https://example.com/flaky.mp4"})
+
+    assert response.status_code == 400
+    assert toasts == []
+
+
 def test_close_route_preserves_queue_and_returns_closed_session(monkeypatch) -> None:
     now_values: list[object] = []
     session_values: list[str] = []

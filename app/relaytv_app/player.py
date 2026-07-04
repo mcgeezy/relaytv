@@ -3875,16 +3875,12 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
     return "mpv_playlist_next_pending"
 
 
-def _notify_bot_check_skip(item: object) -> None:
-    """Toast that a queue item was skipped because YouTube demanded a bot check.
+def _notify_bot_check_toast(text: str) -> None:
+    """Deliver a bot-check warn toast from a daemon thread.
 
-    Delivered from a daemon thread: the toast path can block on Qt shell IPC
-    and this is called while holding ADVANCE_LOCK.
+    The toast path can block on Qt shell IPC and callers may hold
+    ADVANCE_LOCK, so never toast inline.
     """
-    label = ""
-    if isinstance(item, dict):
-        label = str(item.get("title") or item.get("url") or "").strip()
-    text = f"Skipped (YouTube bot check): {label}" if label else "Video skipped: YouTube bot check"
 
     def _run() -> None:
         try:
@@ -3895,6 +3891,15 @@ def _notify_bot_check_skip(item: object) -> None:
             pass
 
     threading.Thread(target=_run, daemon=True).start()
+
+
+def _notify_bot_check_skip(item: object) -> None:
+    """Toast that a queue item was skipped because YouTube demanded a bot check."""
+    label = ""
+    if isinstance(item, dict):
+        label = str(item.get("title") or item.get("url") or "").strip()
+    text = f"Skipped (YouTube bot check): {label}" if label else "Video skipped: YouTube bot check"
+    _notify_bot_check_toast(text)
 
 
 def advance_queue_playback(
@@ -5640,6 +5645,26 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
         inp = (state.NOW_PLAYING.get("input") or state.NOW_PLAYING.get("url") or "").strip()
         if not inp:
             return None
+        target: object = inp
+        if is_youtube_url(inp):
+            # Resolve before stopping anything: a failed resolve (e.g. a
+            # YouTube bot check right after cookies were removed) must leave
+            # current playback running instead of tearing it down to idle.
+            item: dict[str, Any] = {"url": inp}
+            for key in ("title", "thumbnail"):
+                val = state.NOW_PLAYING.get(key)
+                if val:
+                    item[key] = val
+            try:
+                stream, audio = resolve_streams(inp)
+            except Exception as resolve_exc:
+                if isinstance(resolve_exc, YouTubeBotCheckError):
+                    label = str(item.get("title") or inp)
+                    _notify_bot_check_toast(f"Settings not applied (YouTube bot check): {label}")
+                logger.warning("restart_current_resolve_failed error=%s", resolve_exc)
+                return None
+            _store_prefetched_stream(item, inp, stream, audio)
+            target = item
         # capture position if possible
         pos = None
         try:
@@ -5651,7 +5676,7 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
         # Use settings-driven video mode by default; apply_mode can force x11/drm.
         if apply_mode:
             runtime_config.set_value("RELAYTV_VIDEO_MODE", apply_mode)
-        now = play_item(inp, use_resolver=True, cec=False, clear_queue=False, mode="resume", start_pos=(float(pos) if pos is not None else None))
+        now = play_item(target, use_resolver=True, cec=False, clear_queue=False, mode="resume", start_pos=(float(pos) if pos is not None else None))
         return now
     except Exception as e:
         logger.warning("restart_current_failed error=%s", e)
