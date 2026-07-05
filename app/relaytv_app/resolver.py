@@ -501,6 +501,12 @@ def resolve_streams_ytdlp(url: str):
         candidates = ytdlp_format_policy.youtube_progressive_startup_candidates(settings, profile=profile)
     candidates = list(dict.fromkeys(candidates))
 
+    # For YouTube, print live_status alongside the stream URLs: live and
+    # just-ended (post_live) videos only expose segmented formats whose bare
+    # URLs return 204 No Content, so they must not be handed to mpv directly.
+    resolve_live_status = is_youtube_url(u)
+    output_args = ["--print", "urls", "--print", "live_status"] if resolve_live_status else ["-g"]
+
     strategies: list[tuple[list[str], list[str]]] = [(base, candidates)]
     if is_youtube_url(u):
         strategies = _build_youtube_strategies(base, candidates)
@@ -520,7 +526,7 @@ def resolve_streams_ytdlp(url: str):
             _log_resolve(f"yt-dlp strategy start host_arch={host_arch or 'unknown'} args={' '.join(args_base)}")
             for cand in strategy_candidates:
                 t_attempt = time.monotonic()
-                cmd = [*args_base, "-g", u] if not cand else [*args_base, "-f", cand, "-g", u]
+                cmd = [*args_base, *output_args, u] if not cand else [*args_base, "-f", cand, *output_args, u]
                 selected_format = cand or "auto"
                 p_local = run(cmd, check=False)
                 elapsed_ms = int((time.monotonic() - t_attempt) * 1000)
@@ -594,6 +600,10 @@ def resolve_streams_ytdlp(url: str):
         raise HTTPException(status_code=400, detail=f"yt-dlp failed: {err[:1200]}")
 
     lines = [ln.strip() for ln in (p.stdout or "").splitlines() if ln.strip()]
+    live_status = ""
+    if resolve_live_status and lines and not lines[-1].lower().startswith(("http://", "https://")):
+        live_status = lines[-1].strip().lower()
+        lines = lines[:-1]
     total_ms = int((time.monotonic() - t0) * 1000)
     debug_log("youtube", f"yt-dlp resolve succeeded in {total_ms}ms with {len(lines)} stream line(s)")
     _log_resolve(f"yt-dlp resolve succeeded total_ms={total_ms} stream_lines={len(lines)}")
@@ -604,6 +614,14 @@ def resolve_streams_ytdlp(url: str):
         outcome_category="success",
         success=True,
     )
+    if live_status in ("is_live", "post_live"):
+        # Live/post-live formats are segment feeds; their printed URLs serve
+        # no data without per-segment parameters. Hand mpv the page URL so
+        # its yt-dlp hook drives the manifest instead.
+        logger.info("ytdlp_live_stream_deferred_to_mpv live_status=%s url=%s", live_status, u)
+        return u, None
+    if not lines:
+        raise HTTPException(status_code=400, detail="yt-dlp returned no stream URLs")
     if len(lines) == 1:
         return lines[0], None
     return lines[0], lines[1]

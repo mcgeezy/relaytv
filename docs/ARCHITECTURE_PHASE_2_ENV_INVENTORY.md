@@ -209,6 +209,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_PLAYBACK_NOTIFY_DISPLAY_SEC` | `routes/__init__.py` | - | static env |
 | `RELAYTV_PLAYBACK_NOTIFY_FADE_MS` | `routes/__init__.py` | - | static env |
 | `RELAYTV_PLAYBACK_RUNTIME_GAP_CONFIRM_SEC` | `player.py` | - | static env |
+| `RELAYTV_PLAYBACK_START_TIMEOUT_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_TRANSITION_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYER_BACKEND` | `player.py` | - | static env |
 | `RELAYTV_PORT` | `discovery_mdns.py` | - | static env |

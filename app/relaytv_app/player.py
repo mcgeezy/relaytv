@@ -3875,8 +3875,8 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
     return "mpv_playlist_next_pending"
 
 
-def _notify_bot_check_toast(text: str) -> None:
-    """Deliver a bot-check warn toast from a daemon thread.
+def _notify_warn_toast(text: str) -> None:
+    """Deliver a warn toast from a daemon thread.
 
     The toast path can block on Qt shell IPC and callers may hold
     ADVANCE_LOCK, so never toast inline.
@@ -3893,6 +3893,11 @@ def _notify_bot_check_toast(text: str) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _notify_bot_check_toast(text: str) -> None:
+    """Deliver a bot-check warn toast without blocking the caller."""
+    _notify_warn_toast(text)
+
+
 def _notify_bot_check_skip(item: object) -> None:
     """Toast that a queue item was skipped because YouTube demanded a bot check."""
     label = ""
@@ -3900,6 +3905,93 @@ def _notify_bot_check_skip(item: object) -> None:
         label = str(item.get("title") or item.get("url") or "").strip()
     text = f"Skipped (YouTube bot check): {label}" if label else "Video skipped: YouTube bot check"
     _notify_bot_check_toast(text)
+
+
+def _playback_start_timeout_sec() -> float:
+    raw = (os.getenv("RELAYTV_PLAYBACK_START_TIMEOUT_SEC") or "45").strip()
+    try:
+        return max(0.0, float(raw))
+    except Exception:
+        return 45.0
+
+
+def _playback_runtime_started() -> bool:
+    """Return True once the current media actually produced playback.
+
+    Queries mpv IPC directly instead of ``mpv_get``: its stale-cache fallback
+    can echo the previous media's time-pos while the new stream is still
+    stuck loading, which is exactly the state this check must detect.
+    """
+    try:
+        r = mpv_command(["get_property", "time-pos"])
+        if isinstance(r, dict) and r.get("error") == "success" and r.get("data") is not None:
+            return True
+    except Exception:
+        pass
+    try:
+        telemetry = qt_shell_runtime_telemetry(max_age_sec=5.0) or {}
+        if telemetry.get("mpv_runtime_playback_started") or telemetry.get("mpv_runtime_time_pos") is not None:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _arm_playback_start_watchdog(now_item: dict) -> None:
+    """Abort a stream that never starts instead of leaving a silent black screen.
+
+    A resolved URL can accept the connection and then serve nothing (e.g. a
+    just-ended YouTube live stream returns 204 for its segment base URL), which
+    stalls mpv in loading forever with no user feedback. If the media produces
+    no playback within the timeout, toast a warning and hand off to the normal
+    end-of-playback policy (advance the queue, or return to idle).
+    """
+    timeout = _playback_start_timeout_sec()
+    if timeout <= 0 or not isinstance(now_item, dict):
+        return
+    history_id = str(now_item.get("history_id") or "")
+    started_marker = now_item.get("started")
+    label = str(now_item.get("title") or now_item.get("url") or "").strip()
+    if not history_id:
+        return
+
+    def _same_playback() -> bool:
+        current = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        return (
+            isinstance(current, dict)
+            and str(current.get("history_id") or "") == history_id
+            and current.get("started") == started_marker
+        )
+
+    def _run() -> None:
+        poll_sec = max(0.05, min(2.0, timeout / 5.0))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(poll_sec)
+            if not _same_playback():
+                return
+            if _playback_runtime_started():
+                return
+        if not _same_playback() or _playback_runtime_started():
+            return
+        if str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused":
+            return
+        logger.warning(
+            "playback_start_timeout after_sec=%s title=%s", int(timeout), label[:120]
+        )
+        _notify_warn_toast(f"Can't start stream: {label}" if label else "Can't start stream")
+        try:
+            mpv_command(["stop"])
+        except Exception:
+            pass
+        try:
+            from . import playback_service
+
+            playback_service.natural_end()
+        except Exception as exc:
+            logger.warning("playback_start_timeout_recover_failed error=%s", exc)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def advance_queue_playback(
@@ -4553,6 +4645,8 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         _prime_mpv_up_next_from_queue(force=True)
     except Exception:
         pass
+
+    _arm_playback_start_watchdog(now)
 
     debug_log("player", f"play_item complete in {int((time.monotonic() - play_t0) * 1000)}ms title={title!r}")
 
