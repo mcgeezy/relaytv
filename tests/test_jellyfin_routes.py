@@ -705,3 +705,43 @@ def test_jellyfin_stopped_snapshot_returns_accepted_without_payload(monkeypatch)
 
     assert response.status_code == 202
     assert response.json() == {"ok": False, "reason": "no_payload"}
+
+
+def test_pwa_emby_svg_served() -> None:
+    client = TestClient(create_app(testing=True))
+    response = client.get("/pwa/emby.svg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
+
+
+def test_ui_page_carries_neutral_jellyfin_emby_branding_hooks() -> None:
+    """The relabel contract app.js depends on: neutral default text plus the
+    jfBrand spans and ids applyJfBranding rewrites."""
+    client = TestClient(create_app(testing=True))
+    response = client.get("/ui")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Jellyfin / Emby" in html
+    assert 'class="jfBrand"' in html
+    assert 'id="jfCardHeadLabel"' in html
+    assert 'id="jellyfinOpenBtn"' in html
+    assert 'id="setJfApplyBtn"' in html
+
+
+def test_status_route_exposes_jellyfin_server_type(monkeypatch) -> None:
+    monkeypatch.setattr(
+        routes.jellyfin_receiver,
+        "status",
+        lambda: {"enabled": True, "running": True, "server_type": "emby", "server_url": "http://emby.local:8096"},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["jellyfin_server_type"] == "emby"
+    assert body["jellyfin_server_url_configured"] is True

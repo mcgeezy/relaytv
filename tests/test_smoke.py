@@ -134,7 +134,7 @@ def test_ui_smoke() -> None:
     assert 'Show idle dashboard between plays' in response.text
     assert 'Use Invidious server for YouTube playback' in response.text
     assert 'Show connect QR in idle' in response.text
-    assert 'Enable Jellyfin integration' in response.text
+    assert 'Enable <span class="jfBrand">Jellyfin / Emby</span> integration' in response.text
     assert 'function _uploadBadge(item)' in js
     assert 'function _uploadSummary(item)' in js
     assert 'function _formatUploadSize(bytes)' in js
