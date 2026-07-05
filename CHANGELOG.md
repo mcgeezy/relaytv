@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.0](https://github.com/mcgeezy/relaytv/compare/v0.4.0...v0.5.0) (2026-07-05)
+
+
+### Features
+
+* a machine-checked operations test matrix — every supported host profile (x11, wayland, headless, Raspberry Pi, arm64, external mpv) now has pinned runtime decisions and an operator validation checklist ([#26](https://github.com/mcgeezy/relaytv/issues/26)) ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* a top-to-bottom architecture overhaul — modular routes, a runtime config service, a playback transition service, a dedicated Jellyfin service, and an optional API token for locked-down networks ([#21](https://github.com/mcgeezy/relaytv/issues/21), [#22](https://github.com/mcgeezy/relaytv/issues/22), [#23](https://github.com/mcgeezy/relaytv/issues/23), [#24](https://github.com/mcgeezy/relaytv/issues/24), [#25](https://github.com/mcgeezy/relaytv/issues/25)) ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* deno ships in the image as yt-dlp's JavaScript challenge runtime, so YouTube playback keeps working as YouTube changes things ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* yt-dlp now keeps itself up to date — flip the new "Keep yt-dlp up to date" toggle in Settings and RelayTV checks daily in the background ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+
+
+### Bug Fixes
+
+* bot-checked YouTube videos are skipped with a friendly heads-up toast instead of being retried forever ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* closing a video glides back to the idle screen instead of flashing your desktop for a few seconds ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* device passthrough is now generated from what your host actually has, so the container starts cleanly on any box ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* live and just-ended YouTube streams now play instead of hanging on a black screen, and any stream that can't start shows a "Can't start stream" toast within 45 seconds instead of leaving you staring at nothing ([7f7d722](https://github.com/mcgeezy/relaytv/commit/7f7d722a621345345dc3b00897dd0ece30ec286d))
+* Raspberry Pi 5 installs no longer trip over hardware decode nodes that only exist on the Pi 4 ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* your TV and RelayTV finally talk — turning the TV off or switching inputs pauses playback, and coming back resumes right where you left off (CEC) ([945656d](https://github.com/mcgeezy/relaytv/commit/945656d5e934840bed35604958daa5928c8196fa))
+* YouTube bot checks now explain themselves everywhere — the warning toast also appears on direct plays and settings changes, and your current video keeps playing instead of dropping to a black screen ([7f7d722](https://github.com/mcgeezy/relaytv/commit/7f7d722a621345345dc3b00897dd0ece30ec286d))
+
+
+### Documentation
+
+* close out architecture review and slim agent instructions ([#30](https://github.com/mcgeezy/relaytv/issues/30)) ([fb72af5](https://github.com/mcgeezy/relaytv/commit/fb72af5925e802544dccd2c5e43e95339c652e0a))
+
 ## [0.4.0](https://github.com/mcgeezy/relaytv/compare/v0.3.1...v0.4.0) (2026-06-30)
 
 
