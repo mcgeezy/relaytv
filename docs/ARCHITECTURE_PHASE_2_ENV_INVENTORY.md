@@ -166,6 +166,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_REGISTER_RETRY_MAX_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_SEARCH_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
+| `RELAYTV_JELLYFIN_SERVER_TYPE` | `config.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_SERVER_URL` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_STOPPED_DEDUPE_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_PATH` | `integrations/jellyfin_receiver.py` | - | static env |

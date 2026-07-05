@@ -39,6 +39,20 @@ def test_get_settings_route_sanitizes_secret_values(monkeypatch, tmp_path) -> No
     assert body["idle_notifications_enabled"] is True
 
 
+def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:
+    from relaytv_app import state
+
+    assert state._normalize_jellyfin_server_type(" EMBY ") == "emby"
+    assert state._normalize_jellyfin_server_type("Jellyfin") == "jellyfin"
+    assert state._normalize_jellyfin_server_type("plex") == "jellyfin"
+    assert state._normalize_jellyfin_server_type(None) == "jellyfin"
+    assert state._default_settings()["jellyfin_server_type"] == "jellyfin"
+
+    monkeypatch.setattr(state, "_atomic_write_json", lambda path, payload: None)
+    assert state.update_settings({"jellyfin_server_type": " EMBY "})["jellyfin_server_type"] == "emby"
+    assert state.update_settings({"jellyfin_server_type": "bogus"})["jellyfin_server_type"] == "jellyfin"
+
+
 def test_youtube_cookies_routes_upload_and_clear(monkeypatch, tmp_path) -> None:
     updates: list[dict[str, object]] = []
     target = tmp_path / "cookies.txt"
