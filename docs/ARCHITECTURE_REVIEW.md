@@ -2,11 +2,28 @@
 
 Date: 2026-06-30
 
-Status note, 2026-07-01: Phase 1 route and static UI extraction work is in
-progress on `codex/architecture-phase-1`. This review remains the higher-level
-findings document, but several Phase 1 items below now have branch-local
-progress. See [ARCHITECTURE_PHASE_1_ROADMAP.md](ARCHITECTURE_PHASE_1_ROADMAP.md)
-for the current milestone log.
+Status, 2026-07-04: **the recommended roadmap below is complete.** All six
+phases merged to `main` as PRs
+[#21](https://github.com/mcgeezy/relaytv/pull/21)–[#26](https://github.com/mcgeezy/relaytv/pull/26)
+(2026-07-03/04). This document is now the historical findings record; the
+per-phase milestone logs live in the `ARCHITECTURE_PHASE_*_ROADMAP.md` docs,
+and the machine-checked inventories (routes, env, transitions, Jellyfin,
+runtime matrix) remain active guardrails enforced by the test suite.
+
+Finding outcomes:
+
+| Finding | Addressed by | Status |
+| --- | --- | --- |
+| 1. `routes.py` owns too many boundaries | Phase 1 (PR #21) | Done — domain route modules; `routes/__init__.py` still holds shared helpers/glue (follow-up below) |
+| 2. UI embedded as a Python string | Phase 1 (PR #21) | Done — CSS/JS extracted to `static/ui/`; browser smoke test still open |
+| 3. `os.environ` as config bus | Phase 2 (PR #22) | Done — `config.py` runtime config service + machine-checked env inventory |
+| 4. Playback state spread across modules | Phase 3 (PR #23) | Done — `playback_service.py` owns transition commands; writer inventory enforced |
+| 5. Partial Jellyfin boundary | Phase 4 (PR #24) | Done — `integrations/jellyfin_service.py`; receiver stays transport-only |
+| 6. State persistence schema ownership | — | **Open** — no versioned models yet |
+| 7. Tests too concentrated | Phases 1–6 | Largely done — focused route/service/inventory test files; `test_smoke.py` still large |
+| 8. API trust boundary | Phase 5 (PR #25) | Done — optional `RELAYTV_API_TOKEN` bearer auth; trusted-LAN docs |
+| 9. Runtime/installer policy tracing | Phase 6 (PR #26) | Done — machine-checked runtime matrix + operator checklists |
+| 10. Duplication and drift | Phase 2 (partial) | Partial — env parsing centralized; provider/URL helper consolidation still open |
 
 Scope reviewed:
 
@@ -50,18 +67,26 @@ Original measured hotspots:
 - `app/relaytv_app/integrations/jellyfin_receiver.py`: 2,619 lines.
 - `tests/test_smoke.py`: 2,960 lines.
 
-Current Phase 1 branch shape:
+Shape after the roadmap completed (2026-07-04):
 
-- `app/relaytv_app/routes/` is now a package with domain modules for app info,
+- `app/relaytv_app/routes/` is a package with domain modules for app info,
   assets, capabilities, devices, health, Jellyfin, playback, queue, settings,
   snapshots, status, UI, and uploads.
 - `app/relaytv_app/routes/__init__.py` remains the aggregate compatibility
-  module and still owns shared helpers plus unresolved cross-domain glue.
-- Main UI CSS and JavaScript now live in
-  `app/relaytv_app/static/ui/app.css` and
+  module and still owns shared helpers plus cross-domain glue (~3,900 lines).
+- Main UI CSS and JavaScript live in `app/relaytv_app/static/ui/app.css` and
   `app/relaytv_app/static/ui/app.js`.
-- Focused route test files now cover capabilities, Jellyfin, playback,
-  queue/history, settings, uploads, and the public route inventory.
+- `app/relaytv_app/config.py` is the runtime config service (typed env
+  parsing, settings bus, subprocess mirroring boundary).
+- `app/relaytv_app/playback_service.py` owns playback transition commands;
+  `player.py` is the process/control adapter.
+- `app/relaytv_app/integrations/jellyfin_service.py` owns Jellyfin product
+  behavior; `jellyfin_receiver.py` stays transport/session/catalog.
+- Focused test files cover capabilities, Jellyfin routes/service, playback
+  routes/transitions, queue/history, settings, uploads, API auth, the runtime
+  matrix, and the machine-checked route/env/transition/Jellyfin inventories.
+- `tests/test_smoke.py` is still large (~4,200 lines) and remains the
+  catch-all for player/resolver behavior tests.
 
 Positive foundations:
 
@@ -92,7 +117,7 @@ The original monolithic `routes.py` owned:
 - PWA/static asset helpers
 - the full browser UI document
 
-Current Phase 1 status:
+Status after Phase 1 (PR #21):
 
 - Public route registration has been split into domain modules.
 - The aggregate `routes/__init__.py` still owns a large helper surface,
@@ -396,7 +421,7 @@ Create small shared modules:
 
 ## Recommended Roadmap
 
-### Phase 0: Guardrails And Documentation
+### Phase 0: Guardrails And Documentation (complete)
 
 Goal: improve reviewability without changing runtime behavior.
 
@@ -411,7 +436,7 @@ Status:
 
 Suggested PR size: small.
 
-### Phase 1: Extract Routes And Static UI Assets
+### Phase 1: Extract Routes And Static UI Assets (complete — PR #21)
 
 Goal: reduce `routes.py` risk.
 
@@ -429,7 +454,7 @@ Status:
 - Final validation and optional browser automation remain before merging Phase 1
   to `main`.
 
-### Phase 2: Runtime Config Service
+### Phase 2: Runtime Config Service (complete — PR #22)
 
 Goal: stop using process environment as the in-process config bus.
 
@@ -441,7 +466,7 @@ Goal: stop using process environment as the in-process config bus.
 
 Suggested PR size: medium.
 
-### Phase 3: Playback Transition Service
+### Phase 3: Playback Transition Service (complete — PR #23)
 
 Goal: make close/play-now/queue/resume behavior deterministic.
 
@@ -457,7 +482,7 @@ Goal: make close/play-now/queue/resume behavior deterministic.
 
 Suggested PR size: medium to large; split by command path.
 
-### Phase 4: Jellyfin Product Service
+### Phase 4: Jellyfin Product Service (complete — PR #24)
 
 Goal: make Jellyfin behavior testable without route context.
 
@@ -469,7 +494,7 @@ Goal: make Jellyfin behavior testable without route context.
 
 Suggested PR size: medium.
 
-### Phase 5: Optional API Token
+### Phase 5: Optional API Token (complete — PR #25)
 
 Goal: preserve local-first defaults while giving operators a safe exposure path.
 
@@ -480,7 +505,7 @@ Goal: preserve local-first defaults while giving operators a safe exposure path.
 
 Suggested PR size: small to medium.
 
-### Phase 6: Operations Test Matrix
+### Phase 6: Operations Test Matrix (complete — PR #26)
 
 Goal: catch runtime regressions before users do.
 
@@ -497,13 +522,21 @@ Goal: catch runtime regressions before users do.
 
 Suggested PR size: ongoing.
 
-## Suggested Next PRs
+## Open Follow-Ups
 
-1. `test(ui): add browser smoke for settings and queue shell`
-2. `docs: refresh module ownership map after phase 1 merge`
-3. `refactor(config): introduce runtime config snapshot`
-4. `test(playback): cover close and play-now transition service behavior`
-5. `refactor(playback): centralize close and queue advancement policy`
+Work the roadmap intentionally did not cover, in rough value order:
+
+1. `test(ui): add one browser (Playwright) smoke path for /ui` — settings
+   modal, queue actions, Jellyfin shell visibility (Finding 2's remaining
+   item; still string-asserted today).
+2. `refactor(state): add versioned models for queue/history/session/settings`
+   — Finding 6 was not addressed; migrations remain implicit.
+3. `refactor(routes): continue shrinking routes/__init__.py` — the aggregate
+   still owns ~3,900 lines of shared helpers, overlay/idle behavior, and
+   status payload construction.
+4. `refactor(providers): consolidate provider/URL classification` — still
+   duplicated between resolver and player paths (Finding 10 remainder).
+5. `test: keep splitting test_smoke.py by behavior` — still ~4,200 lines.
 
 ## Non-Goals
 

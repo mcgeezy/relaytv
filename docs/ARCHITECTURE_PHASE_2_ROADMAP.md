@@ -1,5 +1,8 @@
 # Phase 2 Architecture Roadmap
 
+Status: **complete** — squash-merged to `main` as PR #22 on 2026-07-03.
+This document is the historical milestone log for the phase.
+
 Date started: 2026-07-02
 
 Branch: `codex/architecture-phase-2`
