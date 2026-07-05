@@ -383,3 +383,134 @@ def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
     assert state.QUEUE[0]["channel"] == "Series · S01"
     assert state.QUEUE[0]["thumbnail"] == "http://jf.local/Items/ep-2/Images/Primary"
     jellyfin_service.reset_command_state()
+
+
+# --- server-type detection (Emby support) ----------------------------------
+
+
+class _FakeSystemInfoResp:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _fake_system_info(monkeypatch, payload) -> None:
+    import json as _json
+
+    def fake_urlopen(req, timeout=None):
+        if isinstance(payload, Exception):
+            raise payload
+        return _FakeSystemInfoResp(_json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr(jellyfin_receiver._urlrequest, "urlopen", fake_urlopen)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"ProductName": "Jellyfin Server", "Version": "10.9.0", "Id": "j1"}, "jellyfin"),
+        ({"ProductName": "Emby Server", "Version": "4.8.0", "Id": "e1"}, "emby"),
+        # Emby 3.5.x omits ProductName from the public system info entirely.
+        ({"Version": "3.5.3", "Id": "e2"}, "emby"),
+    ],
+)
+def test_detect_server_type_classifies_products(monkeypatch, payload, expected) -> None:
+    _fake_system_info(monkeypatch, payload)
+
+    result = jellyfin_receiver.detect_server_type("http://media.local:8096/")
+
+    assert result["ok"] is True
+    assert result["server_type"] == expected
+
+
+def test_detect_server_type_rejects_unrecognizable_and_unreachable(monkeypatch) -> None:
+    _fake_system_info(monkeypatch, {"hello": "world"})
+    result = jellyfin_receiver.detect_server_type("http://media.local:8096")
+    assert result["ok"] is False and result["server_type"] == ""
+
+    _fake_system_info(monkeypatch, OSError("connection refused"))
+    result = jellyfin_receiver.detect_server_type("http://media.local:8096")
+    assert result["ok"] is False and result["server_type"] == ""
+    assert result["error"]
+
+    result = jellyfin_receiver.detect_server_type("")
+    assert result["ok"] is False and result["error"] == "no_server_url"
+
+
+def test_run_detection_persists_detected_server_type(monkeypatch) -> None:
+    updates: list[dict[str, object]] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "jellyfin")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_product_name", "")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ok", None)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ts", None)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_error", None)
+    monkeypatch.setattr(state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
+    _fake_system_info(monkeypatch, {"ProductName": "Emby Server", "Version": "4.8.0", "Id": "e1"})
+
+    result = jellyfin_receiver._run_detection("http://emby.local:8096")
+
+    assert result["ok"] is True
+    status = jellyfin_receiver.status()
+    assert status["server_type"] == "emby"
+    assert status["server_product_name"] == "Emby Server"
+    assert status["last_detect_ok"] is True
+    assert updates == [{"jellyfin_server_type": "emby"}]
+
+
+def test_run_detection_failure_keeps_existing_server_type(monkeypatch) -> None:
+    updates: list[dict[str, object]] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "jellyfin")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ok", None)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ts", None)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_error", None)
+    monkeypatch.setattr(state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
+    _fake_system_info(monkeypatch, OSError("connection refused"))
+
+    result = jellyfin_receiver._run_detection("http://emby.local:8096")
+
+    assert result["ok"] is False
+    status = jellyfin_receiver.status()
+    assert status["server_type"] == "jellyfin"
+    assert status["last_detect_ok"] is False
+    assert status["last_detect_error"]
+    assert updates == []
+
+
+def test_persist_server_type_writes_only_on_change(monkeypatch) -> None:
+    updates: list[dict[str, object]] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "emby")
+    monkeypatch.setattr(state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
+
+    jellyfin_receiver._persist_server_type("emby", "Emby Server")
+
+    assert updates == []
+    assert jellyfin_receiver._STATUS["server_product_name"] == "Emby Server"
+
+
+def test_looks_like_media_url_accepts_emby_hosts() -> None:
+    assert jellyfin_service.looks_like_media_url("http://emby.home.lan:8096/web/index.html") is True
+    assert jellyfin_service.looks_like_media_url("http://jellyfin.home.lan:8096/web/") is True
+    assert jellyfin_service.looks_like_media_url("http://media.local/Items/abc/PlaybackInfo") is True
+    assert jellyfin_service.looks_like_media_url("https://example.com/watch?v=abc") is False
+
+
+def test_provider_display_name_reflects_server_type(monkeypatch) -> None:
+    from relaytv_app import resolver
+
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_server_type": "emby"})
+    assert resolver._provider_display_name("jellyfin") == "Emby"
+    assert resolver._provider_display_name("youtube") == "YouTube"
+
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_server_type": "jellyfin"})
+    assert resolver._provider_display_name("jellyfin") == "Jellyfin"
+
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    assert resolver._provider_display_name("jellyfin") == "Jellyfin"

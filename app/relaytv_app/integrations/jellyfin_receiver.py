@@ -27,6 +27,11 @@ _STATUS: dict[str, object] = {
     "client_name": "RelayTV",
     "client_version": "1.0",
     "heartbeat_sec": 5,
+    "server_type": "jellyfin",
+    "server_product_name": "",
+    "last_detect_ts": None,
+    "last_detect_ok": None,
+    "last_detect_error": None,
     "api_key_configured": False,
     "connected": False,
     "last_heartbeat_ts": None,
@@ -235,13 +240,19 @@ def _mark_catalog_error(msg: str) -> None:
 
 def _read_config() -> dict[str, object]:
     configured_name = ""
+    configured_server_type = ""
     try:
         from .. import state as _state
 
         s = _state.get_settings() if hasattr(_state, "get_settings") else {}
         configured_name = str((s or {}).get("device_name") or "").strip()
+        configured_server_type = str((s or {}).get("jellyfin_server_type") or "").strip().lower()
     except Exception:
         configured_name = ""
+        configured_server_type = ""
+    server_type = configured_server_type or (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_TYPE") or "").strip().lower()
+    if server_type not in ("jellyfin", "emby"):
+        server_type = "jellyfin"
     device_name = (
         configured_name
         or (runtime_config.snapshot().raw("RELAYTV_DEVICE_NAME") or "").strip()
@@ -258,6 +269,7 @@ def _read_config() -> dict[str, object]:
         "client_name": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name).strip() or device_name,
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
+        "server_type": server_type,
     }
 
 
@@ -297,6 +309,7 @@ def start() -> None:
         _STATUS["client_name"] = str(cfg["client_name"])
         _STATUS["client_version"] = str(cfg["client_version"])
         _STATUS["heartbeat_sec"] = int(cfg["heartbeat_sec"])
+        _STATUS["server_type"] = str(cfg["server_type"])
         _API_KEY = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_API_KEY") or "").strip()
         _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
         _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
@@ -457,6 +470,96 @@ def status() -> dict[str, object]:
         return _status_with_sync_health(_STATUS)
 
 
+def detect_server_type(server_url: str, *, timeout_sec: float = 3.0) -> dict[str, object]:
+    """Classify a media server as jellyfin or emby via /System/Info/Public.
+
+    The endpoint is unauthenticated on both products. Jellyfin reports
+    ProductName "Jellyfin Server" and modern Emby reports "Emby Server";
+    Emby 3.5.x omits the field entirely, so a valid system-info payload
+    without a recognizable ProductName counts as Emby.
+    """
+    base = str(server_url or "").strip().rstrip("/")
+    if not base:
+        return {"ok": False, "server_type": "", "product_name": "", "version": "", "error": "no_server_url"}
+    req = _urlrequest.Request(f"{base}/System/Info/Public", method="GET")
+    try:
+        with _urlrequest.urlopen(req, timeout=max(0.5, float(timeout_sec))) as resp:
+            raw = (resp.read() or b"{}").decode("utf-8", "ignore")
+        data = json.loads(raw) if raw.strip() else {}
+        if not isinstance(data, dict):
+            raise RuntimeError("system info response is not an object")
+        product = str(data.get("ProductName") or "").strip()
+        version = str(data.get("Version") or "").strip()
+        lowered = product.lower()
+        if "jellyfin" in lowered:
+            server_type = "jellyfin"
+        elif "emby" in lowered:
+            server_type = "emby"
+        elif not product and (version or str(data.get("Id") or "").strip()):
+            server_type = "emby"
+        else:
+            raise RuntimeError("system info response has no recognizable product")
+        return {"ok": True, "server_type": server_type, "product_name": product, "version": version, "error": None}
+    except Exception as e:
+        return {"ok": False, "server_type": "", "product_name": "", "version": "", "error": _format_http_error(e)}
+
+
+def _persist_server_type(server_type: str, product_name: str = "") -> None:
+    st = str(server_type or "").strip().lower()
+    if st not in ("jellyfin", "emby"):
+        return
+    with _LOCK:
+        changed = _STATUS.get("server_type") != st
+        _STATUS["server_type"] = st
+        if product_name:
+            _STATUS["server_product_name"] = str(product_name)
+    if not changed:
+        return
+    try:
+        runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_TYPE", st)
+    except Exception:
+        pass
+    try:
+        from .. import state as _state
+
+        if hasattr(_state, "update_settings"):
+            _state.update_settings({"jellyfin_server_type": st})
+    except Exception:
+        pass
+
+
+def _run_detection(server_url: str) -> dict[str, object]:
+    result = detect_server_type(server_url)
+    with _LOCK:
+        _STATUS["last_detect_ts"] = int(time.time())
+        _STATUS["last_detect_ok"] = bool(result.get("ok"))
+        _STATUS["last_detect_error"] = result.get("error")
+    if result.get("ok"):
+        _persist_server_type(str(result.get("server_type") or ""), str(result.get("product_name") or ""))
+    return result
+
+
+def _maybe_retry_detection() -> None:
+    """Re-probe from the worker when detection hasn't succeeded yet.
+
+    Only once the server is provably reachable (auth or register worked),
+    and at most every 300s, so an endpoint hidden by a proxy doesn't get
+    hammered on every heartbeat.
+    """
+    st = status()
+    if st.get("last_detect_ok") is True:
+        return
+    base = str(st.get("server_url") or "").strip()
+    if not base:
+        return
+    if not (bool(st.get("authenticated")) or bool(st.get("last_register_ok"))):
+        return
+    last_ts = st.get("last_detect_ts")
+    if last_ts and (time.time() - float(last_ts)) < 300.0:
+        return
+    _run_detection(base)
+
+
 def connect(*, server_url: str, api_key: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
     """Configure and enable Jellyfin receiver runtime."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
@@ -514,8 +617,14 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
         _NEXT_REGISTER_RETRY_TS = 0.0
         _LAST_STOPPED_SIGNATURE = ""
         _LAST_STOPPED_TS = 0.0
-        out = dict(_STATUS)
     _catalog_cache_clear()
+    if str(server_url or "").strip():
+        try:
+            _run_detection(str(server_url or "").strip())
+        except Exception:
+            pass
+    with _LOCK:
+        out = dict(_STATUS)
     _start_worker()
     if _env_bool("RELAYTV_JELLYFIN_AUTO_REGISTER", False):
         try:
@@ -2586,6 +2695,7 @@ def _heartbeat_worker() -> None:
             _ensure_authentication()
             send_progress_once()
             _ensure_registration()
+            _maybe_retry_detection()
         except Exception:
             pass
         hb = max(2, int(float(status().get("heartbeat_sec") or 5)))

@@ -601,7 +601,7 @@ def looks_like_media_url(url: str) -> bool:
         if "/items/" in path or "/videos/" in path:
             return True
         host = (p.netloc or "").lower()
-        return "jellyfin" in host
+        return "jellyfin" in host or "emby" in host
     except Exception:
         return False
 
