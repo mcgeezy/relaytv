@@ -3183,6 +3183,238 @@ def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyP
     assert toasts[0]['level'] == 'warn'
 
 
+def test_restart_current_keeps_playback_when_bot_check_blocks_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasts: list[str] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://www.youtube.com/watch?v=current', 'title': 'Current Video'},
+        raising=False,
+    )
+    monkeypatch.setattr(player, '_notify_bot_check_toast', lambda text: toasts.append(text))
+
+    def fake_resolve(url):
+        raise player.YouTubeBotCheckError(
+            status_code=400,
+            detail='yt-dlp failed: YouTube requires anti-bot verification/cookies.',
+        )
+
+    monkeypatch.setattr(player, 'resolve_streams', fake_resolve)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must not stop playback when resolve fails')))
+    monkeypatch.setattr(player, 'play_item', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must not replay when resolve fails')))
+
+    assert player.restart_current() is None
+    assert len(toasts) == 1
+    assert 'bot check' in toasts[0].lower()
+    assert 'Current Video' in toasts[0]
+
+
+def test_restart_current_resolves_before_stopping_and_reuses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    played: list[dict] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://www.youtube.com/watch?v=current', 'title': 'Current Video'},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'resolve_streams', lambda url: (calls.append('resolve'), ('https://stream.example/v', 'https://stream.example/a'))[1])
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: calls.append('stop'))
+
+    def fake_play(item, **kwargs):
+        calls.append('play')
+        played.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    now = player.restart_current()
+
+    assert now == {'url': 'https://www.youtube.com/watch?v=current'}
+    # Resolve must complete before the running player is torn down.
+    assert calls == ['resolve', 'stop', 'play']
+    assert played[0]['_resolved_stream'] == 'https://stream.example/v'
+    assert played[0]['_resolved_audio'] == 'https://stream.example/a'
+    assert played[0]['title'] == 'Current Video'
+
+
+def test_restart_current_non_youtube_does_not_preresolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    played: list[object] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://example.com/movie.mp4', 'title': 'Movie'},
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'resolve_streams', lambda url: (_ for _ in ()).throw(AssertionError('non-YouTube restart must not pre-resolve')))
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, 'play_item', lambda target, **kwargs: played.append(target) or {'url': 'https://example.com/movie.mp4'})
+
+    assert player.restart_current() == {'url': 'https://example.com/movie.mp4'}
+    assert played == ['https://example.com/movie.mp4']
+
+
+def _patch_resolver_ytdlp_env(monkeypatch: pytest.MonkeyPatch, stdout: str) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    class Proc:
+        returncode = 0
+        stderr = ''
+
+    Proc.stdout = stdout
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr(
+        'relaytv_app.video_profile.get_profile',
+        lambda: {'decode_profile': 'default', 'display_cap_height': 1080, 'av1_allowed': False},
+    )
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+
+    def fake_run(cmd, check=False):
+        calls.append(list(cmd))
+        return Proc()
+
+    monkeypatch.setattr(resolver, 'run', fake_run)
+    return calls
+
+
+def test_resolver_defers_postlive_youtube_to_mpv_ytdl_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = 'https://www.youtube.com/watch?v=postlive1'
+    calls = _patch_resolver_ytdlp_env(
+        monkeypatch,
+        'https://segments.example/videoplayback?a=1\n'
+        'https://segments.example/videoplayback?a=2\n'
+        'post_live\n',
+    )
+
+    stream, audio = resolver.resolve_streams_ytdlp(url)
+
+    # Segmented live formats 204 without per-segment params, so the page URL
+    # goes to mpv and its yt-dlp hook drives the manifest.
+    assert stream == url
+    assert audio is None
+    assert '--print' in calls[0]
+    assert 'live_status' in calls[0]
+    assert '-g' not in calls[0]
+
+
+def test_resolver_keeps_resolved_urls_for_vod_youtube(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _patch_resolver_ytdlp_env(
+        monkeypatch,
+        'https://cdn.example/video.mp4\nhttps://cdn.example/audio.m4a\nnot_live\n',
+    )
+
+    stream, audio = resolver.resolve_streams_ytdlp('https://www.youtube.com/watch?v=vod1')
+
+    assert stream == 'https://cdn.example/video.mp4'
+    assert audio == 'https://cdn.example/audio.m4a'
+    assert calls
+
+
+def test_resolver_non_youtube_keeps_plain_url_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _patch_resolver_ytdlp_env(
+        monkeypatch,
+        'https://cdn.example/rumble-video.mp4\n',
+    )
+
+    stream, audio = resolver.resolve_streams_ytdlp('https://rumble.com/v1abcd-some-video.html')
+
+    assert stream == 'https://cdn.example/rumble-video.mp4'
+    assert audio is None
+    assert '-g' in calls[0]
+    assert '--print' not in calls[0]
+
+
+def test_playback_start_watchdog_aborts_stream_that_never_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import playback_service
+
+    toasts: list[str] = []
+    stops: list[list] = []
+    ended: list[str] = []
+
+    class _SyncThread:
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    now_item = {
+        'url': 'https://www.youtube.com/watch?v=stuck',
+        'title': 'Stuck Stream',
+        'history_id': 'h-stuck',
+        'started': 1234,
+    }
+    monkeypatch.setenv('RELAYTV_PLAYBACK_START_TIMEOUT_SEC', '0.2')
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', dict(now_item), raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.threading, 'Thread', _SyncThread)
+    monkeypatch.setattr(player, '_playback_runtime_started', lambda: False)
+    monkeypatch.setattr(player, '_notify_warn_toast', lambda text: toasts.append(text))
+    monkeypatch.setattr(player, 'mpv_command', lambda cmd: stops.append(list(cmd)))
+    monkeypatch.setattr(playback_service, 'natural_end', lambda: ended.append('natural_end') or 'idle')
+
+    player._arm_playback_start_watchdog(now_item)
+
+    assert len(toasts) == 1
+    assert "Can't start stream" in toasts[0]
+    assert 'Stuck Stream' in toasts[0]
+    assert ['stop'] in stops
+    assert ended == ['natural_end']
+
+
+def test_playback_runtime_started_uses_live_ipc_not_stale_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The previous media's cached time-pos must not count as "started" while
+    # the new stream is stuck loading.
+    monkeypatch.setattr(player, 'mpv_command', lambda cmd: {'error': 'property unavailable'})
+    monkeypatch.setattr(
+        player,
+        'qt_shell_runtime_telemetry',
+        lambda **kwargs: {'mpv_runtime_playback_started': False, 'mpv_runtime_time_pos': None},
+    )
+    assert player._playback_runtime_started() is False
+
+    monkeypatch.setattr(player, 'mpv_command', lambda cmd: {'error': 'success', 'data': 12.5})
+    assert player._playback_runtime_started() is True
+
+
+def test_playback_start_watchdog_noop_once_playback_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import playback_service
+
+    toasts: list[str] = []
+    ended: list[str] = []
+
+    class _SyncThread:
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    now_item = {
+        'url': 'https://www.youtube.com/watch?v=fine',
+        'title': 'Working Stream',
+        'history_id': 'h-fine',
+        'started': 1234,
+    }
+    monkeypatch.setenv('RELAYTV_PLAYBACK_START_TIMEOUT_SEC', '0.2')
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', dict(now_item), raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.threading, 'Thread', _SyncThread)
+    monkeypatch.setattr(player, '_playback_runtime_started', lambda: True)
+    monkeypatch.setattr(player, '_notify_warn_toast', lambda text: toasts.append(text))
+    monkeypatch.setattr(playback_service, 'natural_end', lambda: ended.append('natural_end') or 'idle')
+
+    player._arm_playback_start_watchdog(now_item)
+
+    assert toasts == []
+    assert ended == []
+
+
 def test_closed_session_does_not_prime_mpv_up_next(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'closed', raising=False)
     monkeypatch.setattr(

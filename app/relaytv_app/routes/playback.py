@@ -324,8 +324,20 @@ def play_now(req: PlayNowReq):
             )
         else:
             now = playback_service.play_now(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
-    except Exception:
+    except Exception as exc:
         _rollback_play_now_preserve(preserved)
+        if isinstance(exc, player.YouTubeBotCheckError):
+            # The 400 detail only reaches the requesting client; the TV
+            # otherwise drops back to idle with no explanation.
+            try:
+                _push_overlay_toast(
+                    text=f"Can't play (YouTube bot check): {req.title or req.url}",
+                    duration=6.0,
+                    level="warn",
+                    icon="play",
+                )
+            except Exception:
+                pass
         raise
     try:
         title = now.get("title") if isinstance(now, dict) else None
