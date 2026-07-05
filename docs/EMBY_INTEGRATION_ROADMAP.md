@@ -146,4 +146,5 @@ intended delta.
 
 ## PR Log
 
-- (pending) `feat/emby-server-support` → `main`: Emby server support.
+- PR #31 (open): `feat/emby-server-support` → `main` — M1–M4; M5 live
+  verification runs on the appliance before merge.
