@@ -1,5 +1,8 @@
 # Phase 5 Architecture Roadmap
 
+Status: **complete** — squash-merged to `main` as PR #25 on 2026-07-03.
+This document is the historical milestone log for the phase.
+
 Date started: 2026-07-03
 
 Branch: `codex/architecture-phase-5` (cut from `main` at the Phase 4 squash

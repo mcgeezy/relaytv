@@ -13,17 +13,26 @@ Use this directory as a small operator/product doc set for the public release br
 
 ## Engineering Review Docs
 
-- `ARCHITECTURE_REVIEW.md`: current architecture findings and recommended refactor roadmap
-- `ARCHITECTURE_PHASE_1_ROADMAP.md`: living Phase 1 branch roadmap, milestones, and PR log
-- `ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md`: Phase 1 route inventory and alias guardrail
-- `ARCHITECTURE_PHASE_2_ROADMAP.md`: living Phase 2 branch roadmap for the runtime config service
-- `ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`: machine-checked env variable inventory and settings-bus classification
-- `ARCHITECTURE_PHASE_3_ROADMAP.md`: living Phase 3 branch roadmap for the playback transition service
-- `ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`: machine-checked playback transition writer inventory and containment contract
-- `ARCHITECTURE_PHASE_4_ROADMAP.md`: living Phase 4 branch roadmap for the Jellyfin product service
-- `ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`: machine-checked Jellyfin route-surface inventory and containment contract
-- `ARCHITECTURE_PHASE_5_ROADMAP.md`: living Phase 5 branch roadmap for the optional API token
-- `ARCHITECTURE_PHASE_6_ROADMAP.md`: living Phase 6 branch roadmap for the operations test matrix
+The 2026-06/07 architecture review and its six-phase refactor roadmap are
+complete (PRs #21–#26, merged 2026-07-03/04).
+
+Historical records (findings and per-phase milestone logs; not updated further):
+
+- `ARCHITECTURE_REVIEW.md`: architecture findings, finding outcomes, and the
+  completed refactor roadmap (open follow-ups listed at the end)
+- `ARCHITECTURE_PHASE_1_ROADMAP.md` … `ARCHITECTURE_PHASE_6_ROADMAP.md`:
+  per-phase milestone logs (routes/UI split, runtime config service, playback
+  transition service, Jellyfin product service, optional API token, operations
+  test matrix)
+
+Active guardrails (machine-checked by the test suite; regenerate via each
+inventory test's `--write` mode after intentional changes):
+
+- `ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md`: route inventory and alias guardrail (`tests/test_route_inventory.py`)
+- `ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`: env variable inventory and settings-bus classification (`tests/test_env_inventory.py`)
+- `ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`: playback transition writer inventory and containment contract (`tests/test_transition_inventory.py`)
+- `ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`: Jellyfin route-surface inventory and containment contract (`tests/test_jellyfin_inventory.py`)
+- `OPERATIONS_TEST_MATRIX.md`: runtime profile decision table (`tests/test_runtime_matrix.py`; listed under Primary Docs above)
 
 ## Module Ownership Snapshot
 
@@ -32,6 +41,8 @@ Use this directory as a small operator/product doc set for the public release br
   package still owns shared route helpers and cross-domain glue.
 - `app/relaytv_app/static/ui/`: main web UI stylesheet and JavaScript loaded by
   `/ui`.
+- `app/relaytv_app/config.py`: runtime config service — typed env parsing,
+  settings bus, and the explicit subprocess env-mirroring boundary.
 - `app/relaytv_app/playback_service.py`: playback transition commands
   (play-now, queue, close, advance, resume, natural end, stop) — the writer
   of playback session state outside `state.py`.

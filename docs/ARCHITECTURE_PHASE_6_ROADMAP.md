@@ -1,5 +1,8 @@
 # Phase 6 Architecture Roadmap
 
+Status: **complete** — squash-merged to `main` as PR #26 on 2026-07-04.
+This document is the historical milestone log for the phase.
+
 Date started: 2026-07-03
 
 Branch: `codex/architecture-phase-6` (cut from `main` at the Phase 5 squash
