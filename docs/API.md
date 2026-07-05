@@ -112,6 +112,7 @@ Selected SVG/asset helpers also exist for the UI:
 - `GET /pwa/icon.svg`
 - `GET /pwa/splash.svg`
 - `GET /pwa/jellyfin.svg`
+- `GET /pwa/emby.svg`
 - `GET /pwa/{asset_path:path}`
 - `GET /favicon.ico`
 
@@ -446,6 +447,8 @@ These X11 overlay endpoints remain active for overlay/runtime diagnostics and br
     - `jellyfin_audio_lang`
     - `jellyfin_sub_lang`
     - `jellyfin_playback_mode`
+    - `jellyfin_server_type` (`jellyfin | emby`; normally set by server-type
+      detection, not by hand)
     - `apply_now`
   - supports `apply_now` for settings that can be applied live
   - response includes:

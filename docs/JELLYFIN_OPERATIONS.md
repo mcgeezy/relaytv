@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document covers runtime configuration, reconnect behavior, and first-line troubleshooting for the RelayTV Jellyfin receiver integration.
+This document covers runtime configuration, reconnect behavior, and first-line troubleshooting for the RelayTV Jellyfin receiver integration. The same integration also accepts Emby servers (see "Emby Servers" below); everywhere this document says Jellyfin, an Emby server behaves the same unless noted.
 
 RelayTV now treats the native Jellyfin client as the only supported Jellyfin UX in the public release.
 The old Jellyfin server plugin is deprecated and no longer ships in the public release.
@@ -75,6 +75,39 @@ Optional playback compatibility policy:
   - `auto`: use direct stream unless RelayTV detects compatibility risk (for example AV1 not allowed by current host profile, or source exceeds display cap).
   - `direct`: always prefer Jellyfin direct stream URL.
   - `transcode`: always request Jellyfin transcoding stream URL.
+
+## Emby Servers
+
+The integration is wire-compatible with Emby: point `jellyfin_server_url` (or
+`RELAYTV_JELLYFIN_SERVER_URL`) at an Emby base URL and everything else works
+unchanged — auth (username/password or API key), catalog browsing, playback,
+track selection, and progress/stopped reporting.
+
+Server-type detection:
+
+- On connect/apply, RelayTV probes the unauthenticated
+  `GET /System/Info/Public` endpoint and classifies the server from
+  `ProductName` ("Jellyfin Server" vs "Emby Server"; old Emby builds that omit
+  the field also classify as Emby).
+- The result is stored as the `jellyfin_server_type` setting
+  (`jellyfin | emby`, default `jellyfin`, bus var
+  `RELAYTV_JELLYFIN_SERVER_TYPE`) and drives the UI branding: the settings
+  section, buttons, browse shell, and now-playing provider label read
+  "Emby" when an Emby server is configured, and the neutral "Jellyfin / Emby"
+  before any server URL is set.
+- If the probe fails (server down mid-apply, proxy hides the endpoint), the
+  current server type is kept and the receiver retries once the server is
+  reachable (at most every 300s). `/integrations/jellyfin/status` exposes
+  `server_type`, `server_product_name`, and `last_detect_ts/ok/error`.
+
+Notes:
+
+- Base URLs like `https://host/emby` also work: Emby serves its API both bare
+  and under `/emby`. Reverse proxies that rewrite API paths are not supported.
+- All settings keys, env vars, and API routes keep their `jellyfin_*` names
+  regardless of server type; only user-facing labels change.
+- Emby-only features (Emby Connect, Premiere) and Jellyfin-only features
+  (SyncPlay) are out of scope.
 
 ## Settings UI Credentials (Current)
 
