@@ -47,16 +47,10 @@ docker compose up -d --build
 
 ### Flatpak (no Docker)
 
-Each GitHub Release also ships a host-native Flatpak bundle. One-line install
-from the latest release:
+Each GitHub Release also ships a host-native Flatpak bundle:
 
 ```bash
-sh -c 'set -eu; flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo; tag=$(curl -fsSL https://api.github.com/repos/mcgeezy/relaytv/releases/latest | sed -n "s/.*\"tag_name\": *\"\([^\"]*\)\".*/\1/p" | head -1); arch=$(uname -m); tmp=$(mktemp --suffix=.flatpak); curl -fL -o "$tmp" "https://github.com/mcgeezy/relaytv/releases/download/${tag}/relaytv-${tag}-${arch}.flatpak"; flatpak install --user -y "$tmp"; rm -f "$tmp"'
-```
-
-Then run:
-
-```bash
+flatpak install --user ./relaytv-vX.Y.Z-x86_64.flatpak
 flatpak run io.github.mcgeezy.relaytv
 ```
 
