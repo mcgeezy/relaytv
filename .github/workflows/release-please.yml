@@ -109,7 +109,7 @@ jobs:
           platforms: arm64
 
       - name: Build Flatpak bundle
-        uses: flathub-infra/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6.7
         with:
           bundle: relaytv-${{ needs.release-please.outputs.tag_name }}-${{ matrix.arch }}.flatpak
           manifest-path: packaging/flatpak/io.github.mcgeezy.relaytv.yml
