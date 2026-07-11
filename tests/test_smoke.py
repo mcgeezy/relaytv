@@ -328,6 +328,49 @@ def test_entrypoint_preserves_explicit_pi_mpv_args(monkeypatch: pytest.MonkeyPat
     assert env["RELAYTV_QT_SHELL_MPV_ARGS"] == ""
 
 
+def test_entrypoint_state_dir_precedence() -> None:
+    assert container_entrypoint._state_dir({"RELAYTV_STATE_DIR": "/var/lib/relaytv"}) == Path("/var/lib/relaytv")
+    assert container_entrypoint._state_dir({"BRAVECAST_STATE_DIR": "/legacy"}) == Path("/legacy")
+    assert container_entrypoint._state_dir(
+        {"RELAYTV_STATE_DIR": "/new", "BRAVECAST_STATE_DIR": "/legacy"}
+    ) == Path("/new")
+    assert container_entrypoint._state_dir({}) == Path("/data")
+    assert container_entrypoint._state_dir({"RELAYTV_STATE_DIR": "  "}) == Path("/data")
+
+
+def test_entrypoint_brand_asset_seed_honors_state_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("RELAYTV_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("BRAVECAST_STATE_DIR", raising=False)
+
+    container_entrypoint._sync_legacy_brand_assets()
+
+    assets = tmp_path / "assets"
+    assert assets.is_dir()
+    assert (assets / "logo.svg").is_file()
+
+
+def test_entrypoint_ytdlp_update_state_path_anchors_at_state_dir() -> None:
+    env = {"RELAYTV_STATE_DIR": "/var/lib/relaytv"}
+    assert container_entrypoint._ytdlp_update_state_path(env) == Path(
+        "/var/lib/relaytv/.relaytv-ytdlp-update.json"
+    )
+    env["RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE"] = "custom.json"
+    assert container_entrypoint._ytdlp_update_state_path(env) == Path("/var/lib/relaytv/custom.json")
+    env["RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE"] = "/abs/state.json"
+    assert container_entrypoint._ytdlp_update_state_path(env) == Path("/abs/state.json")
+    assert container_entrypoint._ytdlp_update_state_path({}) == Path("/data/.relaytv-ytdlp-update.json")
+
+
+def test_entrypoint_server_port_honors_relaytv_port() -> None:
+    assert container_entrypoint._server_port({}) == 8787
+    assert container_entrypoint._server_port({"RELAYTV_PORT": "8790"}) == 8790
+    assert container_entrypoint._server_port({"RELAYTV_PORT": "bogus"}) == 8787
+    assert container_entrypoint._server_port({"RELAYTV_PORT": "0"}) == 8787
+    assert container_entrypoint._server_port({"RELAYTV_PORT": "70000"}) == 8787
+
+
 def test_entrypoint_enables_headless_remote_from_mode() -> None:
     env = {"RELAYTV_MODE": "headless"}
 

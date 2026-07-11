@@ -212,7 +212,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_PLAYBACK_START_TIMEOUT_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_TRANSITION_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYER_BACKEND` | `player.py` | - | static env |
-| `RELAYTV_PORT` | `discovery_mdns.py` | - | static env |
+| `RELAYTV_PORT` | `container_entrypoint.py`<br>`discovery_mdns.py` | - | entrypoint input |
 | `RELAYTV_QT_AUDIO_RECOVERY_COOLDOWN` | `player.py` | - | static env |
 | `RELAYTV_QT_AUDIO_WATCHDOG_INTERVAL` | `player.py` | - | static env |
 | `RELAYTV_QT_CURSOR_AUTOHIDE` | `qt_shell_app.py` | - | child process input |
@@ -283,7 +283,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_SPLASH_ARGS` | `player.py` | - | static env |
 | `RELAYTV_SPLASH_IMAGE` | `player.py` | - | static env |
 | `RELAYTV_SPLASH_X11` | `player.py` | - | static env |
-| `RELAYTV_STATE_DIR` | `state.py` | - | static env |
+| `RELAYTV_STATE_DIR` | `container_entrypoint.py`<br>`state.py` | - | entrypoint input |
 | `RELAYTV_STATIC_DIR` | `routes/assets.py` | - | static env |
 | `RELAYTV_STATUS_INCLUDE_MPV_LOG` | `routes/__init__.py` | - | static env |
 | `RELAYTV_SUB_LANG` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |

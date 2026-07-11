@@ -35,10 +35,17 @@ def _wait_for_socket(path: Path, timeout_sec: float = 12.0) -> bool:
     return path.exists()
 
 
+def _state_dir(env: dict[str, str] | None = None) -> Path:
+    """Resolve the persistent state dir with the same precedence as state.py."""
+    src = env if env is not None else os.environ
+    raw = (src.get("RELAYTV_STATE_DIR") or src.get("BRAVECAST_STATE_DIR") or "/data").strip()
+    return Path(raw or "/data")
+
+
 def _sync_legacy_brand_assets() -> None:
-    """Ensure legacy /data/assets files exist when /data is a bind-mounted volume."""
-    src_dir = Path("/app/relaytv_app/static/brand")
-    dst_dir = Path("/data/assets")
+    """Ensure legacy <state>/assets files exist when the state dir is a mounted volume."""
+    src_dir = Path(__file__).resolve().parent / "static" / "brand"
+    dst_dir = _state_dir() / "assets"
     if not src_dir.is_dir():
         return
     try:
@@ -172,6 +179,15 @@ def _yt_dlp_version(env: dict[str, str]) -> str:
     return (p.stdout or "").strip().splitlines()[0] if (p.stdout or "").strip() else ""
 
 
+def _ytdlp_update_state_path(env: dict[str, str]) -> Path:
+    state_dir = _state_dir(env)
+    raw = (env.get("RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE") or "").strip()
+    if not raw:
+        return state_dir / ".relaytv-ytdlp-update.json"
+    path = Path(raw)
+    return path if path.is_absolute() else state_dir / path
+
+
 def _yt_dlp_auto_update(env: dict[str, str]) -> None:
     if not _is_true(env.get("RELAYTV_YTDLP_AUTO_UPDATE"), False):
         return
@@ -188,10 +204,7 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
     """
     interval_hours = max(0.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 24.0))
     timeout_sec = max(10.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC", 180.0))
-    state_path_raw = (env.get("RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE") or "/data/.relaytv-ytdlp-update.json").strip()
-    state_path = Path(state_path_raw)
-    if not state_path.is_absolute():
-        state_path = Path("/data") / state_path
+    state_path = _ytdlp_update_state_path(env)
 
     now = float(time.time())
     state = _read_json_file(state_path)
@@ -401,11 +414,22 @@ def _terminate(proc: subprocess.Popen | None) -> None:
             pass
 
 
+def _server_port(env: dict[str, str] | None = None) -> int:
+    """Resolve the HTTP port for the default uvicorn args (discovery_mdns reads
+    the same variable so advertised and bound ports stay in sync)."""
+    src = env if env is not None else os.environ
+    try:
+        port = int(float((src.get("RELAYTV_PORT") or "").strip() or "8787"))
+    except Exception:
+        return 8787
+    return port if 0 < port < 65536 else 8787
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
     args = list(argv if argv is not None else sys.argv[1:])
     if not args:
-        args = ["uvicorn", "relaytv_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
+        args = ["uvicorn", "relaytv_app.main:app", "--host", "0.0.0.0", "--port", str(_server_port())]
     if args and args[0] == "uvicorn" and (not access_logging_enabled()) and "--no-access-log" not in args:
         args.append("--no-access-log")
 
