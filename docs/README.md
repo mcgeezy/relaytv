@@ -5,6 +5,7 @@ Use this directory as a small operator/product doc set for the public release br
 ## Primary Docs
 
 - `INSTALL.md`: installation, first boot, and environment defaults
+- `FLATPAK_OPERATIONS.md`: host-native Flatpak install, permissions, configuration, and limitations
 - `API.md`: HTTP endpoint reference
 - `JELLYFIN_OPERATIONS.md`: Jellyfin runtime config, verification, troubleshooting
 - `NATIVE_RUNTIME_OPERATIONS.md`: runtime operations, readiness checks, logging, and soak workflow

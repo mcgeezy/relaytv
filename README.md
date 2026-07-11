@@ -45,6 +45,18 @@ docker compose up -d --build
 ./scripts/doctor.sh
 ```
 
+### Flatpak (no Docker)
+
+Each GitHub Release also ships a host-native Flatpak bundle:
+
+```bash
+flatpak install --user ./relaytv-vX.Y.Z-x86_64.flatpak
+flatpak run io.github.mcgeezy.relaytv
+```
+
+See [docs/FLATPAK_OPERATIONS.md](docs/FLATPAK_OPERATIONS.md) for permissions,
+configuration, autostart, and current limitations.
+
 ---
 
 ## Common ways people use RelayTV

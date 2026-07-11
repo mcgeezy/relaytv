@@ -4,6 +4,11 @@ RelayTV supports a native Qt desktop runtime by default. Rollback for a broken
 runtime rollout is a tagged-baseline redeploy, not a parallel compatibility
 runtime.
 
+Docker is the primary install path (below). A host-native Flatpak bundle also
+ships with each GitHub Release — see
+[FLATPAK_OPERATIONS.md](FLATPAK_OPERATIONS.md) for that path and its current
+limitations.
+
 Supported default product profiles:
 
 - Wayland desktop: native Qt

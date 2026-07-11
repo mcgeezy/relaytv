@@ -48,6 +48,22 @@ hardware acceleration, audio, CEC, and diagnostics. Examples include:
 The generated inventory records installed Debian packages and versions when run
 inside the container or another Debian-based runtime environment.
 
+## Flatpak Bundle Components
+
+The Flatpak bundle (`packaging/flatpak/`) builds and redistributes these
+components on top of the `org.freedesktop.Platform` runtime, alongside the
+Python packages listed above:
+
+- `mpv` / `libmpv` (GPL-2.0-or-later / LGPL-2.1-or-later)
+- `libplacebo` (LGPL-2.1-or-later)
+- `libass` (ISC)
+- `LuaJIT` (openresty/luajit2 fork, MIT)
+- `libcec` and `p8-platform` (GPL-2.0-or-later with Pulse-Eight dual-license terms)
+- `deno` (MIT)
+
+FFmpeg, Mesa, Qt platform libraries, and other system components come from the
+freedesktop runtime and are licensed and distributed by that project.
+
 ## Bundled Assets
 
 RelayTV includes project artwork and UI assets under:
