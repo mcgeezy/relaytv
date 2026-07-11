@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mcgeezy.relaytv</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>RelayTV</name>
+  <summary>Local-first TV playback and automation endpoint</summary>
+  <description>
+    <p>
+      RelayTV turns a Linux box plugged into a TV into a local-first playback
+      appliance: a web UI and HTTP API drive fullscreen mpv playback of
+      YouTube, Jellyfin/Emby, and direct media URLs, with queueing, HDMI-CEC
+      TV control, and mDNS discovery on the local network.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.mcgeezy.relaytv.desktop</launchable>
+  <url type="homepage">https://github.com/mcgeezy/relaytv</url>
+  <url type="bugtracker">https://github.com/mcgeezy/relaytv/issues</url>
+  <developer id="io.github.mcgeezy">
+    <name>mcgeezy</name>
+  </developer>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.5.0" date="2026-07-05"/>
+  </releases>
+</component>

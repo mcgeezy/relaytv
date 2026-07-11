@@ -1,0 +1,202 @@
+app-id: io.github.mcgeezy.relaytv
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: relaytv-launch.sh
+separate-locales: false
+
+finish-args:
+  # HTTP API on RELAYTV_PORT (default 8787) + zeroconf/mDNS multicast; host netns.
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  # /dev/dri (GPU decode), /dev/snd (ALSA enumeration/output), /dev/cec* (HDMI-CEC).
+  - --device=all
+  # Device metadata used by devices.py enumeration.
+  - --filesystem=/run/udev:ro
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/man
+  - /share/doc
+  - '*.la'
+  - '*.a'
+
+modules:
+  - name: p8-platform
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      # 2016-era CMakeLists predates the minimum policy CMake 4.x accepts.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    sources:
+      - type: archive
+        url: https://github.com/Pulse-Eight/platform/archive/refs/tags/p8-platform-2.1.0.1.tar.gz
+        sha256: 064f8d2c358895c7e0bea9ae956f8d46f3f057772cb97f2743a11d478a0f68a0
+
+  - name: libcec
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_PREFIX_PATH=/app
+      - -DSKIP_PYTHON_WRAPPER=ON
+    sources:
+      - type: archive
+        url: https://github.com/Pulse-Eight/libcec/archive/refs/tags/libcec-7.1.1.tar.gz
+        sha256: 7f7da95a4c1e7160d42ca37a3ac80cf6f389b317e14816949e0fa5e2edf4cc64
+
+  # mpv's ytdl_hook (all YouTube live/post-live playback) is a Lua script.
+  - name: luajit
+    buildsystem: simple
+    build-commands:
+      - make -j"$FLATPAK_BUILDER_N_JOBS" PREFIX=/app amalg
+      - make PREFIX=/app install
+    sources:
+      - type: archive
+        url: https://github.com/openresty/luajit2/archive/refs/tags/v2.1-20250826.tar.gz
+        sha256: 5a49743ad6ce4b7f19aac71b55a08052c1feb62750f051982082c12bf62f39c0
+
+  - name: libass
+    buildsystem: autotools
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        sha256: 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc
+
+  # Build-time dependency of libplacebo's GLSL preprocessor.
+  - name: python3-jinja2
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - pip3 install --prefix=/app --no-cache-dir jinja2
+    sources: []
+
+  - name: libplacebo
+    buildsystem: meson
+    build-options:
+      env:
+        PYTHONPATH: /app/lib/python3.13/site-packages
+    config-opts:
+      - -Ddemos=false
+      - -Dtests=false
+    sources:
+      - type: archive
+        url: https://github.com/haasn/libplacebo/archive/refs/tags/v7.360.1.tar.gz
+        sha256: d05fdf90bea2f629eaa2d115e909fd356388ac639e54f77b87a018a6d76224bd
+      # The glad submodule pinned by the v7.360.1 tag, unpacked in place so no
+      # git/submodule access is needed at build time.
+      - type: archive
+        url: https://github.com/Dav1dde/glad/archive/73db193f853e2ee079bf3ca8a64aa2eaf6459043.tar.gz
+        sha256: 33dbeae44d8315ece57e14eba4b1b4a02ac5406d1c4f49cd20048c91522a6b9a
+        dest: 3rdparty/glad
+
+  # FFmpeg libs, headers, and the ffmpeg/ffprobe CLIs (thumb_cache,
+  # video_profile) come from the freedesktop runtime itself.
+
+  # Both the mpv binary (subprocess fallback) and libmpv (Qt shell ctypes).
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dlua=luajit
+    sources:
+      - type: archive
+        url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
+        sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+
+  # yt-dlp's sandboxed JavaScript runtime for YouTube challenge solving,
+  # pinned to the same version + checksums as app/Dockerfile.
+  - name: deno
+    buildsystem: simple
+    build-commands:
+      - python3 -m zipfile -e deno.zip /app/bin/
+      - chmod 0755 /app/bin/deno
+    sources:
+      - type: file
+        url: https://github.com/denoland/deno/releases/download/v2.9.1/deno-x86_64-unknown-linux-gnu.zip
+        sha256: 710c54d63477d1100844ef4818f19507ce0dbf40510903b1d883f19e394446a2
+        dest-filename: deno.zip
+        only-arches: [x86_64]
+      - type: file
+        url: https://github.com/denoland/deno/releases/download/v2.9.1/deno-aarch64-unknown-linux-gnu.zip
+        sha256: 0a60d079fa79635a59803074dbbfe86ccc35746dc2c4f8d73f2e50338b3283a9
+        dest-filename: deno.zip
+        only-arches: [aarch64]
+
+  # PySide6's Qt libraries link libgssapi_krb5 and libpcsclite, which the
+  # freedesktop runtime does not ship — bundle both client libraries.
+  - name: krb5
+    subdir: src
+    config-opts:
+      - --disable-static
+      - --disable-rpath
+      - --localstatedir=/app/var/lib
+    cleanup:
+      - /bin
+      - /share/et
+      - /share/examples
+      - /var
+    sources:
+      - type: archive
+        url: https://kerberos.org/dist/krb5/1.22/krb5-1.22.2.tar.gz
+        sha256: 3243ffbc8ea4d4ac22ddc7dd2a1dc54c57874c40648b60ff97009763554eaf13
+
+  - name: pcsc-lite
+    buildsystem: meson
+    config-opts:
+      - -Dlibudev=false
+      - -Dlibusb=false
+      - -Dpolkit=false
+      - -Dusb=false
+      - -Dserial=false
+      # Avoids the hard `systemd` pkg-config dependency for unit-dir lookup.
+      - -Dlibsystemd=false
+    cleanup:
+      - /bin
+      - /sbin
+      - /etc
+      - /lib/systemd
+    sources:
+      - type: archive
+        url: https://pcsclite.apdu.fr/files/pcsc-lite-2.5.1.tar.xz
+        sha256: bfcfe38a20afc49849c6bf55325e38f449fc4b26d3923fdc32b969ae41a8741b
+
+  # Pinned Python deps (PySide6 wheels bundle Qt6 incl. WebEngine). Network is
+  # enabled for pip; move to flatpak-pip-generator lockfiles for Flathub.
+  - name: python-deps
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - pip3 install --prefix=/app --no-cache-dir -r requirements.txt
+    sources:
+      - type: file
+        path: requirements.txt
+
+  - name: relaytv
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/relaytv
+      - cp -r app/relaytv_app /app/relaytv/
+      - install -Dm0755 packaging/flatpak/relaytv-launch.sh /app/bin/relaytv-launch.sh
+      - install -Dm0644 packaging/flatpak/io.github.mcgeezy.relaytv.desktop
+        /app/share/applications/io.github.mcgeezy.relaytv.desktop
+      - install -Dm0644 packaging/flatpak/io.github.mcgeezy.relaytv.metainfo.xml
+        /app/share/metainfo/io.github.mcgeezy.relaytv.metainfo.xml
+      - install -Dm0644 app/relaytv_app/static/brand/logo.svg
+        /app/share/icons/hicolor/scalable/apps/io.github.mcgeezy.relaytv.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .flatpak-builder
+          - build-dir
+          - data

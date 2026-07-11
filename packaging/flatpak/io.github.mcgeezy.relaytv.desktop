@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RelayTV
+Comment=Local-first TV playback and automation endpoint
+Exec=relaytv-launch.sh
+Icon=io.github.mcgeezy.relaytv
+Terminal=false
+Categories=AudioVideo;Video;Player;Network;
+Keywords=tv;cast;mpv;youtube;jellyfin;
