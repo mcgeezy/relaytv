@@ -59,6 +59,7 @@ Python packages listed above:
 - `libass` (ISC)
 - `LuaJIT` (openresty/luajit2 fork, MIT)
 - `libcec` and `p8-platform` (GPL-2.0-or-later with Pulse-Eight dual-license terms)
+- `alsa-utils` (GPL-2.0-or-later)
 - `deno` (MIT)
 
 FFmpeg, Mesa, Qt platform libraries, and other system components come from the

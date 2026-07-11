@@ -129,6 +129,22 @@ modules:
         dest-filename: deno.zip
         only-arches: [aarch64]
 
+  # devices.detect_audio_device() enumerates HDMI outputs via `aplay -L`;
+  # without it mpv falls back to the session default sink, which on most
+  # TV appliances is not the HDMI output.
+  - name: alsa-utils
+    buildsystem: autotools
+    config-opts:
+      - --disable-alsamixer
+      - --disable-xmlto
+      - --disable-nls
+      - --with-udev-rules-dir=/app/lib/udev/rules.d
+    sources:
+      # Keep in lockstep with the runtime's alsa-lib version.
+      - type: archive
+        url: https://www.alsa-project.org/files/pub/utils/alsa-utils-1.2.14.tar.bz2
+        sha256: 0794c74d33fed943e7c50609c13089e409312b6c403d6ae8984fc429c0960741
+
   # PySide6's Qt libraries link libgssapi_krb5 and libpcsclite, which the
   # freedesktop runtime does not ship — bundle both client libraries.
   - name: krb5

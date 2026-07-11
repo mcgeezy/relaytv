@@ -67,6 +67,11 @@ RELAYTV_MODE=wayland
 `RELAYTV_PORT` changes the HTTP port (default 8787); the launcher re-derives
 the Qt overlay and idle URLs automatically.
 
+If audio lands on the wrong output (e.g. a USB DAC instead of the TV), pin
+the HDMI sink in the web UI's audio-device setting or via the API — with the
+device on auto, RelayTV prefers an HDMI ALSA output detected through the
+bundled `aplay`, falling back to the session default sink.
+
 ## Data locations
 
 Everything persistent lives in the app's private data dir on the host:
@@ -101,10 +106,17 @@ systemd user unit ordered after the graphical session:
 Description=RelayTV
 After=graphical-session.target
 PartOf=graphical-session.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
-ExecStart=flatpak run io.github.mcgeezy.relaytv
+ExecStart=/usr/bin/flatpak run io.github.mcgeezy.relaytv
+# flatpak instances live in their own transient scope outside this service's
+# cgroup; without an explicit kill, stop/restart leaves the old instance
+# running and the unit crash-loops on the busy port.
+ExecStop=/usr/bin/flatpak kill io.github.mcgeezy.relaytv
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=graphical-session.target
