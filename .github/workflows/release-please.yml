@@ -76,7 +76,77 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Publish GitHub Release after image push
+  release-flatpak:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+
+      - name: Stamp release version into metainfo
+        run: |
+          sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"/>|<release version=\"${{ needs.release-please.outputs.version }}\" date=\"$(date -u +%F)\"/>|" \
+            packaging/flatpak/io.github.mcgeezy.relaytv.metainfo.xml
+
+      - name: Install docker for QEMU setup
+        if: matrix.arch == 'aarch64'
+        run: dnf -y install docker
+
+      - name: Set up QEMU
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Build Flatpak bundle
+        uses: flathub-infra/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: relaytv-${{ needs.release-please.outputs.tag_name }}-${{ matrix.arch }}.flatpak
+          manifest-path: packaging/flatpak/io.github.mcgeezy.relaytv.yml
+          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          arch: ${{ matrix.arch }}
+          upload-artifact: false
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relaytv-flatpak-${{ matrix.arch }}
+          path: relaytv-${{ needs.release-please.outputs.tag_name }}-${{ matrix.arch }}.flatpak
+          if-no-files-found: error
+
+  publish-release:
+    needs: [release-please, release-image, release-flatpak]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+
+      - name: Download Flatpak bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: relaytv-flatpak-*
+          merge-multiple: true
+
+      - name: Attach Flatpak bundles to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" relaytv-*.flatpak --clobber
+
+      - name: Publish GitHub Release after image push and bundle upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ needs.release-please.outputs.tag_name }}" --draft=false

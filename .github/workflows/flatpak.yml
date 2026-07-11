@@ -1,0 +1,30 @@
+name: flatpak
+
+on:
+  pull_request:
+    paths:
+      - 'packaging/flatpak/**'
+      - 'app/**'
+      - '.github/workflows/flatpak.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flatpak-bundle:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build Flatpak bundle
+        uses: flathub-infra/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: relaytv-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.mcgeezy.relaytv.yml
+          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          arch: x86_64
+          upload-artifact: true
