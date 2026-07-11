@@ -328,6 +328,31 @@ def test_entrypoint_preserves_explicit_pi_mpv_args(monkeypatch: pytest.MonkeyPat
     assert env["RELAYTV_QT_SHELL_MPV_ARGS"] == ""
 
 
+def test_qt_shell_ensures_c_numeric_locale_for_libmpv() -> None:
+    import locale
+
+    qt_shell_app._ensure_c_numeric_locale()
+    assert locale.setlocale(locale.LC_NUMERIC) == "C"
+    assert locale.localeconv()["decimal_point"] == "."
+
+
+def test_flatpak_launcher_disables_native_qt_toasts_by_default() -> None:
+    text = (ROOT_DIR / "packaging/flatpak/relaytv-launch.sh").read_text()
+
+    assert 'RELAYTV_QT_NATIVE_TOASTS="${RELAYTV_QT_NATIVE_TOASTS:-0}"' in text
+    assert 'RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL="${RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL:-0}"' in text
+
+
+def test_qt_native_toasts_stack_inside_main_window_for_libmpv() -> None:
+    text = (ROOT_DIR / "app/relaytv_app/qt_shell_app.py").read_text()
+
+    assert "elif use_libmpv or overlay_parent_is_main_window:" in text
+    assert "native_toast_parent_is_main_window = True" in text
+    assert "native_toast_host.setAttribute(Qt.WA_AlwaysStackOnTop, True)" in text
+    assert "def fit_to_bounds(self, bounds) -> None:" in text
+    assert "native_toast_host.fit_to_bounds(win.rect())" in text
+
+
 def test_entrypoint_state_dir_precedence() -> None:
     assert container_entrypoint._state_dir({"RELAYTV_STATE_DIR": "/var/lib/relaytv"}) == Path("/var/lib/relaytv")
     assert container_entrypoint._state_dir({"BRAVECAST_STATE_DIR": "/legacy"}) == Path("/legacy")

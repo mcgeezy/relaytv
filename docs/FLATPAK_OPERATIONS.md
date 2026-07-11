@@ -95,6 +95,20 @@ breaks between releases, install the bundle from a newer release. Setting
 installs land in the writable app HOME and usually work, but this path is
 unsupported in the Flatpak.
 
+## Toast overlay mode
+
+Flatpak defaults toast notifications to the browser overlay:
+
+```sh
+RELAYTV_QT_NATIVE_TOASTS=0
+RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL=0
+```
+
+Native Qt toast surfaces remain override-only because both top-level and child
+Qt surfaces can disturb fullscreen compositor state or stall embedded libmpv
+video on Wayland. Set `RELAYTV_QT_NATIVE_TOASTS=1` only for diagnostics. The
+Flatpak does not fall back to mpv OSD notifications.
+
 ## Autostart on boot
 
 The flatpak does not install a service. For appliance-style bring-up, create a

@@ -36,6 +36,12 @@ fi
 # provides the confinement (standard for pip-wheel QtWebEngine in Flatpak).
 export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox}"
 
+# Flatpak Wayland/libmpv stacks can freeze or black out video when a native Qt
+# toast surface is raised over playback. Keep native toasts override-only and
+# use the browser overlay notification path by default.
+export RELAYTV_QT_NATIVE_TOASTS="${RELAYTV_QT_NATIVE_TOASTS:-0}"
+export RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL="${RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL:-0}"
+
 # App package plus pip-installed deps (path varies with the runtime Python).
 SITE_PACKAGES="$(ls -d /app/lib/python3.*/site-packages 2>/dev/null | head -n 1 || true)"
 export PYTHONPATH="/app/relaytv${SITE_PACKAGES:+:$SITE_PACKAGES}${PYTHONPATH:+:$PYTHONPATH}"

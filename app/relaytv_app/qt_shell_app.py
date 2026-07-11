@@ -662,6 +662,16 @@ _MPV_FORMAT_NODE_ARRAY = 7
 _MPV_FORMAT_NODE_MAP = 8
 
 
+def _ensure_c_numeric_locale() -> None:
+    """Force LC_NUMERIC=C so mpv_create() accepts the process locale."""
+    try:
+        import locale
+
+        locale.setlocale(locale.LC_NUMERIC, "C")
+    except Exception:
+        pass
+
+
 def _find_libmpv() -> str | None:
     p = ctypes.util.find_library("mpv")
     if p:
@@ -1056,6 +1066,11 @@ class _QtLibMpvPlayer:
         ytdl_raw_options: str | None,
     ) -> None:
         self._bind_api()
+        # Qt adopts the session locale at QApplication init; libmpv refuses to
+        # create a handle unless LC_NUMERIC is "C" (hosts with LANG set, e.g.
+        # desktop sessions the Flatpak runs in, hit this; containers without
+        # LANG never did).
+        _ensure_c_numeric_locale()
         handle = ctypes.c_void_p(self._lib.mpv_create())
         if not handle:
             raise RuntimeError("mpv_create returned null handle")
@@ -1320,6 +1335,7 @@ def main(argv: list[str] | None = None) -> int:
             self._net = QNetworkAccessManager(self)
             self._toasts: list[QWidget] = []
             self._replies: set[object] = set()
+            self._position = "top-left"
             self.setAttribute(Qt.WA_TranslucentBackground, True)
             self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             self.setStyleSheet("background: transparent;")
@@ -1346,6 +1362,26 @@ def main(argv: list[str] | None = None) -> int:
 
         def _insert_index_for_position(self, position: str) -> int:
             return self._layout.count() if str(position or "").startswith("bottom-") else 0
+
+        def fit_to_bounds(self, bounds) -> None:
+            if not self._toasts:
+                return
+            try:
+                self.adjustSize()
+                hint = self.sizeHint()
+                width = max(1, min(int(bounds.width()), int(hint.width())))
+                height = max(1, min(int(bounds.height()), int(hint.height())))
+                position = self._position_name({"position": self._position})
+                if position.endswith("right"):
+                    x = max(0, int(bounds.width()) - width)
+                elif position.endswith("center"):
+                    x = max(0, (int(bounds.width()) - width) // 2)
+                else:
+                    x = 0
+                y = max(0, int(bounds.height()) - height) if position.startswith("bottom-") else 0
+                self.setGeometry(x, y, width, height)
+            except Exception:
+                pass
 
         def _icon_text(self, payload: dict[str, object]) -> str:
             icon = str(payload.get("icon") or "").strip().lower()
@@ -1452,6 +1488,10 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             if not self._toasts:
                 self.hide()
+            else:
+                parent = self.parentWidget()
+                if parent is not None:
+                    self.fit_to_bounds(parent.rect())
 
         def clear_all(self) -> None:
             for widget in list(self._toasts):
@@ -1477,6 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
             if not text:
                 return
             position = self._position_name(payload)
+            self._position = position
             item_alignment = self._layout_alignment_for_position(position)
             self._layout.setAlignment(item_alignment)
             frame = QFrame(self)
@@ -1520,6 +1561,9 @@ def main(argv: list[str] | None = None) -> int:
             while len(self._toasts) > 4:
                 self._remove_toast(self._toasts[-1])
             self.show()
+            parent = self.parentWidget()
+            if parent is not None:
+                self.fit_to_bounds(parent.rect())
             self.raise_()
             ttl_sec = max(0.8, float(payload.get("duration") or 4.0))
             ttl_ms = min(30000, max(800, int(ttl_sec * 1000.0)))
@@ -2187,6 +2231,7 @@ def main(argv: list[str] | None = None) -> int:
     native_toast_toplevel = False
     native_idle_toplevel = False
     overlay_parent_is_main_window = False
+    native_toast_parent_is_main_window = False
     overlay_raise_timer = None
     overlay_last_rect = None
     overlay_load_deferred: list[callable] = []
@@ -2320,7 +2365,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if native_toasts_enabled:
         native_toast_toplevel = overlay_win is None and _native_overlay_toasts_use_toplevel(use_libmpv=use_libmpv)
-        toast_parent = None if native_toast_toplevel else (overlay_win if overlay_win is not None else (win if overlay_parent_is_main_window else video_widget))
+        if native_toast_toplevel:
+            toast_parent = None
+        elif overlay_win is not None:
+            toast_parent = overlay_win
+        elif use_libmpv or overlay_parent_is_main_window:
+            toast_parent = win
+            native_toast_parent_is_main_window = True
+        else:
+            toast_parent = video_widget
         native_toast_host = _NativeToastLayer(toast_parent, overlay_url=args.overlay_url)
         if native_toast_toplevel:
             toast_flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
@@ -2332,6 +2385,11 @@ def main(argv: list[str] | None = None) -> int:
             native_toast_host.setAttribute(Qt.WA_TranslucentBackground, True)
             if not use_wayland_window_flags:
                 native_toast_host.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        else:
+            try:
+                native_toast_host.setAttribute(Qt.WA_AlwaysStackOnTop, True)
+            except Exception:
+                pass
         native_toast_host.hide()
 
     if native_idle_enabled:
@@ -2361,8 +2419,9 @@ def main(argv: list[str] | None = None) -> int:
                 overlay_win.setGeometry(rect)
                 overlay_last_rect = rect
             if native_toast_host is not None:
-                native_toast_host.setGeometry(overlay_win.rect())
-                native_toast_host.raise_()
+                if native_toast_host.isVisible():
+                    native_toast_host.fit_to_bounds(overlay_win.rect())
+                    native_toast_host.raise_()
             return
         target_rect = win.rect() if overlay_parent_is_main_window else video_widget.rect()
         if overlay is not None:
@@ -2372,9 +2431,12 @@ def main(argv: list[str] | None = None) -> int:
         if native_toast_host is not None:
             if native_toast_toplevel:
                 native_toast_host.setGeometry(win.frameGeometry())
+            elif native_toast_parent_is_main_window:
+                native_toast_host.fit_to_bounds(win.rect())
             else:
-                native_toast_host.setGeometry(target_rect)
-            native_toast_host.raise_()
+                native_toast_host.fit_to_bounds(target_rect)
+            if native_toast_host.isVisible():
+                native_toast_host.raise_()
         if native_idle_host is not None:
             if native_idle_toplevel:
                 native_idle_host.setGeometry(win.frameGeometry())
@@ -2433,12 +2495,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if overlay_win is not None:
                 overlay_win.raise_()
-                if native_toast_host is not None:
+                if native_toast_host is not None and native_toast_host.isVisible():
                     native_toast_host.raise_()
                 return
             if overlay is not None:
                 overlay.raise_()
-            if native_toast_host is not None:
+            if native_toast_host is not None and native_toast_host.isVisible():
                 native_toast_host.raise_()
             if native_idle_host is not None and native_idle_host.isVisible():
                 native_idle_host.raise_()
