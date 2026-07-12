@@ -3115,6 +3115,35 @@ def test_auto_next_skips_bot_checked_video_instead_of_retrying(monkeypatch: pyte
     assert toasted == [bot_item]
 
 
+def test_auto_next_skips_post_live_processing_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    processing = {'url': 'https://youtube.com/watch?v=processing', 'title': 'Processing Live'}
+    ready = {'url': 'https://example.com/ready.mp4', 'title': 'Ready'}
+    played: list[dict] = []
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [processing, ready], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+
+    def fake_play(item, **kwargs):
+        if item is processing:
+            raise player.YouTubePostLiveProcessingError('Processing Live')
+        played.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert played == [ready]
+    assert player.state.QUEUE == []
+
+
 def test_auto_next_drops_bot_checked_last_item_without_requeue(monkeypatch: pytest.MonkeyPatch) -> None:
     bot_item = {'url': 'https://www.youtube.com/watch?v=botcheck', 'title': 'Bot Checked'}
 
@@ -3183,6 +3212,19 @@ def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyP
     assert toasts[0]['level'] == 'warn'
 
 
+def test_post_live_processing_toast_has_blank_line_and_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasts: list[str] = []
+    monkeypatch.setattr(player, '_notify_warn_toast', lambda text: toasts.append(text))
+
+    player._notify_post_live_processing(
+        {'url': 'https://youtube.com/watch?v=processing', 'title': 'Processing Live'}
+    )
+
+    assert toasts == [
+        'YouTube is processing this live stream. Replay is not currently available.\n\nProcessing Live'
+    ]
+
+
 def test_restart_current_keeps_playback_when_bot_check_blocks_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     toasts: list[str] = []
     monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
@@ -3208,6 +3250,47 @@ def test_restart_current_keeps_playback_when_bot_check_blocks_resolve(monkeypatc
     assert len(toasts) == 1
     assert 'bot check' in toasts[0].lower()
     assert 'Current Video' in toasts[0]
+
+
+def test_restart_current_keeps_playback_when_post_live_is_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toasted: list[object] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://youtube.com/watch?v=processing', 'title': 'Processing Live'},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        player,
+        'resolve_streams',
+        lambda url: resolver.ResolvedStreams(
+            stream=url,
+            transport='mpv_ytdl',
+            live_status='post_live',
+        ),
+    )
+    monkeypatch.setattr(player, '_notify_post_live_processing', lambda item: toasted.append(item))
+    monkeypatch.setattr(
+        player,
+        'stop_mpv',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must keep playback running')),
+    )
+    monkeypatch.setattr(
+        player,
+        'play_item',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must not replay post-live')),
+    )
+
+    assert player.restart_current() is None
+    assert toasted == [
+        {
+            'url': 'https://youtube.com/watch?v=processing',
+            'title': 'Processing Live',
+        }
+    ]
 
 
 def test_restart_current_resolves_before_stopping_and_reuses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3291,7 +3374,8 @@ def test_resolver_defers_postlive_youtube_to_mpv_ytdl_hook(monkeypatch: pytest.M
         'post_live\n',
     )
 
-    stream, audio = resolver.resolve_streams_ytdlp(url)
+    result = resolver.resolve_streams_ytdlp(url)
+    stream, audio = result
 
     # Segmented live formats 204 without per-segment params, so the page URL
     # goes to mpv and its yt-dlp hook drives the manifest.
@@ -3300,6 +3384,62 @@ def test_resolver_defers_postlive_youtube_to_mpv_ytdl_hook(monkeypatch: pytest.M
     assert '--print' in calls[0]
     assert 'live_status' in calls[0]
     assert '-g' not in calls[0]
+    assert result.transport == 'mpv_ytdl'
+    assert result.live_status == 'post_live'
+    assert result.ytdl_format.startswith('bestvideo[')
+    assert result.ytdl_format != 'auto'
+    assert 'cookies=' not in result.ytdl_raw_options
+
+
+def test_resolver_live_default_candidate_does_not_pass_auto_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = 'https://www.youtube.com/watch?v=postlive-default'
+    _patch_resolver_ytdlp_env(
+        monkeypatch,
+        'https://segments.example/videoplayback?a=1\npost_live\n',
+    )
+    monkeypatch.setattr(
+        'relaytv_app.video_profile.get_profile',
+        lambda: {'decode_profile': 'default', 'display_cap_height': 1080, 'av1_allowed': True},
+    )
+
+    result = resolver.resolve_streams_ytdlp(url)
+
+    # An empty candidate means yt-dlp's default selection. Do not translate
+    # the resolver telemetry label "auto" into the invalid `--format auto`.
+    assert result.ytdl_format == ''
+
+
+def test_resolver_live_handoff_preserves_cookie_and_challenge_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = 'https://www.youtube.com/watch?v=live1'
+    calls = _patch_resolver_ytdlp_env(
+        monkeypatch,
+        'https://segments.example/videoplayback?a=1\nis_live\n',
+    )
+    monkeypatch.setattr(
+        resolver,
+        'build_ytdlp_base_args',
+        lambda: [
+            'yt-dlp',
+            '--cookies',
+            '/data/cookies.txt',
+            '--js-runtimes',
+            'deno',
+            '--no-playlist',
+        ],
+    )
+
+    result = resolver.resolve_streams_ytdlp(url)
+
+    assert tuple(result) == (url, None)
+    assert result.transport == 'mpv_ytdl'
+    assert 'cookies=/data/cookies.txt' in result.ytdl_raw_options
+    assert 'js-runtimes=deno' in result.ytdl_raw_options
+    assert 'remote-components=ejs:github' in result.ytdl_raw_options
+    assert calls
 
 
 def test_resolver_keeps_resolved_urls_for_vod_youtube(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3516,6 +3656,82 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
     assert now['stream'] == 'https://video.example/resolved.mp4'
     assert now['_resolved_stream'] == 'https://video.example/resolved.mp4'
     assert now_values[-1]['_resolved_at'] == 999.0
+
+
+def test_play_item_forwards_live_ytdl_handoff_without_caching_page_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = 'https://youtube.com/watch?v=live1'
+    load_calls: list[dict[str, object]] = []
+    start_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
+    monkeypatch.setattr(player, 'cec_auto_on_switch', lambda cec: False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: False)
+    monkeypatch.setattr(
+        player,
+        '_load_stream_in_existing_mpv',
+        lambda stream_url, audio_url=None, start_pos=None, **kwargs: load_calls.append(
+            {
+                'stream': stream_url,
+                'audio': audio_url,
+                'start_pos': start_pos,
+                **kwargs,
+            }
+        )
+        or False,
+    )
+    monkeypatch.setattr(
+        player,
+        'start_mpv',
+        lambda stream_url, audio_url=None, start_pos=None, **kwargs: start_calls.append(
+            {
+                'stream': stream_url,
+                'audio': audio_url,
+                'start_pos': start_pos,
+                **kwargs,
+            }
+        ),
+    )
+    monkeypatch.setattr(player, '_add_history_entry', lambda now: None)
+    monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda force=False: False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'get_tv_state', lambda: {})
+    monkeypatch.setattr(player.state, 'set_now_playing', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(
+        player,
+        'resolve_streams',
+        lambda requested_url: resolver.ResolvedStreams(
+            stream=requested_url,
+            transport='mpv_ytdl',
+            ytdl_format='best',
+            ytdl_raw_options='cookies=/data/cookies.txt,js-runtimes=deno',
+        ),
+    )
+
+    now = player.play_item(
+        {'url': url, 'title': 'Live stream', 'provider': 'youtube'},
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode='play',
+    )
+
+    expected_handoff = {
+        'stream': url,
+        'audio': None,
+        'start_pos': None,
+        'ytdl_format_override': 'best',
+        'ytdl_raw_options_override': 'cookies=/data/cookies.txt,js-runtimes=deno',
+    }
+    assert load_calls == [expected_handoff]
+    assert start_calls == [expected_handoff]
+    assert now['stream'] == url
+    assert '_resolved_stream' not in now
 
 
 def test_persistable_history_item_keeps_resolved_stream_hint() -> None:

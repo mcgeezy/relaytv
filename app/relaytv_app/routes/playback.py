@@ -325,6 +325,32 @@ def play_now(req: PlayNowReq):
         else:
             now = playback_service.play_now(req.url, use_resolver=True, cec=False, clear_queue=False, mode=(req.reason or "play_now"))
     except Exception as exc:
+        if isinstance(exc, player.YouTubePostLiveProcessingError):
+            try:
+                handoff = playback_service.advance_queue(
+                    mode="play_next",
+                    prefer_playlist_next=False,
+                )
+                now = handoff.get("now_playing") if isinstance(handoff, dict) else None
+            except playback_service.QueueAdvanceEmptyError:
+                player._handle_playback_idle_no_queue()
+                now = None
+            with state.QUEUE_LOCK:
+                qlen = len(state.QUEUE)
+                queue_snapshot = list(state.QUEUE)
+            _ui_event_push_queue(
+                "play_now",
+                queue=queue_snapshot,
+                queue_length=qlen,
+                source="post_live_skip",
+            )
+            return {
+                "ok": True,
+                "action": "skipped_post_live_processing",
+                "now_playing": now,
+                "preserved": preserved,
+                "queue_length": qlen,
+            }
         _rollback_play_now_preserve(preserved)
         if isinstance(exc, player.YouTubeBotCheckError):
             # The 400 detail only reaches the requesting client; the TV

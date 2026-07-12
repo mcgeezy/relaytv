@@ -327,6 +327,35 @@ def test_play_now_bot_check_failure_pushes_warn_toast(monkeypatch) -> None:
     assert toasts[0]["level"] == "warn"
 
 
+def test_play_now_post_live_processing_advances_queue(monkeypatch) -> None:
+    queued = {"url": "https://example.com/next.mp4", "title": "Next Video"}
+    routes.state.QUEUE = [queued]
+
+    def unavailable(*args, **kwargs):
+        raise routes.player.YouTubePostLiveProcessingError("Processing Live")
+
+    def advance(*, mode, prefer_playlist_next):
+        assert mode == "play_next"
+        assert prefer_playlist_next is False
+        routes.state.QUEUE.pop(0)
+        return {"status": "playing_next", "now_playing": queued}
+
+    monkeypatch.setattr(routes.playback_service, "play_now", unavailable)
+    monkeypatch.setattr(routes.playback_service, "advance_queue", advance)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *args, **kwargs: None)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post(
+        "/play_now",
+        json={"url": "https://youtube.com/watch?v=processing", "title": "Processing Live"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["action"] == "skipped_post_live_processing"
+    assert response.json()["now_playing"] == queued
+    assert response.json()["queue_length"] == 0
+
+
 def test_play_now_non_botcheck_failure_does_not_toast(monkeypatch) -> None:
     toasts: list[dict] = []
     monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))

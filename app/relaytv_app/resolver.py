@@ -7,6 +7,7 @@ import json
 import time
 import urllib.request
 import shutil
+from dataclasses import dataclass
 
 from .config import runtime_config
 import platform
@@ -22,6 +23,53 @@ from . import ytdlp_format_policy
 
 
 logger = get_logger("resolver")
+
+
+@dataclass(frozen=True)
+class ResolvedStreams:
+    """Playback source plus optional instructions for mpv's yt-dlp hook.
+
+    Iteration deliberately yields only stream/audio so existing resolver
+    callers can continue unpacking this result as a two-tuple.
+    """
+
+    stream: str
+    audio: str | None = None
+    transport: str = "direct"
+    ytdl_format: str = ""
+    ytdl_raw_options: str = ""
+    live_status: str = ""
+
+    def __iter__(self):
+        yield self.stream
+        yield self.audio
+
+
+def _mpv_ytdl_raw_options(args: list[str]) -> str:
+    """Translate the successful yt-dlp strategy into mpv hook options."""
+    options: list[str] = []
+    idx = 1 if args and not str(args[0]).startswith("-") else 0
+    while idx < len(args):
+        token = str(args[idx] or "").strip()
+        idx += 1
+        if not token.startswith("--"):
+            continue
+        key_value = token[2:]
+        if "=" in key_value:
+            key, value = key_value.split("=", 1)
+        else:
+            key = key_value
+            value = ""
+            if idx < len(args) and not str(args[idx]).startswith("-"):
+                value = str(args[idx])
+                idx += 1
+        if key in {"no-playlist"}:
+            continue
+        # mpv's key/value-list parser uses commas as separators. These yt-dlp
+        # values normally contain no commas; escape any operator-provided ones.
+        value = value.replace("\\", "\\\\").replace(",", "\\,")
+        options.append(f"{key}={value}")
+    return ",".join(options)
 
 
 class YouTubeBotCheckError(HTTPException):
@@ -517,10 +565,14 @@ def resolve_streams_ytdlp(url: str):
             or "only images are available" in low_err
         )
 
-    def _run_strategies(strategy_list: list[tuple[list[str], list[str]]]) -> tuple[object, str, str]:
+    def _run_strategies(
+        strategy_list: list[tuple[list[str], list[str]]],
+    ) -> tuple[object, str, str, str, list[str]]:
         p_local = None
         err_local = ""
         selected_format = fmt or "auto"
+        selected_candidate = fmt or ""
+        selected_args: list[str] = list(base)
         for args_base, strategy_candidates in strategy_list:
             debug_log("youtube", f"Trying yt-dlp strategy: {' '.join(args_base)} (host_arch={host_arch or 'unknown'})")
             _log_resolve(f"yt-dlp strategy start host_arch={host_arch or 'unknown'} args={' '.join(args_base)}")
@@ -528,6 +580,8 @@ def resolve_streams_ytdlp(url: str):
                 t_attempt = time.monotonic()
                 cmd = [*args_base, *output_args, u] if not cand else [*args_base, "-f", cand, *output_args, u]
                 selected_format = cand or "auto"
+                selected_candidate = cand
+                selected_args = list(args_base)
                 p_local = run(cmd, check=False)
                 elapsed_ms = int((time.monotonic() - t_attempt) * 1000)
                 debug_log(
@@ -536,7 +590,7 @@ def resolve_streams_ytdlp(url: str):
                 )
                 _log_resolve(f"yt-dlp attempt format={cand or 'auto'} rc={p_local.returncode} elapsed_ms={elapsed_ms}")
                 if p_local.returncode == 0 and (p_local.stdout or "").strip():
-                    return p_local, "", selected_format
+                    return p_local, "", selected_format, selected_candidate, selected_args
 
                 err_local = (p_local.stderr or "").strip()
                 low_err = err_local.lower()
@@ -554,17 +608,23 @@ def resolve_streams_ytdlp(url: str):
                 if _format_related_retry(low_err):
                     continue
                 break
-        return p_local, err_local, selected_format
+        return p_local, err_local, selected_format, selected_candidate, selected_args
 
     p = None
     err = ""
     selected_format = fmt or "auto"
+    selected_candidate = fmt or ""
+    selected_args = list(base)
     t0 = time.monotonic()
     if is_youtube_url(u) and ytdlp_format_policy.youtube_progressive_startup_enabled(profile):
         _log_resolve("youtube arm-safe staged resolver enabled")
-        p, err, selected_format = _run_strategies(_build_youtube_arm_safe_strategies(base, candidates))
+        p, err, selected_format, selected_candidate, selected_args = _run_strategies(
+            _build_youtube_arm_safe_strategies(base, candidates)
+        )
     else:
-        p, err, selected_format = _run_strategies(strategies)
+        p, err, selected_format, selected_candidate, selected_args = _run_strategies(
+            strategies
+        )
 
     if not p:
         _update_resolver_runtime_state(
@@ -619,7 +679,13 @@ def resolve_streams_ytdlp(url: str):
         # no data without per-segment parameters. Hand mpv the page URL so
         # its yt-dlp hook drives the manifest instead.
         logger.info("ytdlp_live_stream_deferred_to_mpv live_status=%s url=%s", live_status, u)
-        return u, None
+        return ResolvedStreams(
+            stream=u,
+            transport="mpv_ytdl",
+            ytdl_format=selected_candidate,
+            ytdl_raw_options=_mpv_ytdl_raw_options(selected_args),
+            live_status=live_status,
+        )
     if not lines:
         raise HTTPException(status_code=400, detail="yt-dlp returned no stream URLs")
     if len(lines) == 1:

@@ -43,6 +43,14 @@ _NATURAL_IDLE_ENSURE_TIMER: threading.Timer | None = None
 _HISTORY_PROGRESS_LAST_PERSIST: dict[str, float] = {}
 
 
+class YouTubePostLiveProcessingError(HTTPException):
+    """YouTube has ended the live stream but has not processed its replay."""
+
+    def __init__(self, title: str) -> None:
+        self.title = str(title or "").strip()
+        super().__init__(status_code=409, detail="YouTube replay is still processing")
+
+
 def _idle_dashboard_enabled() -> bool:
     try:
         settings = state.get_settings() if hasattr(state, "get_settings") else {}
@@ -1016,7 +1024,14 @@ def _stop_qt_shell() -> None:
         QT_SHELL_PROC = None
 
 
-def _start_qt_shell(stream_url: str | None = None, audio_url: str | None = None, start_pos: float | None = None) -> bool:
+def _start_qt_shell(
+    stream_url: str | None = None,
+    audio_url: str | None = None,
+    start_pos: float | None = None,
+    *,
+    ytdl_format_override: str | None = None,
+    ytdl_raw_options_override: str | None = None,
+) -> bool:
     global QT_SHELL_PROC
     settings = getattr(state, "get_settings", lambda: {})()
     shell_module = (os.getenv("RELAYTV_QT_SHELL_MODULE") or "relaytv_app.qt_shell_app").strip()
@@ -1041,8 +1056,16 @@ def _start_qt_shell(stream_url: str | None = None, audio_url: str | None = None,
     if ytdl_enabled and stream_url and _should_force_ytdl_off(stream_url, provider_hint):
         ytdl_enabled = False
     ytdl_path = (os.getenv("RELAYTV_MPV_YTDL_PATH") or "yt-dlp").strip()
-    ytdl_format = _effective_ytdl_format(settings, provider=provider_hint)
-    ytdl_raw_options = (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
+    ytdl_format = (
+        str(ytdl_format_override).strip()
+        if ytdl_format_override is not None
+        else _effective_ytdl_format(settings, provider=provider_hint)
+    )
+    ytdl_raw_options = (
+        str(ytdl_raw_options_override).strip()
+        if ytdl_raw_options_override is not None
+        else (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
+    )
     args = [
         sys.executable,
         "-m",
@@ -1230,10 +1253,19 @@ def _build_qt_external_mpv_args(
     *,
     fallback_to_x11: bool = False,
     start_pos: float | None = None,
+    ytdl_format_override: str | None = None,
+    ytdl_raw_options_override: str | None = None,
 ) -> list[str]:
     # Start from the standard app-managed args, then append external runtime
     # renderer hints. Keep first-wins semantics for singleton options.
-    args = _build_mpv_args(stream_url, audio_url, "x11", start_pos=start_pos)
+    args = _build_mpv_args(
+        stream_url,
+        audio_url,
+        "x11",
+        start_pos=start_pos,
+        ytdl_format_override=ytdl_format_override,
+        ytdl_raw_options_override=ytdl_raw_options_override,
+    )
     base = _strip_mpv_renderer_args(args[:-1])
     extra = _qt_external_mpv_mode_args(fallback_to_x11=fallback_to_x11)
     out = base + extra + [stream_url]
@@ -1265,9 +1297,18 @@ def _start_qt_external_mpv(
     fallback_to_x11: bool = False,
     fallback_reason: str = "",
     start_pos: float | None = None,
+    ytdl_format_override: str | None = None,
+    ytdl_raw_options_override: str | None = None,
 ) -> subprocess.Popen:
     _stop_qt_shell()
-    args = _build_qt_external_mpv_args(stream_url, audio_url, fallback_to_x11=fallback_to_x11, start_pos=start_pos)
+    args = _build_qt_external_mpv_args(
+        stream_url,
+        audio_url,
+        fallback_to_x11=fallback_to_x11,
+        start_pos=start_pos,
+        ytdl_format_override=ytdl_format_override,
+        ytdl_raw_options_override=ytdl_raw_options_override,
+    )
     mode_args = _qt_external_mpv_mode_args(fallback_to_x11=fallback_to_x11)
     _set_qt_external_runtime_state(
         fallback_to_x11=fallback_to_x11,
@@ -2470,7 +2511,15 @@ def _x11_mode_active(selected_mode: str | None = None) -> bool:
     return _has_x11_display()
 
 
-def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str, start_pos: float | None = None) -> list[str]:
+def _build_mpv_args(
+    stream_url: str,
+    audio_url: str | None,
+    mode: str,
+    start_pos: float | None = None,
+    *,
+    ytdl_format_override: str | None = None,
+    ytdl_raw_options_override: str | None = None,
+) -> list[str]:
     """Build mpv command line with minimal app-managed options.
 
     Keep mpv mostly default-driven and only set options required for RelayTV
@@ -2557,11 +2606,19 @@ def _build_mpv_args(stream_url: str, audio_url: str | None, mode: str, start_pos
         mpv_args.append("--ytdl=yes")
         ytdl_path = (os.getenv("RELAYTV_MPV_YTDL_PATH") or "yt-dlp").strip()
         mpv_args.append(f"--script-opts=ytdl_hook-ytdl_path={ytdl_path}")
-        ytdl_format = _effective_ytdl_format(settings, provider=provider_hint)
+        ytdl_format = (
+            str(ytdl_format_override).strip()
+            if ytdl_format_override is not None
+            else _effective_ytdl_format(settings, provider=provider_hint)
+        )
 
         if ytdl_format:
             mpv_args.append(f"--ytdl-format={ytdl_format}")
-        ytdl_raw = (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
+        ytdl_raw = (
+            str(ytdl_raw_options_override).strip()
+            if ytdl_raw_options_override is not None
+            else (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
+        )
         if ytdl_raw:
             mpv_args.append(f"--ytdl-raw-options={ytdl_raw}")
     else:
@@ -2731,7 +2788,14 @@ def _apply_startup_mpv_runtime_settings() -> None:
         pass
 
 
-def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None) -> bool:
+def _load_stream_in_existing_mpv(
+    stream_url: str,
+    audio_url: str | None = None,
+    start_pos: float | None = None,
+    *,
+    ytdl_format_override: str | None = None,
+    ytdl_raw_options_override: str | None = None,
+) -> bool:
     """Try seamless in-process stream replacement on an already-running mpv."""
     if not _env_bool("RELAYTV_MPV_SEAMLESS_REPLACE", True):
         return False
@@ -2802,6 +2866,18 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, 
     if not control_available:
         return False
 
+    if ytdl_format_override is not None or ytdl_raw_options_override is not None:
+        for prop, value in (
+            ("ytdl-format", ytdl_format_override or ""),
+            ("ytdl-raw-options", ytdl_raw_options_override or ""),
+        ):
+            try:
+                response = mpv_command(["set_property", prop, value])
+            except Exception:
+                return False
+            if not isinstance(response, dict) or response.get("error") != "success":
+                return False
+
     if _qt_shell_runtime_accepts_mpv_commands():
         try:
             if _normalize_start_pos(start_pos) is not None:
@@ -2832,7 +2908,14 @@ def _load_stream_in_existing_mpv(stream_url: str, audio_url: str | None = None, 
     return True
 
 
-def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None):
+def start_mpv(
+    stream_url: str,
+    audio_url: str | None = None,
+    start_pos: float | None = None,
+    *,
+    ytdl_format_override: str | None = None,
+    ytdl_raw_options_override: str | None = None,
+):
     """Start mpv fullscreen with an IPC socket so we can control it.
 
     Video mode:
@@ -2875,6 +2958,8 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
                 fallback_to_x11=False,
                 fallback_reason="",
                 start_pos=start_pos,
+                ytdl_format_override=ytdl_format_override,
+                ytdl_raw_options_override=ytdl_raw_options_override,
             )
             if not wait_for_ipc_ready(timeout=startup_timeout):
                 raise HTTPException(status_code=500, detail="qt external mpv started but IPC not ready")
@@ -2892,6 +2977,8 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
                         fallback_to_x11=True,
                         fallback_reason="video_unhealthy",
                         start_pos=start_pos,
+                        ytdl_format_override=ytdl_format_override,
+                        ytdl_raw_options_override=ytdl_raw_options_override,
                     )
                     if not wait_for_ipc_ready(timeout=startup_timeout):
                         raise HTTPException(status_code=500, detail="qt external mpv x11 fallback started but IPC not ready")
@@ -2902,7 +2989,13 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
             _recover_audio_output_if_needed(settings)
             return
 
-        _start_qt_shell(stream_url, audio_url=audio_url, start_pos=start_pos)
+        _start_qt_shell(
+            stream_url,
+            audio_url=audio_url,
+            start_pos=start_pos,
+            ytdl_format_override=ytdl_format_override,
+            ytdl_raw_options_override=ytdl_raw_options_override,
+        )
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="qt shell started but mpv IPC not ready")
         _set_mpv_process_start_option_active(process_start_option_active)
@@ -2911,7 +3004,14 @@ def start_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | 
         return
 
     def _spawn(mode_to_use: str) -> subprocess.Popen:
-        args = _build_mpv_args(stream_url, audio_url, mode_to_use, start_pos=start_pos)
+        args = _build_mpv_args(
+            stream_url,
+            audio_url,
+            mode_to_use,
+            start_pos=start_pos,
+            ytdl_format_override=ytdl_format_override,
+            ytdl_raw_options_override=ytdl_raw_options_override,
+        )
         if debug:
             logger.info("starting_mpv mode=%s args=%s", mode_to_use, " ".join(shlex.quote(a) for a in args))
         return subprocess.Popen(args)
@@ -3549,10 +3649,34 @@ def _store_prefetched_stream(item: dict[str, Any], url: str, stream: str, audio:
     item["_resolved_at"] = float(time.time())
 
 
+def _clear_prefetched_stream(item: dict[str, Any]) -> None:
+    for key in ("_resolved_source_url", "_resolved_stream", "_resolved_audio", "_resolved_at"):
+        item.pop(key, None)
+
+
+def _resolved_playback_source(
+    item: dict[str, Any],
+    url: str,
+    result: object,
+) -> tuple[str, str | None, str | None, str | None]:
+    stream, audio = result
+    if str(getattr(result, "transport", "direct") or "direct") == "mpv_ytdl":
+        _clear_prefetched_stream(item)
+        ytdl_format = str(getattr(result, "ytdl_format", "") or "").strip()
+        ytdl_raw = str(getattr(result, "ytdl_raw_options", "") or "").strip()
+        operator_raw = (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
+        if operator_raw:
+            ytdl_raw = ",".join(part for part in (operator_raw, ytdl_raw) if part)
+        return str(stream), (str(audio) if audio else None), ytdl_format, ytdl_raw
+    else:
+        _store_prefetched_stream(item, url, stream, audio)
+    return str(stream), (str(audio) if audio else None), None, None
+
+
 def _prefetch_queue_item_worker(item: dict[str, Any], url: str) -> None:
     try:
-        stream, audio = resolve_streams(url)
-        _store_prefetched_stream(item, url, stream, audio)
+        result = resolve_streams(url)
+        _resolved_playback_source(item, url, result)
         debug_log("player", f"queue prefetch resolved provider={item.get('provider') or provider_from_url(url)} url={url!r}")
     except Exception as exc:
         debug_log("player", f"queue prefetch failed url={url!r} err={exc}")
@@ -3907,6 +4031,18 @@ def _notify_bot_check_skip(item: object) -> None:
     _notify_bot_check_toast(text)
 
 
+def _notify_post_live_processing(item: object) -> None:
+    title = ""
+    if isinstance(item, dict):
+        title = str(item.get("title") or item.get("url") or "").strip()
+    else:
+        title = str(item or "").strip()
+    text = "YouTube is processing this live stream. Replay is not currently available."
+    if title:
+        text = f"{text}\n\n{title}"
+    _notify_warn_toast(text)
+
+
 def _playback_start_timeout_sec() -> float:
     raw = (os.getenv("RELAYTV_PLAYBACK_START_TIMEOUT_SEC") or "45").strip()
     try:
@@ -4068,7 +4204,8 @@ def advance_queue_playback(
                 # A bot check will not clear on retry, so skip the item in
                 # every mode; re-queueing it makes auto-next retry it forever.
                 bot_check = isinstance(exc, YouTubeBotCheckError)
-                skip_unplayable = bot_check or (
+                post_live_processing = isinstance(exc, YouTubePostLiveProcessingError)
+                skip_unplayable = bot_check or post_live_processing or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
                     and int(getattr(exc, "status_code", 0) or 0) == 400
@@ -4076,10 +4213,11 @@ def advance_queue_playback(
                 if skip_unplayable:
                     skipped_unplayable += 1
                     logger.warning(
-                        "queue_skip_unplayable mode=%s skipped=%s bot_check=%s title=%s error=%s",
+                        "queue_skip_unplayable mode=%s skipped=%s bot_check=%s post_live_processing=%s title=%s error=%s",
                         mode,
                         skipped_unplayable,
                         bot_check,
+                        post_live_processing,
                         str(next_item.get("title") or next_item.get("url") or "") if isinstance(next_item, dict) else str(next_item or ""),
                         exc,
                     )
@@ -4497,7 +4635,18 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     item_is_live = _provider_item_is_live_stream(item, raw, provider)
     force_resolve_provider = provider in _providers_forced_to_resolve() and (not item_is_live)
     prefetched = _fresh_prefetched_stream(item)
-    should_resolve = use_resolver and (not trusted_local_stream) and (not prefer_mpv_ytdl or is_youtube_url(raw) or force_resolve_provider or prefetched is not None)
+    should_resolve = use_resolver and (not trusted_local_stream) and (
+        not prefer_mpv_ytdl
+        or is_youtube_url(raw)
+        or force_resolve_provider
+        or prefetched is not None
+    )
+    ytdl_format_override = None
+    ytdl_raw_options_override = None
+    transient_handoff = item.pop("_transient_mpv_ytdl_handoff", None)
+    if isinstance(transient_handoff, dict):
+        ytdl_format_override = str(transient_handoff.get("format") or "").strip()
+        ytdl_raw_options_override = str(transient_handoff.get("raw_options") or "").strip()
     if force_resolve_provider:
         debug_log("player", f"forcing resolver for provider={provider}")
     if trusted_local_stream:
@@ -4536,16 +4685,32 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         if prefetched is not None:
             stream, audio = prefetched
             debug_log("player", "using prefetched resolved stream")
+        elif isinstance(transient_handoff, dict):
+            stream, audio = raw, None
+            debug_log("player", "using preflighted mpv yt-dlp handoff")
         else:
             t_resolve = time.monotonic()
-            stream, audio = resolve_streams(raw)
+            result = resolve_streams(raw)
+            if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
+                _clear_prefetched_stream(item)
+                _notify_post_live_processing(item)
+                raise YouTubePostLiveProcessingError(str(title or raw))
+            stream, audio, ytdl_format_override, ytdl_raw_options_override = (
+                _resolved_playback_source(item, raw, result)
+            )
             debug_log("player", f"resolve_streams finished in {int((time.monotonic() - t_resolve) * 1000)}ms")
-            if isinstance(item, dict):
-                _store_prefetched_stream(item, raw, stream, audio)
 
     debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
 
     resume_start_pos = _normalize_start_pos(start_pos)
+    ytdl_handoff_kwargs = (
+        {
+            "ytdl_format_override": ytdl_format_override,
+            "ytdl_raw_options_override": ytdl_raw_options_override,
+        }
+        if ytdl_format_override is not None or ytdl_raw_options_override is not None
+        else {}
+    )
     with MPV_LOCK:
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
@@ -4558,7 +4723,12 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
                 x11_overlay.stop_overlay()
             except Exception:
                 pass
-        reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
+        reused_runtime = _load_stream_in_existing_mpv(
+            stream,
+            audio_url=audio,
+            start_pos=resume_start_pos,
+            **ytdl_handoff_kwargs,
+        )
         if (not reused_runtime) and _qt_shell_backend_enabled():
             # ARM hosts can expose a brief control-gap at EOF; retry a couple
             # of times before escalating to full player restart.
@@ -4574,7 +4744,12 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             delay_sec = max(0.01, min(1.0, delay_sec))
             for _ in range(retries):
                 time.sleep(delay_sec)
-                reused_runtime = _load_stream_in_existing_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
+                reused_runtime = _load_stream_in_existing_mpv(
+                    stream,
+                    audio_url=audio,
+                    start_pos=resume_start_pos,
+                    **ytdl_handoff_kwargs,
+                )
                 if reused_runtime:
                     break
         if reused_runtime:
@@ -4582,7 +4757,12 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             # transitions from idle surface to the newly loaded stream.
             _mark_playback_transition()
         if not reused_runtime:
-            start_mpv(stream, audio_url=audio, start_pos=resume_start_pos)
+            start_mpv(
+                stream,
+                audio_url=audio,
+                start_pos=resume_start_pos,
+                **ytdl_handoff_kwargs,
+            )
         debug_log(
             "player",
             f"{'seamless_replace' if reused_runtime else 'start_mpv'} finished in "
@@ -5750,14 +5930,25 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                 if val:
                     item[key] = val
             try:
-                stream, audio = resolve_streams(inp)
+                result = resolve_streams(inp)
             except Exception as resolve_exc:
                 if isinstance(resolve_exc, YouTubeBotCheckError):
                     label = str(item.get("title") or inp)
                     _notify_bot_check_toast(f"Settings not applied (YouTube bot check): {label}")
                 logger.warning("restart_current_resolve_failed error=%s", resolve_exc)
                 return None
-            _store_prefetched_stream(item, inp, stream, audio)
+            if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
+                _notify_post_live_processing(item)
+                logger.info("restart_current_skipped_post_live_processing title=%s", str(item.get("title") or inp)[:120])
+                return None
+            _stream, _audio, ytdl_format, ytdl_raw = _resolved_playback_source(
+                item, inp, result
+            )
+            if ytdl_format is not None or ytdl_raw is not None:
+                item["_transient_mpv_ytdl_handoff"] = {
+                    "format": ytdl_format or "",
+                    "raw_options": ytdl_raw or "",
+                }
             target = item
         # capture position if possible
         pos = None
