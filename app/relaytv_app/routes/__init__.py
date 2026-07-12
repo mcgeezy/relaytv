@@ -3026,6 +3026,11 @@ def _status_payload() -> dict[str, object]:
             playing = True
             paused = True
             state.set_session_state("paused")
+        elif bool(getattr(player, "startup_session_restore_pending", lambda: False)()):
+            # UI/status polling begins before the display runtime is ready.
+            # Preserve the persisted candidate until the autoplay worker can
+            # restore it instead of demoting it to idle and losing resume.
+            pass
         else:
             native_active = False
             try:
