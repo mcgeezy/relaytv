@@ -89,11 +89,16 @@ it all.
 ## yt-dlp updates
 
 The bundle pins yt-dlp at build time and disables the pip self-update path by
-default (the sandbox has no supported pip-user flow). If YouTube playback
-breaks between releases, install the bundle from a newer release. Setting
-`RELAYTV_YTDLP_AUTO_UPDATE=1` in the env file re-enables the updater — pip
-installs land in the writable app HOME and usually work, but this path is
-unsupported in the Flatpak.
+default. The runtime's Python ships without pip, so the updater cannot work
+inside the sandbox at all: if it runs anyway it fails cleanly with
+`No module named pip` and retries on its normal interval. If YouTube playback
+breaks between releases, install the bundle from a newer release.
+
+Note for state migrated from a Docker install: the `ytdlp_auto_update_enabled`
+setting in `settings.json` overrides the launcher's env default, so a Docker
+deployment that had the updater on will keep attempting (and failing) the
+update under the Flatpak. Turn the yt-dlp auto-update toggle off in Settings
+to silence it.
 
 ## Toast overlay mode
 
