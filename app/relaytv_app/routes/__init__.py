@@ -2726,6 +2726,8 @@ def _session_playing_fast() -> tuple[str, bool, bool]:
     """Cheap playing-state estimate for high-frequency UI polling."""
     sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() or "idle"
     paused = sess == "paused"
+    if bool(getattr(player, "startup_session_restore_pending", lambda: False)()):
+        return sess, False, paused
     playing = sess in ("playing", "paused")
     try:
         explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (time.time() + 60.0)
@@ -3019,18 +3021,18 @@ def _status_payload() -> dict[str, object]:
         sess = "paused" if paused else "playing"
         state.set_session_state(sess)
     elif sess not in ("closed",):
-        if sess == "paused" and isinstance(state.NOW_PLAYING, dict):
+        if bool(getattr(player, "startup_session_restore_pending", lambda: False)()):
+            # UI/status polling begins before the display runtime is ready.
+            # Preserve the persisted candidate until the autoplay worker can
+            # restore it instead of demoting it to idle and losing resume.
+            paused = sess == "paused"
+        elif sess == "paused" and isinstance(state.NOW_PLAYING, dict):
             # Preserve an explicit paused session during runtime telemetry gaps.
             # The autoplay worker treats idle as a natural end, so status/SSE
             # must not demote a resumable current item back to idle.
             playing = True
             paused = True
             state.set_session_state("paused")
-        elif bool(getattr(player, "startup_session_restore_pending", lambda: False)()):
-            # UI/status polling begins before the display runtime is ready.
-            # Preserve the persisted candidate until the autoplay worker can
-            # restore it instead of demoting it to idle and losing resume.
-            pass
         else:
             native_active = False
             try:

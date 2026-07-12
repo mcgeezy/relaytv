@@ -2339,6 +2339,7 @@ def test_playback_state_uses_mpv_ipc_when_qt_telemetry_is_unselected(monkeypatch
     monkeypatch.setattr(routes.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
     monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
     monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'startup_session_restore_pending', lambda: False)
     monkeypatch.setattr(routes.player, 'natural_idle_reset_holding', lambda: False)
     monkeypatch.setattr(routes.player, 'qt_shell_runtime_telemetry', lambda **_: {'selected': False})
     monkeypatch.setattr(
@@ -2677,6 +2678,7 @@ def test_status_preserves_paused_session_during_runtime_dropout(monkeypatch: pyt
     monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: True)
     monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
     monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'startup_session_restore_pending', lambda: False)
     monkeypatch.setattr(routes.player, '_effective_ytdl_format', lambda s=None: '')
     monkeypatch.setattr(routes.player, 'get_mpv_log_tail', lambda lines=40: [])
     monkeypatch.setattr(routes.player, 'IPC_PATH', '/tmp/test-mpv.sock', raising=False)
