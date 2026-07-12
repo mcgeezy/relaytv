@@ -10,6 +10,31 @@ control, and mDNS discovery. Not included: headless Xvfb/x11vnc remote mode,
 the GTK/WebKitGTK X11 notification overlay (the Qt WebEngine overlay is used
 instead), and the Chromium idle browser.
 
+## arm64 validation status
+
+Do not promote the `aarch64`/arm64 Flatpak bundle as a recommended release
+path yet. Live Raspberry Pi 4B Wayland testing showed that the packaged
+runtime can start and play, but playback quality is still below release bar:
+
+- The successful render path on the tested host was Qt external mpv with
+  `--vo=wlshm`. The default OpenGL ES Wayland path
+  (`--vo=gpu --gpu-context=wayland --gpu-api=opengl --opengl-es=yes`) rendered
+  video but produced visible plaid/checker texture corruption. `--vo=dmabuf-wayland`
+  initialized but ended in audio-only playback with no configured video output.
+  `gpu-next`/Vulkan did not survive the playback health check.
+- YouTube playback had to avoid VP9/AV1 and prefer H.264. For the validation
+  URL, YouTube only exposed H.264 at 480p30, 720p60, and 1080p60; there was no
+  H.264 720p30 or 1080p30 variant. The ARM-safe selector therefore chose
+  H.264 480p30 (`itag=135`) rather than the overloaded 60fps variants.
+- Even on the degraded H.264 480p30 `wlshm` path, mpv still reported dropped
+  frames during the live run, so the arm64 Flatpak should remain experimental
+  until render smoothness is improved or hardware decode/render integration is
+  validated.
+
+The x86_64 Flatpak path remains the primary release target for this packaging
+profile. Prefer the Docker/native appliance install path for Raspberry Pi
+deployments until arm64 Flatpak validation is re-run and documented.
+
 ## Install
 
 Download the bundle for your architecture from the GitHub Release assets and

@@ -14,6 +14,30 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
+# When started from SSH/TTY, Flatpak still exposes the desktop sockets but the
+# caller may not provide display env. Fill only missing/TTY-derived values so
+# explicit user config remains authoritative.
+if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  for relaytv_wayland_socket in "$XDG_RUNTIME_DIR"/wayland-*; do
+    if [ -S "$relaytv_wayland_socket" ]; then
+      export WAYLAND_DISPLAY="$(basename "$relaytv_wayland_socket")"
+      break
+    fi
+  done
+  unset relaytv_wayland_socket
+fi
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  if [ -z "${XDG_SESSION_TYPE:-}" ] || [ "${XDG_SESSION_TYPE:-}" = "tty" ]; then
+    export XDG_SESSION_TYPE=wayland
+  fi
+  if [ -z "${RELAYTV_HOST_SESSION_TYPE:-}" ] || [ "${RELAYTV_HOST_SESSION_TYPE:-}" = "tty" ]; then
+    export RELAYTV_HOST_SESSION_TYPE=wayland
+  fi
+  export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+  export RELAYTV_MODE="${RELAYTV_MODE:-wayland}"
+  export RELAYTV_QT_RUNTIME_MODE="${RELAYTV_QT_RUNTIME_MODE:-auto}"
+fi
+
 # Persistent state lives in the app's private XDG data dir
 # (~/.var/app/io.github.mcgeezy.relaytv/data on the host).
 : "${RELAYTV_STATE_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}}"

@@ -13,6 +13,11 @@ from .debug import get_logger
 
 logger = get_logger("state")
 
+_OLD_ARM_NON_AV1_YOUTUBE_DEFAULT_RE = re.compile(
+    r"^bestvideo\[vcodec!\*=av01\]\[height<=([0-9]{3,4})\]\[fps<=60\]\+bestaudio/"
+    r"best\[vcodec!\*=av01\]\[height<=\1\]/best$"
+)
+
 # =========================
 # Persistent state (queue + history)
 # =========================
@@ -31,14 +36,21 @@ def _default_ytdlp_format() -> str:
     if env_fmt:
         return env_fmt
 
-    # Raspberry Pi / arm64 defaults to the same 1080p non-AV1 selector as other
-    # hosts unless explicitly overridden.
+    # Raspberry Pi / arm64 should avoid YouTube VP9/AV1 by default. Those can
+    # look sharp on paper but commonly fall back to software decode and black or
+    # badly delayed presentation on Pi-class hardware.
     arch = (platform.machine() or "").lower()
     if arch in ("aarch64", "arm64"):
         arm_cap = (os.getenv("RELAYTV_ARM_DEFAULT_QUALITY") or "1080").strip()
         if arm_cap not in {"360", "480", "720", "1080"}:
             arm_cap = "1080"
-        return f"bestvideo[vcodec!*=av01][height<={arm_cap}][fps<=60]+bestaudio/best[vcodec!*=av01][height<={arm_cap}]/best"
+        return (
+            f"bestvideo[vcodec^=avc1][height<={arm_cap}][fps<=30]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[vcodec^=avc1][height<={arm_cap}][fps<=30]+bestaudio/"
+            f"best*[vcodec^=avc1][height<={arm_cap}][fps<=30]/"
+            f"best[height<={arm_cap}][fps<=30][vcodec^=avc1]/"
+            f"best[height<={arm_cap}]/best"
+        )
 
     # Universal default for unknown providers: avoid AV1-heavy picks while
     # still allowing split streams where that is the only good choice.
@@ -69,6 +81,14 @@ def _normalize_ytdlp_format(v: str | None) -> str:
     if "/best" not in out:
         out = f"{out}/best"
     return out
+
+
+def _migrate_generated_ytdlp_default(value: object, quality_mode: object) -> str:
+    fmt = str(value or "").strip()
+    mode = _normalize_quality_mode(str(quality_mode or ""))
+    if mode in ("auto_profile",) and _OLD_ARM_NON_AV1_YOUTUBE_DEFAULT_RE.match(fmt):
+        return _default_ytdlp_format()
+    return _normalize_ytdlp_format(fmt)
 
 
 def _normalize_quality_mode(v: str | None) -> str:
@@ -970,8 +990,11 @@ def load_settings() -> None:
     data = _load_json(path, {})
     if isinstance(data, dict):
         defaults.update({k: v for k, v in data.items() if v is not None})
-    defaults["ytdlp_format"] = _normalize_ytdlp_format(defaults.get("ytdlp_format"))
     defaults["quality_mode"] = _normalize_quality_mode(defaults.get("quality_mode"))
+    defaults["ytdlp_format"] = _migrate_generated_ytdlp_default(
+        defaults.get("ytdlp_format"),
+        defaults.get("quality_mode"),
+    )
     defaults["quality_cap"] = _normalize_quality_cap(defaults.get("quality_cap"))
     defaults["youtube_cookies_path"] = str(defaults.get("youtube_cookies_path") or "").strip()
     defaults["youtube_use_invidious"] = bool(defaults.get("youtube_use_invidious"))

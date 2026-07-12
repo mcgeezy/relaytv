@@ -98,7 +98,17 @@ def _arm_default_quality_cap() -> int:
     return _parse_cap(os.getenv("RELAYTV_ARM_DEFAULT_QUALITY")) or 1080
 
 
-def _auto_provider_format(provider: str, cap: int, *, av1_allowed: bool) -> str:
+def _arm_safe_profile(profile: dict[str, Any] | None) -> bool:
+    arch = (platform.machine() or "").lower()
+    if arch in ("aarch64", "arm64"):
+        return True
+    return (
+        isinstance(profile, dict)
+        and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"
+    )
+
+
+def _auto_provider_format(provider: str, cap: int, *, av1_allowed: bool, arm_safe: bool = False) -> str:
     p = str(provider or "other").strip().lower() or "other"
     if p == "rumble":
         # Rumble HLS manifests have shown that plain `best[...]` can still pick
@@ -107,6 +117,14 @@ def _auto_provider_format(provider: str, cap: int, *, av1_allowed: bool) -> str:
         return f"best*[height<={cap}][fps<=60]/best*[height<={cap}]/best[height<={cap}][fps<=60]/best"
     if p in ("twitch", "tiktok", "bitchute"):
         return f"best[height<={cap}][fps<=60]/best"
+    if p == "youtube" and arm_safe:
+        return (
+            f"bestvideo[vcodec^=avc1][height<={cap}][fps<=30]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[vcodec^=avc1][height<={cap}][fps<=30]+bestaudio/"
+            f"best*[vcodec^=avc1][height<={cap}][fps<=30]/"
+            f"best[height<={cap}][fps<=30][vcodec^=avc1]/"
+            f"best[height<={cap}]/best"
+        )
     vcodec = "" if av1_allowed else "[vcodec!*=av01]"
     return f"bestvideo{vcodec}[height<={cap}][fps<=60]+bestaudio/best{vcodec}[height<={cap}]/best"
 
@@ -122,8 +140,7 @@ def youtube_progressive_startup_format(
     if cap <= 0:
         cap = 720
     arm_cap = _arm_default_quality_cap()
-    machine = (platform.machine() or "").lower()
-    if machine in ("aarch64", "arm64") or (isinstance(profile, dict) and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"):
+    if _arm_safe_profile(profile):
         cap = min(cap, arm_cap)
     return f"best*[height<={cap}][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<={cap}][fps<=30][vcodec!=none][acodec!=none]/best[height<={cap}]/best"
 
@@ -140,8 +157,7 @@ def youtube_progressive_startup_candidates(
     if cap <= 0:
         cap = 720
     arm_cap = _arm_default_quality_cap()
-    machine = (platform.machine() or "").lower()
-    if machine in ("aarch64", "arm64") or (isinstance(profile, dict) and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"):
+    if _arm_safe_profile(profile):
         cap = min(cap, arm_cap)
     return list(
         dict.fromkeys(
@@ -197,5 +213,10 @@ def effective_ytdlp_format(
     if mode == "manual" and explicit:
         return _arm_safe_if_needed(explicit, mode=mode, cap=cap)
 
-    out = _auto_provider_format(provider, cap, av1_allowed=_av1_allowed(profile))
+    out = _auto_provider_format(
+        provider,
+        cap,
+        av1_allowed=_av1_allowed(profile),
+        arm_safe=_arm_safe_profile(profile),
+    )
     return _arm_safe_if_needed(out, mode=mode, cap=cap)

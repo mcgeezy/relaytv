@@ -1127,6 +1127,8 @@ def _qt_external_wayland_mode_args() -> list[str]:
     profile = (os.getenv("RELAYTV_QT_EXTERNAL_WAYLAND_PROFILE") or "conservative").strip().lower()
     if profile in ("baseline", "simple", "legacy"):
         return ["--vo=gpu", "--gpu-context=wayland"]
+    if _flatpak_arm_runtime():
+        return ["--vo=wlshm"]
     # Conservative profile is default; validated on NUC Wayland stack.
     return [
         "--vo=gpu",
@@ -1135,6 +1137,19 @@ def _qt_external_wayland_mode_args() -> list[str]:
         "--opengl-es=yes",
         "--fbo-format=rgba8",
     ]
+
+
+def _flatpak_arm_runtime() -> bool:
+    if not os.path.exists("/.flatpak-info"):
+        return False
+    arch = (platform.machine() or "").strip().lower()
+    if arch in ("aarch64", "arm64") or arch.startswith(("armv6", "armv7", "armv8")):
+        return True
+    try:
+        profile = dict(video_profile.get_profile() or {})
+    except Exception:
+        profile = {}
+    return str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"
 
 
 def _qt_external_launch_env(mode_args: list[str]) -> dict[str, str] | None:
@@ -2597,7 +2612,7 @@ def _video_output_healthy(timeout: float = 2.0) -> bool:
     while time.time() < deadline:
         if not _is_playing():
             return False
-        native_state = _qt_shell_runtime_output_state(max_age_sec=native_age)
+        native_state = None if _qt_runtime_uses_external_mpv() else _qt_shell_runtime_output_state(max_age_sec=native_age)
         if native_state is not None:
             has_video = bool(native_state.get("current_vo"))
             has_audio = bool(native_state.get("current_ao")) or isinstance(native_state.get("aid"), int)

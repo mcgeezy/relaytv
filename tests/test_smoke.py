@@ -388,6 +388,19 @@ def test_flatpak_launcher_disables_native_qt_toasts_by_default() -> None:
     assert 'RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL="${RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL:-0}"' in text
 
 
+def test_flatpak_launcher_detects_wayland_socket_for_tty_launches() -> None:
+    text = (ROOT_DIR / "packaging/flatpak/relaytv-launch.sh").read_text()
+
+    assert '"$XDG_RUNTIME_DIR"/wayland-*' in text
+    assert 'export WAYLAND_DISPLAY="$(basename "$relaytv_wayland_socket")"' in text
+    assert '[ "${XDG_SESSION_TYPE:-}" = "tty" ]' in text
+    assert "export XDG_SESSION_TYPE=wayland" in text
+    assert "export RELAYTV_HOST_SESSION_TYPE=wayland" in text
+    assert 'QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"' in text
+    assert 'RELAYTV_MODE="${RELAYTV_MODE:-wayland}"' in text
+    assert 'RELAYTV_QT_RUNTIME_MODE="${RELAYTV_QT_RUNTIME_MODE:-auto}"' in text
+
+
 def test_qt_native_toasts_stack_inside_main_window_for_libmpv() -> None:
     text = (ROOT_DIR / "app/relaytv_app/qt_shell_app.py").read_text()
 
@@ -1611,7 +1624,7 @@ def test_pwa_brand_banner_png_asset_resolves_with_logo_fallback() -> None:
     assert response.headers['content-type'].startswith(('image/png', 'image/svg+xml'))
 
 
-def test_pi_ytdlp_defaults_prefer_1080p_non_av1_without_progressive_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pi_ytdlp_defaults_prefer_1080p_h264_without_progressive_stage(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         'YTDLP_FORMAT',
         'YTDLP_FORMAT_YOUTUBE',
@@ -1626,7 +1639,14 @@ def test_pi_ytdlp_defaults_prefer_1080p_non_av1_without_progressive_stage(monkey
     youtube_fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='youtube', profile=profile)
     rumble_fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='rumble', profile=profile)
 
-    assert youtube_fmt == 'bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best[vcodec!*=av01][height<=1080]/best'
+    assert youtube_fmt == (
+        'bestvideo[vcodec^=avc1][height<=1080][fps<=30]+bestaudio[acodec^=mp4a]/'
+        'bestvideo[vcodec^=avc1][height<=1080][fps<=30]+bestaudio/'
+        'best*[vcodec^=avc1][height<=1080][fps<=30]/'
+        'best[height<=1080][fps<=30][vcodec^=avc1]/'
+        'best[height<=1080]/best'
+    )
+    assert 'vcodec!*=av01' not in youtube_fmt
     assert rumble_fmt == 'best*[height<=1080][fps<=60]/best*[height<=1080]/best[height<=1080][fps<=60]/best'
     assert ytdlp_format_policy.youtube_progressive_startup_enabled(profile) is False
 
@@ -1641,6 +1661,17 @@ def test_pi_ytdlp_safe_selector_remains_opt_in(monkeypatch: pytest.MonkeyPatch) 
     fmt = ytdlp_format_policy.effective_ytdlp_format({}, provider='youtube', profile=profile)
 
     assert fmt == 'best[height<=1080][fps<=30][vcodec^=avc1]/best[height<=1080][fps<=30]/best[height<=1080]/best'
+
+
+def test_pi_ytdlp_migrates_old_generated_non_av1_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('YTDLP_FORMAT', raising=False)
+    monkeypatch.setattr('relaytv_app.state.platform.machine', lambda: 'aarch64')
+    old = 'bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best[vcodec!*=av01][height<=1080]/best'
+
+    migrated = state._migrate_generated_ytdlp_default(old, 'auto_profile')
+
+    assert 'vcodec^=avc1' in migrated
+    assert 'vcodec!*=av01' not in migrated
 
 
 def test_pi_youtube_resolver_does_not_fall_back_to_auto_when_av1_disallowed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4062,6 +4093,7 @@ def test_qt_shell_supervisor_recovers_active_audio_without_video(monkeypatch: py
     monkeypatch.setattr(player.state, 'set_session_state', lambda value: calls.append(('state', value)))
     monkeypatch.setattr(player.state, 'set_session_position', lambda value: calls.append(('position', value)))
 
+
     assert player._qt_shell_supervisor_tick() is True
 
     supervisor = player.qt_shell_supervisor_state()
@@ -4077,6 +4109,42 @@ def test_qt_shell_supervisor_recovers_active_audio_without_video(monkeypatch: py
     assert player.state.NOW_PLAYING['resume_pos'] == 42.5
     assert supervisor['last_action'] == 'restarted_active_playback'
     assert supervisor['last_reason'] == 'active_audio_without_video'
+
+
+def test_external_mpv_video_health_uses_mpv_ipc_not_native_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    native_calls: list[str] = []
+
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: True)
+    monkeypatch.setattr(
+        player,
+        '_qt_shell_runtime_output_state',
+        lambda **_: native_calls.append('native') or {'current_vo': '', 'current_ao': 'alsa'},
+    )
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: {'current-vo': 'gpu', 'video-params': {'w': 854, 'h': 480}, 'audio-params': {'samplerate': 48000}},
+    )
+
+    assert player._video_output_healthy(timeout=0.2) is True
+    assert native_calls == []
+
+
+def test_flatpak_arm_wayland_external_mpv_defaults_to_wlshm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_EXTERNAL_WAYLAND_PROFILE', raising=False)
+    monkeypatch.setattr(player.os.path, 'exists', lambda path: path == '/.flatpak-info')
+    monkeypatch.setattr(player.platform, 'machine', lambda: 'aarch64')
+
+    assert player._qt_external_wayland_mode_args() == ['--vo=wlshm']
+
+
+def test_flatpak_arm_wayland_external_mpv_honors_explicit_baseline_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_QT_EXTERNAL_WAYLAND_PROFILE', 'baseline')
+    monkeypatch.setattr(player.os.path, 'exists', lambda path: path == '/.flatpak-info')
+    monkeypatch.setattr(player.platform, 'machine', lambda: 'aarch64')
+
+    assert player._qt_external_wayland_mode_args() == ['--vo=gpu', '--gpu-context=wayland']
 
 
 def test_stop_mpv_persists_live_runtime_volume(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -183,6 +183,42 @@ modules:
         url: https://pcsclite.apdu.fr/files/pcsc-lite-2.5.1.tar.xz
         sha256: bfcfe38a20afc49849c6bf55325e38f449fc4b26d3923fdc32b969ae41a8741b
 
+  # Additional shared libraries required by PySide6's QtWebEngine wheels.
+  # Missing these causes the Flatpak idle/program web surface to disable itself
+  # and leave only the host desktop visible.
+  - name: snappy
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DSNAPPY_BUILD_TESTS=OFF
+      - -DSNAPPY_BUILD_BENCHMARKS=OFF
+      - -DSNAPPY_INSTALL=ON
+    cleanup:
+      - /include
+      - /lib/cmake
+    sources:
+      - type: archive
+        url: https://github.com/google/snappy/archive/refs/tags/1.2.2.tar.gz
+        sha256: 90f74bc1fbf78a6c56b3c4a082a05103b3a56bb17bca1a27e052ea11723292dc
+
+  - name: minizip
+    buildsystem: simple
+    build-commands:
+      - cd contrib/minizip && autoreconf -fi
+      - cd contrib/minizip && ./configure --prefix=/app --disable-static
+      - make -C contrib/minizip -j"$FLATPAK_BUILDER_N_JOBS"
+      - make -C contrib/minizip install
+    cleanup:
+      - /bin
+      - /include
+      - /lib/pkgconfig
+      - /share/man
+    sources:
+      - type: archive
+        url: https://zlib.net/fossils/zlib-1.3.1.tar.gz
+        sha256: 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+
   # Pinned Python deps (PySide6 wheels bundle Qt6 incl. WebEngine). Network is
   # enabled for pip; move to flatpak-pip-generator lockfiles for Flathub.
   - name: python-deps
