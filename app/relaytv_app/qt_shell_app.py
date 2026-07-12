@@ -52,6 +52,21 @@ def _initial_load_presentation_ready(exposed: bool, swaps: int, settled_age_sec:
     return bool(exposed) and int(swaps) >= 3 and float(settled_age_sec) >= 0.25
 
 
+def _initial_load_gate_timeout_sec() -> float:
+    """How long the first video load may wait for a presentable window.
+
+    Boot is the case that matters: the compositor can take well over the old
+    6s here, and loading early wedges presentation for the whole process
+    life, which is strictly worse than starting late.
+    """
+    raw = (os.getenv("RELAYTV_QT_LIBMPV_PRESENT_GATE_TIMEOUT_SEC") or "90").strip()
+    try:
+        val = float(raw)
+    except Exception:
+        return 90.0
+    return min(600.0, max(6.0, val))
+
+
 def _has_opt(args: list[str], opt: str) -> bool:
     return any(a == opt or a.startswith(opt + "=") for a in args)
 
@@ -2909,40 +2924,55 @@ def main(argv: list[str] | None = None) -> int:
         win.installEventFilter(initial_gate_filter)
         video_widget.installEventFilter(initial_gate_filter)
 
-        def _window_presentation_ready() -> bool:
+        def _window_exposed() -> bool:
             try:
                 handle = win.windowHandle()
-                exposed = bool(handle is not None and handle.isExposed())
+                return bool(handle is not None and handle.isExposed())
             except Exception:
                 return False
+
+        def _window_presentation_ready() -> bool:
             return _initial_load_presentation_ready(
-                exposed,
+                _window_exposed(),
                 int(initial_gate["swaps"]),
                 time.monotonic() - float(initial_gate["settled_ts"]),
             )
+
+        initial_gate["started_ts"] = time.monotonic()
+        initial_gate["progress_logged_sec"] = 0.0
 
         def _load_initial_libmpv_stream() -> None:
             if libmpv_player is None:
                 return
             initial_load_attempts["n"] += 1
+            waited = time.monotonic() - float(initial_gate["started_ts"])
             try:
-                if not libmpv_player.render_context_ready():
-                    if initial_load_attempts["n"] < 120:
-                        QTimer.singleShot(50, _load_initial_libmpv_stream)
-                        return
+                ctx_ready = bool(libmpv_player.render_context_ready())
+                presentation_ready = ctx_ready and _window_presentation_ready()
+                if not presentation_ready and waited < _initial_load_gate_timeout_sec():
+                    if waited - float(initial_gate["progress_logged_sec"]) >= 10.0:
+                        initial_gate["progress_logged_sec"] = waited
+                        _eprint(
+                            "qt-shell libmpv initial load waiting for presentation "
+                            f"(waited={waited:.0f}s ctx={ctx_ready} "
+                            f"exposed={_window_exposed()} swaps={initial_gate['swaps']})"
+                        )
+                    # Poll fast through a normal bring-up, then back off for
+                    # slow session starts (boot).
+                    QTimer.singleShot(50 if waited < 6.0 else 500, _load_initial_libmpv_stream)
+                    return
+                if not ctx_ready:
                     raise RuntimeError("libmpv render context not ready")
-                if not _window_presentation_ready():
-                    if initial_load_attempts["n"] < 120:
-                        QTimer.singleShot(50, _load_initial_libmpv_stream)
-                        return
+                if presentation_ready:
                     _eprint(
-                        "qt-shell libmpv initial load proceeding despite unsettled window "
-                        f"(swaps={initial_gate['swaps']})"
+                        "qt-shell libmpv initial load gated until presentation ready "
+                        f"(waited={waited:.1f}s swaps={initial_gate['swaps']})"
                     )
                 else:
                     _eprint(
-                        "qt-shell libmpv initial load gated until presentation ready "
-                        f"(checks={initial_load_attempts['n']} swaps={initial_gate['swaps']})"
+                        "qt-shell libmpv initial load proceeding despite unsettled window "
+                        f"(waited={waited:.0f}s exposed={_window_exposed()} "
+                        f"swaps={initial_gate['swaps']})"
                     )
                 libmpv_player.load_stream(initial_stream, initial_audio, initial_start)
                 _sync_idle_visibility()

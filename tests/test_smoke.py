@@ -353,6 +353,23 @@ def test_qt_shell_initial_load_waits_for_presentation() -> None:
     assert "video_widget.frameSwapped.connect" in text
 
 
+def test_qt_shell_initial_load_gate_timeout_covers_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Boot can take well over the render-context wait; the fallback that
+    # loads anyway must stay far enough out that a booting compositor
+    # normally settles first (a too-early load wedges presentation).
+    monkeypatch.delenv("RELAYTV_QT_LIBMPV_PRESENT_GATE_TIMEOUT_SEC", raising=False)
+    assert qt_shell_app._initial_load_gate_timeout_sec() == 90.0
+
+    monkeypatch.setenv("RELAYTV_QT_LIBMPV_PRESENT_GATE_TIMEOUT_SEC", "30")
+    assert qt_shell_app._initial_load_gate_timeout_sec() == 30.0
+
+    monkeypatch.setenv("RELAYTV_QT_LIBMPV_PRESENT_GATE_TIMEOUT_SEC", "1")
+    assert qt_shell_app._initial_load_gate_timeout_sec() == 6.0
+
+    monkeypatch.setenv("RELAYTV_QT_LIBMPV_PRESENT_GATE_TIMEOUT_SEC", "bogus")
+    assert qt_shell_app._initial_load_gate_timeout_sec() == 90.0
+
+
 def test_flatpak_launcher_disables_native_qt_toasts_by_default() -> None:
     text = (ROOT_DIR / "packaging/flatpak/relaytv-launch.sh").read_text()
 
@@ -1961,8 +1978,9 @@ def test_qt_libmpv_initial_stream_waits_for_render_context() -> None:
 
     assert 'Initial media is loaded after QOpenGLWidget.initializeGL() creates the' in text
     assert 'def render_context_ready(self) -> bool:' in text
-    assert 'if not libmpv_player.render_context_ready():' in text
-    assert 'QTimer.singleShot(50, _load_initial_libmpv_stream)' in text
+    assert 'ctx_ready = bool(libmpv_player.render_context_ready())' in text
+    assert 'raise RuntimeError("libmpv render context not ready")' in text
+    assert 'QTimer.singleShot(50 if waited < 6.0 else 500, _load_initial_libmpv_stream)' in text
     assert 'self.load_stream((stream or "").strip()' not in text
 
 

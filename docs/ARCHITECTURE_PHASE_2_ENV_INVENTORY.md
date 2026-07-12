@@ -229,6 +229,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_QT_EXTERNAL_WAYLAND_PROFILE` | `player.py` | - | static env |
 | `RELAYTV_QT_LIBMPV` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_LIBMPV_FRAME_MS` | `qt_shell_app.py` | - | child process input |
+| `RELAYTV_QT_LIBMPV_PRESENT_GATE_TIMEOUT_SEC` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_LIBMPV_TOPLEVEL_OVERLAY` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_NATIVE_IDLE` | `qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
 | `RELAYTV_QT_NATIVE_IDLE_TOPLEVEL` | `qt_shell_app.py` | - | child process input |
