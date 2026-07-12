@@ -530,6 +530,17 @@ def test_persist_server_type_writes_only_on_change(monkeypatch) -> None:
     assert jellyfin_receiver._STATUS["server_product_name"] == "Emby Server"
 
 
+def test_set_server_type_updates_live_status_and_clears_stale_product(monkeypatch) -> None:
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "jellyfin")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_product_name", "Jellyfin Server")
+    monkeypatch.setattr(state, "update_settings", lambda patch: dict(patch))
+
+    result = jellyfin_receiver.set_server_type(" EMBY ")
+
+    assert result["server_type"] == "emby"
+    assert result["server_product_name"] == ""
+
+
 def test_looks_like_media_url_accepts_emby_hosts() -> None:
     assert jellyfin_service.looks_like_media_url("http://emby.home.lan:8096/web/index.html") is True
     assert jellyfin_service.looks_like_media_url("http://jellyfin.home.lan:8096/web/") is True

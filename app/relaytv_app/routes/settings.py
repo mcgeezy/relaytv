@@ -338,6 +338,13 @@ def update_settings(req: SettingsReq):
             live_applied.append("device_name")
         except Exception:
             live_apply_failed.append("device_name")
+    if "jellyfin_server_type" in requested_keys and updated.get("jellyfin_server_type") is not None:
+        try:
+            server_type = str(updated.get("jellyfin_server_type") or "jellyfin").strip().lower()
+            jellyfin_receiver.set_server_type(server_type)
+            live_applied.append("jellyfin_server_type")
+        except Exception:
+            live_apply_failed.append("jellyfin_server_type")
     jellyfin_setting_keys = {
         "jellyfin_enabled",
         "jellyfin_server_url",

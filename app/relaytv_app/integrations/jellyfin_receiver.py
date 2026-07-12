@@ -513,6 +513,8 @@ def _persist_server_type(server_type: str, product_name: str = "") -> None:
         _STATUS["server_type"] = st
         if product_name:
             _STATUS["server_product_name"] = str(product_name)
+        elif changed:
+            _STATUS["server_product_name"] = ""
     if not changed:
         return
     try:
@@ -526,6 +528,15 @@ def _persist_server_type(server_type: str, product_name: str = "") -> None:
             _state.update_settings({"jellyfin_server_type": st})
     except Exception:
         pass
+
+
+def set_server_type(server_type: str) -> dict[str, object]:
+    """Apply an operator-selected server type to the live receiver."""
+    st = str(server_type or "").strip().lower()
+    if st not in ("jellyfin", "emby"):
+        raise ValueError("server_type must be jellyfin or emby")
+    _persist_server_type(st)
+    return status()
 
 
 def _run_detection(server_url: str) -> dict[str, object]:
