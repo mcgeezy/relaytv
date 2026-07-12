@@ -353,6 +353,17 @@ def test_qt_shell_initial_load_waits_for_presentation() -> None:
     assert "video_widget.frameSwapped.connect" in text
 
 
+def test_qt_shell_remaps_window_that_never_exposed() -> None:
+    # Boot-time mapping can corrupt mutter stacking (stack_position assertion)
+    # leaving the window permanently unexposed: black screen until re-mapped.
+    text = (ROOT_DIR / "app/relaytv_app/qt_shell_app.py").read_text()
+
+    assert "def _exposure_watchdog() -> None:" in text
+    assert "remapping fullscreen window" in text
+    assert 'exposure_state = {"ever_exposed": False, "remaps": 0}' in text
+    assert 'exposure_state["remaps"] >= 5' in text
+
+
 def test_qt_shell_initial_load_gate_timeout_covers_boot(monkeypatch: pytest.MonkeyPatch) -> None:
     # Boot can take well over the render-context wait; the fallback that
     # loads anyway must stay far enough out that a booting compositor

@@ -2867,6 +2867,48 @@ def main(argv: list[str] | None = None) -> int:
                 overlay_win.activateWindow()
             except Exception:
                 pass
+    if not headless_qpa:
+        # A window mapped while gnome-shell is still initializing (boot) can
+        # land in a corrupted stacking state (mutter logs
+        # "meta_window_set_stack_position_no_sync: assertion
+        # 'window->stack_position >= 0' failed") and is then never exposed:
+        # the appliance boots to a black screen until something re-maps the
+        # window. If the window has never been exposed, re-map it so the
+        # settled compositor stacks a fresh surface.
+        exposure_state = {"ever_exposed": False, "remaps": 0}
+
+        def _exposure_watchdog() -> None:
+            try:
+                handle = win.windowHandle()
+                exposed = bool(handle is not None and handle.isExposed())
+            except Exception:
+                exposed = False
+            if exposed:
+                exposure_state["ever_exposed"] = True
+                try:
+                    exposure_timer.stop()
+                except Exception:
+                    pass
+                return
+            if exposure_state["ever_exposed"] or exposure_state["remaps"] >= 5:
+                return
+            exposure_state["remaps"] += 1
+            _eprint(
+                "qt-shell window never exposed; remapping fullscreen window "
+                f"(attempt {exposure_state['remaps']})"
+            )
+            try:
+                win.hide()
+                win.showFullScreen()
+                win.raise_()
+                win.activateWindow()
+            except Exception as exc:
+                _eprint(f"qt-shell window remap failed: {exc}")
+
+        exposure_timer = QTimer()
+        exposure_timer.setInterval(8000)
+        exposure_timer.timeout.connect(_exposure_watchdog)
+        exposure_timer.start()
     if overlay is not None and overlay_win is None:
         overlay.show()
         overlay.raise_()
