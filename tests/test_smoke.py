@@ -336,6 +336,23 @@ def test_qt_shell_ensures_c_numeric_locale_for_libmpv() -> None:
     assert locale.localeconv()["decimal_point"] == "."
 
 
+def test_qt_shell_initial_load_waits_for_presentation() -> None:
+    # Loading the first video before the fullscreen Wayland surface settles
+    # wedges presentation into an audio-only frozen frame; the gate requires
+    # a mapped window, real frame swaps, and quiet geometry.
+    ready = qt_shell_app._initial_load_presentation_ready
+
+    assert ready(True, 3, 0.25) is True
+    assert ready(True, 10, 5.0) is True
+    assert ready(False, 10, 5.0) is False
+    assert ready(True, 2, 5.0) is False
+    assert ready(True, 10, 0.1) is False
+
+    text = (ROOT_DIR / "app/relaytv_app/qt_shell_app.py").read_text()
+    assert "_window_presentation_ready()" in text
+    assert "video_widget.frameSwapped.connect" in text
+
+
 def test_flatpak_launcher_disables_native_qt_toasts_by_default() -> None:
     text = (ROOT_DIR / "packaging/flatpak/relaytv-launch.sh").read_text()
 

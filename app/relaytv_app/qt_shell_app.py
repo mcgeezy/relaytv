@@ -45,6 +45,13 @@ def _eprint(*a: object) -> None:
     logger.info(" ".join(str(part) for part in a))
 
 
+def _initial_load_presentation_ready(exposed: bool, swaps: int, settled_age_sec: float) -> bool:
+    """Gate for the first video load: the window must be mapped, actively
+    swapping frames, and past its bring-up geometry churn, or the Wayland
+    presentation loop can wedge into an audio-only frozen frame."""
+    return bool(exposed) and int(swaps) >= 3 and float(settled_age_sec) >= 0.25
+
+
 def _has_opt(args: list[str], opt: str) -> bool:
     return any(a == opt or a.startswith(opt + "=") for a in args)
 
@@ -2876,6 +2883,43 @@ def main(argv: list[str] | None = None) -> int:
         initial_audio = (args.audio or None)
         initial_start = args.start
         initial_load_attempts = {"n": 0}
+        # Starting the first video while the fullscreen Wayland surface is
+        # still being mapped/reconfigured wedges the window's presentation
+        # loop: one frame renders, then playback continues audio-only over a
+        # frozen frame and even later idle/overlay paints never reach the
+        # screen (observed on the Flatpak turn-up; starting from a settled
+        # idle window is always healthy). Hold the initial load until the
+        # window is exposed, has swapped real frames, and its geometry has
+        # stopped changing.
+        initial_gate = {"swaps": 0, "settled_ts": time.monotonic()}
+        try:
+            video_widget.frameSwapped.connect(
+                lambda: initial_gate.__setitem__("swaps", initial_gate["swaps"] + 1)
+            )
+        except Exception:
+            pass
+
+        class _InitialLoadGateFilter(QObject):
+            def eventFilter(self, _obj, event):  # noqa: N802 (Qt naming)
+                if event.type() in (QEvent.Resize, QEvent.Show, QEvent.Expose):
+                    initial_gate["settled_ts"] = time.monotonic()
+                return False
+
+        initial_gate_filter = _InitialLoadGateFilter()
+        win.installEventFilter(initial_gate_filter)
+        video_widget.installEventFilter(initial_gate_filter)
+
+        def _window_presentation_ready() -> bool:
+            try:
+                handle = win.windowHandle()
+                exposed = bool(handle is not None and handle.isExposed())
+            except Exception:
+                return False
+            return _initial_load_presentation_ready(
+                exposed,
+                int(initial_gate["swaps"]),
+                time.monotonic() - float(initial_gate["settled_ts"]),
+            )
 
         def _load_initial_libmpv_stream() -> None:
             if libmpv_player is None:
@@ -2883,10 +2927,23 @@ def main(argv: list[str] | None = None) -> int:
             initial_load_attempts["n"] += 1
             try:
                 if not libmpv_player.render_context_ready():
-                    if initial_load_attempts["n"] < 80:
+                    if initial_load_attempts["n"] < 120:
                         QTimer.singleShot(50, _load_initial_libmpv_stream)
                         return
                     raise RuntimeError("libmpv render context not ready")
+                if not _window_presentation_ready():
+                    if initial_load_attempts["n"] < 120:
+                        QTimer.singleShot(50, _load_initial_libmpv_stream)
+                        return
+                    _eprint(
+                        "qt-shell libmpv initial load proceeding despite unsettled window "
+                        f"(swaps={initial_gate['swaps']})"
+                    )
+                else:
+                    _eprint(
+                        "qt-shell libmpv initial load gated until presentation ready "
+                        f"(checks={initial_load_attempts['n']} swaps={initial_gate['swaps']})"
+                    )
                 libmpv_player.load_stream(initial_stream, initial_audio, initial_start)
                 _sync_idle_visibility()
                 _nudge_overlay_stack()
