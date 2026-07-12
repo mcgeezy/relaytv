@@ -484,6 +484,41 @@ def test_run_detection_failure_keeps_existing_server_type(monkeypatch) -> None:
     assert updates == []
 
 
+@pytest.mark.parametrize(
+    ("server_type", "expected_row_ids"),
+    [
+        ("jellyfin", ["continue_watching", "next_up", "movies", "shows", "recently_added"]),
+        ("emby", ["movies", "shows", "recently_added"]),
+    ],
+)
+def test_home_rows_match_server_capabilities(monkeypatch, server_type, expected_row_ids) -> None:
+    requested_urls: list[str] = []
+
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", server_type)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_catalog_base_token_user",
+        lambda: ("http://media.local", "token", "user-1"),
+    )
+
+    def fake_get_json(url, *, timeout, token):
+        requested_urls.append(url)
+        return {"Items": [{"Id": "item-1"}]}
+
+    monkeypatch.setattr(jellyfin_receiver, "_get_json", fake_get_json)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_normalize_catalog_item",
+        lambda item, *, base, token: {"item_id": item["Id"]},
+    )
+
+    payload = jellyfin_receiver.get_home_rows(limit=5, refresh=True)
+
+    assert [row["id"] for row in payload["rows"]] == expected_row_ids
+    if server_type == "emby":
+        assert not any("/Items/Resume" in url or "/Shows/NextUp" in url for url in requested_urls)
+
+
 def test_persist_server_type_writes_only_on_change(monkeypatch) -> None:
     updates: list[dict[str, object]] = []
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "emby")

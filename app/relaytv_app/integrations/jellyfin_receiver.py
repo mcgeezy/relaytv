@@ -1829,7 +1829,8 @@ def get_home_rows(*, limit: int = 24, refresh: bool = False) -> dict[str, object
     base, token, user_id = _catalog_base_token_user()
     if not base:
         return {"rows": [], "generated_ts": int(time.time())}
-    cache_key = f"home:{base}:{user_id}:{lim}"
+    server_type = str(status().get("server_type") or "jellyfin").strip().lower()
+    cache_key = f"home:{server_type}:{base}:{user_id}:{lim}"
     if not refresh:
         cached = _catalog_cache_get(cache_key)
         if isinstance(cached, dict):
@@ -1900,13 +1901,21 @@ def get_home_rows(*, limit: int = 24, refresh: bool = False) -> dict[str, object
         latest_urls.append(f"{base}/Users/{_urlparse.quote(user_id)}/Items/Latest?Limit={lim}")
     latest_urls.append(f"{base}/Items/Latest?Limit={lim}")
 
-    specs = [
-        ("continue_watching", "Continue Watching", continue_urls),
-        ("next_up", "Next Up", next_up_urls),
-        ("movies", "Movies", movies_urls),
-        ("shows", "Shows", shows_urls),
-        ("recently_added", "Recently Added", latest_urls),
-    ]
+    specs = []
+    if server_type != "emby":
+        specs.extend(
+            [
+                ("continue_watching", "Continue Watching", continue_urls),
+                ("next_up", "Next Up", next_up_urls),
+            ]
+        )
+    specs.extend(
+        [
+            ("movies", "Movies", movies_urls),
+            ("shows", "Shows", shows_urls),
+            ("recently_added", "Recently Added", latest_urls),
+        ]
+    )
     for row_id, title, urls in specs:
         items = _first_items(urls)
         norm = [_normalize_catalog_item(it, base=base, token=token) for it in items]
