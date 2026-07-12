@@ -49,6 +49,7 @@ class SettingsReq(BaseModel):
     jellyfin_audio_lang: str | None = None
     jellyfin_sub_lang: str | None = None
     jellyfin_playback_mode: str | None = None
+    jellyfin_server_type: str | None = None
     apply_now: bool = False
 
 
@@ -282,6 +283,8 @@ def update_settings(req: SettingsReq):
         runtime_config.set_value("RELAYTV_JELLYFIN_SUB_LANG", str(updated.get("jellyfin_sub_lang") or "").strip().lower())
     if "jellyfin_playback_mode" in requested_keys and updated.get("jellyfin_playback_mode") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(updated.get("jellyfin_playback_mode") or "auto").strip().lower())
+    if "jellyfin_server_type" in requested_keys and updated.get("jellyfin_server_type") is not None:
+        runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_TYPE", str(updated.get("jellyfin_server_type") or "jellyfin").strip().lower())
     if requested_keys.intersection({"jellyfin_enabled", "jellyfin_server_url", "jellyfin_username", "jellyfin_password"}):
         runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1")
 
@@ -335,6 +338,13 @@ def update_settings(req: SettingsReq):
             live_applied.append("device_name")
         except Exception:
             live_apply_failed.append("device_name")
+    if "jellyfin_server_type" in requested_keys and updated.get("jellyfin_server_type") is not None:
+        try:
+            server_type = str(updated.get("jellyfin_server_type") or "jellyfin").strip().lower()
+            jellyfin_receiver.set_server_type(server_type)
+            live_applied.append("jellyfin_server_type")
+        except Exception:
+            live_apply_failed.append("jellyfin_server_type")
     jellyfin_setting_keys = {
         "jellyfin_enabled",
         "jellyfin_server_url",

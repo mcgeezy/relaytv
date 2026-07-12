@@ -941,6 +941,17 @@ def resolve_title(url: str) -> str:
 
 def _provider_display_name(provider: str) -> str:
     prov = str(provider or "").strip().lower()
+    if prov == "jellyfin":
+        # The jellyfin provider covers both server products; the configured
+        # server type decides which brand the user actually sees.
+        try:
+            from . import state as _state
+
+            if str(_state.get_settings().get("jellyfin_server_type") or "").strip().lower() == "emby":
+                return "Emby"
+        except Exception:
+            pass
+        return "Jellyfin"
     labels = {
         "youtube": "YouTube",
         "rumble": "Rumble",
@@ -949,7 +960,6 @@ def _provider_display_name(provider: str) -> str:
         "vimeo": "Vimeo",
         "twitch": "Twitch",
         "tiktok": "TikTok",
-        "jellyfin": "Jellyfin",
     }
     return labels.get(prov, prov.title() if prov else "Video")
 

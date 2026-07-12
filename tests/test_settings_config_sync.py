@@ -39,6 +39,7 @@ def quiet_settings_apply(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(routes.player, "stop_cec_monitor", lambda: None)
     monkeypatch.setattr(settings_routes.upload_store, "cleanup_uploads", lambda settings: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "set_device_identity", lambda name: None)
+    monkeypatch.setattr(settings_routes.jellyfin_receiver, "set_server_type", lambda server_type: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "connect", lambda **kwargs: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "disconnect", lambda: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "mark_error", lambda reason: None)
@@ -154,6 +155,7 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
         jellyfin_audio_lang=" ENG ",
         jellyfin_sub_lang=" OFF ",
         jellyfin_playback_mode=" Native ",
+        jellyfin_server_type=" EMBY ",
     )
 
     assert _cfg("RELAYTV_JELLYFIN_ENABLED") == "1"
@@ -164,8 +166,24 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
     assert _cfg("RELAYTV_JELLYFIN_AUDIO_LANG") == "eng"
     assert _cfg("RELAYTV_JELLYFIN_SUB_LANG") == "off"
     assert _cfg("RELAYTV_JELLYFIN_PLAYBACK_MODE") == "native"
+    assert _cfg("RELAYTV_JELLYFIN_SERVER_TYPE") == "emby"
     # Touching any core Jellyfin key force-enables username/password auth mode.
     assert _cfg("RELAYTV_JELLYFIN_AUTH_ENABLED") == "1"
+
+
+def test_settings_apply_syncs_server_type_to_live_receiver(quiet_settings_apply, monkeypatch) -> None:
+    applied: list[str] = []
+    monkeypatch.setattr(
+        settings_routes.jellyfin_receiver,
+        "set_server_type",
+        lambda server_type: applied.append(str(server_type)),
+    )
+
+    response = _apply(jellyfin_server_type=" EMBY ")
+
+    assert applied == ["emby"]
+    assert "jellyfin_server_type" in response["live_applied"]
+    assert "jellyfin_server_type" not in response["live_apply_failed"]
 
 
 def test_settings_apply_does_not_write_env_beyond_mirror_contract(quiet_settings_apply) -> None:
@@ -197,6 +215,7 @@ def test_settings_apply_does_not_write_env_beyond_mirror_contract(quiet_settings
         jellyfin_audio_lang="eng",
         jellyfin_sub_lang="off",
         jellyfin_playback_mode="auto",
+        jellyfin_server_type="emby",
     )
 
     for name in sorted(SETTINGS_BUS_VARS):

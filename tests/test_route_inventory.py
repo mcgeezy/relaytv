@@ -72,6 +72,7 @@ EXPECTED_ROUTES = {
     ("GET", "/pwa/brand/banner.png", "pwa_brand_banner_png_asset"),
     ("GET", "/pwa/brand/banner.svg", "pwa_brand_banner_svg_asset"),
     ("GET", "/pwa/brand/logo.svg", "pwa_brand_logo_svg_asset"),
+    ("GET", "/pwa/emby.svg", "pwa_emby_svg"),
     ("GET", "/pwa/icon.svg", "pwa_icon_svg"),
     ("GET", "/pwa/jellyfin.svg", "pwa_jellyfin_svg"),
     ("GET", "/pwa/splash.svg", "pwa_splash_svg"),

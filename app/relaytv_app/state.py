@@ -103,6 +103,13 @@ def _normalize_jellyfin_playback_mode(v: object) -> str:
     return "auto"
 
 
+def _normalize_jellyfin_server_type(v: object) -> str:
+    s = str(v or "").strip().lower()
+    if s in ("jellyfin", "emby"):
+        return s
+    return "jellyfin"
+
+
 def _normalize_invidious_base(v: object) -> str:
     s = str(v or "").strip()
     if not s:
@@ -961,6 +968,7 @@ def _default_settings() -> dict:
         "jellyfin_audio_lang": (os.getenv("RELAYTV_JELLYFIN_AUDIO_LANG") or "").strip(),
         "jellyfin_sub_lang": (os.getenv("RELAYTV_JELLYFIN_SUB_LANG") or os.getenv("RELAYTV_SUB_LANG") or "").strip(),
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
+        "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
     }
 
 def load_settings() -> None:
@@ -985,6 +993,7 @@ def load_settings() -> None:
     defaults["weather"] = _normalize_weather_settings(defaults.get("weather"))
     defaults["uploads"] = _normalize_upload_settings(defaults.get("uploads"))
     defaults["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(defaults.get("jellyfin_playback_mode"))
+    defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(defaults.get("jellyfin_server_type"))
     with SETTINGS_LOCK:
         SETTINGS = defaults
 
@@ -1034,6 +1043,7 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_audio_lang",
         "jellyfin_sub_lang",
         "jellyfin_playback_mode",
+        "jellyfin_server_type",
     }
     clean = {k: v for k, v in (patch or {}).items() if k in allowed}
     if "device_name" in clean:
@@ -1091,6 +1101,8 @@ def update_settings(patch: dict) -> dict:
         clean["jellyfin_sub_lang"] = str(clean.get("jellyfin_sub_lang") or "").strip().lower()
     if "jellyfin_playback_mode" in clean:
         clean["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(clean.get("jellyfin_playback_mode"))
+    if "jellyfin_server_type" in clean:
+        clean["jellyfin_server_type"] = _normalize_jellyfin_server_type(clean.get("jellyfin_server_type"))
     with SETTINGS_LOCK:
         SETTINGS.update(clean)
         payload = dict(SETTINGS)

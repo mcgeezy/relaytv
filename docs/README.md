@@ -6,7 +6,8 @@ Use this directory as a small operator/product doc set for the public release br
 
 - `INSTALL.md`: installation, first boot, and environment defaults
 - `API.md`: HTTP endpoint reference
-- `JELLYFIN_OPERATIONS.md`: Jellyfin runtime config, verification, troubleshooting
+- `JELLYFIN_OPERATIONS.md`: Jellyfin/Emby runtime config, verification, troubleshooting
+- `EMBY_INTEGRATION_ROADMAP.md`: Emby server support roadmap and live-verification checklist
 - `NATIVE_RUNTIME_OPERATIONS.md`: runtime operations, readiness checks, logging, and soak workflow
 - `OPERATIONS_TEST_MATRIX.md`: runtime profile decision table (machine-checked) and per-profile validation checklists
 - `RELEASE.md`: release inputs, image traceability, and compliance checklist
@@ -52,11 +53,12 @@ inventory test's `--write` mode after intentional changes):
   data.
 - `app/relaytv_app/resolver.py`: URL validation, provider classification, and
   stream resolution.
-- `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin product
+- `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin/Emby product
   behavior — command ingress, stream selection and transcode policy, track
   preferences, metadata enrichment, stopped/progress payloads.
-- `app/relaytv_app/integrations/jellyfin_receiver.py`: Jellyfin transport,
-  auth, status, catalog cache, and progress/stopped calls.
+- `app/relaytv_app/integrations/jellyfin_receiver.py`: Jellyfin/Emby
+  transport, auth, server-type detection, status, catalog cache, and
+  progress/stopped calls.
 - `scripts/`: install, doctor, host operations, and release support scripts.
 
 Development history, migration notes, archived docs, deep validation notes, and engineering-only guidance should stay out of the public documentation tree unless they are intentionally converted into operator-facing docs.

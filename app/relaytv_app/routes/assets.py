@@ -215,6 +215,27 @@ def _jellyfin_svg(size: int = 128) -> str:
 </svg>'''
 
 
+def _emby_svg(size: int = 128) -> str:
+    # Original glyph in the house icon style; deliberately not the Emby trademark.
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 128 128" role="img" aria-label="Emby">
+  <defs>
+    <linearGradient id="eg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#52b54b"/>
+      <stop offset="1" stop-color="#1f7a3a"/>
+    </linearGradient>
+    <radialGradient id="eb" cx="50%" cy="40%" r="65%">
+      <stop offset="0" stop-color="#1d2b1f"/>
+      <stop offset="1" stop-color="#0b120c"/>
+    </radialGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#eb)" stroke="rgba(255,255,255,0.18)" />
+  <circle cx="64" cy="60" r="34" fill="url(#eg)" />
+  <polygon points="54,42 86,60 54,78" fill="white" opacity="0.95" />
+  <circle cx="64" cy="102" r="7" fill="#9fe3a0" opacity="0.95" />
+</svg>'''
+
+
 @router.get("/thumbs/{filename}")
 async def thumbs(filename: str):
     # Security: only allow simple filenames like <hex>.jpg
@@ -366,6 +387,14 @@ def pwa_jellyfin_svg():
     if asset and os.path.exists(asset):
         return FileResponse(asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
     return Response(_jellyfin_svg(128), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/pwa/emby.svg")
+def pwa_emby_svg():
+    asset = _safe_static_join(_PWA_STATIC_ROOT, "emby.svg")
+    if asset and os.path.exists(asset):
+        return FileResponse(asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+    return Response(_emby_svg(128), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/pwa/{asset_path:path}")

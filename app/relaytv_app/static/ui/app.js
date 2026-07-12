@@ -567,7 +567,7 @@ function faviconUrl(input){
   const u = obj ? String(obj.url || '') : String(input || '');
   const provider = obj ? String(obj.provider || '').toLowerCase() : '';
   if (provider === 'jellyfin' || _looksLikeJellyfinMediaUrl(u)) {
-    return '/pwa/jellyfin.svg';
+    return __jfServerType === 'emby' ? '/pwa/emby.svg' : '/pwa/jellyfin.svg';
   }
   const host = _safeUrlHost(u);
   if (!host) return '';
@@ -959,6 +959,38 @@ const __JF_REQ_TIMEOUT_MS = 12000;
 const __UI_FALLBACK_REFRESH_MS = 8000;
 const __UI_EVENT_RECONNECT_MS = 5000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
+
+let __jfServerType = 'jellyfin';
+let __jfServerConfigured = false;
+let __jfBrandApplied = false;
+
+function jfBrandName(){
+  if (!__jfServerConfigured) return 'Jellyfin / Emby';
+  return __jfServerType === 'emby' ? 'Emby' : 'Jellyfin';
+}
+
+function applyJfBranding(serverType, serverConfigured){
+  const t = String(serverType || '').trim().toLowerCase() === 'emby' ? 'emby' : 'jellyfin';
+  const configured = !!serverConfigured;
+  if (__jfBrandApplied && t === __jfServerType && configured === __jfServerConfigured) return;
+  __jfServerType = t;
+  __jfServerConfigured = configured;
+  __jfBrandApplied = true;
+  const brand = jfBrandName();
+  document.querySelectorAll('.jfBrand').forEach(el => { el.textContent = brand; });
+  const headLabel = document.getElementById('jfCardHeadLabel');
+  if (headLabel) headLabel.textContent = brand.toUpperCase();
+  const openBtn = document.getElementById('jellyfinOpenBtn');
+  if (openBtn) {
+    openBtn.title = `Open ${brand}`;
+    openBtn.setAttribute('aria-label', `Open ${brand}`);
+  }
+  const searchInput = document.getElementById('jfSearchInput');
+  if (searchInput) {
+    searchInput.placeholder = `Search ${brand} titles…`;
+    searchInput.setAttribute('aria-label', `Search ${brand}`);
+  }
+}
 
 function _jfCanLaunchFromStatus(st){
   if (!st || typeof st !== 'object') return false;
@@ -1979,7 +2011,7 @@ async function loadJellyfinHome(force){
   } catch (e) {
     const msg = String(e?.message || e);
     _jfSetBrowseUnavailable(msg);
-    _jfDetailPlaceholder('Jellyfin unavailable.');
+    _jfDetailPlaceholder(`${jfBrandName()} unavailable.`);
     _jfSetConn(false, 'Unavailable');
     _jfSetStatus(`Error: ${msg}`, 'err');
   } finally {
@@ -2465,7 +2497,7 @@ async function _jfPerformItemAction(item, kind, target){
     return {ok: false};
   }
   if (!__jfConnected) {
-    _jfNotifyAction(target, 'Jellyfin unavailable. Reconnect first.', 'err');
+    _jfNotifyAction(target, `${jfBrandName()} unavailable. Reconnect first.`, 'err');
     return {ok: false};
   }
   __jfActionBusy = true;
@@ -2976,6 +3008,7 @@ function renderStatus(st) {
   if (!st) return;
   if (_uiRefreshInteractionLockActive()) return;
   _jfSetLaunchVisible(_jfCanLaunchFromStatus(st));
+  applyJfBranding(st.jellyfin_server_type, st.jellyfin_server_url_configured);
 
   // state pill
   const dot = document.getElementById('dot');
@@ -4030,6 +4063,10 @@ async function loadSettingsUi(){
     ytCookiesState.classList.remove('ok', 'err');
     ytCookiesState.textContent = cur.youtube_cookies_configured ? 'cookies.txt is configured.' : 'No cookies.txt uploaded.';
   }
+  applyJfBranding(
+    (jfStatus && jfStatus.server_type) || cur.jellyfin_server_type,
+    !!String(cur.jellyfin_server_url || '').trim()
+  );
   if (jfEnabled) jfEnabled.checked = !!cur.jellyfin_enabled;
   if (jfServerUrl) jfServerUrl.value = (cur.jellyfin_server_url || defaultJellyfinServerUrl());
   if (jfUsername) jfUsername.value = (cur.jellyfin_username || '');
@@ -4448,9 +4485,9 @@ function bindSettingsUi(){
       return;
     }
     if (jfEnabled) {
-      if (!jfServer) { alert('Jellyfin server URL is required.'); return; }
-      if (!jfUser) { alert('Jellyfin username is required.'); return; }
-      if (!jfPass && !jfPwConfigured) { alert('Jellyfin password is required.'); return; }
+      if (!jfServer) { alert(`${jfBrandName()} server URL is required.`); return; }
+      if (!jfUser) { alert(`${jfBrandName()} username is required.`); return; }
+      if (!jfPass && !jfPwConfigured) { alert(`${jfBrandName()} password is required.`); return; }
     }
 
     const payload = {
@@ -4503,6 +4540,15 @@ function bindSettingsUi(){
       alert('Failed to save settings');
       return;
     }
+    // Server-type detection runs during apply; rebrand right away instead of
+    // waiting for the next status poll.
+    try {
+      const jfRes = await fetch('/integrations/jellyfin/status');
+      if (jfRes && jfRes.ok) {
+        const jf = await jfRes.json();
+        applyJfBranding(jf.server_type, !!jfServer);
+      }
+    } catch (_e) {}
     closeSettings();
   };
 }

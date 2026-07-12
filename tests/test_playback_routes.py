@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app import playback_service, routes
@@ -716,6 +717,33 @@ def test_playback_state_route_reports_closed_stop_hold(monkeypatch) -> None:
     assert body["playing"] is False
     assert body["transition_in_progress"] is False
     assert body["queue_length"] == 1
+
+
+@pytest.mark.parametrize(("session_state", "paused"), [("playing", False), ("paused", True)])
+def test_playback_state_route_keeps_pending_restore_non_playing(monkeypatch, session_state, paused) -> None:
+    monkeypatch.setattr(routes.state, "SESSION_STATE", session_state, raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"title": "Pending restore"}, raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [], raising=False)
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
+    monkeypatch.setattr(routes.player, "startup_session_restore_pending", lambda: True)
+    monkeypatch.setattr(routes.player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "natural_idle_reset_holding", lambda: False)
+    monkeypatch.setattr(
+        routes.player,
+        "qt_shell_runtime_telemetry",
+        lambda **kwargs: {"selected": True, "available": False, "freshness": "missing"},
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/playback/state")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == session_state
+    assert body["playing"] is False
+    assert body["paused"] is paused
+    assert body["has_now_playing"] is True
 
 
 def test_playback_state_route_reports_dead_backend_with_queue_as_runtime_gap(monkeypatch) -> None:

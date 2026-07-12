@@ -2726,6 +2726,8 @@ def _session_playing_fast() -> tuple[str, bool, bool]:
     """Cheap playing-state estimate for high-frequency UI polling."""
     sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() or "idle"
     paused = sess == "paused"
+    if bool(getattr(player, "startup_session_restore_pending", lambda: False)()):
+        return sess, False, paused
     playing = sess in ("playing", "paused")
     try:
         explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (time.time() + 60.0)
@@ -3019,7 +3021,12 @@ def _status_payload() -> dict[str, object]:
         sess = "paused" if paused else "playing"
         state.set_session_state(sess)
     elif sess not in ("closed",):
-        if sess == "paused" and isinstance(state.NOW_PLAYING, dict):
+        if bool(getattr(player, "startup_session_restore_pending", lambda: False)()):
+            # UI/status polling begins before the display runtime is ready.
+            # Preserve the persisted candidate until the autoplay worker can
+            # restore it instead of demoting it to idle and losing resume.
+            paused = sess == "paused"
+        elif sess == "paused" and isinstance(state.NOW_PLAYING, dict):
             # Preserve an explicit paused session during runtime telemetry gaps.
             # The autoplay worker treats idle as a natural end, so status/SSE
             # must not demote a resumable current item back to idle.
@@ -3093,6 +3100,12 @@ def _status_payload() -> dict[str, object]:
     jf_catalog_cache_clears = int(jf_status.get("catalog_cache_clears") or 0)
     jf_catalog_cache_last_cleared_ts = jf_status.get("catalog_cache_last_cleared_ts")
     jf_last_error = str(jf_status.get("last_error") or "")
+    jf_server_type = str(jf_status.get("server_type") or settings_snapshot.get("jellyfin_server_type") or "jellyfin").strip().lower()
+    if jf_server_type not in ("jellyfin", "emby"):
+        jf_server_type = "jellyfin"
+    jf_server_url_configured = bool(
+        str(jf_status.get("server_url") or "").strip() or str(settings_snapshot.get("jellyfin_server_url") or "").strip()
+    )
     playback_telemetry_source = "none"
     playback_telemetry_freshness = "unknown"
     native_qt_runtime_mode = bool(
@@ -3154,6 +3167,8 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_catalog_cache_clears": jf_catalog_cache_clears,
         "jellyfin_catalog_cache_last_cleared_ts": jf_catalog_cache_last_cleared_ts,
         "jellyfin_last_error": jf_last_error,
+        "jellyfin_server_type": jf_server_type,
+        "jellyfin_server_url_configured": jf_server_url_configured,
         "jellyfin_playback_mode": _effective_jellyfin_playback_mode(settings_snapshot),
         "pause_reason": state.get_pause_reason() if hasattr(state, "get_pause_reason") else None,
         "resume_available": resume_avail,
@@ -3307,7 +3322,7 @@ def ui():
     <header>
       <h1 id="appBrandName">RelayTV</h1>
       <div class="hdrRight">
-        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin">Jellyfin</button>
+        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfBrand">Jellyfin</span></button>
         <button id="addUrlBtn" class="hdrAddBtn" title="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
           <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
@@ -3546,7 +3561,7 @@ def ui():
       <div class="jfShellInner">
         <div class="jfShellHead">
           <button id="jfShellBackBtn" class="jfShellBack">← Back</button>
-          <div class="jfShellTitle">Jellyfin</div>
+          <div class="jfShellTitle"><span class="jfBrand">Jellyfin</span></div>
         </div>
         <div class="jfTabs" role="tablist" aria-label="Jellyfin sections">
           <button class="jfTabBtn active" id="jfTabDashboardBtn" data-jf-tab="dashboard" role="tab" aria-selected="true" aria-controls="jellyfinCard" tabindex="0">Dashboard</button>
@@ -3555,7 +3570,7 @@ def ui():
         </div>
         <section id="jellyfinCard" class="card jellyfinCard" role="tabpanel">
           <div class="sectionTitle jfCardHead">
-            <span class="jfCardHeadLabel">JELLYFIN</span>
+            <span class="jfCardHeadLabel" id="jfCardHeadLabel">JELLYFIN</span>
             <div class="jfCardSearchWrap">
               <input id="jfSearchInput" class="input jfCardSearch" placeholder="Search Jellyfin titles…" aria-label="Search Jellyfin" />
             </div>
@@ -3571,7 +3586,7 @@ def ui():
               <div id="jfRows" class="jfRows"></div>
             </div>
             <div id="jfDetailBackdrop" class="jfDetailBackdrop" aria-hidden="true"></div>
-            <aside id="jfDetail" class="jfDetail muted">Select a Jellyfin item to view details.</aside>
+            <aside id="jfDetail" class="jfDetail muted">Select an item to view details.</aside>
             <div id="jfAlphaIndicator" class="jfAlphaIndicator" aria-hidden="true">A</div>
           </div>
         </section>
@@ -3807,32 +3822,32 @@ def ui():
     </details>
 
     <details class="settingsGroup">
-      <summary>Jellyfin Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <summary><span class="jfBrand">Jellyfin / Emby</span> Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
         <div class="toggleRow">
           <div class="toggleCopy">
-            <div class="toggleTitle">Enable Jellyfin integration</div>
-            <div class="toggleHint">Show Jellyfin browsing and playback controls when server settings are configured.</div>
+            <div class="toggleTitle">Enable <span class="jfBrand">Jellyfin / Emby</span> integration</div>
+            <div class="toggleHint">Show <span class="jfBrand">Jellyfin / Emby</span> browsing and playback controls when server settings are configured.</div>
           </div>
-          <label class="toggleSwitch" for="setJfEnabled" title="Enable Jellyfin integration">
+          <label class="toggleSwitch" for="setJfEnabled" title="Enable media server integration">
             <input type="checkbox" id="setJfEnabled" />
             <span class="toggleTrack" aria-hidden="true"></span>
           </label>
         </div>
 
         <div class="fieldRow">
-          <label class="fieldLbl">Jellyfin server</label>
+          <label class="fieldLbl"><span class="jfBrand">Jellyfin / Emby</span> server</label>
           <input id="setJfServerUrl" class="input" placeholder="http://10.0.55.2:8096" />
-          <div class="hint">Use your local Jellyfin base URL, for example `http://10.0.55.2:8096`.</div>
+          <div class="hint">Use your local Jellyfin or Emby base URL, for example `http://10.0.55.2:8096`. The server type is detected automatically.</div>
         </div>
 
         <div class="fieldRow">
           <label class="fieldLbl">Username</label>
-          <input id="setJfUsername" class="input" placeholder="jellyfin username" />
+          <input id="setJfUsername" class="input" placeholder="server username" />
         </div>
         <div class="fieldRow">
           <label class="fieldLbl">Preferred user ID (optional)</label>
-          <input id="setJfUserId" class="input" placeholder="Jellyfin user Id (UUID)" />
+          <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
           <div class="hint">Optional profile override for catalog browsing on this TV. Leave blank to use the authenticated user.</div>
         </div>
         <div class="fieldRow">
@@ -3841,7 +3856,7 @@ def ui():
           <div class="toggleRow">
             <div class="toggleCopy">
               <div class="toggleTitle">Clear stored password</div>
-              <div class="toggleHint">Remove the saved Jellyfin password on the next Jellyfin apply.</div>
+              <div class="toggleHint">Remove the saved server password on the next apply.</div>
             </div>
             <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
               <input type="checkbox" id="setJfClearPassword" />
@@ -3853,7 +3868,7 @@ def ui():
         <div class="fieldRow">
           <label class="fieldLbl">Preferred audio language</label>
           <input id="setJfAudioLang" class="input" placeholder="e.g. en, pt-BR" />
-          <div class="hint">Used when selecting Jellyfin audio tracks if available.</div>
+          <div class="hint">Used when selecting server audio tracks if available.</div>
         </div>
         <div class="fieldRow">
           <label class="fieldLbl">Preferred subtitle language</label>
@@ -3870,7 +3885,7 @@ def ui():
           <div class="hint">Auto uses host decode profile and display cap to choose direct or transcode.</div>
         </div>
         <div class="inlineApplyRow">
-          <button type="button" id="setJfApplyBtn" class="btn electricBlue">Apply Jellyfin</button>
+          <button type="button" id="setJfApplyBtn" class="btn electricBlue">Apply <span class="jfBrand">Jellyfin / Emby</span></button>
           <div id="setJfApplyResult" class="inlineApplyMsg"></div>
         </div>
         <div class="inlineApplyRow">

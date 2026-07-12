@@ -5009,6 +5009,8 @@ def _autoplay_next_worker():
     while True:
         time.sleep(0.25)
         if not _SESSION_RESTORE_ATTEMPTED:
+            if _startup_session_restore_waiting_for_qt_runtime():
+                continue
             _SESSION_RESTORE_ATTEMPTED = True
             if _restore_session_on_startup_if_needed():
                 continue
@@ -5442,6 +5444,37 @@ def _restore_session_on_startup_if_needed() -> bool:
     except Exception as e:
         logger.warning("startup_session_restore_failed error=%s", e)
         return False
+
+
+def startup_session_restore_pending() -> bool:
+    """Return whether a persisted playing/paused session still awaits restore."""
+    if _SESSION_RESTORE_ATTEMPTED:
+        return False
+    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    return bool(sess in ("playing", "paused") and now)
+
+
+def _startup_session_restore_waiting_for_qt_runtime() -> bool:
+    """Keep persisted Qt playback pending until its idle runtime is controllable."""
+    if not startup_session_restore_pending():
+        return False
+    if not _qt_shell_backend_enabled():
+        return False
+    if not _qt_shell_display_stable():
+        return True
+    if not _idle_qt_shell_enabled():
+        return False
+    if not _qt_shell_running():
+        return True
+    telemetry = qt_shell_runtime_telemetry(max_age_sec=3.0)
+    if str(telemetry.get("freshness") or "").strip().lower() != "fresh":
+        return True
+    if telemetry.get("alive") is not True:
+        return True
+    if telemetry.get("qt_overlay_enabled") is True and telemetry.get("qt_overlay_load_ok") is not True:
+        return True
+    return not bool(str(telemetry.get("control_file") or "").strip())
 
 
 def _repair_orphan_runtime_playback(props: dict[str, Any] | None = None) -> bool:
