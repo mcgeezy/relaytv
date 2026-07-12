@@ -1858,7 +1858,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     .toast.success{--accent:var(--ok)} .toast.warn{--accent:var(--warn)} .toast.error{--accent:var(--err)}
     .toastTop{display:flex;align-items:center;gap:var(--toast-top-gap);}
     .ico{width:var(--toast-icon-size);height:var(--toast-icon-size);border-radius:999px;background:rgba(255,255,255,.08);display:grid;place-items:center;font-size:var(--toast-icon-font);}
-    .tTxt{font-size:var(--toast-text-font);line-height:1.28;}
+    .tTxt{font-size:var(--toast-text-font);line-height:1.28;white-space:pre-line;}
     .toast a{color:inherit;text-decoration:underline;font-weight:600;font-size:var(--toast-link-font);display:inline-block;margin-top:var(--toast-link-gap);pointer-events:auto;}
     .toast .img{margin-top:var(--toast-image-gap);width:100%;height:var(--toast-image-height);display:none;object-fit:cover;border-radius:var(--toast-image-radius);border:1px solid rgba(130,170,220,.25);background:rgba(255,255,255,.04)}
     .toast .img.ready{display:block;}
