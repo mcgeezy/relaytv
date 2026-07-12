@@ -1004,7 +1004,12 @@ def _ui_event_push_jellyfin(
 
 
 def _host_urls() -> list[str]:
-    port = int(os.getenv("PORT", "8787"))
+    # RELAYTV_PORT is the documented port knob (entrypoint, mDNS, Flatpak
+    # launcher); PORT stays as a legacy fallback for existing deployments.
+    try:
+        port = int((os.getenv("RELAYTV_PORT") or os.getenv("PORT") or "8787").strip() or "8787")
+    except Exception:
+        port = 8787
     out: list[str] = [f"http://127.0.0.1:{port}/ui", f"http://localhost:{port}/ui"]
     ips: set[str] = set()
     try:

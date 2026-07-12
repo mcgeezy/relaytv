@@ -212,7 +212,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_PLAYBACK_START_TIMEOUT_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_TRANSITION_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYER_BACKEND` | `player.py` | - | static env |
-| `RELAYTV_PORT` | `container_entrypoint.py`<br>`discovery_mdns.py` | - | entrypoint input |
+| `RELAYTV_PORT` | `container_entrypoint.py`<br>`discovery_mdns.py`<br>`routes/__init__.py` | - | entrypoint input |
 | `RELAYTV_QT_AUDIO_RECOVERY_COOLDOWN` | `player.py` | - | static env |
 | `RELAYTV_QT_AUDIO_WATCHDOG_INTERVAL` | `player.py` | - | static env |
 | `RELAYTV_QT_CURSOR_AUTOHIDE` | `qt_shell_app.py` | - | child process input |

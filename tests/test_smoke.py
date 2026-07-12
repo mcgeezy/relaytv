@@ -396,6 +396,21 @@ def test_entrypoint_server_port_honors_relaytv_port() -> None:
     assert container_entrypoint._server_port({"RELAYTV_PORT": "70000"}) == 8787
 
 
+def test_host_urls_advertise_relaytv_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The connect QR and /x11/host_urls must advertise the port the server
+    # actually listens on when RELAYTV_PORT overrides the default.
+    monkeypatch.setenv("RELAYTV_PORT", "8790")
+    monkeypatch.delenv("PORT", raising=False)
+
+    urls = routes._host_urls()
+
+    assert urls[0] == "http://127.0.0.1:8790/ui"
+    assert all(":8790/" in u for u in urls)
+
+    monkeypatch.setenv("RELAYTV_PORT", "not-a-port")
+    assert routes._host_urls()[0] == "http://127.0.0.1:8787/ui"
+
+
 def test_entrypoint_enables_headless_remote_from_mode() -> None:
     env = {"RELAYTV_MODE": "headless"}
 
