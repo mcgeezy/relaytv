@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/mcgeezy/relaytv/compare/v0.5.0...v0.6.0) (2026-07-12)
+
+
+### Features
+
+* support Emby servers with auto-detected branding, live configuration, capability-aware dashboards, and runtime-gated session restore ([8487d3d](https://github.com/mcgeezy/relaytv/commit/8487d3d1e374153c37efafc3fb856793daa54f85))
+
+
+### Bug Fixes
+
+* a just-ended YouTube stream now shows "YouTube is processing this live stream" and moves on to the next video instead of playing its final seconds and stopping — the replay plays normally once YouTube finishes processing it ([dc884cd](https://github.com/mcgeezy/relaytv/commit/dc884cd41fe409fac5cc5f388ebd0516bc0631e7))
+* live YouTube streams keep your cookies and bot-challenge settings when handed to mpv, so a stream that resolves no longer hits a bot check the moment playback starts ([dc884cd](https://github.com/mcgeezy/relaytv/commit/dc884cd41fe409fac5cc5f388ebd0516bc0631e7))
+
 ## [0.5.0](https://github.com/mcgeezy/relaytv/compare/v0.4.0...v0.5.0) (2026-07-05)
 
 
