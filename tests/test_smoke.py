@@ -3013,6 +3013,32 @@ def test_auto_next_worker_prefers_mpv_playlist_handoff(monkeypatch: pytest.Monke
     assert calls == [{'mode': 'auto_next', 'prefer_playlist_next': True}]
 
 
+def test_startup_session_restore_waits_for_qt_display(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', {'url': 'https://example.com/resume.mp4'}, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_display_stable', lambda: False)
+
+    assert player._startup_session_restore_waiting_for_display() is True
+
+    monkeypatch.setattr(player, '_qt_shell_display_stable', lambda: True)
+    assert player._startup_session_restore_waiting_for_display() is False
+
+
+def test_startup_session_restore_does_not_wait_without_pending_qt_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player, '_qt_shell_display_stable', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'idle', raising=False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+
+    assert player._startup_session_restore_waiting_for_display() is False
+
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'paused', raising=False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', {'url': 'https://example.com/resume.mp4'}, raising=False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: False)
+    assert player._startup_session_restore_waiting_for_display() is False
+
+
 def test_auto_next_playlist_handoff_uses_armed_item_after_eof(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[list[object]] = []
 
