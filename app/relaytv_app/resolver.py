@@ -65,9 +65,12 @@ def _mpv_ytdl_raw_options(args: list[str]) -> str:
                 idx += 1
         if key in {"no-playlist"}:
             continue
-        # mpv's key/value-list parser uses commas as separators. These yt-dlp
-        # values normally contain no commas; escape any operator-provided ones.
-        value = value.replace("\\", "\\\\").replace(",", "\\,")
+        # mpv's key/value-list parser splits pairs on commas and has no
+        # backslash escaping (a `\,` makes option parsing fail outright);
+        # length-prefixed quoting (%n%value) is the only way to carry a
+        # comma, and a bare leading % would be read as a quote marker.
+        if value and ("," in value or value.startswith("%")):
+            value = f"%{len(value)}%{value}"
         options.append(f"{key}={value}")
     return ",".join(options)
 
@@ -79,6 +82,25 @@ class YouTubeBotCheckError(HTTPException):
     unchanged; queue advancement catches this type to skip the item instead
     of retrying, since a bot check will not clear on its own.
     """
+
+
+class YouTubePostLiveProcessingError(HTTPException):
+    """YouTube has ended the live stream but has not processed its replay.
+
+    Raised only when yt-dlp fails with YouTube's own playability reason for
+    an unready replay; an ended stream that still resolves keeps playing
+    through mpv's yt-dlp hook like a live one.
+    """
+
+    def __init__(self, title: str) -> None:
+        self.title = str(title or "").strip()
+        super().__init__(status_code=409, detail="YouTube replay is still processing")
+
+
+def _youtube_error_is_postlive_processing(low_err: str) -> bool:
+    """Match YouTube's playability reason for an ended stream awaiting replay."""
+    return "live stream recording is not available" in low_err
+
 
 # Compact resolver runtime telemetry for /status and /runtime/capabilities.
 _RESOLVER_RUNTIME_LOCK = threading.Lock()
@@ -648,6 +670,8 @@ def resolve_streams_ytdlp(url: str):
             success=False,
         )
         logger.warning("ytdlp_failed provider=%s format=%s error=%s", provider or "unknown", selected_format, err[:1200])
+        if is_youtube_url(u) and _youtube_error_is_postlive_processing(err.lower()):
+            raise YouTubePostLiveProcessingError(u)
         if is_youtube_url(u) and _youtube_error_is_botcheck(err.lower()):
             raise YouTubeBotCheckError(
                 status_code=400,

@@ -26,6 +26,7 @@ from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
 from .resolver import (
     YouTubeBotCheckError,
+    YouTubePostLiveProcessingError,
     enrich_item_metadata,
     is_youtube_url,
     make_item,
@@ -41,14 +42,6 @@ logger = get_logger("player")
 _NATURAL_IDLE_RESET_UNTIL = 0.0
 _NATURAL_IDLE_ENSURE_TIMER: threading.Timer | None = None
 _HISTORY_PROGRESS_LAST_PERSIST: dict[str, float] = {}
-
-
-class YouTubePostLiveProcessingError(HTTPException):
-    """YouTube has ended the live stream but has not processed its replay."""
-
-    def __init__(self, title: str) -> None:
-        self.title = str(title or "").strip()
-        super().__init__(status_code=409, detail="YouTube replay is still processing")
 
 
 def _idle_dashboard_enabled() -> bool:
@@ -4690,8 +4683,18 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             debug_log("player", "using preflighted mpv yt-dlp handoff")
         else:
             t_resolve = time.monotonic()
-            result = resolve_streams(raw)
+            try:
+                result = resolve_streams(raw)
+            except YouTubePostLiveProcessingError:
+                _clear_prefetched_stream(item)
+                _notify_post_live_processing(item)
+                raise
             if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
+                # post_live resolves, but while YouTube processes the replay
+                # it serves only the live-edge fragment feed (no manifest, no
+                # fragment durations for mpv's hook), so playback would start
+                # seconds from the end and die. Skip until processing ends
+                # and the video plays as a normal VOD (verified on-device).
                 _clear_prefetched_stream(item)
                 _notify_post_live_processing(item)
                 raise YouTubePostLiveProcessingError(str(title or raw))
@@ -5932,12 +5935,19 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
             try:
                 result = resolve_streams(inp)
             except Exception as resolve_exc:
+                if isinstance(resolve_exc, YouTubePostLiveProcessingError):
+                    _notify_post_live_processing(item)
+                    logger.info("restart_current_skipped_post_live_processing title=%s", str(item.get("title") or inp)[:120])
+                    return None
                 if isinstance(resolve_exc, YouTubeBotCheckError):
                     label = str(item.get("title") or inp)
                     _notify_bot_check_toast(f"Settings not applied (YouTube bot check): {label}")
                 logger.warning("restart_current_resolve_failed error=%s", resolve_exc)
                 return None
             if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
+                # See play_item: a successfully resolved post_live stream is
+                # only watchable at the live edge, so restarting it would
+                # tear playback down for a stream that dies in seconds.
                 _notify_post_live_processing(item)
                 logger.info("restart_current_skipped_post_live_processing title=%s", str(item.get("title") or inp)[:120])
                 return None
