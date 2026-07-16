@@ -240,26 +240,37 @@ Implementation notes recorded along the way:
 - A resume position is dropped on the relay path (the stream is not
   seekable), so a restart or resume of a relayed replay plays from the start.
 
-### M6 — Live verification on the appliance (pending)
+### M6 — Live verification on the appliance (in progress)
 
-1. **Pipeline without a post_live specimen** (available immediately): the
-   topology works on any normal VOD forced to adaptive formats. Play a
-   regular YouTube video with the relay forced on and a
-   `bestvideo+bestaudio` expression → yt-dlp ×2 → ffmpeg → HTTP → mpv
-   renders with audio. Validates everything except YouTube's post-live
-   manifest.
-2. **Process hygiene**: `pgrep -f yt-dlp` / `pgrep -f ffmpeg` after stop,
-   skip-to-next, client disconnect, and a service restart mid-stream →
-   zero survivors.
-3. **Backpressure**: pause mpv 60s mid-relay → RSS of the trio stays flat;
-   resume continues cleanly.
-4. **Kill-switch**: `RELAYTV_POSTLIVE_RELAY=0` → identical skip+toast to
-   today.
-5. **Real post_live** (needs a stream that just ended; user-driven
-   timing): queue it → plays from the beginning with audio, info toast
-   appears, seeking refused gracefully, queue advances normally at the end.
-6. **Regression**: Docker path unaffected; `PYTHONPATH=app pytest -q`
-   green.
+Pre-deployment checks, run 2026-07-15 with the real module **inside the
+production Docker container** (its pinned yt-dlp 2026.07.04 + deno; the
+host's stale yt-dlp 2026.03.03 fails YouTube's challenge/SABR gates and is
+not representative):
+
+1. **Pipeline on a normal VOD with forced adaptive formats** — done.
+   `bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]/bestaudio` on a
+   139s VOD: yt-dlp picked formats 135+140, ffmpeg muxed, **first matroska
+   bytes after 2.03s** (EBML magic verified; 45s watchdog has huge margin),
+   3 MB in 2.25s. ffprobe: h264+aac; mpv decoded 60 frames with `A-V: 0.000`
+   and clean EOF.
+2. **Process hygiene (reader close)** — done: closing the reader tore down
+   all three processes (yt-dlp SIGTERM, ffmpeg escalated to kill, audio
+   child saw the expected broken pipe); zero survivors in container or on
+   the host. Supersede/close/reaper paths are unit-tested; the
+   restart-mid-stream case rides on cgroup teardown plus the lifespan
+   `close_all`.
+3. **Backpressure** — done: on a 2-hour VOD, pausing reads for 60s grew the
+   trio's RSS by **0 KB** and reads resumed instantly.
+4. **Kill-switch** — unit-tested (`RELAYTV_POSTLIVE_RELAY=0` restores
+   skip+toast in play_item and restart_current); live toggle check happens
+   with the deployed build.
+5. **Deployed end-to-end** — pending: build this branch into the runtime,
+   play a normal VOD through the full HTTP path, then the real test: a
+   genuine post_live video (a stream that just ended; user-driven timing) →
+   plays from the beginning with audio, info toast appears, queue advances
+   normally at the end.
+6. **Regression** — 389 tests green, ruff clean; running Docker instance
+   untouched by the verification (module exercised from /tmp, cleaned up).
 
 ## Risks
 
