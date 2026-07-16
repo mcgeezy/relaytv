@@ -104,6 +104,7 @@ from .playback import (
     volume as volume,
 )
 from .playback import router as playback_router
+from .postlive import router as postlive_router
 from .queue import router as queue_router
 from .settings import (
     SettingsReq as SettingsReq,
@@ -132,6 +133,7 @@ router.include_router(devices_router)
 router.include_router(health_router)
 router.include_router(jellyfin_router)
 router.include_router(playback_router)
+router.include_router(postlive_router)
 router.include_router(queue_router)
 router.include_router(settings_router)
 router.include_router(snapshots_router)

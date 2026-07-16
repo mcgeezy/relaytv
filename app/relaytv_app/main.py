@@ -27,6 +27,7 @@ from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
 from .integrations import jellyfin_receiver
 from . import discovery_mdns
+from . import postlive_relay
 from . import video_profile
 from . import upload_store
 from . import ytdlp_update
@@ -104,6 +105,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             discovery_mdns.stop()
             stop_x11_overlay()
             stop_splash_screen()
+            postlive_relay.close_all(reason="server shutdown")
 
     app = FastAPI(lifespan=_lifespan)
 

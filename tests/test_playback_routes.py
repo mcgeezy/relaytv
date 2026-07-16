@@ -775,3 +775,34 @@ def test_playback_state_route_reports_dead_backend_with_queue_as_runtime_gap(mon
     assert body["transition_in_progress"] is False
     assert body["playback_runtime_state"] == "degraded"
     assert body["playback_runtime_state_reason"] == "backend_not_ready"
+
+
+def test_postlive_route_streams_relay_session(monkeypatch) -> None:
+    from relaytv_app import postlive_relay
+
+    def fake_iter_stream(token, chunk_size=65536):
+        if token == "tok123":
+            return iter([b"mkv-", b"bytes"])
+        return None
+
+    monkeypatch.setattr(postlive_relay, "iter_stream", fake_iter_stream)
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/postlive/tok123.mkv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "video/x-matroska"
+    assert response.content == b"mkv-bytes"
+
+
+def test_postlive_route_rejects_unknown_or_consumed_tokens(monkeypatch) -> None:
+    from relaytv_app import postlive_relay
+
+    # iter_stream returns None for unknown tokens, closed sessions, and
+    # reconnects (the relay is progressive-only and single-reader).
+    monkeypatch.setattr(postlive_relay, "iter_stream", lambda token, chunk_size=65536: None)
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/postlive/nope.mkv")
+
+    assert response.status_code == 404
