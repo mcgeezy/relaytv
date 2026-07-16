@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlsplit, url
 from typing import Any, Callable
 from fastapi import HTTPException
 
-from . import state, devices, ytdlp_format_policy, video_profile
+from . import state, devices, postlive_relay, ytdlp_format_policy, video_profile
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
 from .resolver import (
@@ -4036,6 +4036,55 @@ def _notify_post_live_processing(item: object) -> None:
     _notify_warn_toast(text)
 
 
+def _notify_post_live_relay(item: object) -> None:
+    """Set expectations for relayed replays: plays from the start, no seeking."""
+
+    def _run() -> None:
+        try:
+            from .routes import _push_overlay_toast
+
+            _push_overlay_toast(
+                text="Replay is still processing — playing from the start. Seeking is unavailable.",
+                duration=6.0,
+                level="info",
+                icon="play",
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _post_live_relay_source(item: object, result: object) -> str | None:
+    """Start a relay pipeline for a still-processing replay.
+
+    Returns the loopback stream URL for mpv, or None when the relay is
+    disabled or failed to start — callers then fall back to skip+toast, so
+    the worst outcome of a relay problem is the pre-relay behavior.
+    """
+    if not postlive_relay.relay_enabled():
+        return None
+    try:
+        session = postlive_relay.create_session(
+            str(getattr(result, "stream", "") or ""),
+            str(getattr(result, "ytdl_format", "") or ""),
+            tuple(getattr(result, "ytdlp_args", ()) or ()),
+        )
+    except Exception as exc:
+        logger.warning("post_live_relay_unavailable error=%s", str(exc)[:300])
+        return None
+    title = ""
+    if isinstance(item, dict):
+        title = str(item.get("title") or item.get("url") or "").strip()
+    logger.info(
+        "post_live_relay_started token=%s title=%s",
+        session.token,
+        title[:120],
+    )
+    _notify_post_live_relay(item)
+    return postlive_relay.relay_url(session.token)
+
+
 def _playback_start_timeout_sec() -> float:
     raw = (os.getenv("RELAYTV_PLAYBACK_START_TIMEOUT_SEC") or "45").strip()
     try:
@@ -4636,6 +4685,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     )
     ytdl_format_override = None
     ytdl_raw_options_override = None
+    relay_playback = False
     transient_handoff = item.pop("_transient_mpv_ytdl_handoff", None)
     if isinstance(transient_handoff, dict):
         ytdl_format_override = str(transient_handoff.get("format") or "").strip()
@@ -4692,15 +4742,27 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
                 # post_live resolves, but while YouTube processes the replay
                 # it serves only the live-edge fragment feed (no manifest, no
-                # fragment durations for mpv's hook), so playback would start
-                # seconds from the end and die. Skip until processing ends
-                # and the video plays as a normal VOD (verified on-device).
+                # fragment durations for mpv's hook), so mpv alone would start
+                # seconds from the end and die (verified on-device). Relay
+                # through yt-dlp+ffmpeg instead; skip only if the relay is
+                # disabled or fails to start.
                 _clear_prefetched_stream(item)
-                _notify_post_live_processing(item)
-                raise YouTubePostLiveProcessingError(str(title or raw))
-            stream, audio, ytdl_format_override, ytdl_raw_options_override = (
-                _resolved_playback_source(item, raw, result)
-            )
+                relay_stream = _post_live_relay_source(item, result)
+                if relay_stream is None:
+                    _notify_post_live_processing(item)
+                    raise YouTubePostLiveProcessingError(str(title or raw))
+                # The relay serves ordinary progressive matroska on loopback:
+                # no separate audio (ffmpeg muxed it), no ytdl overrides, and
+                # no resume position — the stream is not seekable.
+                stream, audio = relay_stream, None
+                ytdl_format_override = None
+                ytdl_raw_options_override = None
+                start_pos = None
+                relay_playback = True
+            else:
+                stream, audio, ytdl_format_override, ytdl_raw_options_override = (
+                    _resolved_playback_source(item, raw, result)
+                )
             debug_log("player", f"resolve_streams finished in {int((time.monotonic() - t_resolve) * 1000)}ms")
 
     debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
@@ -4796,7 +4858,9 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         **({"jellyfin_stream_mode": item.get("jellyfin_stream_mode")} if item.get("jellyfin_stream_mode") else {}),
         **({"jellyfin_stream_reason": item.get("jellyfin_stream_reason")} if item.get("jellyfin_stream_reason") else {}),
     }
-    if stream and stream != raw:
+    # Relay URLs are single-use loopback tokens: caching one as a resolved
+    # stream would replay a dead token (404) instead of re-resolving.
+    if stream and stream != raw and not relay_playback:
         now["_resolved_source_url"] = raw
         now["_resolved_stream"] = stream
         now["_resolved_audio"] = audio or ""
@@ -5978,20 +6042,26 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                 logger.warning("restart_current_resolve_failed error=%s", resolve_exc)
                 return None
             if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
-                # See play_item: a successfully resolved post_live stream is
-                # only watchable at the live edge, so restarting it would
-                # tear playback down for a stream that dies in seconds.
-                _notify_post_live_processing(item)
-                logger.info("restart_current_skipped_post_live_processing title=%s", str(item.get("title") or inp)[:120])
-                return None
-            _stream, _audio, ytdl_format, ytdl_raw = _resolved_playback_source(
-                item, inp, result
-            )
-            if ytdl_format is not None or ytdl_raw is not None:
-                item["_transient_mpv_ytdl_handoff"] = {
-                    "format": ytdl_format or "",
-                    "raw_options": ytdl_raw or "",
-                }
+                if not postlive_relay.relay_enabled():
+                    # See play_item: without the relay a resolved post_live
+                    # stream is only watchable at the live edge, so a restart
+                    # would tear playback down for a stream that dies in
+                    # seconds. Keep whatever is currently playing instead.
+                    _notify_post_live_processing(item)
+                    logger.info("restart_current_skipped_post_live_processing title=%s", str(item.get("title") or inp)[:120])
+                    return None
+                # play_item relays post_live itself (re-resolving once). The
+                # relay is progressive-only, so the restart replays from the
+                # start rather than the captured position.
+            else:
+                _stream, _audio, ytdl_format, ytdl_raw = _resolved_playback_source(
+                    item, inp, result
+                )
+                if ytdl_format is not None or ytdl_raw is not None:
+                    item["_transient_mpv_ytdl_handoff"] = {
+                        "format": ytdl_format or "",
+                        "raw_options": ytdl_raw or "",
+                    }
             target = item
         # capture position if possible
         pos = None

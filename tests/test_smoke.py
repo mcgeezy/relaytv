@@ -3325,7 +3325,7 @@ def test_restart_current_keeps_playback_when_bot_check_blocks_resolve(monkeypatc
     assert 'Current Video' in toasts[0]
 
 
-@pytest.mark.parametrize('resolve_outcome', ['resolves_post_live', 'raises_processing'])
+@pytest.mark.parametrize('resolve_outcome', ['resolves_post_live_relay_disabled', 'raises_processing'])
 def test_restart_current_keeps_playback_when_post_live_is_processing(
     monkeypatch: pytest.MonkeyPatch,
     resolve_outcome: str,
@@ -3338,6 +3338,9 @@ def test_restart_current_keeps_playback_when_post_live_is_processing(
         {'url': 'https://youtube.com/watch?v=processing', 'title': 'Processing Live'},
         raising=False,
     )
+    # Without the relay a resolved post_live stream is only watchable at the
+    # live edge, so a restart must keep the running playback.
+    monkeypatch.setenv('RELAYTV_POSTLIVE_RELAY', '0')
 
     def resolve(url):
         if resolve_outcome == 'raises_processing':
@@ -3364,6 +3367,44 @@ def test_restart_current_keeps_playback_when_post_live_is_processing(
             'title': 'Processing Live',
         }
     ]
+
+
+def test_restart_current_replays_post_live_through_relay(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    played: list[dict] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://youtube.com/watch?v=processing', 'title': 'Processing Live'},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        player,
+        'resolve_streams',
+        lambda url: (
+            calls.append('resolve'),
+            resolver.ResolvedStreams(stream=url, transport='mpv_ytdl', live_status='post_live'),
+        )[1],
+    )
+    monkeypatch.setattr(player, 'is_playing', lambda: False)
+    monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: calls.append('stop'))
+
+    def fake_play(item, **kwargs):
+        calls.append('play')
+        played.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    now = player.restart_current()
+
+    # With the relay available, restarting a post_live item goes through
+    # play_item, which relays it; play_item resolves again, so no transient
+    # ytdl handoff is stashed on the item.
+    assert now == {'url': 'https://youtube.com/watch?v=processing'}
+    assert calls == ['resolve', 'stop', 'play']
+    assert '_transient_mpv_ytdl_handoff' not in played[0]
 
 
 def test_restart_current_resolves_before_stopping_and_reuses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4108,7 +4149,10 @@ def test_play_item_forwards_live_ytdl_handoff_without_caching_page_url(
     assert '_resolved_stream' not in now
 
 
-@pytest.mark.parametrize('resolve_outcome', ['resolves_post_live', 'raises_processing'])
+@pytest.mark.parametrize(
+    'resolve_outcome',
+    ['post_live_relay_disabled', 'post_live_relay_fails', 'raises_processing'],
+)
 def test_play_item_toasts_and_clears_prefetch_when_replay_is_unready(
     monkeypatch: pytest.MonkeyPatch,
     resolve_outcome: str,
@@ -4127,13 +4171,20 @@ def test_play_item_toasts_and_clears_prefetch_when_replay_is_unready(
         'start_mpv',
         lambda *a, **k: (_ for _ in ()).throw(AssertionError('must not start playback')),
     )
+    # The relay is the primary post_live path; the skip+toast fallback must
+    # survive both a disabled relay and one that fails to start.
+    if resolve_outcome == 'post_live_relay_disabled':
+        monkeypatch.setenv('RELAYTV_POSTLIVE_RELAY', '0')
+    else:
+        monkeypatch.setattr(
+            postlive_relay,
+            'create_session',
+            lambda *a, **k: (_ for _ in ()).throw(postlive_relay.RelayError('spawn failed')),
+        )
 
     def resolve(requested_url):
         if resolve_outcome == 'raises_processing':
             raise resolver.YouTubePostLiveProcessingError(requested_url)
-        # A resolved post_live stream is only watchable at the live edge, so
-        # play_item must skip it exactly like a resolver-raised processing
-        # error instead of starting playback that dies within seconds.
         return resolver.ResolvedStreams(
             stream=requested_url,
             transport='mpv_ytdl',
@@ -4157,6 +4208,89 @@ def test_play_item_toasts_and_clears_prefetch_when_replay_is_unready(
     assert len(toasted) == 1
     assert toasted[0]['url'] == url
     assert '_resolved_stream' not in toasted[0]
+
+
+def test_play_item_relays_post_live_replay_through_local_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = 'https://youtube.com/watch?v=stillcooking'
+    load_calls: list[dict[str, object]] = []
+    sessions: list[tuple] = []
+    relay_toasts: list[object] = []
+
+    monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
+    monkeypatch.setattr(player, 'cec_auto_on_switch', lambda cec: False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: False)
+    monkeypatch.setattr(
+        player,
+        '_load_stream_in_existing_mpv',
+        lambda stream_url, audio_url=None, start_pos=None, **kwargs: load_calls.append(
+            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos, **kwargs}
+        )
+        or True,
+    )
+    monkeypatch.setattr(
+        player,
+        'start_mpv',
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError('reused runtime must handle the load')),
+    )
+    monkeypatch.setattr(player, '_add_history_entry', lambda now: None)
+    monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda force=False: False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'get_tv_state', lambda: {})
+    monkeypatch.setattr(player.state, 'set_now_playing', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(player, '_notify_post_live_relay', lambda item: relay_toasts.append(item))
+
+    class _Session:
+        token = 'tok1'
+
+    def fake_create_session(page_url, ytdl_format, ytdlp_args=()):
+        sessions.append((page_url, ytdl_format, tuple(ytdlp_args)))
+        return _Session()
+
+    monkeypatch.setattr(postlive_relay, 'create_session', fake_create_session)
+    monkeypatch.setattr(
+        player,
+        'resolve_streams',
+        lambda requested_url: resolver.ResolvedStreams(
+            stream=requested_url,
+            transport='mpv_ytdl',
+            ytdl_format='bestvideo[height<=1080]+bestaudio/best',
+            ytdl_raw_options='extractor-args=youtube:player_client=tv_simply',
+            live_status='post_live',
+            ytdlp_args=('yt-dlp', '--no-playlist'),
+        ),
+    )
+
+    now = player.play_item(
+        {'url': url, 'title': 'Still cooking', 'provider': 'youtube'},
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode='resume',
+        start_pos=42.5,
+    )
+
+    # The relay session runs the resolver's winning strategy, and mpv gets a
+    # plain loopback stream: muxed audio, no ytdl overrides, and no resume
+    # position (the progressive relay is not seekable).
+    assert sessions == [
+        (url, 'bestvideo[height<=1080]+bestaudio/best', ('yt-dlp', '--no-playlist'))
+    ]
+    assert load_calls == [
+        {
+            'stream': postlive_relay.relay_url('tok1'),
+            'audio': None,
+            'start_pos': None,
+        }
+    ]
+    assert relay_toasts and relay_toasts[0]['url'] == url
+    assert now['stream'] == postlive_relay.relay_url('tok1')
+    assert '_resolved_stream' not in now
 
 
 def test_persistable_history_item_keeps_resolved_stream_hint() -> None:
