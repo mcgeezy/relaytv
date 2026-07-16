@@ -15,6 +15,7 @@ from relaytv_app.config import runtime_config
 from relaytv_app import container_entrypoint
 from relaytv_app import player
 from relaytv_app import playback_service
+from relaytv_app import postlive_relay
 from relaytv_app import qt_shell_app
 from relaytv_app import resolver
 from relaytv_app import routes
@@ -3515,6 +3516,252 @@ def test_mpv_ytdl_raw_options_quotes_comma_values() -> None:
     # mpv's key/value-list parser has no escape character; comma-bearing
     # values must use its %n% length-prefixed quoting to survive parsing.
     assert out == f'cookies=/data/cookies.txt,extractor-args=%{len(value)}%{value}'
+
+
+class _FakeRelayPipe:
+    def __init__(self, fd: int, chunks: list[bytes] | None = None) -> None:
+        self._fd = fd
+        self._chunks = list(chunks or [])
+        self.closed = False
+
+    def fileno(self) -> int:
+        return self._fd
+
+    def read(self, n: int = -1) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b''
+
+    def readline(self) -> bytes:
+        return b''
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeRelayProc:
+    _next_fd = 100
+
+    def __init__(self, cmd: list[str], kwargs: dict) -> None:
+        _FakeRelayProc._next_fd += 1
+        self.cmd = list(cmd)
+        self.popen_kwargs = kwargs
+        self.stdout = _FakeRelayPipe(_FakeRelayProc._next_fd)
+        self.stderr = _FakeRelayPipe(_FakeRelayProc._next_fd + 1000)
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+
+def _patch_relay_popen(monkeypatch: pytest.MonkeyPatch) -> list[_FakeRelayProc]:
+    procs: list[_FakeRelayProc] = []
+
+    def fake_popen(cmd, **kwargs):
+        proc = _FakeRelayProc(cmd, kwargs)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(postlive_relay.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(postlive_relay, '_ensure_reaper', lambda: None)
+    postlive_relay.close_all(reason='test setup')
+    return procs
+
+
+def test_postlive_relay_splits_merge_format_expressions() -> None:
+    fmt = 'bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best'
+    assert postlive_relay.split_format_expression(fmt) == (
+        'bestvideo[vcodec!*=av01][height<=1080][fps<=60]',
+        'bestaudio/best',
+    )
+    assert postlive_relay.split_format_expression('best') == ('best', None)
+    assert postlive_relay.split_format_expression('') == ('best', None)
+    assert postlive_relay.split_format_expression('best[height<=720]/b') == (
+        'best[height<=720]/b',
+        None,
+    )
+    # A '+' inside brackets is part of a filter, not a merge.
+    assert postlive_relay.split_format_expression('bv[format_note*=a+b]+ba') == (
+        'bv[format_note*=a+b]',
+        'ba',
+    )
+
+
+def test_postlive_relay_session_spawns_winning_strategy_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+    monkeypatch.setenv('RELAYTV_PORT', '8787')
+    url = 'https://www.youtube.com/watch?v=postlive1'
+    base = ('yt-dlp', '--extractor-args', 'youtube:player_client=tv_simply', '--no-playlist')
+
+    session = postlive_relay.create_session(
+        url, 'bestvideo[height<=1080]+bestaudio/best', base
+    )
+    try:
+        assert len(procs) == 3
+        video_proc, audio_proc, ffmpeg_proc = procs
+        # Each downloader re-runs the resolver's winning strategy verbatim.
+        assert video_proc.cmd[: len(base)] == list(base)
+        assert video_proc.cmd[len(base):] == [
+            '-f', 'bestvideo[height<=1080]', '--no-progress', '-o', '-', url,
+        ]
+        assert audio_proc.cmd[len(base):] == [
+            '-f', 'bestaudio/best', '--no-progress', '-o', '-', url,
+        ]
+        # ffmpeg muxes both downloader stdouts (inherited via pass_fds) into
+        # a progressive matroska stream on its own stdout.
+        in_fds = [video_proc.stdout.fileno(), audio_proc.stdout.fileno()]
+        assert ffmpeg_proc.cmd[0] == 'ffmpeg'
+        for fd in in_fds:
+            assert f'pipe:{fd}' in ffmpeg_proc.cmd
+        assert ffmpeg_proc.cmd[-5:] == ['-c', 'copy', '-f', 'matroska', 'pipe:1']
+        assert list(ffmpeg_proc.popen_kwargs['pass_fds']) == in_fds
+        # The parent's copies of the downloader read ends are closed so the
+        # pipeline's fds die with its processes.
+        assert video_proc.stdout.closed
+        assert audio_proc.stdout.closed
+        assert postlive_relay.relay_url(session.token) == (
+            f'http://127.0.0.1:8787/postlive/{session.token}.mkv'
+        )
+    finally:
+        postlive_relay.close_all(reason='test teardown')
+
+
+def test_postlive_relay_single_format_uses_one_downloader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+
+    postlive_relay.create_session('https://youtube.com/watch?v=x', 'best', ('yt-dlp',))
+    try:
+        assert len(procs) == 2
+        ffmpeg_proc = procs[-1]
+        assert ffmpeg_proc.cmd.count('-i') == 1
+    finally:
+        postlive_relay.close_all(reason='test teardown')
+
+
+def test_postlive_relay_supersedes_previous_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+
+    first = postlive_relay.create_session('https://youtube.com/watch?v=a', 'best', ('yt-dlp',))
+    second = postlive_relay.create_session('https://youtube.com/watch?v=b', 'best', ('yt-dlp',))
+    try:
+        # Single-player appliance: the new session tears the old one down.
+        assert postlive_relay.get_session(first.token) is None
+        assert all(proc.terminated for proc in procs[:2])
+        assert postlive_relay.get_session(second.token) is second
+        assert first.close_reason == 'superseded'
+    finally:
+        postlive_relay.close_all(reason='test teardown')
+
+
+def test_postlive_relay_close_session_terminates_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+
+    session = postlive_relay.create_session(
+        'https://youtube.com/watch?v=x', 'bv+ba', ('yt-dlp',)
+    )
+    postlive_relay.close_session(session.token, reason='test')
+
+    assert all(proc.terminated for proc in procs)
+    assert postlive_relay.get_session(session.token) is None
+    # Idempotent: a second close (e.g. reaper racing the route) is a no-op.
+    postlive_relay.close_session(session.token, reason='test again')
+    assert session.close_reason == 'test'
+
+
+def test_postlive_relay_stream_allows_exactly_one_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+
+    session = postlive_relay.create_session(
+        'https://youtube.com/watch?v=x', 'best', ('yt-dlp',)
+    )
+    procs[-1].stdout._chunks = [b'mkv-', b'bytes']
+
+    stream = postlive_relay.iter_stream(session.token)
+    assert stream is not None
+    # Progressive-only: a second attach cannot be served from the start.
+    assert postlive_relay.iter_stream(session.token) is None
+
+    assert b''.join(stream) == b'mkv-bytes'
+    # Reader EOF closes the session and the pipeline with it.
+    assert session.closed
+    assert session.close_reason == 'reader closed'
+    assert all(proc.terminated for proc in procs)
+    assert postlive_relay.iter_stream('unknown-token') is None
+
+
+def test_postlive_relay_reaper_reaps_dead_weight_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_relay_popen(monkeypatch)
+
+    session = postlive_relay.create_session(
+        'https://youtube.com/watch?v=x', 'best', ('yt-dlp',)
+    )
+    try:
+        now = session.created_at
+        assert postlive_relay._session_expired(session, now) == ''
+        # mpv never connected within the grace window.
+        assert (
+            postlive_relay._session_expired(session, now + 61.0)
+            == 'no reader attached'
+        )
+        # The pipeline died before anyone attached.
+        session.ffmpeg_proc.returncode = 1
+        assert (
+            postlive_relay._session_expired(session, now)
+            == 'pipeline exited before reader attached'
+        )
+        session.ffmpeg_proc.returncode = None
+        session.reader_attached = True
+        assert postlive_relay._session_expired(session, now + 9999.0) == ''
+    finally:
+        postlive_relay.close_all(reason='test teardown')
+
+
+def test_postlive_relay_kill_switch_disables_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+    monkeypatch.setenv('RELAYTV_POSTLIVE_RELAY', '0')
+
+    with pytest.raises(postlive_relay.RelayError):
+        postlive_relay.create_session('https://youtube.com/watch?v=x', 'best', ('yt-dlp',))
+    assert procs == []
+
+
+def test_server_port_prefers_relaytv_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import config as app_config
+
+    monkeypatch.setenv('RELAYTV_PORT', '8790')
+    monkeypatch.setenv('PORT', '9000')
+    assert app_config.server_port() == 8790
+    monkeypatch.delenv('RELAYTV_PORT')
+    assert app_config.server_port() == 9000
+    monkeypatch.delenv('PORT')
+    assert app_config.server_port() == 8787
+    monkeypatch.setenv('RELAYTV_PORT', 'bogus')
+    assert app_config.server_port() == 8787
 
 
 def test_resolver_live_default_candidate_does_not_pass_auto_format(

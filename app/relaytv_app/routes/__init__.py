@@ -20,7 +20,7 @@ import socket
 import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from .. import state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
+from .. import config, state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import jellyfin_receiver, jellyfin_service
@@ -1004,7 +1004,7 @@ def _ui_event_push_jellyfin(
 
 
 def _host_urls() -> list[str]:
-    port = int(os.getenv("PORT", "8787"))
+    port = config.server_port()
     out: list[str] = [f"http://127.0.0.1:{port}/ui", f"http://localhost:{port}/ui"]
     ips: set[str] = set()
     try:

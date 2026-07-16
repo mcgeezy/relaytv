@@ -91,6 +91,20 @@ def env_str(name: str, default: str = "") -> str:
     return value.strip()
 
 
+def server_port() -> int:
+    """The TCP port the HTTP server listens on.
+
+    ``RELAYTV_PORT`` is the documented knob (entrypoint, mDNS, Flatpak
+    launcher); ``PORT`` stays as a legacy fallback for existing deployments.
+    """
+    raw = (os.getenv("RELAYTV_PORT") or os.getenv("PORT") or "8787").strip()
+    try:
+        port = int(float(raw or "8787"))
+    except Exception:
+        port = 8787
+    return max(1, min(65535, port))
+
+
 # The settings bus: variables the app itself writes to os.environ at runtime
 # (startup sync in main.py, settings apply in routes/settings.py, Jellyfin
 # track preference in routes/jellyfin.py, video-mode restart in player.py).
