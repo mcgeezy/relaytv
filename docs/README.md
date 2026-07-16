@@ -8,6 +8,7 @@ Use this directory as a small operator/product doc set for the public release br
 - `API.md`: HTTP endpoint reference
 - `JELLYFIN_OPERATIONS.md`: Jellyfin/Emby runtime config, verification, troubleshooting
 - `EMBY_INTEGRATION_ROADMAP.md`: Emby server support roadmap and live-verification checklist
+- `POSTLIVE_REPLAY_RELAY_ROADMAP.md`: playing YouTube replays that are still processing (why mpv can't, how the relay does)
 - `NATIVE_RUNTIME_OPERATIONS.md`: runtime operations, readiness checks, logging, and soak workflow
 - `OPERATIONS_TEST_MATRIX.md`: runtime profile decision table (machine-checked) and per-profile validation checklists
 - `RELEASE.md`: release inputs, image traceability, and compliance checklist
