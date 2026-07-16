@@ -3461,6 +3461,15 @@ def test_resolver_defers_postlive_youtube_to_mpv_ytdl_hook(monkeypatch: pytest.M
     assert result.ytdl_format.startswith('bestvideo[')
     assert result.ytdl_format != 'auto'
     assert 'cookies=' not in result.ytdl_raw_options
+    # The winning strategy's base argv is exported verbatim so the post-live
+    # relay can re-run the exact strategy: program name + options only, no
+    # format selection, print directives, or URL.
+    assert result.ytdlp_args
+    assert result.ytdlp_args[0] == 'yt-dlp'
+    assert list(result.ytdlp_args) == calls[0][: len(result.ytdlp_args)]
+    assert calls[0][len(result.ytdlp_args)] in ('-f', '--print')
+    assert '--print' not in result.ytdlp_args
+    assert url not in result.ytdlp_args
 
 
 def test_resolver_raises_post_live_processing_when_replay_is_unready(
