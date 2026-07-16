@@ -94,6 +94,11 @@ server {
 - `GET /sw.js`: service worker
 - `GET /thumbs/{filename}`: cached thumbnail image
 - `GET /snapshots/{filename}`: saved JPEG snapshot
+- `GET /postlive/{token}.mkv`: internal loopback stream for still-processing
+  YouTube replays (see `POSTLIVE_REPLAY_RELAY_ROADMAP.md`). The player mints a
+  single-use token per playback and hands the URL to mpv; the stream is
+  progressive-only, so a consumed, unknown, or superseded token returns 404.
+  Not part of the public API surface — clients should never call it.
 - `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
 - `GET /share`
   - query: `url` or `link`, optional `cec`

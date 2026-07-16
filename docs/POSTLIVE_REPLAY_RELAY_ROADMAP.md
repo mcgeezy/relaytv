@@ -136,7 +136,7 @@ were sitting uncommitted on `main` and touching the same files. Parked as
 a self-contained commit on `feat/youtube-live-playback` (`206ba20`, ruff
 clean, 388 tests passing) for separate review, leaving this branch clean.
 
-### M1 — Export the winning yt-dlp argv (pending)
+### M1 — Export the winning yt-dlp argv (complete)
 
 `ytdlp_args: tuple[str, ...] = ()` on `ResolvedStreams`
 (`resolver.py:28-51`), populated from `selected_args` at the post_live
@@ -150,7 +150,7 @@ Tests extend `test_resolver_defers_postlive_youtube_to_mpv_ytdl_hook`:
 `ytdlp_args` carries `player_client=tv_simply`; VOD results leave it
 empty.
 
-### M2 — `postlive_relay.py` session module (pending)
+### M2 — `postlive_relay.py` session module (complete)
 
 ```python
 def split_format_expression(fmt: str) -> tuple[str, str | None]
@@ -178,7 +178,7 @@ def relay_url(token: str) -> str
 - `ffmpeg` and `yt-dlp` are invoked by bare name from PATH, per the
   `thumb_cache.py:190` precedent.
 
-### M3 — `GET /postlive/{token}.mkv` (pending)
+### M3 — `GET /postlive/{token}.mkv` (complete)
 
 New router `routes/postlive.py`, registered in `routes/__init__.py`.
 `StreamingResponse(gen(), media_type="video/x-matroska")`; the generator
@@ -193,7 +193,7 @@ this route works by construction rather than by carve-out.
 `/postlive` joins the `skip_slow_request_logging` list — a multi-hour
 stream would otherwise be logged as a multi-hour slow request.
 
-### M4 — Player integration (pending)
+### M4 — Player integration (complete)
 
 - `play_item` (`player.py:4692-4693`): post_live becomes try-relay-else-skip.
   On success the relay URL is loaded as a plain direct stream (no ytdl
@@ -218,14 +218,27 @@ stream would otherwise be logged as a multi-hour slow request.
 - Queue-advance skip logic (`player.py:4200-4201`) is unchanged: post_live
   only reaches it when the relay declined.
 
-### M5 — Kill-switch + guardrails (pending)
+### M5 — Kill-switch + guardrails (complete)
 
 `RELAYTV_POSTLIVE_RELAY`, default enabled — playing these videos is the
-point of the feature; operators who hit trouble set it to `0` for today's
-skip+toast. Env inventory regenerated
+point of the feature; operators who hit trouble set it to `0` for the
+skip+toast behavior. Env inventory regenerated
 (`PYTHONPATH=app python3 tests/test_env_inventory.py --write`); route
 inventory updated; `/postlive/{token}.mkv` documented in `API.md` as
 internal/loopback.
+
+Implementation notes recorded along the way:
+
+- One defect caught by tests during M4: play_item's generic resolved-stream
+  caching stored the relay URL as `_resolved_stream`, which a replay within
+  the prefetch TTL would have reused as a dead single-use token (404). Relay
+  playbacks now skip that caching entirely.
+- Background queue prefetch never spawns a relay: prefetch goes through
+  `_resolved_playback_source` (which drops `mpv_ytdl` results), and only
+  `play_item` starts a pipeline — sessions exist only for items actually
+  playing.
+- A resume position is dropped on the relay path (the stream is not
+  seekable), so a restart or resume of a relayed replay plays from the start.
 
 ### M6 — Live verification on the appliance (pending)
 
