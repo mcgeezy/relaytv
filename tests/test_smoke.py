@@ -4045,6 +4045,23 @@ def test_server_port_prefers_relaytv_port(monkeypatch: pytest.MonkeyPatch) -> No
     assert app_config.server_port() == 8787
 
 
+def test_container_entrypoint_binds_configured_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The bind port and every generated URL (mDNS, relay loopback) must come
+    # from the same source: RELAYTV_PORT moving the URLs while uvicorn stays
+    # on 8787 would point mpv at a dead /postlive port.
+    from relaytv_app import container_entrypoint
+
+    monkeypatch.setenv('RELAYTV_PORT', '8790')
+    args = container_entrypoint._default_server_args()
+    assert args[0] == 'uvicorn'
+    assert args[-2:] == ['--port', '8790']
+    monkeypatch.delenv('RELAYTV_PORT')
+    monkeypatch.delenv('PORT', raising=False)
+    assert container_entrypoint._default_server_args()[-2:] == ['--port', '8787']
+
+
 def test_resolver_live_default_candidate_does_not_pass_auto_format(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

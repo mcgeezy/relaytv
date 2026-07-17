@@ -172,4 +172,6 @@ RUN ! grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' /app/relaytv_app
 
 EXPOSE 8787
 ENTRYPOINT ["python", "-m", "relaytv_app.container_entrypoint"]
-CMD ["uvicorn", "relaytv_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
+# No CMD: the entrypoint composes the stock uvicorn command itself, binding
+# the port from RELAYTV_PORT/PORT (default 8787) so the listen port and the
+# app's generated URLs (mDNS, post-live relay loopback) always agree.
