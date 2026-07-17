@@ -4085,6 +4085,107 @@ def _post_live_relay_source(item: object, result: object) -> str | None:
     return postlive_relay.relay_url(session.token)
 
 
+_POST_LIVE_UPGRADE_POLL_SEC = 2.0
+_POST_LIVE_UPGRADE_PATH_MISS_LIMIT = 10
+
+
+def _notify_post_live_seek_ready() -> None:
+    try:
+        from .routes import _push_overlay_toast
+
+        _push_overlay_toast(
+            text="Replay download complete — seeking is now available.",
+            duration=5.0,
+            level="info",
+            icon="play",
+        )
+    except Exception:
+        pass
+
+
+def _relay_token_from_url(stream_url: str) -> str:
+    text = str(stream_url or "").strip()
+    marker = "/postlive/"
+    if marker not in text or not text.endswith(".mkv"):
+        return ""
+    return text.rsplit("/", 1)[-1][: -len(".mkv")]
+
+
+def _post_live_upgrade_step(token: str, expected_url: str, path_misses: int) -> tuple[str, int]:
+    """One poll of the relay-to-local-file upgrade watch.
+
+    Returns (verdict, path_misses): 'wait' to keep polling, 'stop' when the
+    upgrade is impossible or no longer relevant, 'upgraded' after swapping
+    mpv onto the finalized spool file.
+    """
+    spool = postlive_relay.spool_ready_path(token)
+    if spool is None and postlive_relay.get_session(token) is None:
+        return "stop", path_misses
+    try:
+        current = mpv_get("path")
+    except Exception:
+        current = None
+    current_text = str(current or "").strip()
+    if current_text and current_text != expected_url:
+        return "stop", path_misses
+    if not current_text:
+        # Only swap on a positive match: an idle or EOF'd player must not
+        # be yanked back into the replay.
+        path_misses += 1
+        if path_misses > _POST_LIVE_UPGRADE_PATH_MISS_LIMIT:
+            return "stop", path_misses
+        return "wait", path_misses
+    if spool is None:
+        return "wait", 0
+    pos = None
+    try:
+        raw_pos = mpv_get("time-pos")
+        if raw_pos is not None:
+            pos = max(0.0, float(raw_pos))
+    except Exception:
+        pos = None
+    with MPV_LOCK:
+        swapped = _load_stream_in_existing_mpv(spool, start_pos=pos)
+    if not swapped:
+        # Seamless replace declined; the progressive stream keeps playing
+        # exactly as before, just without the timeline upgrade.
+        return "stop", 0
+    logger.info(
+        "post_live_relay_upgraded token=%s spool=%s start_pos=%s", token, spool, pos
+    )
+    _notify_post_live_seek_ready()
+    return "upgraded", 0
+
+
+def _arm_post_live_relay_upgrade(stream_url: str) -> None:
+    """Watch a relay playback and swap mpv onto the finalized spool file.
+
+    Once the download completes, ffmpeg seeks back and writes duration and
+    cues, turning the spool into an ordinary seekable mkv. Reloading it at
+    the current position upgrades the session from progressive/no-timeline
+    to full seeking; until then playback continues off the tail-followed
+    stream untouched.
+    """
+    token = _relay_token_from_url(stream_url)
+    if not token:
+        return
+
+    def _run() -> None:
+        misses = 0
+        while True:
+            time.sleep(_POST_LIVE_UPGRADE_POLL_SEC)
+            try:
+                verdict, misses = _post_live_upgrade_step(token, stream_url, misses)
+            except Exception:
+                return
+            if verdict != "wait":
+                return
+
+    threading.Thread(
+        target=_run, name="relaytv-postlive-upgrade", daemon=True
+    ).start()
+
+
 def _playback_start_timeout_sec() -> float:
     raw = (os.getenv("RELAYTV_PLAYBACK_START_TIMEOUT_SEC") or "45").strip()
     try:
@@ -4833,6 +4934,11 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             f"{'seamless_replace' if reused_runtime else 'start_mpv'} finished in "
             f"{int((time.monotonic() - t_mpv) * 1000)}ms",
         )
+
+    if relay_playback:
+        # Once the relay's mux finalizes the spool file, swap mpv onto the
+        # local file for a real timeline (seeking, known duration).
+        _arm_post_live_relay_upgrade(stream)
 
     if resume_start_pos is not None:
         try:

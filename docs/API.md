@@ -98,6 +98,8 @@ server {
   YouTube replays (see `POSTLIVE_REPLAY_RELAY_ROADMAP.md`). The player mints a
   single-use token per playback and hands the URL to mpv; the stream is
   progressive-only, so a consumed, unknown, or superseded token returns 404.
+  Once the underlying download completes, the player swaps mpv onto the
+  finalized local spool file (gaining seeking) and this route drops out.
   Not part of the public API surface — clients should never call it.
 - `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
 - `GET /share`

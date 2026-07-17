@@ -3596,7 +3596,9 @@ class _FakeRelayProc:
 
     def terminate(self) -> None:
         self.terminated = True
-        self.returncode = 0
+        # Mirror a real termination: never exit code 0 — spool completeness
+        # detection relies on "0 means the mux finished on its own".
+        self.returncode = -15
 
     def wait(self, timeout: float | None = None) -> int | None:
         return self.returncode
@@ -3606,7 +3608,9 @@ class _FakeRelayProc:
         self.returncode = -9
 
 
-def _patch_relay_popen(monkeypatch: pytest.MonkeyPatch) -> list[_FakeRelayProc]:
+def _patch_relay_popen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path=None
+) -> list[_FakeRelayProc]:
     procs: list[_FakeRelayProc] = []
 
     def fake_popen(cmd, **kwargs):
@@ -3614,6 +3618,10 @@ def _patch_relay_popen(monkeypatch: pytest.MonkeyPatch) -> list[_FakeRelayProc]:
         procs.append(proc)
         return proc
 
+    import tempfile
+
+    spool_root = str(tmp_path) if tmp_path is not None else tempfile.mkdtemp(prefix='relaytest-postlive-')
+    monkeypatch.setattr(postlive_relay, '_spool_root', lambda: spool_root)
     monkeypatch.setattr(postlive_relay.subprocess, 'Popen', fake_popen)
     monkeypatch.setattr(postlive_relay, '_ensure_reaper', lambda: None)
     postlive_relay.close_all(reason='test setup')
@@ -3665,12 +3673,18 @@ def test_postlive_relay_session_spawns_winning_strategy_pipeline(
             '-f', 'bestaudio/best', '--no-progress', '-o', '-', url,
         ]
         # ffmpeg muxes both downloader stdouts (inherited via pass_fds) into
-        # a progressive matroska stream on its own stdout.
+        # the session's matroska spool file, which it finalizes with
+        # duration and cues on clean exit — the basis of the seek upgrade.
         in_fds = [video_proc.stdout.fileno(), audio_proc.stdout.fileno()]
         assert ffmpeg_proc.cmd[0] == 'ffmpeg'
         for fd in in_fds:
             assert f'pipe:{fd}' in ffmpeg_proc.cmd
-        assert ffmpeg_proc.cmd[-5:] == ['-c', 'copy', '-f', 'matroska', 'pipe:1']
+        assert ffmpeg_proc.cmd[-5:-1] == ['-c', 'copy', '-f', 'matroska']
+        assert ffmpeg_proc.cmd[-1] == session.spool_path
+        assert session.spool_path == os.path.join(
+            postlive_relay._spool_root(), f'{session.token}.mkv'
+        )
+        assert ffmpeg_proc.popen_kwargs['stdout'] is subprocess.DEVNULL
         assert list(ffmpeg_proc.popen_kwargs['pass_fds']) == in_fds
         # The parent's copies of the downloader read ends are closed so the
         # pipeline's fds die with its processes.
@@ -3770,19 +3784,123 @@ def test_postlive_relay_stream_allows_exactly_one_reader(
     session = postlive_relay.create_session(
         'https://youtube.com/watch?v=x', 'best', ('yt-dlp',)
     )
-    procs[-1].stdout._chunks = [b'mkv-', b'bytes']
+    with open(session.spool_path, 'wb') as spool:
+        spool.write(b'mkv-bytes')
+    procs[-1].returncode = 0  # the mux finished on its own
 
     stream = postlive_relay.iter_stream(session.token)
     assert stream is not None
-    # Progressive-only: a second attach cannot be served from the start.
+    # Single-use token: a second attach cannot be served.
     assert postlive_relay.iter_stream(session.token) is None
 
     assert b''.join(stream) == b'mkv-bytes'
-    # Reader EOF closes the session and the pipeline with it.
+    # Reader EOF closes the session; the downloaders die with it (ffmpeg
+    # already exited on its own).
     assert session.closed
     assert session.close_reason == 'reader closed'
-    assert all(proc.terminated for proc in procs)
+    assert all(proc.terminated for proc in procs[:-1])
+    # The finalized spool outlives the session for the seek upgrade.
+    assert postlive_relay.spool_ready_path(session.token) == session.spool_path
+    assert os.path.exists(session.spool_path)
     assert postlive_relay.iter_stream('unknown-token') is None
+    postlive_relay.close_all(reason='test teardown')
+    assert not os.path.exists(session.spool_path)
+
+
+def test_postlive_relay_incomplete_spool_is_discarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_relay_popen(monkeypatch)
+
+    session = postlive_relay.create_session(
+        'https://youtube.com/watch?v=x', 'best', ('yt-dlp',)
+    )
+    with open(session.spool_path, 'wb') as spool:
+        spool.write(b'partial')
+
+    # Torn down mid-mux (ffmpeg terminated, never exit 0): the truncated
+    # file must never be presented as seekable, nor left on disk.
+    assert postlive_relay.spool_ready_path(session.token) is None
+    postlive_relay.close_session(session.token, reason='test')
+    assert postlive_relay.spool_ready_path(session.token) is None
+    assert not os.path.exists(session.spool_path)
+
+
+def test_postlive_relay_new_session_prunes_completed_spool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    procs = _patch_relay_popen(monkeypatch)
+
+    first = postlive_relay.create_session(
+        'https://youtube.com/watch?v=a', 'best', ('yt-dlp',)
+    )
+    with open(first.spool_path, 'wb') as spool:
+        spool.write(b'done')
+    procs[-1].returncode = 0
+    postlive_relay.close_session(first.token, reason='reader closed')
+    assert postlive_relay.spool_ready_path(first.token) == first.spool_path
+
+    second = postlive_relay.create_session(
+        'https://youtube.com/watch?v=b', 'best', ('yt-dlp',)
+    )
+    try:
+        # Single-player appliance: a new play supersedes the kept spool too.
+        assert postlive_relay.spool_ready_path(first.token) is None
+        assert not os.path.exists(first.spool_path)
+    finally:
+        postlive_relay.close_session(second.token, reason='test teardown')
+
+
+def test_postlive_relay_sweep_clears_spool_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setattr(postlive_relay, '_spool_root', lambda: str(tmp_path))
+    (tmp_path / 'stale.mkv').write_bytes(b'x')
+    (tmp_path / 'stale-dir').mkdir()
+
+    postlive_relay.sweep_spool_root()
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_post_live_upgrade_step_swaps_to_finalized_spool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    token = 'tokup'
+    expected_url = postlive_relay.relay_url(token)
+    spool = str(tmp_path / f'{token}.mkv')
+    (tmp_path / f'{token}.mkv').write_bytes(b'mkv')
+    load_calls: list[tuple] = []
+    toasts: list[bool] = []
+
+    monkeypatch.setattr(player, '_load_stream_in_existing_mpv',
+                        lambda stream_url, audio_url=None, start_pos=None, **k:
+                        load_calls.append((stream_url, start_pos)) or True)
+    monkeypatch.setattr(player, '_notify_post_live_seek_ready', lambda: toasts.append(True))
+
+    # Still muxing: keep polling, and a transient path miss is tolerated.
+    monkeypatch.setattr(postlive_relay, 'spool_ready_path', lambda t: None)
+    monkeypatch.setattr(postlive_relay, 'get_session', lambda t: object())
+    monkeypatch.setattr(player, 'mpv_get', lambda key: None)
+    assert player._post_live_upgrade_step(token, expected_url, 0) == ('wait', 1)
+
+    # Playback moved on to other media: stop without touching mpv.
+    monkeypatch.setattr(player, 'mpv_get', lambda key: 'https://other/media')
+    assert player._post_live_upgrade_step(token, expected_url, 0) == ('stop', 0)
+
+    # Session gone and no finalized spool (relay failed): stop.
+    monkeypatch.setattr(postlive_relay, 'get_session', lambda t: None)
+    assert player._post_live_upgrade_step(token, expected_url, 0) == ('stop', 0)
+
+    # Finalized spool + mpv still on the relay stream: swap at position.
+    monkeypatch.setattr(postlive_relay, 'spool_ready_path', lambda t: spool)
+    monkeypatch.setattr(
+        player, 'mpv_get',
+        lambda key: expected_url if key == 'path' else 123.4,
+    )
+    assert player._post_live_upgrade_step(token, expected_url, 0) == ('upgraded', 0)
+    assert load_calls == [(spool, 123.4)]
+    assert toasts == [True]
 
 
 def test_postlive_relay_reaper_reaps_dead_weight_sessions(
@@ -4278,6 +4396,10 @@ def test_play_item_relays_post_live_replay_through_local_stream(
     monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
     monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
     monkeypatch.setattr(player, '_notify_post_live_relay', lambda item: relay_toasts.append(item))
+    armed: list[str] = []
+    monkeypatch.setattr(
+        player, '_arm_post_live_relay_upgrade', lambda stream_url: armed.append(stream_url)
+    )
 
     class _Session:
         token = 'tok1'
@@ -4324,6 +4446,8 @@ def test_play_item_relays_post_live_replay_through_local_stream(
     ]
     assert relay_toasts and relay_toasts[0]['url'] == url
     assert now['stream'] == postlive_relay.relay_url('tok1')
+    # The seek-upgrade watch arms against the exact stream mpv is playing.
+    assert armed == [postlive_relay.relay_url('tok1')]
     assert '_resolved_stream' not in now
 
 

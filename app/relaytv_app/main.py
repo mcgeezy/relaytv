@@ -77,6 +77,9 @@ def create_app(*, testing: bool = False) -> FastAPI:
         runtime_config.refresh_from_env()
         _sync_jellyfin_env_from_settings()
         upload_store.cleanup_uploads(get_settings() if callable(get_settings) else {})
+        # Spool files from a previous process are unreachable (sessions and
+        # the completed-spool registry are process-local) — reclaim the disk.
+        postlive_relay.sweep_spool_root()
         if not testing:
             video_profile.warm_profile()
         workers_enabled = not (

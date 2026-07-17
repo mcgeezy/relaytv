@@ -48,13 +48,15 @@ local HTTP stream.
 
 ```
 yt-dlp -f <video> -o -  ─┐
-                         ├─→ ffmpeg -i pipe:V -i pipe:A -c copy -f matroska pipe:1 ─┐
-yt-dlp -f <audio> -o -  ─┘                                                          │
-                                                                                    ▼
-                                        GET http://127.0.0.1:8787/postlive/<token>.mkv
-                                                                                    │
-                                                                                    ▼
-                                                                                   mpv
+                         ├─→ ffmpeg -i pipe:V -i pipe:A -c copy -f matroska ─→ spool file
+yt-dlp -f <audio> -o -  ─┘                                                        │
+                                                                       (tail-follow while growing)
+                                                                                  ▼
+                                      GET http://127.0.0.1:8787/postlive/<token>.mkv ─→ mpv
+                                                                                  │
+                                            (mux finalizes: duration + cues written)
+                                                                                  ▼
+                                       seamless reload from the local file ─→ mpv, seekable
 ```
 
 Rationale for each choice:
@@ -70,9 +72,11 @@ Rationale for each choice:
   external mpv, Qt-shell external mpv, Qt-shell in-process libmpv),
   because each simply receives a stream URL. No `ytdl_hook`, no
   per-runtime special-casing.
-- **OS pipe backpressure**: when mpv pauses, ffmpeg's write blocks, its
-  reads stop, and yt-dlp's writes block. Flow regulates itself with no
-  unbounded buffering.
+- **A spool file, not a pipe** (M7): disk buffers the download, so it runs
+  at network speed decoupled from playback, and ffmpeg's clean-exit
+  finalize turns the spool into a fully seekable mkv — the basis of the
+  in-place seek upgrade (see M7). v1 shipped `pipe:1` with OS-pipe
+  backpressure; the spool superseded it.
 
 ## Working Rules
 
@@ -103,17 +107,23 @@ In scope:
 - `RELAYTV_POSTLIVE_RELAY` kill-switch (default enabled).
 - Operator docs, env inventory regen, API docs.
 
-Out of scope (v1):
+Deferred-item disposition (resolved in M7, 2026-07-17):
 
-- **Seeking and duration.** mpv receives a progressive stream, so it has
-  no timeline: seeks are unavailable and `duration_sec` stays null in
-  history. An info toast sets the expectation. Revisit only if the replay
-  wait proves long enough that viewers ask for it.
-- Caching relayed output to disk for later replay.
-- Any non-YouTube provider — no other provider exhibits this manifest
-  shape.
-- Additional buffer/timeout tuning knobs. Pipe backpressure is
-  self-regulating; knobs would be speculation.
+- **Seeking and duration** — implemented via the spool-to-disk upgrade
+  (M7): once the mux finalizes, mpv is swapped onto the local file and
+  gains a full timeline. Until that moment (the first minutes of
+  playback) seeking stays unavailable and the toast still applies.
+- **Caching relayed output** — absorbed by the same design: the finalized
+  spool file *is* the cache for the lifetime of the session (kept for the
+  upgrade, pruned on supersede/TTL/shutdown/startup). A persistent
+  cross-restart cache was rejected: the post_live window is temporary,
+  and once YouTube finishes processing the normal VOD path serves the
+  video with everything the cache would have offered.
+- **Non-YouTube providers** — removed, not applicable: no other provider
+  exhibits this manifest shape.
+- **Buffer/timeout tuning knobs** — removed, not applicable: v1's pipe
+  backpressure proved self-regulating in the field, and v2's disk spool
+  removes the coupling entirely. Only the kill-switch remains.
 
 ## Baseline (measured at start)
 
@@ -182,8 +192,8 @@ def relay_url(token: str) -> str
 
 New router `routes/postlive.py`, registered in `routes/__init__.py`.
 `StreamingResponse(gen(), media_type="video/x-matroska")`; the generator
-reads ffmpeg's stdout in 64 KiB chunks and closes the session in
-`finally`. Unknown token → 404.
+reads in 64 KiB chunks (v1: ffmpeg's stdout; since M7: tail-following the
+spool file) and closes the session in `finally`. Unknown token → 404.
 
 No auth exemption is needed and none should be added:
 `api_auth.write_request_allowed` (`api_auth.py:37`) guards only
@@ -286,14 +296,41 @@ not representative):
    back to the idle screen without wedging.
 6. **Regression** — 390 tests green, ruff clean.
 
+### M7 — Spool-to-disk + seek upgrade (the deferred items)
+
+Implemented 2026-07-17. ffmpeg muxes to a **spool file** under
+`STATE_DIR/cache/postlive/{token}.mkv` instead of a pipe; the route
+tail-follows the growing file (playback still starts within seconds).
+Because the mux now targets a real file, ffmpeg finalizes it on clean exit
+— seeks back and writes duration and cues — producing an ordinary
+seekable mkv at download speed, far ahead of realtime playback. A player
+watch thread (`_arm_post_live_relay_upgrade`) polls for that moment and,
+if mpv is still positively on the relay URL, seamlessly reloads the local
+file at the current position: full timeline, seeking, known duration,
+plus a "seeking is now available" toast. If the seamless replace
+declines, progressive playback simply continues as before.
+
+Lifecycle rules: a finalized spool (`ffmpeg` exit 0 — a terminated mux
+never reports 0, so truncated files are never presented as seekable)
+outlives its session so the upgrade can win the race against reader
+detach; completed spools are pruned to the newest one, expired after 6h
+by the reaper, superseded by any new relay session, removed at shutdown,
+and swept at startup (nothing from a previous process is attachable).
+Disk replaces pipe backpressure as the buffer: a full disk fails the mux
+and degrades to EOF + queue advance.
+
 ## Risks
 
 - **ffmpeg startup latency**: matroska needs both input headers before it
   emits output, so first bytes wait on both yt-dlp children connecting.
   Expected to be seconds; the 45s watchdog is the backstop. Measured in M6.
-- **Fragment URL expiry (~6h)**: an 82-minute video relays in roughly real
-  time, well inside the window. A 6h+ stream could expire mid-relay → EOF
-  → queue advance. Accepted for v1.
+- **Fragment URL expiry (~6h)**: mostly retired by M7 — the spool download
+  runs at network speed instead of realtime, so only pathologically long
+  replays could still expire mid-download (degrades to EOF → advance).
+- **Disk usage** (new with M7): a long replay spools multiple GB under
+  `STATE_DIR/cache/postlive`. Bounded by the one-live-plus-one-completed
+  retention, the 6h TTL, and the startup sweep; a full disk fails the mux
+  and degrades to EOF + queue advance.
 - **Orphaned processes**: the main correctness risk; three teardown
   triggers plus explicit M6 verification.
 - **stderr deadlock**: bounded drain threads, by design in M2.
