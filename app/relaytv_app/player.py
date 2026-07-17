@@ -4787,6 +4787,10 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     ytdl_format_override = None
     ytdl_raw_options_override = None
     relay_playback = False
+    prepared_relay = item.pop("_prepared_post_live_relay", None)
+    prepared_relay_stream = ""
+    if isinstance(prepared_relay, dict):
+        prepared_relay_stream = str(prepared_relay.get("stream") or "").strip()
     transient_handoff = item.pop("_transient_mpv_ytdl_handoff", None)
     if isinstance(transient_handoff, dict):
         ytdl_format_override = str(transient_handoff.get("format") or "").strip()
@@ -4826,7 +4830,18 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
                 and sess in ("", "idle", "closed")
             ):
                 _stop_qt_shell()
-        if prefetched is not None:
+        if prepared_relay_stream:
+            # restart_current spawned the relay session before stopping
+            # playback (so a spawn failure keeps the old stream running);
+            # consume it instead of re-resolving and re-spawning.
+            _clear_prefetched_stream(item)
+            stream, audio = prepared_relay_stream, None
+            ytdl_format_override = None
+            ytdl_raw_options_override = None
+            start_pos = None
+            relay_playback = True
+            debug_log("player", "using preflighted post-live relay session")
+        elif prefetched is not None:
             stream, audio = prefetched
             debug_log("player", "using prefetched resolved stream")
         elif isinstance(transient_handoff, dict):
@@ -6148,17 +6163,19 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                 logger.warning("restart_current_resolve_failed error=%s", resolve_exc)
                 return None
             if str(getattr(result, "live_status", "") or "").strip().lower() == "post_live":
-                if not postlive_relay.relay_enabled():
-                    # See play_item: without the relay a resolved post_live
-                    # stream is only watchable at the live edge, so a restart
-                    # would tear playback down for a stream that dies in
-                    # seconds. Keep whatever is currently playing instead.
+                # Spawn the relay session BEFORE stopping playback, same
+                # principle as resolving first: if the relay is disabled or
+                # its pipeline cannot start, keep whatever is currently
+                # playing instead of tearing it down for nothing. play_item
+                # consumes the prepared session without re-resolving. The
+                # relayed replay starts from the beginning, not the
+                # captured position.
+                relay_stream = _post_live_relay_source(item, result)
+                if relay_stream is None:
                     _notify_post_live_processing(item)
                     logger.info("restart_current_skipped_post_live_processing title=%s", str(item.get("title") or inp)[:120])
                     return None
-                # play_item relays post_live itself (re-resolving once). The
-                # relay is progressive-only, so the restart replays from the
-                # start rather than the captured position.
+                item["_prepared_post_live_relay"] = {"stream": relay_stream}
             else:
                 _stream, _audio, ytdl_format, ytdl_raw = _resolved_playback_source(
                     item, inp, result

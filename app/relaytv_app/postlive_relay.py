@@ -136,7 +136,41 @@ def _ytdlp_base_args(ytdlp_args) -> list[str]:
     args = [str(a) for a in (ytdlp_args or []) if str(a).strip()]
     if not args or args[0].startswith("-"):
         args = ["yt-dlp", *args]
-    return args
+    return _absolutize_path_args(args)
+
+
+# yt-dlp options whose values are filesystem paths. The relay children run
+# from per-session temp workdirs (fragment staging needs a writable cwd), so
+# a relative path that resolved fine from the server's cwd — e.g. an
+# operator's RELAYTV_YTDLP_COOKIES=cookies.txt — would silently miss there.
+_PATH_ARG_FLAGS = (
+    "--cookies",
+    "--cache-dir",
+    "--config-location",
+    "--config-locations",
+    "--netrc-location",
+    "--download-archive",
+)
+
+
+def _absolutize_path_args(args: list[str]) -> list[str]:
+    out: list[str] = []
+    expect_path = False
+    for token in args:
+        if expect_path:
+            out.append(os.path.abspath(token))
+            expect_path = False
+            continue
+        if token in _PATH_ARG_FLAGS:
+            expect_path = True
+            out.append(token)
+            continue
+        flag, sep, value = token.partition("=")
+        if sep and flag in _PATH_ARG_FLAGS and value:
+            out.append(f"{flag}={os.path.abspath(value)}")
+            continue
+        out.append(token)
+    return out
 
 
 def _drain_stderr(name: str, proc: subprocess.Popen, tail: collections.deque) -> None:
@@ -188,14 +222,6 @@ def create_session(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySessi
     base = _ytdlp_base_args(ytdlp_args)
     token = secrets.token_urlsafe(16)
 
-    # Single-player appliance: at most one pipeline at a time, and a new
-    # play supersedes any completed spool still held for an upgrade.
-    with _LOCK:
-        stale_tokens = list(_SESSIONS.keys())
-    for stale_token in stale_tokens:
-        close_session(stale_token, reason="superseded")
-    _prune_completed_spools(keep=0)
-
     ytdlp_procs: list[subprocess.Popen] = []
     ffmpeg_proc: subprocess.Popen | None = None
     workdirs: list[str] = []
@@ -246,6 +272,16 @@ def create_session(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySessi
             proc.stdout.close()
         except Exception:
             pass
+
+    # Single-player appliance: at most one session, and a new play
+    # supersedes any completed spool held for an upgrade. Superseding only
+    # AFTER the new pipeline spawned means a spawn failure leaves whatever
+    # is currently playing untouched (restart-in-place relies on this).
+    with _LOCK:
+        stale_tokens = list(_SESSIONS.keys())
+    for stale_token in stale_tokens:
+        close_session(stale_token, reason="superseded")
+    _prune_completed_spools(keep=0)
 
     session = RelaySession(
         token=token,

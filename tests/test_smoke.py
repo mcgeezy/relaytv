@@ -3389,6 +3389,11 @@ def test_restart_current_replays_post_live_through_relay(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(player, 'is_playing', lambda: False)
     monkeypatch.setattr(player, 'stop_mpv', lambda *args, **kwargs: calls.append('stop'))
+    monkeypatch.setattr(
+        player,
+        '_post_live_relay_source',
+        lambda item, result: (calls.append('relay'), 'http://127.0.0.1:8787/postlive/tokr.mkv')[1],
+    )
 
     def fake_play(item, **kwargs):
         calls.append('play')
@@ -3399,12 +3404,44 @@ def test_restart_current_replays_post_live_through_relay(monkeypatch: pytest.Mon
 
     now = player.restart_current()
 
-    # With the relay available, restarting a post_live item goes through
-    # play_item, which relays it; play_item resolves again, so no transient
-    # ytdl handoff is stashed on the item.
+    # The relay session spawns BEFORE playback stops (a spawn failure must
+    # keep the current stream running), and play_item consumes the prepared
+    # session instead of re-resolving.
     assert now == {'url': 'https://youtube.com/watch?v=processing'}
-    assert calls == ['resolve', 'stop', 'play']
+    assert calls == ['resolve', 'relay', 'stop', 'play']
+    assert played[0]['_prepared_post_live_relay'] == {
+        'stream': 'http://127.0.0.1:8787/postlive/tokr.mkv'
+    }
     assert '_transient_mpv_ytdl_handoff' not in played[0]
+
+
+def test_restart_current_keeps_playing_when_relay_cannot_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    toasts: list[object] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {'url': 'https://youtube.com/watch?v=processing', 'title': 'Processing Live'},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        player,
+        'resolve_streams',
+        lambda url: resolver.ResolvedStreams(stream=url, transport='mpv_ytdl', live_status='post_live'),
+    )
+    # Relay enabled but the pipeline fails to start (missing ffmpeg, disk,
+    # cookie path...): current playback must stay untouched.
+    monkeypatch.setattr(player, '_post_live_relay_source', lambda item, result: None)
+    monkeypatch.setattr(player, '_notify_post_live_processing', lambda item: toasts.append(item))
+    monkeypatch.setattr(player, 'stop_mpv', lambda *a, **k: calls.append('stop'))
+    monkeypatch.setattr(player, 'play_item', lambda *a, **k: calls.append('play'))
+
+    assert player.restart_current() is None
+    assert calls == []
+    assert toasts and toasts[0]['url'] == 'https://youtube.com/watch?v=processing'
 
 
 def test_restart_current_resolves_before_stopping_and_reuses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3706,6 +3743,57 @@ def test_postlive_relay_session_spawns_winning_strategy_pipeline(
     # close_session removes the workdirs with the pipeline.
     assert not os.path.exists(video_cwd)
     assert not os.path.exists(audio_cwd)
+
+
+def test_postlive_relay_absolutizes_relative_path_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The children run from temp workdirs, so relative operator paths (e.g.
+    # RELAYTV_YTDLP_COOKIES=cookies.txt) that resolved from the server cwd
+    # must be pinned to absolute before the cwd changes.
+    procs = _patch_relay_popen(monkeypatch)
+
+    postlive_relay.create_session(
+        'https://youtube.com/watch?v=x',
+        'best',
+        ('yt-dlp', '--cookies', 'cookies.txt', '--cache-dir=ytcache', '--no-playlist'),
+    )
+    try:
+        cmd = procs[0].cmd
+        cookie_value = cmd[cmd.index('--cookies') + 1]
+        assert os.path.isabs(cookie_value)
+        assert cookie_value == os.path.abspath('cookies.txt')
+        cache_args = [a for a in cmd if a.startswith('--cache-dir=')]
+        assert cache_args == [f'--cache-dir={os.path.abspath("ytcache")}']
+        assert '--no-playlist' in cmd
+    finally:
+        postlive_relay.close_all(reason='test teardown')
+
+
+def test_postlive_relay_spawn_failure_preserves_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Supersession happens only after the new pipeline spawned: a spawn
+    # failure must leave the currently playing session untouched
+    # (restart-in-place spawns the new session before stopping playback).
+    _patch_relay_popen(monkeypatch)
+    first = postlive_relay.create_session(
+        'https://youtube.com/watch?v=a', 'best', ('yt-dlp',)
+    )
+
+    def broken_popen(cmd, **kwargs):
+        raise OSError('no such executable')
+
+    monkeypatch.setattr(postlive_relay.subprocess, 'Popen', broken_popen)
+    try:
+        with pytest.raises(postlive_relay.RelayError):
+            postlive_relay.create_session(
+                'https://youtube.com/watch?v=b', 'best', ('yt-dlp',)
+            )
+        assert postlive_relay.get_session(first.token) is first
+        assert not first.closed
+    finally:
+        postlive_relay.close_all(reason='test teardown')
 
 
 def test_postlive_relay_default_format_spawns_split_pipeline(
@@ -4448,6 +4536,73 @@ def test_play_item_relays_post_live_replay_through_local_stream(
     assert now['stream'] == postlive_relay.relay_url('tok1')
     # The seek-upgrade watch arms against the exact stream mpv is playing.
     assert armed == [postlive_relay.relay_url('tok1')]
+
+
+def test_play_item_consumes_prepared_post_live_relay_without_resolving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # restart_current pre-spawns the relay session and stashes its URL;
+    # play_item must load it directly — no second resolve, no second
+    # session, and no resolved-stream caching of the single-use token.
+    url = 'https://youtube.com/watch?v=prepared'
+    relay_stream = 'http://127.0.0.1:8787/postlive/tokprep.mkv'
+    load_calls: list[dict[str, object]] = []
+    armed: list[str] = []
+
+    monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
+    monkeypatch.setattr(player, 'cec_auto_on_switch', lambda cec: False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: False)
+    monkeypatch.setattr(
+        player,
+        '_load_stream_in_existing_mpv',
+        lambda stream_url, audio_url=None, start_pos=None, **kwargs: load_calls.append(
+            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos}
+        )
+        or True,
+    )
+    monkeypatch.setattr(player, '_add_history_entry', lambda now: None)
+    monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda force=False: False)
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'get_tv_state', lambda: {})
+    monkeypatch.setattr(player.state, 'set_now_playing', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_state', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
+    monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(player, '_arm_post_live_relay_upgrade', lambda s: armed.append(s))
+    monkeypatch.setattr(
+        player,
+        'resolve_streams',
+        lambda requested_url: (_ for _ in ()).throw(
+            AssertionError('prepared relay must not resolve again')
+        ),
+    )
+    monkeypatch.setattr(
+        postlive_relay,
+        'create_session',
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError('prepared relay must not spawn a second session')
+        ),
+    )
+
+    now = player.play_item(
+        {
+            'url': url,
+            'title': 'Prepared replay',
+            'provider': 'youtube',
+            '_prepared_post_live_relay': {'stream': relay_stream},
+        },
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode='resume',
+        start_pos=99.0,
+    )
+
+    assert load_calls == [{'stream': relay_stream, 'audio': None, 'start_pos': None}]
+    assert armed == [relay_stream]
+    assert now['stream'] == relay_stream
+    assert '_resolved_stream' not in now
     assert '_resolved_stream' not in now
 
 
