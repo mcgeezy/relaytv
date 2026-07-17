@@ -2300,7 +2300,7 @@ def _first_nonempty_str(values: list[object]) -> str:
     return ""
 
 
-# Phase 4 (docs/ARCHITECTURE_PHASE_4_ROADMAP.md M2): pure Jellyfin helpers
+# Pure Jellyfin helpers (docs/ARCHITECTURE.md)
 # live in integrations/jellyfin_service.py. These aliases keep the routes
 # compatibility surface and existing monkeypatch targets stable.
 _jellyfin_access_token = jellyfin_service.access_token

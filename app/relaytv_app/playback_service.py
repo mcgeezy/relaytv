@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Playback transition service (Phase 3, docs/ARCHITECTURE_PHASE_3_ROADMAP.md).
+"""Playback transition service (docs/ARCHITECTURE.md).
 
 Explicit command vocabulary for playback transitions (architecture review
 Finding 4). Facade-first: each command delegates 1:1 to the current
@@ -22,7 +22,7 @@ Review command mapping:
 
 The Phase 3 end state is that this module is the only writer of the playback
 transition globals outside ``state.py`` (see
-docs/ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md). Delegation goes through
+docs/TRANSITION_INVENTORY.md). Delegation goes through
 module attributes (``player.play_item``) on purpose: tests monkeypatch those
 attributes and must keep intercepting the calls.
 """

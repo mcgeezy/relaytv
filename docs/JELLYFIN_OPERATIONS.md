@@ -109,6 +109,25 @@ Notes:
 - Emby-only features (Emby Connect, Premiere) and Jellyfin-only features
   (SyncPlay) are out of scope.
 
+### Emby Live-Verification Checklist
+
+Run against a real Emby server (first bring-up, or after integration
+changes):
+
+1. Enter the Emby URL + credentials in settings → the section relabels to
+   "Emby Integration" without a page reload;
+   `/integrations/jellyfin/status` shows `server_type: "emby"`.
+2. Auth both ways: username/password (`/Users/AuthenticateByName`) and
+   API key (`X-Emby-Token`).
+3. Browse home/movies/TV and series → season → episode; posters render.
+4. Play a movie and an episode (direct and transcode modes); audio and
+   subtitle track selection.
+5. Progress and Stopped visible on the Emby dashboard; now-playing/queue
+   show provider "Emby" with the Emby icon.
+6. Regression: point back at a Jellyfin server → relabels back to
+   "Jellyfin"; full browse/play/progress flow re-verified;
+   `PYTHONPATH=app pytest -q` green.
+
 ## Settings UI Credentials (Current)
 
 RelayTV Settings now supports Jellyfin credential and playback policy management directly:

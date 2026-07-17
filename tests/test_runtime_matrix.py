@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Machine-checked runtime profile matrix (docs/ARCHITECTURE_PHASE_6_ROADMAP.md).
+"""Machine-checked runtime profile matrix (docs/OPERATIONS_TEST_MATRIX.md).
 
 Pins the runtime decisions RelayTV makes per operations profile — host
 profile detection, entrypoint defaults, Qt runtime mode, and decode

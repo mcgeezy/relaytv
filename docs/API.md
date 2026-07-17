@@ -95,7 +95,7 @@ server {
 - `GET /thumbs/{filename}`: cached thumbnail image
 - `GET /snapshots/{filename}`: saved JPEG snapshot
 - `GET /postlive/{token}.mkv`: internal loopback stream for still-processing
-  YouTube replays (see `POSTLIVE_REPLAY_RELAY_ROADMAP.md`). The player mints a
+  YouTube replays (see `POSTLIVE_REPLAY.md`). The player mints a
   single-use token per playback and hands the URL to mpv; the stream is
   progressive-only, so a consumed, unknown, or superseded token returns 404.
   Once the underlying download completes, the player swaps mpv onto the

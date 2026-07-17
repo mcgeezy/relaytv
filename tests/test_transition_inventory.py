@@ -3,7 +3,7 @@
 
 The Phase 3 playback-service work centralizes every write to the playback
 transition globals behind explicit service commands. This test keeps
-``docs/ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`` in sync with the source
+``docs/TRANSITION_INVENTORY.md`` in sync with the source
 tree and pins the allowed writer modules per global so each migration
 milestone tightens the contract explicitly.
 
@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = REPO_ROOT / "app" / "relaytv_app"
-INVENTORY_DOC = REPO_ROOT / "docs" / "ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md"
+INVENTORY_DOC = REPO_ROOT / "docs" / "TRANSITION_INVENTORY.md"
 
 TABLE_BEGIN = "<!-- BEGIN GENERATED TRANSITION TABLE (tests/test_transition_inventory.py) -->"
 TABLE_END = "<!-- END GENERATED TRANSITION TABLE -->"
@@ -106,7 +106,7 @@ def test_transition_inventory_doc_matches_source() -> None:
     expected = render_table()
     actual = _doc_table_lines()
     assert actual == expected, (
-        "docs/ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md is stale; regenerate with "
+        "docs/TRANSITION_INVENTORY.md is stale; regenerate with "
         "`PYTHONPATH=app python3 tests/test_transition_inventory.py --write`"
     )
 

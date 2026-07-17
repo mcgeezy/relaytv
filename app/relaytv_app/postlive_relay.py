@@ -19,7 +19,7 @@ mkv. The player watches for that moment and seamlessly reloads mpv from
 the local file at the current position, upgrading the session from
 "progressive, no timeline" to "local file, full seeking". Until then
 seeking is unavailable and duration unknown; an info toast sets the
-expectation. See docs/POSTLIVE_REPLAY_RELAY_ROADMAP.md.
+expectation. See docs/POSTLIVE_REPLAY.md.
 
 Sessions are capped at one (single-player appliance): creating a session
 supersedes any existing one. Teardown triggers are the route reader

@@ -2,7 +2,7 @@
 """Shared typed environment parsing and the runtime configuration service.
 
 Consolidates the per-module ``_env_*`` helpers and owns the settings-driven
-runtime configuration (Phase 2, see docs/ARCHITECTURE_PHASE_2_ROADMAP.md).
+runtime configuration (docs/ARCHITECTURE.md).
 Parsing semantics are preserved exactly: ``env_choice`` keeps the two
 historical spelling sets behind the ``extended`` flag because the route-side
 copies accepted "enable(d)" / "disable(d)" while the child-process copies did
@@ -108,7 +108,7 @@ def server_port() -> int:
 # The settings bus: variables the app itself writes to os.environ at runtime
 # (startup sync in main.py, settings apply in routes/settings.py, Jellyfin
 # track preference in routes/jellyfin.py, video-mode restart in player.py).
-# Kept in sync with docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md.
+# Kept in sync with docs/ENV_INVENTORY.md.
 SETTINGS_BUS_VARS = frozenset(
     {
         "INVIDIOUS_BASE",
@@ -147,7 +147,7 @@ SETTINGS_BUS_VARS = frozenset(
     }
 )
 
-# Subprocess mirroring contract (docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md):
+# Subprocess mirroring contract (docs/ENV_INVENTORY.md):
 # settings-bus variables still mirrored to os.environ because a runtime child
 # process reads them. qt_shell_app falls back to RELAYTV_DEVICE_NAME when
 # persisted settings are unavailable. tests/test_env_inventory.py pins the
