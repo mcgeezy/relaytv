@@ -3627,7 +3627,10 @@ def test_postlive_relay_splits_merge_format_expressions() -> None:
         'bestaudio/best',
     )
     assert postlive_relay.split_format_expression('best') == ('best', None)
-    assert postlive_relay.split_format_expression('') == ('best', None)
+    # Empty means the resolver won with yt-dlp's default (bv*+ba/b) — the
+    # relay must reproduce that as a split download, never '-f best'
+    # (post_live serves no muxed formats; caught live on the appliance).
+    assert postlive_relay.split_format_expression('') == ('bv*', 'ba')
     assert postlive_relay.split_format_expression('best[height<=720]/b') == (
         'best[height<=720]/b',
         None,
@@ -3676,6 +3679,26 @@ def test_postlive_relay_session_spawns_winning_strategy_pipeline(
         assert postlive_relay.relay_url(session.token) == (
             f'http://127.0.0.1:8787/postlive/{session.token}.mkv'
         )
+    finally:
+        postlive_relay.close_all(reason='test teardown')
+
+
+def test_postlive_relay_default_format_spawns_split_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: the resolver's winning post_live attempt often carries no
+    # -f at all (yt-dlp default bv*+ba/b). The relay must reproduce that as a
+    # video+audio split — '-f best' asks for a muxed format post_live never
+    # serves, and the whole pipeline died on the appliance.
+    procs = _patch_relay_popen(monkeypatch)
+
+    postlive_relay.create_session('https://youtube.com/watch?v=x', '', ('yt-dlp',))
+    try:
+        assert len(procs) == 3
+        video_proc, audio_proc, ffmpeg_proc = procs
+        assert video_proc.cmd[1:3] == ['-f', 'bv*']
+        assert audio_proc.cmd[1:3] == ['-f', 'ba']
+        assert ffmpeg_proc.cmd.count('-i') == 2
     finally:
         postlive_relay.close_all(reason='test teardown')
 

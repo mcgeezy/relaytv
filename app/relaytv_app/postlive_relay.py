@@ -79,10 +79,15 @@ def split_format_expression(fmt: str) -> tuple[str, str | None]:
     bracket depth zero; everything after it (including ``/`` fallbacks like
     ``bestaudio/best``) stays a single audio selection. No top-level ``+``
     means a single download.
+
+    An empty expression means the resolver won without ``-f`` — yt-dlp's
+    default ``bv*+ba/b`` — so it splits to video+audio downloads. It must not
+    map to ``best``: that selects a muxed format, and post_live videos only
+    serve adaptive (split) formats, so ``-f best`` fails outright.
     """
     text = (fmt or "").strip()
     if not text:
-        return "best", None
+        return "bv*", "ba"
     depth = 0
     for idx, ch in enumerate(text):
         if ch in "[(":
