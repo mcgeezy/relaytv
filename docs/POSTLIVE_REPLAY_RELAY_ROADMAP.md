@@ -319,6 +319,19 @@ and swept at startup (nothing from a previous process is attachable).
 Disk replaces pipe backpressure as the buffer: a full disk fails the mux
 and degrades to EOF + queue advance.
 
+Live-verified 2026-07-17 on a genuine post_live specimen (a just-ended
+ministry press conference, 804 fragments per track): playback started
+progressively within seconds; the spool grew at ~5-6x realtime; at 7:16
+of playback the download completed and the upgrade fired
+(`post_live_relay_upgraded ... start_pos=436.133`), mpv swapped onto
+`/data/cache/postlive/<token>.mkv` at position, duration became the full
+4019.5s, `seekable=true`, and an actual seek to 42:40 worked. The
+session closed `reader closed spool_kept=True`, both downloaders logged
+"Download completed", and zero pipeline processes or fragment workdirs
+remained. Bonus path proven the same day: a post_live item auto-resumed
+through the relay after a container restart, and a superseded
+mid-download session deleted its incomplete spool.
+
 ## Risks
 
 - **ffmpeg startup latency**: matroska needs both input headers before it
