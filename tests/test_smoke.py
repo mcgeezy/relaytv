@@ -3679,8 +3679,19 @@ def test_postlive_relay_session_spawns_winning_strategy_pipeline(
         assert postlive_relay.relay_url(session.token) == (
             f'http://127.0.0.1:8787/postlive/{session.token}.mkv'
         )
+        # Each downloader runs in its own writable workdir: the dash
+        # fragment downloader stages '--FragN.part' files in cwd even when
+        # streaming to stdout, the server's cwd may be read-only, and a
+        # shared dir would collide on the identical .part names.
+        video_cwd = video_proc.popen_kwargs['cwd']
+        audio_cwd = audio_proc.popen_kwargs['cwd']
+        assert video_cwd != audio_cwd
+        assert os.path.isdir(video_cwd) and os.path.isdir(audio_cwd)
     finally:
         postlive_relay.close_all(reason='test teardown')
+    # close_session removes the workdirs with the pipeline.
+    assert not os.path.exists(video_cwd)
+    assert not os.path.exists(audio_cwd)
 
 
 def test_postlive_relay_default_format_spawns_split_pipeline(

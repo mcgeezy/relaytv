@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import collections
 import secrets
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -64,6 +66,7 @@ class RelaySession:
     ytdlp_procs: list[subprocess.Popen]
     ffmpeg_proc: subprocess.Popen
     created_at: float
+    workdirs: tuple[str, ...] = ()
     reader_attached: bool = False
     reader_detached: bool = False
     closed: bool = False
@@ -167,14 +170,23 @@ def create_session(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySessi
 
     ytdlp_procs: list[subprocess.Popen] = []
     ffmpeg_proc: subprocess.Popen | None = None
+    workdirs: list[str] = []
     try:
         for fmt in [video_fmt] + ([audio_fmt] if audio_fmt else []):
+            # Post-live formats are dash fragments; yt-dlp stages each
+            # fragment as a .part file in its cwd even when writing to
+            # stdout, and the server's own cwd may be read-only. One dir
+            # per child — they would collide on the same '--FragN.part'
+            # names in a shared one.
+            workdir = tempfile.mkdtemp(prefix=f"postlive-{token}-")
+            workdirs.append(workdir)
             ytdlp_procs.append(
                 subprocess.Popen(
                     [*base, "-f", fmt, "--no-progress", "-o", "-", url],
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    cwd=workdir,
                 )
             )
         input_fds = [p.stdout.fileno() for p in ytdlp_procs]
@@ -192,6 +204,7 @@ def create_session(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySessi
     except Exception as exc:
         for proc in ytdlp_procs + ([ffmpeg_proc] if ffmpeg_proc else []):
             _end_process(proc)
+        _remove_workdirs(workdirs)
         raise RelayError(f"post-live relay pipeline failed to start: {exc}") from exc
 
     # ffmpeg owns inherited copies of the yt-dlp stdout read ends; drop ours
@@ -210,6 +223,7 @@ def create_session(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySessi
         ytdlp_procs=ytdlp_procs,
         ffmpeg_proc=ffmpeg_proc,
         created_at=time.time(),
+        workdirs=tuple(workdirs),
     )
     for idx, proc in enumerate(ytdlp_procs):
         _start_stderr_drain(session, f"ytdlp{idx}", proc)
@@ -281,6 +295,11 @@ def _end_process(proc: subprocess.Popen | None) -> None:
             pass
 
 
+def _remove_workdirs(workdirs) -> None:
+    for workdir in workdirs:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 def close_session(token: str, *, reason: str) -> None:
     with _LOCK:
         session = _SESSIONS.pop(str(token or ""), None)
@@ -298,6 +317,7 @@ def close_session(token: str, *, reason: str) -> None:
             session.ffmpeg_proc.stdout.close()
     except Exception:
         pass
+    _remove_workdirs(session.workdirs)
     tails = {
         name: " | ".join(list(tail)[-3:])
         for name, tail in session.stderr_tails.items()
