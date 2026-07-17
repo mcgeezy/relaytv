@@ -264,13 +264,27 @@ not representative):
 4. **Kill-switch** — unit-tested (`RELAYTV_POSTLIVE_RELAY=0` restores
    skip+toast in play_item and restart_current); live toggle check happens
    with the deployed build.
-5. **Deployed end-to-end** — pending: build this branch into the runtime,
-   play a normal VOD through the full HTTP path, then the real test: a
-   genuine post_live video (a stream that just ended; user-driven timing) →
-   plays from the beginning with audio, info toast appears, queue advances
-   normally at the end.
-6. **Regression** — 389 tests green, ruff clean; running Docker instance
-   untouched by the verification (module exercised from /tmp, cleaned up).
+5. **Deployed end-to-end** — done 2026-07-17, against genuine post_live
+   specimens (a just-ended Merz/Macron press conference, caught by polling a
+   basket of currently-live streams until one flipped). The first two
+   attempts each exposed a real bug the synthetic checks could not:
+   - The resolver's winning post_live attempt often carries **no `-f`**
+     (yt-dlp's default `bv*+ba/b`), and the relay mapped that empty
+     expression to `-f best` — a muxed format post_live never serves.
+     Fixed: empty now splits to `bv*` + `ba` (d509bf3).
+   - yt-dlp's dash-fragment downloader stages `--FragN.part` files in its
+     **cwd even when streaming to stdout**; the children inherited the
+     server's read-only `/app` and died with `Permission denied`.
+     Progressive-VOD verification never staged fragments, which is why
+     pre-deployment checks missed it. Fixed: one temp workdir per child,
+     removed on session close (next commit).
+   The third attempt played: session `bv*`+`ba` (audio itag 140, 799
+   fragments), both downloaders + ffmpeg alive, mpv position advancing
+   (32.5 → 47.8 over 15s) with the muxed timeline growing ahead of
+   playback. Both failed attempts also proved the failure path: clean
+   teardown, stderr tails logged, dead-token replays 404, appliance falls
+   back to the idle screen without wedging.
+6. **Regression** — 390 tests green, ruff clean.
 
 ## Risks
 
