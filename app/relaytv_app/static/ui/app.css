@@ -1069,6 +1069,73 @@
 
     
     /* Queue tiles */
+    /* ===== Queue: glass panel matching the remote (always dark) ===== */
+    .queueCard{
+      background-image: none !important;
+      background: linear-gradient(165deg, rgba(13,22,44,.94), rgba(5,9,20,.97)) !important;
+      border: 1px solid rgba(120,180,255,.30);
+      border-radius: 26px;
+      padding: 16px;
+      box-shadow:
+        0 0 28px rgba(56,130,246,.12),
+        0 18px 48px rgba(0,0,0,.50),
+        inset 0 1px 0 rgba(190,220,255,.14);
+    }
+    .qHead{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 2px 2px 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid rgba(140,190,255,.16);
+    }
+    .qHeadTitle{
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: #dceaff;
+      text-shadow: 0 1px 6px rgba(4,12,38,.60);
+    }
+    .qCount{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+      padding: 0 7px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #eaf3ff;
+      border: 1px solid rgba(96,170,255,.50);
+      background: linear-gradient(180deg, rgba(43,108,231,.85), rgba(22,56,142,.90));
+      box-shadow: 0 0 10px rgba(56,130,246,.25), inset 0 1px 0 rgba(200,228,255,.28);
+    }
+    .qClearBtn{
+      margin-left: auto;
+      min-height: 0;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: rgba(210,228,255,.80);
+      border: 1px solid rgba(140,190,255,.28);
+      background: rgba(20,32,62,.45);
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .qClearBtn:hover{
+      color: #eaf3ff;
+      border-color: rgba(150,210,255,.55);
+      background: rgba(34,60,120,.60);
+      box-shadow: 0 0 12px rgba(72,150,255,.22);
+      transform: none;
+    }
+    .qClearBtn:active{ background: rgba(24,44,92,.70); transform: translateY(1px); }
     .queueList{
       margin: 0;
       padding: 0;
@@ -1076,6 +1143,20 @@
       display: grid;
       gap: 10px;
     }
+    .queueList:empty::after{
+      content: "Queue is empty";
+      display: block;
+      padding: 18px 6px;
+      text-align: center;
+      font-size: 13px;
+      letter-spacing: .04em;
+      color: rgba(210,225,250,.45);
+    }
+    .queueCard .footerRow{ color: rgba(210,225,250,.55); }
+    /* Panel is always dark: pin text colors against light-mode var flips */
+    .queueCard .qTitle{ color: #eaf3ff; }
+    .queueCard .qChan,
+    .queueCard .qUrl{ color: rgba(210,225,250,.62); }
 
     .qTile{
       position: relative;
@@ -1084,9 +1165,14 @@
       gap: 10px;
       padding: 12px;
       border-radius: 18px;
-      background: var(--card2);
-      border: 1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(24,38,72,.55), rgba(12,20,42,.60));
+      border: 1px solid rgba(120,180,255,.22);
+      box-shadow: inset 0 1px 0 rgba(190,220,255,.10);
       user-select: none;
+    }
+    .qTile:hover{
+      border-color: rgba(140,200,255,.36);
+      background: linear-gradient(180deg, rgba(30,48,90,.60), rgba(15,26,52,.65));
     }
     .qTile.isUnavailable{
       opacity: .72;
@@ -1125,10 +1211,10 @@
       justify-content:center;
       align-self: center;
       border-radius: 12px;
-      background: rgba(0, 153, 255, .16);
-      border: 1px solid rgba(95, 205, 255, .34);
-      color: rgba(125, 220, 255, .94);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      background: linear-gradient(180deg, rgba(43,108,231,.40), rgba(22,56,142,.45));
+      border: 1px solid rgba(96, 170, 255, .42);
+      color: rgba(190, 222, 255, .94);
+      box-shadow: inset 0 1px 0 rgba(200,228,255,.16);
       cursor: grab;
       position: relative;
       z-index: 2;
@@ -1136,8 +1222,9 @@
       user-select: none;
     }
     .qHandle:hover{
-      background: rgba(0, 153, 255, .22);
-      border-color: rgba(125, 220, 255, .46);
+      background: linear-gradient(180deg, rgba(56,124,246,.50), rgba(26,64,158,.55));
+      border-color: rgba(150, 210, 255, .58);
+      box-shadow: 0 0 10px rgba(72,150,255,.25), inset 0 1px 0 rgba(200,228,255,.20);
     }
     .qHandle:active{ cursor: grabbing; }
 
@@ -1164,20 +1251,28 @@
       width: 28px;
       height: 28px;
       border-radius: 999px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
       line-height: 1;
-      border: 1px solid rgba(248, 113, 113, .72);
-      background: rgba(220, 38, 38, .88);
-      color: #fff;
+      border: 1px solid rgba(255, 130, 150, .42);
+      background: rgba(20, 26, 40, .60);
+      color: rgba(255, 165, 180, .90);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       position: relative;
       z-index: 2;
-      box-shadow: 0 8px 16px rgba(127, 29, 29, .45);
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
     }
-    .qDelBtn:hover{ background: rgba(239, 68, 68, .92); transform: none; }
+    .qDelBtn:hover{
+      background: rgba(220, 38, 38, .88);
+      border-color: rgba(255, 150, 165, .70);
+      color: #fff;
+      box-shadow: 0 0 12px rgba(255, 120, 140, .30);
+      transform: none;
+    }
     .qDelBtn:active{ transform: none; }
 
     .qBody{

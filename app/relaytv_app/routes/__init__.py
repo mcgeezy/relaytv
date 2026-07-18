@@ -3578,12 +3578,15 @@ def ui():
       </section>
     </div>
 
-      <aside class="card">
-        <div class="sectionTitle">QUEUE</div>
+      <aside class="card queueCard">
+        <div class="qHead">
+          <span class="qHeadTitle">Queue</span>
+          <span id="queueCount" class="qCount">0</span>
+          <button id="queueClearBtn" class="qClearBtn hidden" title="Clear queue" onclick="post('/clear')">Clear</button>
+        </div>
         <ol id="queue" class="queueList"></ol>
         <div class="footerRow">
           <span>Tip: Share again while playing to enqueue</span>
-          <span><a class="link" href="#" onclick="post('/clear');return false;">clear</a></span>
         </div>
       </aside>
     </div>

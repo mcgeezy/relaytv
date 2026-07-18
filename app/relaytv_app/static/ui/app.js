@@ -3063,6 +3063,10 @@ function renderStatus(st) {
   const ppb = document.getElementById('playPauseBtn');
   if (ppb) ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
   document.getElementById('qlen').textContent = st.queue_length || 0;
+  const qCount = document.getElementById('queueCount');
+  if (qCount) qCount.textContent = String(st.queue_length || 0);
+  const qClear = document.getElementById('queueClearBtn');
+  if (qClear) qClear.classList.toggle('hidden', !(Number(st.queue_length) > 0));
 
   // progress bar fill
   if (!__scrubbing && st.position != null && st.duration != null && st.duration > 0) {
