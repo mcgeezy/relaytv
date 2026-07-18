@@ -750,9 +750,9 @@ function _renderRemoteVolume(value, opts){
     const liveDragValue = Math.max(0, Math.min(200, Number(slider.value || 100)));
     const base = slider.__draggingVolume ? liveDragValue : (effective != null ? effective : liveDragValue);
     slider.style.setProperty('--remote-vol-pct', `${((base / 200) * 100).toFixed(2)}%`);
-    if (label) label.textContent = `${Math.round(base)}% Volume`;
+    if (label) label.textContent = `${Math.round(base)}%`;
   } else if (label) {
-    label.textContent = effective == null ? '--% Volume' : `${effective}% Volume`;
+    label.textContent = effective == null ? '--%' : `${effective}%`;
   }
   if (effective != null) {
     __remoteVolumeKnownValue = effective;
@@ -3056,10 +3056,12 @@ function renderStatus(st) {
   const mute = !!st.mute;
   const mb = document.getElementById('muteBtn');
   if (mb){
-    // update label/icon subtly
-    mb.querySelector('.bIcon').textContent = mute ? '🔇' : '🔈';
-    mb.querySelector('span:last-child').textContent = mute ? 'Unmute' : 'Mute';
+    mb.classList.toggle('muted', mute);
+    const muteLbl = mb.querySelector('.rLabel');
+    if (muteLbl) muteLbl.textContent = mute ? 'Unmute' : 'Mute';
   }
+  const ppb = document.getElementById('playPauseBtn');
+  if (ppb) ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
   document.getElementById('qlen').textContent = st.queue_length || 0;
 
   // progress bar fill

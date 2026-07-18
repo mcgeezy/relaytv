@@ -1,6 +1,6 @@
     :root{
-      --bg0:#070a12;
-      --bg1:#0b0f19;
+      --bg0:#04060c;
+      --bg1:#080c16;
       --card: rgba(255,255,255,.08);
       --card2: rgba(255,255,255,.06);
       --stroke: rgba(255,255,255,.22);
@@ -43,9 +43,9 @@
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(1200px 600px at 10% 0%, rgba(120,180,255,.22), transparent 55%),
-        radial-gradient(900px 520px at 90% 10%, rgba(180,120,255,.16), transparent 60%),
-        radial-gradient(800px 600px at 50% 110%, rgba(120,255,190,.12), transparent 55%),
+        radial-gradient(1200px 600px at 10% 0%, rgba(120,180,255,.12), transparent 55%),
+        radial-gradient(900px 520px at 90% 10%, rgba(180,120,255,.08), transparent 60%),
+        radial-gradient(800px 600px at 50% 110%, rgba(120,255,190,.06), transparent 55%),
         linear-gradient(180deg, var(--bg0), var(--bg1));
       padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
     }
@@ -607,55 +607,189 @@
       margin-left: auto;
     }
 
-    /* Keep thumbnail backgrounds off the remote buttons tile */
+    /* ===== Remote: neon-glass panel (always dark, both themes) ===== */
     .remoteCard{
       background-image: none !important;
+      background: linear-gradient(165deg, rgba(13,22,44,.94), rgba(5,9,20,.97)) !important;
+      border: 1px solid rgba(120,180,255,.36);
+      border-radius: 26px;
+      padding: 16px;
+      box-shadow:
+        0 0 36px rgba(56,130,246,.16),
+        0 18px 48px rgba(0,0,0,.55),
+        inset 0 1px 0 rgba(190,220,255,.16);
     }
-    .remoteCard button:not(.danger){
-      border-color: rgba(56, 189, 248, .58);
-      background: linear-gradient(180deg, rgba(56, 189, 248, .96), rgba(37, 99, 235, .94));
-      color: #eff6ff;
-      box-shadow: 0 10px 22px rgba(30, 64, 175, .40);
+    .rGrid{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
     }
-    .remoteCard button:not(.danger):hover{
-      background: linear-gradient(180deg, rgba(56, 189, 248, .99), rgba(29, 78, 216, .96));
-      box-shadow: 0 14px 28px rgba(30, 64, 175, .45);
+    .rTile{
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      min-height: 64px;
+      padding: 14px;
+      border-radius: 20px;
+      color: #eaf3ff;
+      border: 1px solid rgba(96,170,255,.55);
+      background:
+        radial-gradient(130% 100% at 18% 0%, rgba(96,180,255,.50), rgba(37,99,235,0) 55%),
+        linear-gradient(180deg, rgba(43,108,231,.94), rgba(22,56,142,.96));
+      box-shadow:
+        0 0 18px rgba(56,130,246,.26),
+        0 10px 26px rgba(2,8,26,.55),
+        inset 0 1px 0 rgba(200,228,255,.32),
+        inset 0 0 22px rgba(56,130,246,.18);
+      text-shadow: 0 1px 6px rgba(4,12,38,.60);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .rTile:hover{
+      background:
+        radial-gradient(130% 100% at 18% 0%, rgba(120,196,255,.58), rgba(37,99,235,0) 58%),
+        linear-gradient(180deg, rgba(56,124,246,.97), rgba(26,64,158,.97));
+      box-shadow:
+        0 0 26px rgba(72,150,255,.36),
+        0 14px 30px rgba(2,8,26,.60),
+        inset 0 1px 0 rgba(210,234,255,.38),
+        inset 0 0 24px rgba(72,150,255,.22);
       transform: translateY(-1px);
     }
-    .remoteCard button:not(.danger):active{
-      background: linear-gradient(180deg, rgba(37, 99, 235, .95), rgba(29, 78, 216, .92));
+    .rTile:active{
+      background:
+        radial-gradient(130% 100% at 18% 0%, rgba(80,160,240,.40), rgba(37,99,235,0) 55%),
+        linear-gradient(180deg, rgba(34,88,200,.95), rgba(18,46,120,.96));
       transform: translateY(1px);
     }
-    .remoteCard button:not(.danger) .bIcon{
-      background: rgba(7, 31, 71, .35);
-      border-color: rgba(191, 219, 254, .34);
+    .rTile > span,
+    .rTile > span:last-child{ flex: 0 0 auto; }
+    .rBig{
+      flex-direction: column;
+      gap: 12px;
+      aspect-ratio: 1.15 / 1;
+      padding: 18px 12px 14px;
+    }
+    .rWide{ grid-column: 1 / -1; }
+    .rSeek{ min-height: 76px; }
+    .rLabel{
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .rRing{
+      display: grid;
+      place-items: center;
+      width: clamp(58px, 44%, 96px);
+      aspect-ratio: 1;
+      border-radius: 999px;
+      border: 2px solid rgba(190,222,255,.72);
+      background: radial-gradient(circle at 50% 35%, rgba(120,190,255,.16), rgba(10,24,60,.08));
+      box-shadow: 0 0 14px rgba(96,170,255,.32), inset 0 0 12px rgba(96,170,255,.20);
+    }
+    .rWide .rRing{ width: 58px; }
+    .rGlyph{
+      display: block;
+      width: 56%;
+      height: 56%;
+    }
+    .rRingSeek{
+      width: 54px;
+      border: 0;
+      background: none;
+      box-shadow: none;
+    }
+    .rRingSeek .rGlyphSeek{ width: 100%; height: 100%; }
+    .rGlyphSeek text{ font-family: inherit; }
+    .rGlyphPause{ display: none; }
+    #playPauseBtn.isPlaying .rGlyphPlay{ display: none; }
+    #playPauseBtn.isPlaying .rGlyphPause{ display: block; }
+    /* Mute: concept's bright sweep-lit bar is the muted-active state */
+    #muteBtn.muted{
+      border-color: rgba(150,210,255,.85);
+      background:
+        linear-gradient(115deg, rgba(190,235,255,.50), rgba(120,190,255,0) 48%),
+        linear-gradient(180deg, rgba(74,152,255,.98), rgba(30,84,204,.97));
+      box-shadow:
+        0 0 30px rgba(90,170,255,.45),
+        0 12px 28px rgba(2,8,26,.55),
+        inset 0 1px 0 rgba(226,242,255,.55),
+        inset 0 0 26px rgba(120,190,255,.30);
+    }
+    /* Close: neutral charcoal glass; destructive hint only on hover/press */
+    .rClose{
+      border-color: rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(31,37,54,.88), rgba(15,19,31,.94));
+      color: rgba(225,232,246,.85);
+      box-shadow: 0 10px 24px rgba(0,0,0,.50), inset 0 1px 0 rgba(255,255,255,.08);
+      text-shadow: none;
+    }
+    .rClose .rRing{
+      border-color: rgba(255,255,255,.30);
+      background: none;
+      box-shadow: none;
+    }
+    .rClose:hover{
+      background: linear-gradient(180deg, rgba(37,43,62,.90), rgba(18,22,36,.95));
+      border-color: rgba(255,130,150,.42);
+      box-shadow: 0 0 18px rgba(255,120,140,.16), 0 12px 26px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10);
+      transform: translateY(-1px);
+    }
+    .rClose:hover .rRing{ border-color: rgba(255,150,165,.55); }
+    .rClose:active{
+      background: linear-gradient(180deg, rgba(26,30,44,.92), rgba(12,15,25,.96));
+      transform: translateY(1px);
+    }
+    @media (max-width: 420px){
+      .rGrid{ gap: 11px; }
+      .rBig{ aspect-ratio: auto; min-height: 112px; gap: 8px; padding: 12px 10px; }
+      .rRing{ width: clamp(48px, 38%, 64px); }
+      .rWide .rRing{ width: 50px; }
+      .rSeek{ min-height: 64px; }
+      .rRingSeek{ width: 44px; }
+      .rLabel{ font-size: 12px; letter-spacing: .11em; }
     }
     .remoteVolumeRow{
-      margin-top: 10px;
+      margin-top: 16px;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center;
-      gap: 12px;
-      padding: 10px 12px;
-      border-radius: 16px;
-      border: 1px solid rgba(56, 189, 248, .32);
-      background: linear-gradient(180deg, rgba(9, 20, 42, .34), rgba(9, 20, 42, .24));
+      gap: 14px;
+      padding: 6px 8px 2px;
+      border: 0;
+      border-radius: 0;
+      background: none;
     }
+    .rVolIcon{
+      width: 24px;
+      height: 24px;
+      color: #dceaff;
+      opacity: .92;
+    }
+    .rVolIcon svg{ display: block; width: 100%; height: 100%; }
     .remoteVolumeValue{
-      min-width: 58px;
-      font-size: 14px;
-      font-weight: 800;
-      letter-spacing: .02em;
-      color: #eef6ff;
-      text-align: left;
+      min-width: 52px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      color: #9fd0ff;
+      text-align: right;
     }
     .remoteVolumeSlider{
       --remote-vol-pct: 50%;
-      --remote-vol-fill-start: rgba(12, 74, 164, .98);
-      --remote-vol-fill-end: rgba(30, 64, 175, .94);
-      --remote-vol-track-start: rgba(191, 219, 254, .34);
-      --remote-vol-track-end: rgba(96, 165, 250, .28);
-      --remote-vol-track-border: rgba(191, 219, 254, .24);
+      --remote-vol-fill-start: rgba(96, 176, 255, .96);
+      --remote-vol-fill-end: rgba(56, 122, 246, .96);
+      --remote-vol-track-start: rgba(140, 180, 255, .20);
+      --remote-vol-track-end: rgba(120, 165, 250, .14);
+      --remote-vol-track-border: rgba(160, 200, 255, .16);
       width: 100%;
       margin: 0;
       appearance: none;
@@ -679,13 +813,13 @@
     .remoteVolumeSlider::-webkit-slider-thumb{
       -webkit-appearance: none;
       appearance: none;
-      margin-top: -5px;
-      width: 18px;
-      height: 18px;
+      margin-top: -7px;
+      width: 21px;
+      height: 21px;
       border-radius: 999px;
-      border: 1px solid rgba(125, 211, 252, .72);
-      background: linear-gradient(180deg, rgba(56, 189, 248, .98), rgba(37, 99, 235, .95));
-      box-shadow: 0 4px 12px rgba(30, 64, 175, .40), inset 0 1px 0 rgba(255,255,255,.28);
+      border: 1px solid rgba(170, 220, 255, .85);
+      background: radial-gradient(circle at 40% 32%, rgba(220,240,255,.95), rgba(96,176,255,.95) 55%, rgba(56,122,246,.95));
+      box-shadow: 0 0 14px rgba(120, 190, 255, .70), 0 4px 12px rgba(30, 64, 175, .45), inset 0 1px 0 rgba(255,255,255,.40);
     }
     .remoteVolumeSlider::-moz-range-track{
       height: 8px;
@@ -699,12 +833,12 @@
       background: linear-gradient(180deg, var(--remote-vol-fill-start), var(--remote-vol-fill-end));
     }
     .remoteVolumeSlider::-moz-range-thumb{
-      width: 18px;
-      height: 18px;
+      width: 21px;
+      height: 21px;
       border-radius: 999px;
-      border: 1px solid rgba(125, 211, 252, .72);
-      background: linear-gradient(180deg, rgba(56, 189, 248, .98), rgba(37, 99, 235, .95));
-      box-shadow: 0 4px 12px rgba(30, 64, 175, .40), inset 0 1px 0 rgba(255,255,255,.28);
+      border: 1px solid rgba(170, 220, 255, .85);
+      background: radial-gradient(circle at 40% 32%, rgba(220,240,255,.95), rgba(96,176,255,.95) 55%, rgba(56,122,246,.95));
+      box-shadow: 0 0 14px rgba(120, 190, 255, .70), 0 4px 12px rgba(30, 64, 175, .45), inset 0 1px 0 rgba(255,255,255,.40);
     }
 
     @media (prefers-color-scheme: light){
@@ -724,35 +858,6 @@
         box-shadow: 0 10px 22px rgba(2,6,23,.10);
         color: #0c1324;
       }
-      .remoteVolumeRow{
-        background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(236, 246, 255, .88));
-        border-color: rgba(37, 99, 235, .18);
-      }
-      .remoteVolumeValue{
-        color: #0c1324;
-      }
-      .remoteVolumeSlider{
-        --remote-vol-fill-start: rgba(8, 47, 120, .98);
-        --remote-vol-fill-end: rgba(29, 78, 216, .94);
-        --remote-vol-track-start: rgba(191, 219, 254, .78);
-        --remote-vol-track-end: rgba(147, 197, 253, .66);
-        --remote-vol-track-border: rgba(59, 130, 246, .20);
-      }
-      .remoteVolumeSlider::-webkit-slider-runnable-track{
-        border-color: var(--remote-vol-track-border);
-      }
-      .remoteVolumeSlider::-moz-range-track{
-        border-color: var(--remote-vol-track-border);
-      }
-      .remoteVolumeSlider::-webkit-slider-thumb{
-        border-color: rgba(125, 211, 252, .84);
-        background: linear-gradient(180deg, rgba(56, 189, 248, 1), rgba(37, 99, 235, .97));
-      }
-      .remoteVolumeSlider::-moz-range-thumb{
-        border-color: rgba(125, 211, 252, .84);
-        background: linear-gradient(180deg, rgba(56, 189, 248, 1), rgba(37, 99, 235, .97));
-      }
-    }
       .sectionTitle::before{
         box-shadow: 0 0 0 6px rgba(120,180,255,.16);
       }
@@ -926,22 +1031,6 @@
       font-weight: 800;
     }
 
-    .controls{
-      display:grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .controls2{
-      display:grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 10px;
-    }
-    @media (max-width: 520px){
-      .controls{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .controls2{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-
     button{
       appearance:none;
       border: 1px solid var(--stroke);
@@ -976,23 +1065,7 @@
     button:hover{ background: var(--btnH); box-shadow: 0 14px 30px rgba(0,0,0,.48); transform: translateY(-1px); }
     button:active{ background: var(--btnA); transform: translateY(1px); }
 
-    .bIcon{
-      width: 28px;
-      height: 28px;
-      border-radius: 12px;
-      display:grid;
-      place-items:center;
-      background: rgba(0,0,0,.18);
-      border: 1px solid rgba(255,255,255,.10);
-      font-size: 16px;
-      line-height: 1;
-    }
-    @media (prefers-color-scheme: light){
-      .bIcon{ background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.10); }
-    }
-
     .danger{ border-color: rgba(255,120,140,.35); }
-    .danger .bIcon{ background: rgba(255,120,140,.12); border-color: rgba(255,120,140,.25); }
 
     
     /* Queue tiles */

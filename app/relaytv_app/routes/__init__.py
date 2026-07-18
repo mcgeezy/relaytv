@@ -3301,7 +3301,7 @@ def ui():
 <html lang="en">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0f19" />
+  <meta name="theme-color" content="#05070d" />
   <link rel="manifest" href="/manifest.json" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -3529,22 +3529,51 @@ def ui():
       </section>
 
       <section id="remoteCard" class="card remoteCard">
-        <div class="sectionTitle">REMOTE</div>
-
-        <div class="controls" style="margin-top:12px; grid-template-columns: repeat(2, minmax(0, 1fr));">
-          <button onclick="post('/playback/toggle')"><span class="bIcon">⏯️</span><span>Play/Pause</span></button>
-          <button onclick="post('/next')"><span class="bIcon">⏭️</span><span>Next</span></button>
-          <button onclick="post('/mute')" id="muteBtn"><span class="bIcon">🔇</span><span>Mute</span></button>
-          <button class="danger" onclick="post('/close')" id="closeBtn"><span class="bIcon">✖️</span><span>Close</span></button>
-        </div>
-
-        <div class="controls2">
-          <button onclick="post('/seek',{sec:-10})"><span class="bIcon">↩️</span><span>-10s</span></button>
-          <button onclick="post('/seek',{sec:+30})"><span class="bIcon">↪️</span><span>+30s</span></button>
+        <div class="rGrid">
+          <button id="playPauseBtn" class="rTile rBig" onclick="post('/playback/toggle')" aria-label="Play or pause">
+            <span class="rRing">
+              <svg class="rGlyph rGlyphPlay" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 5.9v12.2a.9.9 0 0 0 1.37.77l9.6-6.1a.9.9 0 0 0 0-1.52l-9.6-6.1a.9.9 0 0 0-1.37.75z" fill="currentColor"/></svg>
+              <svg class="rGlyph rGlyphPause" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="5" width="3.6" height="14" rx="1.3" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.3" fill="currentColor"/></svg>
+            </span>
+            <span class="rLabel">Play/Pause</span>
+          </button>
+          <button class="rTile rBig" onclick="post('/next')" aria-label="Play next">
+            <span class="rRing">
+              <svg class="rGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.6v10.8a.85.85 0 0 0 1.3.72l8.2-5.4a.85.85 0 0 0 0-1.44L7.3 5.88A.85.85 0 0 0 6 6.6z" fill="currentColor"/><rect x="16.6" y="5.6" width="2.6" height="12.8" rx="1.1" fill="currentColor"/></svg>
+            </span>
+            <span class="rLabel">Next</span>
+          </button>
+          <button id="muteBtn" class="rTile rWide rMute" onclick="post('/mute')" aria-label="Toggle mute">
+            <span class="rRing">
+              <svg class="rGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.6v4.8h3.1l4.6 4V5.6l-4.6 4H4z" fill="currentColor"/><path d="M15.6 9.9l4.2 4.2m0-4.2l-4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+            </span>
+            <span class="rLabel">Mute</span>
+          </button>
+          <button id="closeBtn" class="rTile rWide rClose" onclick="post('/close')" aria-label="Close playback">
+            <span class="rRing">
+              <svg class="rGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 7.2l9.6 9.6m0-9.6l-9.6 9.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </span>
+            <span class="rLabel">Close</span>
+          </button>
+          <button class="rTile rSeek" onclick="post('/seek',{sec:-10})" aria-label="Back 10 seconds">
+            <span class="rRing rRingSeek">
+              <svg class="rGlyph rGlyphSeek" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8a8.2 8.2 0 1 1-7.5 4.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.9 3.2v5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.4" text-anchor="middle" font-size="8.2" font-weight="700" fill="currentColor">10</text></svg>
+            </span>
+            <span class="rLabel">−10s</span>
+          </button>
+          <button class="rTile rSeek" onclick="post('/seek',{sec:+30})" aria-label="Forward 30 seconds">
+            <span class="rRing rRingSeek">
+              <svg class="rGlyph rGlyphSeek" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8a8.2 8.2 0 1 0 7.5 4.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M19.1 3.2v5h-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.4" text-anchor="middle" font-size="8.2" font-weight="700" fill="currentColor">30</text></svg>
+            </span>
+            <span class="rLabel">+30s</span>
+          </button>
         </div>
         <div class="remoteVolumeRow">
-          <div id="remoteVolValue" class="remoteVolumeValue">--%</div>
+          <span class="rVolIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 9.6v4.8h3.1l4.6 4V5.6l-4.6 4H4z" fill="currentColor"/><path d="M15.3 9.2a4.4 4.4 0 0 1 0 5.6m2.5-8a8 8 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </span>
           <input id="remoteVolSlider" class="remoteVolumeSlider" type="range" min="0" max="200" step="1" value="100" aria-label="Volume" />
+          <div id="remoteVolValue" class="remoteVolumeValue">--%</div>
         </div>
       </section>
     </div>
