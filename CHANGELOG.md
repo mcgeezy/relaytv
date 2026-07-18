@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.1](https://github.com/mcgeezy/relaytv/compare/v0.6.0...v0.6.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* a just-ended YouTube stream now plays from the start while YouTube is still processing the replay, instead of being skipped with a "processing" notice — playback begins within seconds, and once the background download completes, seeking and the full timeline switch on mid-playback ([0a6664e](https://github.com/mcgeezy/relaytv/commit/0a6664e50d0527a248369390f264e70dec5c0644))
+* still-processing replays restart and auto-resume correctly, never reuse stale stream links, and fall back to the previous skip-with-notice behavior if the relay is disabled (RELAYTV_POSTLIVE_RELAY=0) or unavailable ([0a6664e](https://github.com/mcgeezy/relaytv/commit/0a6664e50d0527a248369390f264e70dec5c0644))
+* wait for YouTube media URL availability ([a84b015](https://github.com/mcgeezy/relaytv/commit/a84b015e6f9fca04a4175a53fdb2db4588bf3d8a))
+
+
+### Documentation
+
+* planning-era architecture and roadmap documents consolidated into permanent ARCHITECTURE.md and POSTLIVE_REPLAY.md operator docs ([0a6664e](https://github.com/mcgeezy/relaytv/commit/0a6664e50d0527a248369390f264e70dec5c0644))
+
 ## [0.6.0](https://github.com/mcgeezy/relaytv/compare/v0.5.0...v0.6.0) (2026-07-12)
 
 
