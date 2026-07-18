@@ -951,16 +951,6 @@
       backdrop-filter: blur(6px);
       -webkit-backdrop-filter: blur(6px);
     }
-    /* Apply scrim to queue text block when a thumbnail background is present */
-    li.hasBg .qBody{
-      background: rgba(0,0,0,.30);
-      border: 1px solid rgba(255,255,255,.16);
-      border-radius: 14px;
-      padding: 8px 10px;
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-    }
-
 @media (prefers-color-scheme: light){
   /* Keep metadata containers on image-backed cards dark-glass in light mode too. */
   .scrim{
@@ -968,27 +958,16 @@
     border-color: rgba(255,255,255,.18);
     color: #f7fbff;
   }
-  li.hasBg .qBody{
-    background: rgba(8, 13, 24, .42);
-    border-color: rgba(255,255,255,.18);
-    color: #f7fbff;
-  }
   .scrim #now,
   .scrim .nowSubRow,
-  .scrim .muted,
-  li.hasBg .qTitle,
-  li.hasBg .qTitleText,
-  li.hasBg .qChan,
-  li.hasBg .qUrl{
+  .scrim .muted{
     color: #f7fbff;
   }
-  .scrim .muted,
-  li.hasBg .qChan,
-  li.hasBg .qUrl{
+  .scrim .muted{
     color: rgba(234,240,255,.84);
   }
-  .hasBg .nowTitle, .hasBg .qTitle{ text-shadow: 0 3px 12px rgba(0,0,0,.72); }
-  .hasBg .muted, .hasBg .qUrl{ text-shadow: 0 2px 10px rgba(0,0,0,.60); }
+  .hasBg .nowTitle{ text-shadow: 0 3px 12px rgba(0,0,0,.72); }
+  .hasBg .muted{ text-shadow: 0 2px 10px rgba(0,0,0,.60); }
 }
 
     .muted{
@@ -1186,14 +1165,60 @@
     .qTile{
       position: relative;
       display:flex;
-      align-items: stretch;
-      gap: 10px;
-      padding: 12px;
-      border-radius: 18px;
+      align-items: center;
+      gap: 12px;
+      min-height: 76px;
+      padding: 10px;
+      border-radius: 16px;
       background: linear-gradient(180deg, rgba(24,38,72,.55), rgba(12,20,42,.60));
       border: 1px solid rgba(120,180,255,.22);
       box-shadow: inset 0 1px 0 rgba(190,220,255,.10);
       user-select: none;
+    }
+    .qThumb{
+      position: relative;
+      flex: 0 0 auto;
+      width: 104px;
+      aspect-ratio: 16 / 9;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(120,180,255,.18);
+      background:
+        radial-gradient(80% 80% at 30% 20%, rgba(43,108,231,.30), transparent 60%),
+        linear-gradient(150deg, rgba(20,34,66,.85), rgba(8,14,30,.90));
+    }
+    .qThumbImg{
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .qThumbFav{
+      position: absolute;
+      left: 4px;
+      bottom: 4px;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.35);
+      background: rgba(10,16,30,.65);
+    }
+    .qUnavailTag{
+      display: inline-block;
+      margin-left: 7px;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: rgba(255,205,130,.92);
+      border: 1px solid rgba(255,190,110,.40);
+      background: rgba(90,60,18,.35);
+    }
+    @media (max-width: 420px){
+      .qThumb{ width: 88px; }
+      .qTile{ gap: 10px; }
     }
     .qTile:hover{
       border-color: rgba(140,200,255,.36);
@@ -1207,24 +1232,6 @@
     .qTile.dragOver{
       outline: 2px solid rgba(120,180,255,.55);
       outline-offset: 2px;
-    }
-
-    .qProvBg{
-      position:absolute;
-      inset: 0;
-      pointer-events:none;
-      opacity: .12;
-      filter: blur(.2px);
-      display:flex;
-      align-items:center;
-      justify-content:flex-start;
-      padding-left: 10px;
-    }
-    .qProvBg img{
-      width: 84px;
-      height: 84px;
-      border-radius: 22px;
-      border: 1px solid rgba(255,255,255,.10);
     }
 
     .qHandle{
@@ -1313,8 +1320,9 @@
 
     .qTitle{
       color: var(--text);
+      font-size: 14px;
       font-weight: 650;
-      line-height: 1.2;
+      line-height: 1.25;
       display:flex;
       align-items:flex-start;
       gap: 8px;

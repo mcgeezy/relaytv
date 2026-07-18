@@ -3149,15 +3149,28 @@ function renderStatus(st) {
     if (item && item.available === false) li.classList.add('isUnavailable');
     li.dataset.index = String(idx);
 
-    setBg(li, thumbUrl(item));
-
-    // Big, faint provider logo behind handle
-    const bg = document.createElement('div');
-    bg.className = 'qProvBg';
-    const bgFav = faviconUrl(item);
-    if (bgFav){
-      bg.innerHTML = `<img src="${bgFav}" alt="" />`;
-      li.appendChild(bg);
+    // Contained 16:9 artwork (not a background: text stays on clean glass)
+    const thumb = document.createElement('div');
+    thumb.className = 'qThumb';
+    const turl = thumbUrl(item);
+    if (turl){
+      const art = document.createElement('img');
+      art.className = 'qThumbImg';
+      art.alt = '';
+      art.loading = 'lazy';
+      art.src = turl;
+      art.onerror = () => { try { art.remove(); } catch(_e) {} };
+      thumb.appendChild(art);
+    }
+    const thumbFav = faviconUrl(item);
+    if (thumbFav){
+      const favBadge = document.createElement('img');
+      favBadge.className = 'qThumbFav';
+      favBadge.alt = '';
+      favBadge.loading = 'lazy';
+      favBadge.src = thumbFav;
+      favBadge.onerror = () => { try { favBadge.remove(); } catch(_e) {} };
+      thumb.appendChild(favBadge);
     }
 
     // Drag handle (hamburger)
@@ -3175,17 +3188,10 @@ function renderStatus(st) {
     const title = document.createElement('div');
     title.className = 'qTitle';
 
-    const favImg = document.createElement('img');
-    favImg.className = 'fav';
-    favImg.alt = '';
-    favImg.loading = 'lazy';
-    favImg.src = faviconUrl(item) || '';
-
     const tspan = document.createElement('span');
     tspan.className = 'qTitleText';
     tspan.textContent = item.title || item.url || '';
 
-    if (favImg.src) title.appendChild(favImg);
     title.appendChild(tspan);
     const titleBadge = _uploadBadge(item);
     if (titleBadge) title.insertAdjacentHTML('beforeend', titleBadge);
@@ -3193,6 +3199,12 @@ function renderStatus(st) {
     const chan = document.createElement('div');
     chan.className = 'qChan';
     chan.textContent = displaySub(item) || '';
+    if (item && item.available === false){
+      const tag = document.createElement('span');
+      tag.className = 'qUnavailTag';
+      tag.textContent = 'unavailable';
+      chan.appendChild(tag);
+    }
 
     body.appendChild(title);
     body.appendChild(chan);
@@ -3203,8 +3215,9 @@ function renderStatus(st) {
     del.title = 'Remove from queue';
     del.onclick = () => qRemove(idx);
 
-    li.appendChild(handle);
+    li.appendChild(thumb);
     li.appendChild(body);
+    li.appendChild(handle);
     li.appendChild(del);
     ol.appendChild(li);
   });
