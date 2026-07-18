@@ -686,7 +686,11 @@ function _uploadSummary(item){
 
 function _hasNowPlayingItem(st, np){
   if (st && (st.playing || st.paused)) return true;
-  return !!(np && (np.title || np.url || np.stream));
+  const hasItem = !!(np && (np.title || np.url || np.stream));
+  // Both /status and /playback/state now carry the authoritative flag; trust
+  // it when present so the fast and full views cannot disagree at idle.
+  if (st && typeof st.has_now_playing === 'boolean') return st.has_now_playing && hasItem;
+  return hasItem;
 }
 
 function _isNowPlayingJellyfin(np){
@@ -1015,6 +1019,10 @@ let __jfViewportBound = false;
 const __JF_CATALOG_LIMIT = 5000;
 const __JF_REQ_TIMEOUT_MS = 12000;
 const __UI_FALLBACK_REFRESH_MS = 8000;
+const __NOW_IDLE_DEBOUNCE_MS = 4000;
+let __nowIdleSinceTs = 0;
+let __nowIdleSettleTimer = 0;
+let __nowLastShownNp = null;
 const __UI_EVENT_RECONNECT_MS = 5000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
 
@@ -3080,9 +3088,33 @@ function renderStatus(st) {
   if (state) state.textContent = sess;
 
   // now playing
-  const np = st.now_playing || {};
+  let np = st.now_playing || {};
   const picon = document.getElementById('picon');
-  const hasNow = _hasNowPlayingItem(st, np);
+  // Debounce the idle flip: a transient idle signal (transition gap, fast/full
+  // disagreement) must not blank the card. Content applies instantly; idle
+  // only lands after the signal has been stable for a few seconds, and the
+  // last-shown item stays frozen on screen during that window.
+  let hasNow = _hasNowPlayingItem(st, np);
+  if (!hasNow){
+    if (!__nowIdleSinceTs){
+      __nowIdleSinceTs = Date.now();
+      if (!__nowIdleSettleTimer){
+        __nowIdleSettleTimer = window.setTimeout(() => {
+          __nowIdleSettleTimer = 0;
+          if (__lastStatus) renderStatus(__lastStatus);
+        }, __NOW_IDLE_DEBOUNCE_MS + 300);
+      }
+    }
+    if (((Date.now() - __nowIdleSinceTs) < __NOW_IDLE_DEBOUNCE_MS) && __nowLastShownNp){
+      hasNow = true;
+      np = __nowLastShownNp;
+    }
+  } else {
+    __nowIdleSinceTs = 0;
+    if (__nowIdleSettleTimer){ window.clearTimeout(__nowIdleSettleTimer); __nowIdleSettleTimer = 0; }
+  }
+  if (hasNow) __nowLastShownNp = np;
+  else __nowLastShownNp = null;
   const fav = hasNow ? faviconUrl(np) : '/pwa/brand/logo.svg';
   picon.innerHTML = fav ? `<img src="${fav}" alt="" />` : '🎞️';
   document.getElementById('now').textContent = hasNow ? (np.title || 'Now Playing') : 'Ready';

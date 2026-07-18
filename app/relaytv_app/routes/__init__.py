@@ -3174,6 +3174,9 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_playback_mode": _effective_jellyfin_playback_mode(settings_snapshot),
         "pause_reason": state.get_pause_reason() if hasattr(state, "get_pause_reason") else None,
         "resume_available": resume_avail,
+        # Same authoritative signal the fast snapshot carries; without it the
+        # client's fast/full views can disagree at idle and flap the UI.
+        "has_now_playing": isinstance(now_playing, dict),
         "playing": playing,
         "paused": paused,
         "playback_telemetry_source": playback_telemetry_source,
