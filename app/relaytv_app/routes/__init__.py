@@ -3263,14 +3263,20 @@ async def _ui_events_sse(request: Request) -> object:
                     last_queue_length = queue_length
                     last_has_now_playing = has_now_playing
 
-                if (time.time() - last_emit_ts) >= 15.0:
+                # Idle ping cadence must stay well inside the client's health
+                # window (app.js _uiEventHealthy) or a quiet stream reads as dead.
+                if (time.time() - last_emit_ts) >= 5.0:
                     ping = _json.dumps({"type": "ping", "ts": time.time()}, separators=(",", ":"), ensure_ascii=False)
                     yield f"event: ping\ndata: {ping}\n\n"
                     last_emit_ts = time.time()
         finally:
             _UI_EVENT_SUBS.discard(q)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/ui/events")
@@ -3339,6 +3345,8 @@ def ui():
         </div>
       </div>
     </header>
+
+    <div id="connBadge" class="connBadge hidden" role="status" aria-live="polite">Reconnecting…</div>
 
     <!-- Hidden by default: manual URL modal (opened via ＋ button) -->
     <div id="addBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">

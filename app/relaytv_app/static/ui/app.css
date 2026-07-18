@@ -607,6 +607,31 @@
       margin-left: auto;
     }
 
+    /* ===== Connection indicator ===== */
+    .connBadge{
+      position: fixed;
+      top: max(10px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10000;
+      padding: 7px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      color: #ffe3b0;
+      border: 1px solid rgba(255,200,120,.45);
+      background: linear-gradient(180deg, rgba(60,42,18,.94), rgba(38,26,10,.96));
+      box-shadow: 0 0 18px rgba(255,180,80,.20), 0 10px 24px rgba(0,0,0,.45);
+    }
+    body.connLost .remoteCard,
+    body.connLost .queueCard{
+      filter: saturate(.55) brightness(.78);
+      transition: filter .3s ease;
+    }
+
     /* ===== Remote: neon-glass panel (always dark, both themes) ===== */
     .remoteCard{
       background-image: none !important;

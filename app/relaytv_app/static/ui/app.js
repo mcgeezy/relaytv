@@ -67,15 +67,29 @@ function _fetchWithTimeout(url, opts, timeoutMs){
 }
 
 async function post(path, body) {
+  const opts = {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: body ? JSON.stringify(body) : '{}'
+  };
+  // Generous timeout: Android wifi power-save adds seconds of first-packet
+  // latency right when the user picks the phone up.
+  let ok = false;
   try {
-    await _fetchWithTimeout(path, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: body ? JSON.stringify(body) : '{}'
-    }, 1800);
-  } catch(_e) {
-    // Keep controls responsive even if a transient request stalls.
+    await _fetchWithTimeout(path, opts, 5000);
+    ok = true;
+  } catch(e) {
+    // Retry only when the request never left (connection refused / network
+    // error). An abort may have landed server-side, and most commands are
+    // toggles or relative seeks where a blind resend would double-apply.
+    if (!e || e.name !== 'AbortError') {
+      try {
+        await _fetchWithTimeout(path, opts, 5000);
+        ok = true;
+      } catch(_e2) {}
+    }
   }
+  if (!ok) _connSignal(false, {sticky: true, message: 'Command failed — check connection'});
   refresh().catch(() => null);
 }
 
@@ -326,13 +340,13 @@ function _shouldRefreshFullStatus(st, fast){
 }
 
 async function _fetchFastPlaybackState(){
-  const r = await _fetchWithTimeout('/playback/state', {cache:'no-store'}, 900);
+  const r = await _fetchWithTimeout('/playback/state', {cache:'no-store'}, 2500);
   if (!r.ok) throw new Error(`playback_state ${r.status}`);
   return await r.json();
 }
 
 async function _fetchFullStatus(){
-  const r = await _fetchWithTimeout('/status', {cache:'no-store'}, 1600);
+  const r = await _fetchWithTimeout('/status', {cache:'no-store'}, 4000);
   if (!r.ok) throw new Error(`status ${r.status}`);
   const st = await r.json();
   __lastStatusFullFetchTs = Date.now();
@@ -341,10 +355,54 @@ async function _fetchFullStatus(){
 
 function _uiEventMarkAlive(){
   __uiEventSourceLastTs = Date.now();
+  _connSignal(true);
 }
 
 function _uiEventHealthy(){
-  return !!(__uiEventSource && ((Date.now() - __uiEventSourceLastTs) < 10000));
+  // Server pings every 5s when idle; allow two missed pings before we call
+  // the stream dead.
+  return !!(__uiEventSource && ((Date.now() - __uiEventSourceLastTs) < 12000));
+}
+
+function _closeUiEventStream(){
+  const es = __uiEventSource;
+  __uiEventSource = null;
+  if (es) { try { es.close(); } catch (_e) {} }
+}
+
+// Reconnect on staleness, not just on a null handle: connections killed by
+// Android screen-off/Doze or an AP roam often die without ever firing onerror,
+// leaving a zombie EventSource that would otherwise block reconnects forever.
+function _ensureUiEventStream(){
+  if (__uiEventSource && _uiEventHealthy()) return;
+  _closeUiEventStream();
+  connectUiEventStream();
+}
+
+// --- Connection indicator ---------------------------------------------------
+let __connFailStreak = 0;
+let __connBadgeStickyUntil = 0;
+
+function _connSignal(ok, opts){
+  const badge = document.getElementById('connBadge');
+  if (ok){
+    __connFailStreak = 0;
+    if (badge && Date.now() >= __connBadgeStickyUntil){
+      badge.classList.add('hidden');
+      document.body.classList.remove('connLost');
+    }
+    return;
+  }
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  __connFailStreak += 1;
+  if (o.sticky) __connBadgeStickyUntil = Date.now() + 2500;
+  if (__connFailStreak >= 2 || o.sticky){
+    if (badge){
+      badge.textContent = o.message || 'Reconnecting…';
+      badge.classList.remove('hidden');
+    }
+    document.body.classList.add('connLost');
+  }
 }
 
 function _scheduleUiEventReconnect(){
@@ -3160,20 +3218,22 @@ function renderStatus(st) {
 async function refresh() {
   let st = __lastStatus || null;
   let fast = null;
+  let reachedServer = false;
   try {
     fast = await _fetchFastPlaybackState();
+    reachedServer = true;
     st = _mergePlaybackStateIntoStatus(st, fast);
   } catch(_e) {}
 
   try {
     if (_shouldRefreshFullStatus(st, fast)) {
       const full = await _fetchFullStatus();
+      reachedServer = true;
       st = fast ? _mergePlaybackStateIntoStatus(full, fast) : full;
     }
-  } catch(_e) {
-    if (!st) return;
-  }
+  } catch(_e) {}
 
+  _connSignal(reachedServer);
   if (!st) return;
   __lastStatus = st;
   renderStatus(st);
@@ -3253,7 +3313,10 @@ function connectUiEventStream(){
     return;
   }
   __uiEventSource = es;
-  _uiEventMarkAlive();
+  // Stamp the health clock without signalling connectivity: the stream hasn't
+  // proven itself until a real event (hello/ping) arrives, and a false "ok"
+  // here would flicker the reconnect badge on every failed attempt.
+  __uiEventSourceLastTs = Date.now();
 
   es.addEventListener('hello', (ev) => {
     _uiEventMarkAlive();
@@ -4618,11 +4681,15 @@ window.addEventListener('DOMContentLoaded', () => {
     if (__uiNavDepth > 0) __uiNavDepth = Math.max(0, __uiNavDepth - 1);
     _uiCloseTopLayerFromNav();
   });
-  document.addEventListener('visibilitychange', () => {
+  const wakeReconnect = () => {
     if (document.visibilityState !== 'visible') return;
-    if (!__uiEventSource) connectUiEventStream();
-    if (!_uiEventHealthy()) refresh().catch(() => {});
-  });
+    const wasHealthy = _uiEventHealthy();
+    _ensureUiEventStream();
+    if (!wasHealthy) refresh().catch(() => {});
+  };
+  document.addEventListener('visibilitychange', wakeReconnect);
+  window.addEventListener('online', wakeReconnect);
+  window.addEventListener('pageshow', wakeReconnect);
   connectUiEventStream();
   refresh();
   setInterval(() => {
@@ -4630,8 +4697,7 @@ window.addEventListener('DOMContentLoaded', () => {
     refresh().catch(() => {});
   }, __UI_FALLBACK_REFRESH_MS);
   setInterval(() => {
-    if (__uiEventSource) return;
-    connectUiEventStream();
+    _ensureUiEventStream();
   }, __UI_EVENT_RECONNECT_MS);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
