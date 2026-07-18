@@ -442,13 +442,6 @@
     border-color: rgba(15,23,42,.14);
     box-shadow: inset 0 1px 0 rgba(255,255,255,.82);
   }
-  .metaRow .chip,
-  .nowBottomBar .chip{
-    background: linear-gradient(180deg, rgba(59, 130, 246, .82), rgba(37, 99, 235, .76));
-    border-color: rgba(29, 78, 216, .34);
-    color: #f8fbff;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 8px 18px rgba(30, 64, 175, .16);
-  }
   .progress{
     background: rgba(255,255,255,.70);
     border-color: rgba(15,23,42,.12);
@@ -518,62 +511,206 @@
       display:grid;
       gap: 14px;
     }
-    .nowSkipBtn{
-      margin-left: auto;
-      width: 28px;
-      height: 28px;
-      flex: 0 0 auto;
-      min-height: 0;
-      border-radius: 999px;
-      padding: 0;
-      font-size: 14px;
-      font-weight: 800;
-      line-height: 1;
-      border: 1px solid rgba(248, 113, 113, .72);
-      background: rgba(220, 38, 38, .88);
-      color: #fff;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 8px 16px rgba(127, 29, 29, .45);
+    /* ===== Now Playing: hero glass panel (always dark, both themes) ===== */
+    .nowCard{
+      background-image: none !important;
+      background: linear-gradient(165deg, rgba(13,22,44,.94), rgba(5,9,20,.97)) !important;
+      border: 1px solid rgba(120,180,255,.30);
+      border-radius: 26px;
+      padding: 16px;
+      box-shadow:
+        0 0 28px rgba(56,130,246,.12),
+        0 18px 48px rgba(0,0,0,.50),
+        inset 0 1px 0 rgba(190,220,255,.14);
     }
-    .nowSkipBtn:hover{ background: rgba(239, 68, 68, .92); transform: none; }
-    .nowSkipBtn:active{ transform: none; }
-    .nowBottomBar{
-      margin-top: 10px;
+    .nHead{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 2px 2px 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid rgba(140,190,255,.16);
+    }
+    .nHeadTitle{
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: #dceaff;
+      text-shadow: 0 1px 6px rgba(4,12,38,.60);
+    }
+    .nStateDot{
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(150,190,240,.35);
+      box-shadow: none;
+      flex: 0 0 auto;
+    }
+    .nStateDot.playing{
+      background: rgba(96,180,255,.95);
+      box-shadow: 0 0 8px rgba(96,180,255,.80);
+      animation: nDotPulse 2.2s ease-in-out infinite;
+    }
+    @keyframes nDotPulse{
+      0%, 100%{ box-shadow: 0 0 4px rgba(96,180,255,.55); opacity: .75; }
+      50%{ box-shadow: 0 0 12px rgba(96,180,255,.95); opacity: 1; }
+    }
+    .nStateTag{
+      padding: 1px 8px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: rgba(255,205,130,.92);
+      border: 1px solid rgba(255,190,110,.40);
+      background: rgba(90,60,18,.35);
+    }
+    .nSkipBtn,
+    .nGhostBtn{
+      min-height: 0;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: rgba(210,228,255,.80);
+      border: 1px solid rgba(140,190,255,.28);
+      background: rgba(20,32,62,.45);
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .nSkipBtn{ margin-left: auto; }
+    .nSkipBtn:hover,
+    .nGhostBtn:hover{
+      color: #eaf3ff;
+      border-color: rgba(150,210,255,.55);
+      background: rgba(34,60,120,.60);
+      box-shadow: 0 0 12px rgba(72,150,255,.22);
+      transform: none;
+    }
+    .nSkipBtn:active,
+    .nGhostBtn:active{ background: rgba(24,44,92,.70); transform: translateY(1px); }
+    .nHero{
+      position: relative;
+      border-radius: 14px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      max-height: 250px;
+      width: 100%;
+      border: 1px solid rgba(120,180,255,.18);
+      background:
+        radial-gradient(80% 80% at 30% 20%, rgba(43,108,231,.28), transparent 60%),
+        linear-gradient(150deg, rgba(20,34,66,.85), rgba(8,14,30,.90));
+    }
+    .nHeroArt{
+      position: absolute;
+      inset: 0;
+    }
+    .nHeroFade{
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(5,9,20,0) 30%, rgba(5,9,20,.45) 62%, rgba(5,9,20,.90) 100%);
+      pointer-events: none;
+    }
+    .nHeroBody{
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 12px 14px;
+      min-width: 0;
+    }
+    .nTitle{
+      font-size: clamp(15px, 2.4vw, 18px);
+      font-weight: 700;
+      line-height: 1.25;
+      color: #f2f7ff;
+      text-shadow: 0 2px 10px rgba(0,0,0,.80);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .nMetaRow{
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .nChan{
+      font-size: 12px;
+      color: rgba(220,232,252,.80);
+      text-shadow: 0 1px 8px rgba(0,0,0,.75);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .nHeroBody .providerIcon{
+      background: rgba(10,16,30,.65);
+      border-color: rgba(255,255,255,.18);
+    }
+    .nTrackBtns{
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+    .nTimeRow{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      flex-wrap: wrap;
+      margin-top: 7px;
+      padding: 0 2px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      color: #9fd0ff;
+      font-variant-numeric: tabular-nums;
     }
-    .nowPosChip{
-      margin-right: auto;
+    .nIdleMsg{
+      display: none;
+      padding: 26px 10px;
+      text-align: center;
+      font-size: 13px;
+      letter-spacing: .04em;
+      color: rgba(210,225,250,.45);
     }
-    .nowMetaActions{
-      display:flex;
-      align-items:center;
-      justify-content:flex-end;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-left: auto;
+    .nowCard.isIdle .nHero,
+    .nowCard.isIdle .progress,
+    .nowCard.isIdle .nTimeRow{ display: none; }
+    .nowCard.isIdle .nIdleMsg{ display: block; }
+    .nowCard .progress{
+      margin-top: 14px;
+      height: 8px;
+      background: linear-gradient(180deg, rgba(140,180,255,.20), rgba(120,165,250,.14));
+      border: 1px solid rgba(160,200,255,.16);
     }
-    .nowLangBtn{
-      min-height: 0 !important;
-      height: 36px;
-      padding: 0 12px !important;
-      border-radius: 12px !important;
-      font-size: 13px !important;
-      font-weight: 700 !important;
-      letter-spacing: .2px;
-      background: rgba(56, 189, 248, .20);
-      border-color: rgba(56, 189, 248, .55);
-      box-shadow: 0 8px 18px rgba(7, 89, 133, .25) !important;
+    .nowCard .progressFill{
+      position: relative;
+      background: linear-gradient(90deg, rgba(96,176,255,.96), rgba(56,122,246,.96));
+      box-shadow: 0 0 10px rgba(96,176,255,.45);
+      min-width: 0;
     }
-    .nowLangBtn:hover{
-      background: rgba(56, 189, 248, .26);
-      border-color: rgba(56, 189, 248, .7);
-      transform: none;
+    .nowCard .progressFill::after{
+      content: "";
+      position: absolute;
+      right: -6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 15px;
+      height: 15px;
+      border-radius: 999px;
+      border: 1px solid rgba(170,220,255,.85);
+      background: radial-gradient(circle at 40% 32%, rgba(220,240,255,.95), rgba(96,176,255,.95) 55%, rgba(56,122,246,.95));
+      box-shadow: 0 0 10px rgba(120,190,255,.70);
     }
     .langModal{
       width: min(560px, 100%);
@@ -871,35 +1008,11 @@
         background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,255,255,.86));
         box-shadow: 0 10px 22px rgba(2,6,23,.10);
       }
-      #nowTopCard.hasBg .sectionTitle{
-        background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06));
-        border-color: rgba(255,255,255,.18);
-        box-shadow: 0 10px 26px rgba(0,0,0,.22);
-        color: #f7fbff;
-      }
-      #nowTopCard:not(.hasBg) .sectionTitle{
-        background: linear-gradient(180deg, rgba(255,255,255,.97), rgba(243,248,255,.90));
-        border-color: rgba(15,23,42,.14);
-        box-shadow: 0 10px 22px rgba(2,6,23,.10);
-        color: #0c1324;
-      }
       .sectionTitle::before{
         box-shadow: 0 0 0 6px rgba(120,180,255,.16);
       }
     }
 
-    .nowTitle{
-      font-size: clamp(14px, 2.2vw, 18px);
-      font-weight: 650;
-      line-height: 1.25;
-      margin: 0 0 6px 0;
-    }
-    .nowSubRow{
-      display:flex;
-      align-items:center;
-      gap: 8px;
-      min-width: 0;
-    }
     .providerIcon{
       flex: 0 0 auto;
       width: 18px;
@@ -934,41 +1047,6 @@
       background-size: cover !important;
       background-position: center !important;
     }
-    /* Text scrim for readability over dark/busy thumbnails */
-    .scrim{
-      background: rgba(0,0,0,.30);
-      border: 1px solid rgba(255,255,255,.16);
-      border-radius: 14px;
-      padding: 8px 10px;
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-    }
-    .hasBg .nowTitle, .hasBg .qTitle{ text-shadow: 0 3px 12px rgba(0,0,0,.85); }
-    .hasBg .muted, .hasBg .qUrl{ text-shadow: 0 2px 10px rgba(0,0,0,.85); }
-    .hasBg .chip{
-      background: rgba(0,0,0,.35);
-      border-color: rgba(255,255,255,.18);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-    }
-@media (prefers-color-scheme: light){
-  /* Keep metadata containers on image-backed cards dark-glass in light mode too. */
-  .scrim{
-    background: rgba(8, 13, 24, .42);
-    border-color: rgba(255,255,255,.18);
-    color: #f7fbff;
-  }
-  .scrim #now,
-  .scrim .nowSubRow,
-  .scrim .muted{
-    color: #f7fbff;
-  }
-  .scrim .muted{
-    color: rgba(234,240,255,.84);
-  }
-  .hasBg .nowTitle{ text-shadow: 0 3px 12px rgba(0,0,0,.72); }
-  .hasBg .muted{ text-shadow: 0 2px 10px rgba(0,0,0,.60); }
-}
 
     .muted{
       color: var(--muted);

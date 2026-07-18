@@ -109,7 +109,9 @@ def test_ui_smoke() -> None:
     assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in js
     assert "await _fetchWithTimeout('/overlay'" in js
     assert 'bindAboutUi();' in js
-    assert 'class="nowSubRow"' in response.text
+    assert 'class="nMetaRow"' in response.text
+    assert 'id="nHeroArt"' in response.text
+    assert 'id="nowStateDot"' in response.text
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
     assert 'role="tablist"' in response.text

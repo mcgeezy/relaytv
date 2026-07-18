@@ -3510,30 +3510,36 @@ def ui():
 
     <div class="topgrid">
       <div class="nowCol">
-      <section id="nowTopCard" class="card">
-        <div class="sectionTitle">NOW PLAYING <button id="nowSkipBtn" class="nowSkipBtn hidden" title="Stop current and play next up" aria-label="Play next up">✕</button></div>
+      <section id="nowTopCard" class="card nowCard">
+        <div class="nHead">
+          <span class="nHeadTitle">Now Playing</span>
+          <span id="nowStateDot" class="nStateDot" aria-hidden="true"></span>
+          <span id="nowStateTag" class="nStateTag hidden">Paused</span>
+          <button id="nowSkipBtn" class="nSkipBtn hidden" title="Stop current and play next up" aria-label="Play next up">Skip</button>
+        </div>
 
-        <div class="nowTitle">
-          <div class="scrim" style="min-width:0;">
-            <div id="now">Ready</div>
-            <div class="nowSubRow">
+        <div class="nHero">
+          <div id="nHeroArt" class="nHeroArt" aria-hidden="true"></div>
+          <div class="nHeroFade" aria-hidden="true"></div>
+          <div class="nHeroBody">
+            <div id="now" class="nTitle">Ready</div>
+            <div class="nMetaRow">
               <span id="picon" class="providerIcon">🎞️</span>
-              <div id="nowSub" class="muted" style="min-width:0;"></div>
+              <div id="nowSub" class="nChan" style="min-width:0;"></div>
+              <div class="nTrackBtns">
+                <button id="nowLangBtn" class="nGhostBtn hidden" title="Audio language" aria-label="Audio language">Audio</button>
+                <button id="nowSubLangBtn" class="nGhostBtn hidden" title="Subtitle language" aria-label="Subtitle language">Subs</button>
+              </div>
             </div>
           </div>
         </div>
 
+        <div class="nIdleMsg" aria-hidden="true">Nothing playing — share a link or pick from the queue</div>
+
         <div id="progress" class="progress" title="Drag to seek (or tap)">
           <div id="progFill" class="progressFill"></div>
         </div>
-        <div class="nowBottomBar">
-          <span class="chip nowPosChip" title="Playback time">⏱ <span id="pos">--:--</span> <span class="chipSep">/</span> <span id="dur">--:--</span></span>
-          <div class="nowMetaActions">
-            <span class="chip" title="Queue length">📥 <span id="qlen">0</span> queued</span>
-            <button id="nowLangBtn" class="nowLangBtn hidden" title="Audio language" aria-label="Audio language">Audio</button>
-            <button id="nowSubLangBtn" class="nowLangBtn hidden" title="Subtitle language" aria-label="Subtitle language">Subs</button>
-          </div>
-        </div>
+        <div class="nTimeRow"><span id="pos">--:--</span><span id="dur">--:--</span></div>
       </section>
 
       <section id="remoteCard" class="card remoteCard">

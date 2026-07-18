@@ -3100,8 +3100,20 @@ function renderStatus(st) {
     };
   }
 
-  // background thumbnail (YouTube supported; others fall back to none)
-  setBg(document.getElementById('nowTopCard'), thumbUrl(np));
+  // hero artwork (YouTube supported; others fall back to glass gradient)
+  setBg(document.getElementById('nHeroArt'), hasNow ? thumbUrl(np) : '');
+
+  const nowCardEl = document.getElementById('nowTopCard');
+  const paused = !!st.paused && hasNow;
+  const activelyPlaying = !!st.playing && !st.paused && hasNow;
+  if (nowCardEl){
+    nowCardEl.classList.toggle('isIdle', !hasNow);
+    nowCardEl.classList.toggle('isPaused', paused);
+  }
+  const stateTag = document.getElementById('nowStateTag');
+  if (stateTag) stateTag.classList.toggle('hidden', !paused);
+  const stateDot = document.getElementById('nowStateDot');
+  if (stateDot) stateDot.classList.toggle('playing', activelyPlaying);
 
   const posTxt = fmtTime(st.position);
   const durTxt = fmtTime(st.duration);
@@ -3120,7 +3132,6 @@ function renderStatus(st) {
   }
   const ppb = document.getElementById('playPauseBtn');
   if (ppb) ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
-  document.getElementById('qlen').textContent = st.queue_length || 0;
   const qCount = document.getElementById('queueCount');
   if (qCount) qCount.textContent = String(st.queue_length || 0);
   const qClear = document.getElementById('queueClearBtn');
