@@ -3316,7 +3316,7 @@ def ui():
   <link rel="shortcut icon" href="/pwa/brand/logo.svg?v=2" />
   <link rel="apple-touch-icon" href="/pwa/brand/logo.svg?v=2" />
   <title>RelayTV</title>
-  <link rel="stylesheet" href="/static/ui/app.css" />
+  <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3637,7 +3637,7 @@ def ui():
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
-  <script src="/static/ui/app.js" defer></script>
+  <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -3947,4 +3947,19 @@ def ui():
 
 """
     html = html.replace("__IDLE_PANEL_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
-    return HTMLResponse(content=html)
+    html = html.replace("__UI_ASSET_V__", _ui_asset_version())
+    # The shell must never be cached: it carries the asset version stamp that
+    # busts the hour-long static cache on app.js/app.css after a deploy.
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
+
+
+def _ui_asset_version() -> str:
+    stamp = 0
+    for name in ("app.css", "app.js"):
+        path = _resolve_static_asset("ui", name)
+        try:
+            if path:
+                stamp = max(stamp, int(os.path.getmtime(path)))
+        except OSError:
+            pass
+    return str(stamp or int(time.time()))

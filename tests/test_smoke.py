@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 import tomllib
@@ -50,8 +51,9 @@ def test_ui_smoke() -> None:
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
-    assert '<link rel="stylesheet" href="/static/ui/app.css" />' in response.text
-    assert '<script src="/static/ui/app.js" defer></script>' in response.text
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
+    assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
+    assert response.headers.get('cache-control') == 'no-cache'
     assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
     assert '<style>' not in response.text
     assert css_response.status_code == 200
