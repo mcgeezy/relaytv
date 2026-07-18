@@ -3562,14 +3562,47 @@ def test_resolver_live_handoff_preserves_cookie_and_challenge_options(
 def test_resolver_keeps_resolved_urls_for_vod_youtube(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _patch_resolver_ytdlp_env(
         monkeypatch,
-        'https://cdn.example/video.mp4\nhttps://cdn.example/audio.m4a\nnot_live\n',
+        'https://cdn.example/video.mp4\n'
+        'https://cdn.example/audio.m4a\n'
+        'relaytv_format_available_at:1234\n'
+        'relaytv_available_at:NA\n'
+        'not_live\n',
     )
 
-    stream, audio = resolver.resolve_streams_ytdlp('https://www.youtube.com/watch?v=vod1')
+    result = resolver.resolve_streams_ytdlp('https://www.youtube.com/watch?v=vod1')
+    stream, audio = result
 
     assert stream == 'https://cdn.example/video.mp4'
     assert audio == 'https://cdn.example/audio.m4a'
+    assert result.available_at == 1234.0
     assert calls
+
+
+def test_resolved_media_wait_honors_extractor_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(player.time, 'time', lambda: 1000.4)
+    monkeypatch.setattr(player.time, 'sleep', lambda seconds: slept.append(seconds))
+
+    player._wait_for_resolved_media_availability(
+        {'_playback_available_at': 1004.0}
+    )
+
+    assert slept == [pytest.approx(4.2)]
+
+
+def test_resolved_media_wait_ignores_expired_or_invalid_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(player.time, 'time', lambda: 1000.4)
+    monkeypatch.setattr(player.time, 'sleep', lambda seconds: slept.append(seconds))
+
+    player._wait_for_resolved_media_availability({'_resolved_available_at': 999.0})
+    player._wait_for_resolved_media_availability({'_resolved_available_at': 'invalid'})
+
+    assert slept == []
 
 
 def test_resolver_non_youtube_keeps_plain_url_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3727,17 +3760,27 @@ def test_session_tracker_does_not_reopen_closed_session(monkeypatch: pytest.Monk
 def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytest.MonkeyPatch) -> None:
     start_calls: list[dict[str, object]] = []
     now_values: list[dict] = []
+    events: list[object] = []
 
     monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
     monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
     monkeypatch.setattr(player, 'cec_auto_on_switch', lambda cec: False)
-    monkeypatch.setattr(player, '_load_stream_in_existing_mpv', lambda *a, **k: False)
+    monkeypatch.setattr(
+        player,
+        '_load_stream_in_existing_mpv',
+        lambda *a, **k: events.append('load') or False,
+    )
+
+    def start_mpv(stream_url, audio_url=None, start_pos=None):
+        events.append('start')
+        start_calls.append(
+            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos}
+        )
+
     monkeypatch.setattr(
         player,
         'start_mpv',
-        lambda stream_url, audio_url=None, start_pos=None: start_calls.append(
-            {'stream': stream_url, 'audio': audio_url, 'start_pos': start_pos}
-        ),
+        start_mpv,
     )
     monkeypatch.setattr(player, 'mpv_set', lambda *a, **k: None)
     monkeypatch.setattr(player, '_add_history_entry', lambda now: None)
@@ -3750,6 +3793,11 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
     monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
     monkeypatch.setattr(player, 'resolve_streams', lambda url: (_ for _ in ()).throw(AssertionError('yt-dlp should not run')))
     monkeypatch.setattr(player.time, 'time', lambda: 1000.0)
+    monkeypatch.setattr(
+        player.time,
+        'sleep',
+        lambda seconds: events.append(('sleep', seconds)),
+    )
 
     now = player.play_item(
         {
@@ -3761,6 +3809,7 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
             '_resolved_stream': 'https://video.example/resolved.mp4',
             '_resolved_audio': 'https://audio.example/resolved.m4a',
             '_resolved_at': 999.0,
+            '_resolved_available_at': 1004.0,
         },
         use_resolver=True,
         cec=False,
@@ -3773,6 +3822,9 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
     assert now['stream'] == 'https://video.example/resolved.mp4'
     assert now['_resolved_stream'] == 'https://video.example/resolved.mp4'
     assert now_values[-1]['_resolved_at'] == 999.0
+    assert events[0] == ('sleep', pytest.approx(4.2))
+    assert events[1] == 'load'
+    assert events[-1] == 'start'
 
 
 def test_play_item_forwards_live_ytdl_handoff_without_caching_page_url(

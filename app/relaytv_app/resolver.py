@@ -39,6 +39,7 @@ class ResolvedStreams:
     ytdl_format: str = ""
     ytdl_raw_options: str = ""
     live_status: str = ""
+    available_at: float = 0.0
 
     def __iter__(self):
         yield self.stream
@@ -575,7 +576,20 @@ def resolve_streams_ytdlp(url: str):
     # just-ended (post_live) videos only expose segmented formats whose bare
     # URLs return 204 No Content, so they must not be handed to mpv directly.
     resolve_live_status = is_youtube_url(u)
-    output_args = ["--print", "urls", "--print", "live_status"] if resolve_live_status else ["-g"]
+    output_args = (
+        [
+            "--print",
+            "urls",
+            "--print",
+            "relaytv_format_available_at:%(requested_formats.0.available_at)s",
+            "--print",
+            "relaytv_available_at:%(available_at)s",
+            "--print",
+            "live_status",
+        ]
+        if resolve_live_status
+        else ["-g"]
+    )
 
     strategies: list[tuple[list[str], list[str]]] = [(base, candidates)]
     if is_youtube_url(u):
@@ -685,9 +699,25 @@ def resolve_streams_ytdlp(url: str):
 
     lines = [ln.strip() for ln in (p.stdout or "").splitlines() if ln.strip()]
     live_status = ""
-    if resolve_live_status and lines and not lines[-1].lower().startswith(("http://", "https://")):
-        live_status = lines[-1].strip().lower()
-        lines = lines[:-1]
+    available_at = 0.0
+    if resolve_live_status:
+        media_lines: list[str] = []
+        for line in lines:
+            if line.startswith(("relaytv_format_available_at:", "relaytv_available_at:")):
+                raw_available_at = line.split(":", 1)[1].strip()
+                if raw_available_at and raw_available_at != "NA":
+                    try:
+                        candidate_available_at = float(raw_available_at)
+                    except (TypeError, ValueError):
+                        candidate_available_at = 0.0
+                    if candidate_available_at > 0.0:
+                        available_at = candidate_available_at
+                continue
+            media_lines.append(line)
+        lines = media_lines
+        if lines and not lines[-1].lower().startswith(("http://", "https://")):
+            live_status = lines[-1].strip().lower()
+            lines = lines[:-1]
     total_ms = int((time.monotonic() - t0) * 1000)
     debug_log("youtube", f"yt-dlp resolve succeeded in {total_ms}ms with {len(lines)} stream line(s)")
     _log_resolve(f"yt-dlp resolve succeeded total_ms={total_ms} stream_lines={len(lines)}")
@@ -709,12 +739,24 @@ def resolve_streams_ytdlp(url: str):
             ytdl_format=selected_candidate,
             ytdl_raw_options=_mpv_ytdl_raw_options(selected_args),
             live_status=live_status,
+            available_at=available_at,
         )
     if not lines:
         raise HTTPException(status_code=400, detail="yt-dlp returned no stream URLs")
     if len(lines) == 1:
-        return lines[0], None
-    return lines[0], lines[1]
+        return ResolvedStreams(
+            stream=lines[0],
+            transport="yt-dlp",
+            live_status=live_status,
+            available_at=available_at,
+        )
+    return ResolvedStreams(
+        stream=lines[0],
+        audio=lines[1],
+        transport="yt-dlp",
+        live_status=live_status,
+        available_at=available_at,
+    )
 
 
 def resolve_streams_invidious(youtube_url: str, base: str | None = None):

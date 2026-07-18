@@ -3614,6 +3614,26 @@ def _item_needs_metadata_prefetch(item: object) -> bool:
     return (not title) or title == url or (not thumb)
 
 
+def _wait_for_resolved_media_availability(item: object) -> None:
+    """Honor yt-dlp's delay before opening a newly signed media URL."""
+    if not isinstance(item, dict):
+        return
+    try:
+        available_at = float(
+            item.get("_playback_available_at")
+            or item.get("_resolved_available_at")
+            or 0.0
+        )
+    except (TypeError, ValueError):
+        return
+    wait_sec = available_at - int(time.time())
+    if wait_sec <= 0.0:
+        return
+    wait_sec = min(15.0, wait_sec) + 0.2
+    logger.info("resolved_media_availability_wait wait_sec=%.2f", wait_sec)
+    time.sleep(wait_sec)
+
+
 def _fresh_prefetched_stream(item: object) -> tuple[str, str | None] | None:
     if not isinstance(item, dict):
         return None
@@ -3635,15 +3655,35 @@ def _fresh_prefetched_stream(item: object) -> tuple[str, str | None] | None:
     return stream, audio
 
 
-def _store_prefetched_stream(item: dict[str, Any], url: str, stream: str, audio: str | None) -> None:
+def _store_prefetched_stream(
+    item: dict[str, Any],
+    url: str,
+    stream: str,
+    audio: str | None,
+    available_at: object = None,
+) -> None:
     item["_resolved_source_url"] = str(url or "").strip()
     item["_resolved_stream"] = str(stream or "").strip()
     item["_resolved_audio"] = str(audio or "").strip() if audio else ""
     item["_resolved_at"] = float(time.time())
+    try:
+        available_ts = float(available_at or 0.0)
+    except (TypeError, ValueError):
+        available_ts = 0.0
+    if available_ts > 0.0:
+        item["_resolved_available_at"] = available_ts
+    else:
+        item.pop("_resolved_available_at", None)
 
 
 def _clear_prefetched_stream(item: dict[str, Any]) -> None:
-    for key in ("_resolved_source_url", "_resolved_stream", "_resolved_audio", "_resolved_at"):
+    for key in (
+        "_resolved_source_url",
+        "_resolved_stream",
+        "_resolved_audio",
+        "_resolved_at",
+        "_resolved_available_at",
+    ):
         item.pop(key, None)
 
 
@@ -3653,6 +3693,14 @@ def _resolved_playback_source(
     result: object,
 ) -> tuple[str, str | None, str | None, str | None]:
     stream, audio = result
+    try:
+        available_at = float(getattr(result, "available_at", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        available_at = 0.0
+    if available_at > 0.0:
+        item["_playback_available_at"] = available_at
+    else:
+        item.pop("_playback_available_at", None)
     if str(getattr(result, "transport", "direct") or "direct") == "mpv_ytdl":
         _clear_prefetched_stream(item)
         ytdl_format = str(getattr(result, "ytdl_format", "") or "").strip()
@@ -3662,7 +3710,7 @@ def _resolved_playback_source(
             ytdl_raw = ",".join(part for part in (operator_raw, ytdl_raw) if part)
         return str(stream), (str(audio) if audio else None), ytdl_format, ytdl_raw
     else:
-        _store_prefetched_stream(item, url, stream, audio)
+        _store_prefetched_stream(item, url, stream, audio, available_at)
     return str(stream), (str(audio) if audio else None), None, None
 
 
@@ -4714,6 +4762,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         if ytdl_format_override is not None or ytdl_raw_options_override is not None
         else {}
     )
+    _wait_for_resolved_media_availability(item)
     with MPV_LOCK:
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
