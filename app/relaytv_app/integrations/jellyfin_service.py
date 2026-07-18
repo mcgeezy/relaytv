@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Jellyfin product service (docs/ARCHITECTURE_PHASE_4_ROADMAP.md).
+"""Jellyfin product service (docs/ARCHITECTURE.md).
 
 Product-level Jellyfin behavior extracted from the routes package: payload
 parsing and normalization, stream URL construction, direct/transcode policy,

@@ -2,7 +2,7 @@
 """Guardrail: the app-config environment variable inventory is machine-checked.
 
 The Phase 2 runtime-config work migrates in-process env reads behind a typed
-config service. This test keeps ``docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md``
+config service. This test keeps ``docs/ENV_INVENTORY.md``
 in sync with the source tree so new variables, new runtime writers, or moved
 readers are caught in review.
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = REPO_ROOT / "app" / "relaytv_app"
-INVENTORY_DOC = REPO_ROOT / "docs" / "ARCHITECTURE_PHASE_2_ENV_INVENTORY.md"
+INVENTORY_DOC = REPO_ROOT / "docs" / "ENV_INVENTORY.md"
 
 TABLE_BEGIN = "<!-- BEGIN GENERATED ENV TABLE (tests/test_env_inventory.py) -->"
 TABLE_END = "<!-- END GENERATED ENV TABLE -->"
@@ -123,7 +123,7 @@ def test_env_inventory_doc_matches_source() -> None:
     expected = render_table()
     actual = _doc_table_lines()
     assert actual == expected, (
-        "docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md is stale; regenerate with "
+        "docs/ENV_INVENTORY.md is stale; regenerate with "
         "`PYTHONPATH=app python3 tests/test_env_inventory.py --write`"
     )
 
@@ -143,7 +143,7 @@ def test_runtime_env_bus_child_process_contract_is_pinned() -> None:
     so env mirroring for children only needs to cover operator-provided
     variables. If this fails, a settings-bus variable gained or lost a child
     process reader; update the mirroring contract in
-    docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md before changing env writes.
+    docs/ENV_INVENTORY.md before changing env writes.
     """
     actual = set()
     for name, entry in scan_inventory().items():

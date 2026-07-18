@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Service-level Jellyfin behavior tests (docs/ARCHITECTURE_PHASE_4_ROADMAP.md M7).
+"""Service-level Jellyfin behavior tests (docs/ARCHITECTURE.md).
 
 These exercise integrations/jellyfin_service.py directly with fake receiver
 and player adapters — no FastAPI route context. Route-level contract tests

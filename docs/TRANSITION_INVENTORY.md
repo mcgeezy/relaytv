@@ -1,16 +1,14 @@
-# Phase 3 Playback Transition Writer Inventory
+# Playback Transition Writer Inventory
 
-This document is the measured baseline for the Phase 3 playback transition
-service work (`docs/ARCHITECTURE_PHASE_3_ROADMAP.md`). It answers one
-question: outside `state.py`, which modules write the playback transition
-globals today?
+This document is the machine-checked containment contract for playback
+transition state (see `ARCHITECTURE.md`). It answers one question: outside
+`state.py`, which modules write the playback transition globals?
 
 `state.py` owns the globals, their setters, and their persistence, and is
-excluded from the scan by definition. Everything listed below is a writer the
-phase migrates behind `playback_service` commands, and
-`tests/test_transition_inventory.py` pins the writer module sets so each
-milestone tightens the contract explicitly — the generated table and the
-pinned sets must both change in the same commit as the migration itself.
+excluded from the scan by definition. Writers are contained behind
+`playback_service` commands, and `tests/test_transition_inventory.py` pins
+the writer module sets — the generated table and the pinned sets must both
+change in the same commit as any migration.
 
 Write forms counted per global:
 

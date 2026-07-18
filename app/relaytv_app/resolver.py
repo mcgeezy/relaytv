@@ -40,6 +40,10 @@ class ResolvedStreams:
     ytdl_raw_options: str = ""
     live_status: str = ""
     available_at: float = 0.0
+    # The winning strategy's base argv (program name + options, no format or
+    # URL), so callers can re-run the exact strategy that produced this
+    # result instead of re-deriving one that might lose.
+    ytdlp_args: tuple[str, ...] = ()
 
     def __iter__(self):
         yield self.stream
@@ -740,6 +744,7 @@ def resolve_streams_ytdlp(url: str):
             ytdl_raw_options=_mpv_ytdl_raw_options(selected_args),
             live_status=live_status,
             available_at=available_at,
+            ytdlp_args=tuple(selected_args),
         )
     if not lines:
         raise HTTPException(status_code=400, detail="yt-dlp returned no stream URLs")

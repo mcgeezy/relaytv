@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import socket
 import threading
+from . import config
 from .config import env_bool as _env_bool
 from .config import runtime_config
 
@@ -36,11 +37,7 @@ def _service_type() -> str:
 
 
 def _service_port() -> int:
-    try:
-        p = int(float(os.getenv("RELAYTV_PORT") or "8787"))
-    except Exception:
-        p = 8787
-    return max(1, min(65535, p))
+    return config.server_port()
 
 
 def _detect_ipv4() -> str:

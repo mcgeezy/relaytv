@@ -20,7 +20,7 @@ import socket
 import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from .. import state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
+from .. import config, state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import jellyfin_receiver, jellyfin_service
@@ -104,6 +104,7 @@ from .playback import (
     volume as volume,
 )
 from .playback import router as playback_router
+from .postlive import router as postlive_router
 from .queue import router as queue_router
 from .settings import (
     SettingsReq as SettingsReq,
@@ -132,6 +133,7 @@ router.include_router(devices_router)
 router.include_router(health_router)
 router.include_router(jellyfin_router)
 router.include_router(playback_router)
+router.include_router(postlive_router)
 router.include_router(queue_router)
 router.include_router(settings_router)
 router.include_router(snapshots_router)
@@ -1004,7 +1006,7 @@ def _ui_event_push_jellyfin(
 
 
 def _host_urls() -> list[str]:
-    port = int(os.getenv("PORT", "8787"))
+    port = config.server_port()
     out: list[str] = [f"http://127.0.0.1:{port}/ui", f"http://localhost:{port}/ui"]
     ips: set[str] = set()
     try:
@@ -2298,7 +2300,7 @@ def _first_nonempty_str(values: list[object]) -> str:
     return ""
 
 
-# Phase 4 (docs/ARCHITECTURE_PHASE_4_ROADMAP.md M2): pure Jellyfin helpers
+# Pure Jellyfin helpers (docs/ARCHITECTURE.md)
 # live in integrations/jellyfin_service.py. These aliases keep the routes
 # compatibility surface and existing monkeypatch targets stable.
 _jellyfin_access_token = jellyfin_service.access_token

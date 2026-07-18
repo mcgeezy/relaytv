@@ -27,6 +27,7 @@ from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
 from .integrations import jellyfin_receiver
 from . import discovery_mdns
+from . import postlive_relay
 from . import video_profile
 from . import upload_store
 from . import ytdlp_update
@@ -76,6 +77,9 @@ def create_app(*, testing: bool = False) -> FastAPI:
         runtime_config.refresh_from_env()
         _sync_jellyfin_env_from_settings()
         upload_store.cleanup_uploads(get_settings() if callable(get_settings) else {})
+        # Spool files from a previous process are unreachable (sessions and
+        # the completed-spool registry are process-local) — reclaim the disk.
+        postlive_relay.sweep_spool_root()
         if not testing:
             video_profile.warm_profile()
         workers_enabled = not (
@@ -104,6 +108,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             discovery_mdns.stop()
             stop_x11_overlay()
             stop_splash_screen()
+            postlive_relay.close_all(reason="server shutdown")
 
     app = FastAPI(lifespan=_lifespan)
 

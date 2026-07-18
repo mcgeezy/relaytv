@@ -1,11 +1,8 @@
-# Phase 2 Environment Variable Inventory
+# Environment Variable Inventory
 
-Date started: 2026-07-02
-
-This is the machine-checked inventory of app-config environment variables for
-the Phase 2 runtime-config effort (see
-[ARCHITECTURE_PHASE_2_ROADMAP.md](ARCHITECTURE_PHASE_2_ROADMAP.md)). The table
-below is generated from the source tree and guarded by
+This is the machine-checked inventory of app-config environment variables
+(see `ARCHITECTURE.md` for the runtime config service boundary it guards).
+The table below is generated from the source tree and guarded by
 `tests/test_env_inventory.py`; regenerate it after intentional changes with:
 
 ```text
@@ -15,8 +12,8 @@ PYTHONPATH=app python3 tests/test_env_inventory.py --write
 ## Scope
 
 In scope: `RELAYTV_*`, `YTDLP_*`, `USE_INVIDIOUS`, `INVIDIOUS_BASE`,
-`MPV_AUDIO_DEVICE`, and `MPV_EXTRA_ARGS` — the app configuration surface that
-Phase 2 migrates behind `RuntimeConfig`.
+`MPV_AUDIO_DEVICE`, and `MPV_EXTRA_ARGS` — the app configuration surface
+managed behind `RuntimeConfig`.
 
 Out of scope: platform and toolkit variables (`DISPLAY`, `WAYLAND_DISPLAY`,
 `XDG_*`, `QT_*`, `HOME`, `PATH`, ...). Those describe the host session, are not
@@ -213,7 +210,8 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_PLAYBACK_START_TIMEOUT_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_TRANSITION_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYER_BACKEND` | `player.py` | - | static env |
-| `RELAYTV_PORT` | `discovery_mdns.py` | - | static env |
+| `RELAYTV_PORT` | `config.py` | - | static env |
+| `RELAYTV_POSTLIVE_RELAY` | `postlive_relay.py` | - | static env |
 | `RELAYTV_QT_AUDIO_RECOVERY_COOLDOWN` | `player.py` | - | static env |
 | `RELAYTV_QT_AUDIO_WATCHDOG_INTERVAL` | `player.py` | - | static env |
 | `RELAYTV_QT_CURSOR_AUTOHIDE` | `qt_shell_app.py` | - | child process input |

@@ -49,10 +49,10 @@ Several public surfaces are machine-checked against in-tree inventory docs.
 When intentionally changing one of these surfaces, regenerate its doc with the
 matching test's `--write` mode instead of hand-editing:
 
-- routes/aliases: `tests/test_route_inventory.py` → `docs/ARCHITECTURE_PHASE_1_ROUTE_INVENTORY.md`
-- env variables: `tests/test_env_inventory.py` → `docs/ARCHITECTURE_PHASE_2_ENV_INVENTORY.md`
-- playback transition writers: `tests/test_transition_inventory.py` → `docs/ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md`
-- Jellyfin route surface: `tests/test_jellyfin_inventory.py` → `docs/ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`
+- routes/aliases: `tests/test_route_inventory.py` (in-code list, no companion doc)
+- env variables: `tests/test_env_inventory.py` → `docs/ENV_INVENTORY.md`
+- playback transition writers: `tests/test_transition_inventory.py` → `docs/TRANSITION_INVENTORY.md`
+- Jellyfin route surface: `tests/test_jellyfin_inventory.py` → `docs/JELLYFIN_INVENTORY.md`
 - runtime profile matrix: `tests/test_runtime_matrix.py` → `docs/OPERATIONS_TEST_MATRIX.md`
 
 ## Security Constraints
@@ -76,11 +76,12 @@ done — all phases squash-merged to `main` as `refactor:` PRs
 5. optional API token (#25)
 6. operations test matrix (#26)
 
-`docs/ARCHITECTURE_REVIEW.md` holds the findings, per-finding outcomes, and
-the remaining open follow-ups; `docs/ARCHITECTURE_PHASE_*_ROADMAP.md` are the
-historical milestone logs. The former no-release hold is lifted; normal
-release flow applies. The `codex/architecture-phase-*` branch discipline no
-longer applies — work from `main` with normal feature/fix branches.
+`docs/ARCHITECTURE.md` holds the current-state boundaries and the remaining
+open follow-ups; the full review and per-phase milestone logs live in git
+history (removed from the docs tree 2026-07-17). The former no-release hold
+is lifted; normal release flow applies. The `codex/architecture-phase-*`
+branch discipline no longer applies — work from `main` with normal
+feature/fix branches.
 
 Boundaries the roadmap established, to preserve in new work:
 

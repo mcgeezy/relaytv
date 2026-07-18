@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Phase 3 transition scenario guardrails (docs/ARCHITECTURE_PHASE_3_ROADMAP.md M1).
+"""Playback transition scenario guardrails (docs/ARCHITECTURE.md).
 
 Home for the review-mandated transition scenarios that lacked coverage at
 phase start. The other four scenarios are guarded in
 tests/test_playback_routes.py and tests/test_smoke.py; see the coverage
-baseline in docs/ARCHITECTURE_PHASE_3_TRANSITION_INVENTORY.md.
+baseline in docs/TRANSITION_INVENTORY.md.
 """
 import json
 

@@ -2,7 +2,7 @@
 """Optional bearer-token guard for write endpoints.
 
 The API is local-first and unauthenticated by default (trusted LAN,
-docs/ARCHITECTURE_REVIEW.md Finding 8). Setting ``RELAYTV_API_TOKEN``
+docs/ARCHITECTURE.md, API Trust Boundary). Setting ``RELAYTV_API_TOKEN``
 turns on bearer auth for write requests (``POST``/``PUT``/``PATCH``/
 ``DELETE``) across the whole app via middleware, so future write routes
 are covered by default. Reads (``GET``/``HEAD``/``OPTIONS``) — health,

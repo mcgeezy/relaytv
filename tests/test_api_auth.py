@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Optional API token guard contract (docs/ARCHITECTURE_PHASE_5_ROADMAP.md M1).
+"""Optional API token guard contract (docs/ARCHITECTURE.md, API Trust Boundary).
 
 With RELAYTV_API_TOKEN unset the API must behave exactly as before: every
 write endpoint open. With a token configured, write requests require

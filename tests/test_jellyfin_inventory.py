@@ -3,7 +3,7 @@
 
 The Phase 4 Jellyfin product-service work moves Jellyfin product logic out of
 the routes package into ``integrations/jellyfin_service.py``. This test keeps
-``docs/ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md`` in sync with the source
+``docs/JELLYFIN_INVENTORY.md`` in sync with the source
 tree and pins the Jellyfin function definitions allowed per routes module so
 each migration milestone tightens the contract explicitly.
 
@@ -20,7 +20,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = REPO_ROOT / "app" / "relaytv_app"
 ROUTES_DIR = APP_DIR / "routes"
-INVENTORY_DOC = REPO_ROOT / "docs" / "ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md"
+INVENTORY_DOC = REPO_ROOT / "docs" / "JELLYFIN_INVENTORY.md"
 
 LISTING_BEGIN = "<!-- BEGIN GENERATED JELLYFIN ROUTE LISTING (tests/test_jellyfin_inventory.py) -->"
 LISTING_END = "<!-- END GENERATED JELLYFIN ROUTE LISTING -->"
@@ -69,7 +69,7 @@ def test_jellyfin_inventory_doc_matches_source() -> None:
     expected = [line for line in render_listing() if line.strip()]
     actual = _doc_listing_lines()
     assert actual == expected, (
-        "docs/ARCHITECTURE_PHASE_4_JELLYFIN_INVENTORY.md is stale; regenerate with "
+        "docs/JELLYFIN_INVENTORY.md is stale; regenerate with "
         "`PYTHONPATH=app python3 tests/test_jellyfin_inventory.py --write`"
     )
 

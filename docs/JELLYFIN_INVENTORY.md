@@ -1,17 +1,15 @@
-# Phase 4 Jellyfin Route-Surface Inventory
+# Jellyfin Route-Surface Inventory
 
-This document is the measured baseline for the Phase 4 Jellyfin product
-service work (`docs/ARCHITECTURE_PHASE_4_ROADMAP.md`). It answers one
-question: which Jellyfin functions are defined in the routes package today?
+This document is the machine-checked containment contract for the Jellyfin
+route surface (see `ARCHITECTURE.md`). It answers one question: which
+Jellyfin functions are defined in the routes package?
 
 `integrations/jellyfin_receiver.py` owns transport/session/catalog and is not
-part of this scan. Everything listed below either stays as HTTP surface
-(endpoint handlers, request guards, UI-event glue) or migrates into
-`integrations/jellyfin_service.py` during Phase 4.
-`tests/test_jellyfin_inventory.py` pins the allowed function set per routes
-module so each milestone tightens the contract explicitly — the generated
-listing and the pinned sets must both change in the same commit as the
-migration itself.
+part of this scan. Everything listed below is HTTP surface (endpoint
+handlers, request guards, UI-event glue); product behavior belongs in
+`integrations/jellyfin_service.py`. `tests/test_jellyfin_inventory.py` pins
+the allowed function set per routes module — the generated listing and the
+pinned sets must both change in the same commit as any migration.
 
 Scan rule: any `def` in `app/relaytv_app/routes/` whose name mentions
 jellyfin (case-insensitive). Helpers without jellyfin in the name (for

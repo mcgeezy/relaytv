@@ -68,6 +68,7 @@ EXPECTED_ROUTES = {
     ("POST", "/playback/play", "playback_play"),
     ("GET", "/playback/state", "playback_state"),
     ("POST", "/playback/toggle", "playback_toggle"),
+    ("GET", "/postlive/{token}.mkv", "postlive_stream"),
     ("POST", "/previous", "previous"),
     ("GET", "/pwa/brand/banner.png", "pwa_brand_banner_png_asset"),
     ("GET", "/pwa/brand/banner.svg", "pwa_brand_banner_svg_asset"),

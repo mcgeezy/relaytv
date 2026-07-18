@@ -22,6 +22,9 @@ _SLOW_REQUEST_SKIP_PREFIXES = (
     "/favicon.ico",
     "/manifest.json",
     "/sw.js",
+    # Post-live relay streams stay open for the length of the replay; that
+    # is the feature working, not a slow request.
+    "/postlive/",
 )
 _SLOW_REQUEST_SKIP_EXACT = (
     "/health",

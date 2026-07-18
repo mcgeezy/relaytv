@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import config
 from .debug import configure_logging, get_logger, access_logging_enabled
 
 
@@ -401,11 +402,29 @@ def _terminate(proc: subprocess.Popen | None) -> None:
             pass
 
 
+def _default_server_args() -> list[str]:
+    """The stock uvicorn command, bound to the configured port.
+
+    The bind port and every URL the app generates (mDNS, host URLs, the
+    post-live relay loopback) must come from the same source —
+    ``config.server_port()`` — or `RELAYTV_PORT` would move the generated
+    URLs while the server keeps listening on the old port.
+    """
+    return [
+        "uvicorn",
+        "relaytv_app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(config.server_port()),
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
     args = list(argv if argv is not None else sys.argv[1:])
     if not args:
-        args = ["uvicorn", "relaytv_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
+        args = _default_server_args()
     if args and args[0] == "uvicorn" and (not access_logging_enabled()) and "--no-access-log" not in args:
         args.append("--no-access-log")
 
