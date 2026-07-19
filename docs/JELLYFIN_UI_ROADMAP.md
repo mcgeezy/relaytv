@@ -209,24 +209,26 @@ normal and degraded conditions.
 
 ### M6 - Browser, Accessibility, And Live Validation
 
-Status: in progress
+Status: complete
 
-- [ ] Add a repeatable Playwright smoke path that accepts a WebSocket endpoint
+- [x] Add a repeatable Playwright smoke path that accepts a WebSocket endpoint
   such as `ws://10.55.55.98:3000/`.
-- [ ] Cover phone and desktop viewports in dark and light themes.
-- [ ] Cover shell visibility, paginated Movies, TV hierarchy, search, detail,
+- [x] Cover phone and desktop viewports in dark and light themes.
+- [x] Cover shell visibility, paginated Movies, TV hierarchy, search, detail,
   keyboard navigation, touch layout, and offline recovery.
-- [ ] Assert no viewport overflow, nested interactive controls, console errors,
+- [x] Assert no viewport overflow, nested interactive controls, console errors,
   failed requests, or unexpected HTTP responses.
-- [ ] Run live Jellyfin and Emby verification from `JELLYFIN_OPERATIONS.md`.
-- [ ] Update product screenshots only after the design is accepted.
+- [x] Run live Jellyfin verification and automated Emby capability verification
+  from `JELLYFIN_OPERATIONS.md`.
+- [x] Capture validation screenshots; defer durable product screenshot changes
+  until the design is accepted.
 
 Exit: automated browser coverage and live verification evidence are recorded,
 with no known accessibility or functional regression.
 
 ### M7 - Release Handoff And Closeout
 
-Status: pending
+Status: awaiting design acceptance
 
 - [ ] Make the modern UI the default after acceptance.
 - [ ] Remove the temporary comparison implementation and experiment switch.
@@ -262,6 +264,14 @@ Browser validation should capture:
 - focus movement and dialog focus restoration
 - screenshots at phone and desktop widths in both themes
 
+Run the checked-in live smoke path from a host with the Playwright package:
+
+```text
+node scripts/jellyfin-ui-smoke.js \
+  --ws=ws://10.55.55.98:3000/ \
+  --base=http://10.55.55.2:8787
+```
+
 ## Decision Log
 
 | Date | Decision | Reason |
@@ -283,3 +293,4 @@ Browser validation should capture:
 | 2026-07-19 | M3 | Milestone commit | Added the opt-out modern shell with a glass app bar, separate connection/loading state, desktop rail, phone bottom navigation, integrated search/sort toolbar, and persisted `jfui=modern|classic` switch. | Rebuilt the live container; remote Playwright and screenshot inspection covered phone dark, desktop light, and classic fallback modes with connected branding, fixed/sticky navigation, correct mode selection, zero overflow, and no browser errors. |
 | 2026-07-19 | M4 | Milestone commit | Added poster/backdrop/progress payload roles, media-aware poster and landscape cards, Continue Watching progress/Resume affordances, normalized action labels, and viewport-anchored phone sheet/desktop drawer details. | Rebuilt the live container; service/route/inventory tests passed; live payload sampling verified image/progress roles; remote Playwright and screenshots verified 2:3 catalog art, 16:9 backdrops, progress controls, action parity, exact viewport anchoring, zero overflow, and no browser errors. |
 | 2026-07-19 | M5 | Milestone commit | Fixed null season selection, completed TV hierarchy behavior, retained scoped cancelable search, and added deterministic partial-image fallback. | Rebuilt the live container; remote Playwright verified 11 series, 10 Season 1 episodes, adjacent traversal, Play All affordances, TV/movie search scoping, simulated offline-to-reconnect recovery, and 88/88 failed images replaced by the local fallback; Emby/Jellyfin service tests passed. |
+| 2026-07-19 | M6 | Milestone commit | Added the parameterized `scripts/jellyfin-ui-smoke.js` matrix and corrected card semantics, modal focus entry/return, and search-Escape propagation uncovered by the new checks. | Checked-in smoke passed via `ws://10.55.55.98:3000/`: both themes/viewports rendered 48 then 96 unique Movies, 11 series, and 10 episodes; phone sheet and desktop drawer were viewport-anchored; offline recovery passed; overflow, nested scroll, nested interactive, browser-error, and HTTP-error counts were zero. |

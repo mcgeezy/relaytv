@@ -377,6 +377,7 @@ function _jfCloseDetailPanel(opts){
   if (grid) grid.classList.remove('detailOpen');
   const detail = document.getElementById('jfDetail');
   if (detail) {
+    detail.setAttribute('aria-hidden', 'true');
     detail.style.top = '';
     detail.style.width = '';
     detail.style.maxWidth = '';
@@ -387,8 +388,6 @@ function _jfCloseDetailPanel(opts){
     detail.style.position = '';
   }
   _jfSetDetailScrollLock(false);
-  __jfSelectedItemId = '';
-  __jfSelectedItem = null;
   _jfApplySelectionUi();
   _jfDetailPlaceholder('Select a Jellyfin item to view details.');
 }
@@ -397,6 +396,8 @@ function _jfOpenDetailPanel(){
   const grid = document.getElementById('jfGrid');
   const wasOpen = _jfIsDetailOpen();
   if (grid) grid.classList.add('detailOpen');
+  const detail = document.getElementById('jfDetail');
+  if (detail) detail.setAttribute('aria-hidden', 'false');
   if (!wasOpen) _uiPushLayer();
   _jfSetDetailScrollLock(true);
   requestAnimationFrame(() => _jfPositionDetailPanel());
@@ -718,7 +719,10 @@ function _jfRenderDetail(item){
   closeBtn.type = 'button';
   closeBtn.className = 'jfDetailClose';
   closeBtn.textContent = '← Back';
-  closeBtn.onclick = () => _jfCloseDetailPanel();
+  closeBtn.onclick = () => {
+    _jfCloseDetailPanel();
+    _jfFocusSelectedItem();
+  };
   host.appendChild(closeBtn);
 
   const isEpisode = itemType === 'episode';
@@ -765,6 +769,7 @@ function _jfRenderDetail(item){
   host.appendChild(thumbWrap);
 
   const title = document.createElement('div');
+  title.id = 'jfDetailTitle';
   title.className = 'jfDetailTitle';
   title.textContent = item.title || '(untitled)';
   host.appendChild(title);
@@ -850,7 +855,10 @@ function _jfRenderDetail(item){
   msg.className = 'jfActionMsg';
   host.appendChild(msg);
   _jfOpenDetailPanel();
-  requestAnimationFrame(() => _jfPositionDetailPanel());
+  requestAnimationFrame(() => {
+    _jfPositionDetailPanel();
+    closeBtn.focus();
+  });
 }
 
 function _jfBuildRowItemCard(item, rowId){
@@ -880,7 +888,8 @@ function _jfBuildRowItemCard(item, rowId){
   if (itemType) btn.classList.add(`jfType-${itemType.replace(/[^a-z0-9_-]/g, '')}`);
   if (normalizedRowId) btn.classList.add(`jfRowItem-${normalizedRowId.replace(/[^a-z0-9_-]/g, '')}`);
   btn.tabIndex = 0;
-  btn.setAttribute('role', 'button');
+  btn.setAttribute('role', 'group');
+  btn.setAttribute('aria-roledescription', 'media card');
   btn.dataset.itemId = String(item.item_id || '').trim();
   btn.dataset.itemTitle = titleText;
   btn.dataset.itemSubtitle = subtitleText;
@@ -1997,7 +2006,10 @@ function bindJellyfinUi(){
 
   if (launchBtn) launchBtn.onclick = () => openJellyfinShell();
   if (shellBack) shellBack.onclick = () => closeJellyfinShell();
-  if (detailBackdrop) detailBackdrop.onclick = () => _jfCloseDetailPanel();
+  if (detailBackdrop) detailBackdrop.onclick = () => {
+    _jfCloseDetailPanel();
+    _jfFocusSelectedItem();
+  };
   tabBtns.forEach((btn) => {
     btn.onclick = () => {
       const tab = String(btn.getAttribute('data-jf-tab') || '').trim();
@@ -2076,6 +2088,7 @@ function bindJellyfinUi(){
         searchInput.value = '';
         _jfLoadActiveTabDefault(true);
         e.preventDefault();
+        e.stopPropagation();
       }
     });
   }
@@ -2345,6 +2358,7 @@ function bindJellyfinUi(){
     if (e.key === 'Escape' && __jfUiVisible) {
       if (_jfIsDetailOpen()) {
         _jfCloseDetailPanel();
+        _jfFocusSelectedItem();
       } else {
         closeJellyfinShell();
       }

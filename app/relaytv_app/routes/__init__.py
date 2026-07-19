@@ -3660,7 +3660,7 @@ def ui():
                 <div id="jfRows" class="jfRows"></div>
               </div>
               <div id="jfDetailBackdrop" class="jfDetailBackdrop" aria-hidden="true"></div>
-              <aside id="jfDetail" class="jfDetail muted">Select an item to view details.</aside>
+              <aside id="jfDetail" class="jfDetail muted" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="jfDetailTitle">Select an item to view details.</aside>
               <div id="jfAlphaIndicator" class="jfAlphaIndicator" aria-hidden="true">A</div>
             </div>
           </section>

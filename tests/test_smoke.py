@@ -50,6 +50,7 @@ def test_ui_smoke() -> None:
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
+    jellyfin_playwright = (ROOT_DIR / 'scripts' / 'jellyfin-ui-smoke.js').read_text(encoding='utf-8')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
@@ -127,6 +128,7 @@ def test_ui_smoke() -> None:
     assert 'role="tablist"' in response.text
     assert 'role="tab"' in response.text
     assert 'id="jfDetailBackdrop"' in response.text
+    assert 'role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="jfDetailTitle"' in response.text
     assert 'id="jfSortSelect"' in response.text
     assert 'id="jfAlphaIndicator"' in response.text
     assert 'id="jfConnection"' in response.text
@@ -207,6 +209,9 @@ def test_ui_smoke() -> None:
     assert '.jfModern .jfConnection{' in jellyfin_css
     assert '.jfModern .jfDetail{' in jellyfin_css
     assert '.jfMediaProgress{' in jellyfin_css
+    assert "chromium.connect(wsEndpoint)" in jellyfin_playwright
+    assert "--${name}=" in jellyfin_playwright
+    assert "nestedInteractive" in jellyfin_playwright
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js
