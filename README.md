@@ -33,10 +33,13 @@
 
 ## One box. Every way you watch.
 
-### 📲 Send it
+### 🔗 Send it
 
-Share a media link from Android, choose Play Now or add it to the queue, and let
-the TV box take over.
+Paste a media URL into the Web UI from any phone or computer. For one-tap
+sharing, use **RelayTV Play** or **RelayTV Queue** from the
+[Android share sheet](https://github.com/mcgeezy/relaytv-android), or send links
+through the Home Assistant Companion app with the
+[`mobile_app.share` automation](https://github.com/mcgeezy/relaytv-ha#home-assistant-companion-app-share-automation).
 
 ### 🎬 Browse it
 
