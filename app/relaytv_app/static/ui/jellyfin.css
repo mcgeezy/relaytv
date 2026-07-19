@@ -1212,6 +1212,13 @@
   border-radius: inherit;
   background: linear-gradient(90deg, #38bdf8, #3978f6);
 }
+.jfThumb img.jfImageFallback,
+.jfDetailThumb.jfImageFallback{
+  object-fit: contain;
+  padding: 18px;
+  opacity: .68;
+  filter: grayscale(.25);
+}
 .jfModern .jfItem{
   overflow: hidden;
   border-radius: 16px;

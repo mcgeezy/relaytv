@@ -183,6 +183,8 @@ def test_ui_smoke() -> None:
     assert 'function _jfBuildRowItemCard' in jellyfin_js
     assert "btn.classList.add(`jfType-${itemType.replace" in jellyfin_js
     assert "progressTrack.className = 'jfMediaProgress';" in jellyfin_js
+    assert 'function _jfBindImageFallback' in jellyfin_js
+    assert 'function _jfHasFiniteNumber' in jellyfin_js
     assert "item.backdrop || item.poster_local" in jellyfin_js
     assert "mkBtn('Queue Last', 'play_last')" in jellyfin_js
     assert "const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';" in jellyfin_js

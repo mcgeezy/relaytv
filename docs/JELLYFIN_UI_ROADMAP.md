@@ -195,21 +195,21 @@ action, and no playback command semantics regress.
 
 ### M5 - TV, Search, And Resilience
 
-Status: in progress
+Status: complete
 
-- [ ] Complete series to season to episode navigation.
-- [ ] Validate Play All and previous/next episode traversal.
-- [ ] Complete debounced, cancelable search across top-level sections.
-- [ ] Handle timeout, disconnected, empty, partial-image, and stale-response
+- [x] Complete series to season to episode navigation.
+- [x] Validate Play All and previous/next episode traversal.
+- [x] Complete debounced, cancelable search across top-level sections.
+- [x] Handle timeout, disconnected, empty, partial-image, and stale-response
   states.
-- [ ] Confirm Emby hides unsupported rows while preserving supported flows.
+- [x] Confirm Emby hides unsupported rows while preserving supported flows.
 
 Exit: Jellyfin and Emby browse, search, and TV workflows are complete under
 normal and degraded conditions.
 
 ### M6 - Browser, Accessibility, And Live Validation
 
-Status: pending
+Status: in progress
 
 - [ ] Add a repeatable Playwright smoke path that accepts a WebSocket endpoint
   such as `ws://10.55.55.98:3000/`.
@@ -282,3 +282,4 @@ Browser validation should capture:
 | 2026-07-19 | M2 | Milestone commit | Replaced full-library catalog requests with 48-item pages, deduplicated sentinel-driven appends, cancellable browse requests, lazy images, and document-level catalog scrolling. | Rebuilt the live container; direct endpoint pagination passed; remote Playwright via `ws://10.55.55.98:3000/` verified 48-to-96 append, unique IDs, retained focus, no nested or horizontal overflow, bounded sort reloads, TV loading, and aborted obsolete sort/search requests. |
 | 2026-07-19 | M3 | Milestone commit | Added the opt-out modern shell with a glass app bar, separate connection/loading state, desktop rail, phone bottom navigation, integrated search/sort toolbar, and persisted `jfui=modern|classic` switch. | Rebuilt the live container; remote Playwright and screenshot inspection covered phone dark, desktop light, and classic fallback modes with connected branding, fixed/sticky navigation, correct mode selection, zero overflow, and no browser errors. |
 | 2026-07-19 | M4 | Milestone commit | Added poster/backdrop/progress payload roles, media-aware poster and landscape cards, Continue Watching progress/Resume affordances, normalized action labels, and viewport-anchored phone sheet/desktop drawer details. | Rebuilt the live container; service/route/inventory tests passed; live payload sampling verified image/progress roles; remote Playwright and screenshots verified 2:3 catalog art, 16:9 backdrops, progress controls, action parity, exact viewport anchoring, zero overflow, and no browser errors. |
+| 2026-07-19 | M5 | Milestone commit | Fixed null season selection, completed TV hierarchy behavior, retained scoped cancelable search, and added deterministic partial-image fallback. | Rebuilt the live container; remote Playwright verified 11 series, 10 Season 1 episodes, adjacent traversal, Play All affordances, TV/movie search scoping, simulated offline-to-reconnect recovery, and 88/88 failed images replaced by the local fallback; Emby/Jellyfin service tests passed. |

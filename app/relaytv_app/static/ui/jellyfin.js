@@ -681,6 +681,16 @@ function _jfPreloadImage(url){
   });
 }
 
+function _jfBindImageFallback(img){
+  if (!img) return;
+  img.addEventListener('error', () => {
+    if (img.dataset.jfFallback === '1') return;
+    img.dataset.jfFallback = '1';
+    img.classList.add('jfImageFallback');
+    img.src = '/pwa/weather/not-available.svg';
+  });
+}
+
 function _jfDetailPlaceholder(text){
   const host = document.getElementById('jfDetail');
   if (!host) return;
@@ -720,6 +730,7 @@ function _jfRenderDetail(item){
   thumb.alt = '';
   thumb.loading = 'eager';
   thumb.src = item.backdrop || item.poster_local || item.poster || item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
+  _jfBindImageFallback(thumb);
   thumb.addEventListener('load', () => _jfPositionDetailPanel(), {once:true});
   thumb.addEventListener('error', () => _jfPositionDetailPanel(), {once:true});
   thumbWrap.appendChild(thumb);
@@ -892,6 +903,7 @@ function _jfBuildRowItemCard(item, rowId){
   img.loading = 'lazy';
   img.decoding = 'async';
   img.src = item.poster_local || item.poster || item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
+  _jfBindImageFallback(img);
   tWrap.appendChild(img);
 
   const badgeText = (itemType === 'episode' && item.season_number != null && item.episode_number != null)
@@ -1055,6 +1067,10 @@ function _jfNextStart(value){
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
+
+function _jfHasFiniteNumber(value){
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
 }
 
 function _jfCatalogKindIsActive(kind){
@@ -1571,14 +1587,14 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
     const seasonRes = await _jfFetchJson(`/jellyfin/tv/series/${encodeURIComponent(sid)}/seasons${refresh ? '?refresh=1' : ''}`);
     const seasons = Array.isArray(seasonRes.seasons) ? seasonRes.seasons : [];
     let seasonNum = __jfTvSeasonNumber;
-    if (!Number.isFinite(Number(seasonNum))) {
-      const first = seasons.find((s) => Number.isFinite(Number(s && s.season_number)));
+    if (!_jfHasFiniteNumber(seasonNum)) {
+      const first = seasons.find((s) => _jfHasFiniteNumber(s && s.season_number));
       seasonNum = first ? Number(first.season_number) : null;
     }
 
     let epUrl = `/jellyfin/tv/series/${encodeURIComponent(sid)}/episodes`;
     const epQs = new URLSearchParams();
-    if (Number.isFinite(Number(seasonNum))) epQs.set('season_number', String(Number(seasonNum)));
+    if (_jfHasFiniteNumber(seasonNum)) epQs.set('season_number', String(Number(seasonNum)));
     if (refresh) epQs.set('refresh', '1');
     const epQuery = epQs.toString();
     if (epQuery) epUrl += `?${epQuery}`;
@@ -1596,7 +1612,7 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
       thumbnail: String((s && (s.thumbnail_local || s.thumbnail)) || '').trim(),
       thumbnail_local: String((s && s.thumbnail_local) || '').trim(),
     }));
-    const seasonLabel = Number.isFinite(Number(seasonNum)) ? `Season ${Number(seasonNum)}` : 'No season selected';
+    const seasonLabel = _jfHasFiniteNumber(seasonNum) ? `Season ${Number(seasonNum)}` : 'No season selected';
     const rows = [
       {id:'tv_selection', title:`${title} · ${seasonLabel}`, expanded: chooserExpanded},
     ];
@@ -1606,14 +1622,14 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
         {id:'tv_seasons', title:'Seasons', items: seasonItems},
       );
     }
-    rows.push({id:'tv_episodes', title:`Episodes${Number.isFinite(Number(seasonNum)) ? ` · Season ${Number(seasonNum)}` : ''}`, items: episodes});
+    rows.push({id:'tv_episodes', title:`Episodes${_jfHasFiniteNumber(seasonNum) ? ` · Season ${Number(seasonNum)}` : ''}`, items: episodes});
     __jfTvSeriesId = sid;
     __jfTvSeriesTitle = title;
     __jfTvSeriesThumb = thumb;
-    __jfTvSeasonNumber = Number.isFinite(Number(seasonNum)) ? Number(seasonNum) : null;
+    __jfTvSeasonNumber = _jfHasFiniteNumber(seasonNum) ? Number(seasonNum) : null;
     __jfTvSeasonChooserExpanded = chooserExpanded;
     __jfTvViewMode = 'detail';
-    __jfSelectedItemId = Number.isFinite(Number(seasonNum)) ? `season:${sid}:${Number(seasonNum)}` : '';
+    __jfSelectedItemId = _jfHasFiniteNumber(seasonNum) ? `season:${sid}:${Number(seasonNum)}` : '';
     _jfRenderRows(rows);
     _jfApplySelectionUi();
     if (focusChooser) {
