@@ -66,16 +66,32 @@ function _fetchWithTimeout(url, opts, timeoutMs){
   return fetch(url, finalOpts).finally(() => clearTimeout(timer));
 }
 
-async function post(path, body) {
+async function post(path, body, postOpts) {
+  const opts = {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: body ? JSON.stringify(body) : '{}'
+  };
+  // Generous timeout: Android wifi power-save adds seconds of first-packet
+  // latency right when the user picks the phone up.
+  let ok = false;
   try {
-    await _fetchWithTimeout(path, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: body ? JSON.stringify(body) : '{}'
-    }, 1800);
+    await _fetchWithTimeout(path, opts, 5000);
+    ok = true;
   } catch(_e) {
-    // Keep controls responsive even if a transient request stalls.
+    // A network error doesn't prove the request never reached the server (the
+    // connection can drop after the command lands), and most commands are
+    // toggles or relative seeks where a resend would double-apply. Only
+    // retry commands the caller marked idempotent (absolute sets); everything
+    // else surfaces the failure so the user can retap.
+    if (postOpts && postOpts.idempotent) {
+      try {
+        await _fetchWithTimeout(path, opts, 5000);
+        ok = true;
+      } catch(_e2) {}
+    }
   }
+  if (!ok) _connSignal(false, {sticky: true, message: 'Command failed — check connection'});
   refresh().catch(() => null);
 }
 
@@ -279,6 +295,7 @@ let __lastStatus = null;
 let __lastStatusFullFetchTs = 0;
 let __uiEventSource = null;
 let __uiEventSourceLastTs = 0;
+let __uiEventSourceBornTs = 0;
 let __uiEventReconnectTimer = 0;
 let __remoteVolumeKnownValue = null;
 
@@ -326,13 +343,13 @@ function _shouldRefreshFullStatus(st, fast){
 }
 
 async function _fetchFastPlaybackState(){
-  const r = await _fetchWithTimeout('/playback/state', {cache:'no-store'}, 900);
+  const r = await _fetchWithTimeout('/playback/state', {cache:'no-store'}, 2500);
   if (!r.ok) throw new Error(`playback_state ${r.status}`);
   return await r.json();
 }
 
 async function _fetchFullStatus(){
-  const r = await _fetchWithTimeout('/status', {cache:'no-store'}, 1600);
+  const r = await _fetchWithTimeout('/status', {cache:'no-store'}, 4000);
   if (!r.ok) throw new Error(`status ${r.status}`);
   const st = await r.json();
   __lastStatusFullFetchTs = Date.now();
@@ -341,10 +358,63 @@ async function _fetchFullStatus(){
 
 function _uiEventMarkAlive(){
   __uiEventSourceLastTs = Date.now();
+  _connSignal(true);
 }
 
 function _uiEventHealthy(){
-  return !!(__uiEventSource && ((Date.now() - __uiEventSourceLastTs) < 10000));
+  // Server pings every 5s when idle; allow two missed pings before we call
+  // the stream dead. Only real events stamp the clock, so a stream that never
+  // delivers anything can never read as healthy — the fallback poll and the
+  // reconnect badge stay armed while reconnect attempts are unproven.
+  return !!(__uiEventSource && __uiEventSourceLastTs
+    && ((Date.now() - __uiEventSourceLastTs) < 12000));
+}
+
+function _closeUiEventStream(){
+  const es = __uiEventSource;
+  __uiEventSource = null;
+  if (es) { try { es.close(); } catch (_e) {} }
+}
+
+// Reconnect on staleness, not just on a null handle: connections killed by
+// Android screen-off/Doze or an AP roam often die without ever firing onerror,
+// leaving a zombie EventSource that would otherwise block reconnects forever.
+function _ensureUiEventStream(){
+  if (__uiEventSource){
+    if (_uiEventHealthy()) return;
+    // A fresh stream gets time to connect and deliver its first event before
+    // we recycle it — but it stays "unhealthy" until that event arrives, so
+    // this grace never suppresses the fallback poll.
+    if ((Date.now() - __uiEventSourceBornTs) < 12000) return;
+  }
+  _closeUiEventStream();
+  connectUiEventStream();
+}
+
+// --- Connection indicator ---------------------------------------------------
+let __connFailStreak = 0;
+let __connBadgeStickyUntil = 0;
+
+function _connSignal(ok, opts){
+  const badge = document.getElementById('connBadge');
+  if (ok){
+    __connFailStreak = 0;
+    if (badge && Date.now() >= __connBadgeStickyUntil){
+      badge.classList.add('hidden');
+      document.body.classList.remove('connLost');
+    }
+    return;
+  }
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  __connFailStreak += 1;
+  if (o.sticky) __connBadgeStickyUntil = Date.now() + 2500;
+  if (__connFailStreak >= 2 || o.sticky){
+    if (badge){
+      badge.textContent = o.message || 'Reconnecting…';
+      badge.classList.remove('hidden');
+    }
+    document.body.classList.add('connLost');
+  }
 }
 
 function _scheduleUiEventReconnect(){
@@ -628,7 +698,11 @@ function _uploadSummary(item){
 
 function _hasNowPlayingItem(st, np){
   if (st && (st.playing || st.paused)) return true;
-  return !!(np && (np.title || np.url || np.stream));
+  const hasItem = !!(np && (np.title || np.url || np.stream));
+  // Both /status and /playback/state now carry the authoritative flag; trust
+  // it when present so the fast and full views cannot disagree at idle.
+  if (st && typeof st.has_now_playing === 'boolean') return st.has_now_playing && hasItem;
+  return hasItem;
 }
 
 function _isNowPlayingJellyfin(np){
@@ -750,9 +824,9 @@ function _renderRemoteVolume(value, opts){
     const liveDragValue = Math.max(0, Math.min(200, Number(slider.value || 100)));
     const base = slider.__draggingVolume ? liveDragValue : (effective != null ? effective : liveDragValue);
     slider.style.setProperty('--remote-vol-pct', `${((base / 200) * 100).toFixed(2)}%`);
-    if (label) label.textContent = `${Math.round(base)}% Volume`;
+    if (label) label.textContent = `${Math.round(base)}%`;
   } else if (label) {
-    label.textContent = effective == null ? '--% Volume' : `${effective}% Volume`;
+    label.textContent = effective == null ? '--%' : `${effective}%`;
   }
   if (effective != null) {
     __remoteVolumeKnownValue = effective;
@@ -777,7 +851,7 @@ function initRemoteVolumeSlider(){
     const val = Math.max(0, Math.min(200, Number(slider.value || 0)));
     slider.__draggingVolume = false;
     _renderRemoteVolume(val, {source:'user'});
-    await post('/volume', {set: val});
+    await post('/volume', {set: val}, {idempotent: true});
   };
 
   slider.addEventListener('pointerdown', () => { slider.__draggingVolume = true; });
@@ -826,7 +900,7 @@ async function _commitSeekFromPct(pct){
   const dur = __lastStatus.duration;
   if (dur == null || isNaN(dur) || dur <= 0) return;
   const sec = pct * dur;
-  await post('/seek_abs', {sec: sec});
+  await post('/seek_abs', {sec: sec}, {idempotent: true});
 }
 
 function initScrubber(){
@@ -957,6 +1031,10 @@ let __jfViewportBound = false;
 const __JF_CATALOG_LIMIT = 5000;
 const __JF_REQ_TIMEOUT_MS = 12000;
 const __UI_FALLBACK_REFRESH_MS = 8000;
+const __NOW_IDLE_DEBOUNCE_MS = 4000;
+let __nowIdleSinceTs = 0;
+let __nowIdleSettleTimer = 0;
+let __nowLastShownNp = null;
 const __UI_EVENT_RECONNECT_MS = 5000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
 
@@ -3016,15 +3094,41 @@ function renderStatus(st) {
   const brand = document.getElementById('appBrandName');
   const sess = st.state || (st.playing ? (st.paused ? 'paused' : 'playing') : 'idle');
   if (brand) brand.textContent = st.device_name || 'RelayTV';
+  const menuDev = document.getElementById('menuDeviceName');
+  if (menuDev) menuDev.textContent = st.device_name || 'RelayTV';
   if (dot) {
     dot.className = 'dot' + (sess === 'playing' ? ' playing' : (sess === 'paused' ? ' paused' : (sess === 'closed' ? ' closed' : '')));
   }
   if (state) state.textContent = sess;
 
   // now playing
-  const np = st.now_playing || {};
+  let np = st.now_playing || {};
   const picon = document.getElementById('picon');
-  const hasNow = _hasNowPlayingItem(st, np);
+  // Debounce the idle flip: a transient idle signal (transition gap, fast/full
+  // disagreement) must not blank the card. Content applies instantly; idle
+  // only lands after the signal has been stable for a few seconds, and the
+  // last-shown item stays frozen on screen during that window.
+  let hasNow = _hasNowPlayingItem(st, np);
+  if (!hasNow){
+    if (!__nowIdleSinceTs){
+      __nowIdleSinceTs = Date.now();
+      if (!__nowIdleSettleTimer){
+        __nowIdleSettleTimer = window.setTimeout(() => {
+          __nowIdleSettleTimer = 0;
+          if (__lastStatus) renderStatus(__lastStatus);
+        }, __NOW_IDLE_DEBOUNCE_MS + 300);
+      }
+    }
+    if (((Date.now() - __nowIdleSinceTs) < __NOW_IDLE_DEBOUNCE_MS) && __nowLastShownNp){
+      hasNow = true;
+      np = __nowLastShownNp;
+    }
+  } else {
+    __nowIdleSinceTs = 0;
+    if (__nowIdleSettleTimer){ window.clearTimeout(__nowIdleSettleTimer); __nowIdleSettleTimer = 0; }
+  }
+  if (hasNow) __nowLastShownNp = np;
+  else __nowLastShownNp = null;
   const fav = hasNow ? faviconUrl(np) : '/pwa/brand/logo.svg';
   picon.innerHTML = fav ? `<img src="${fav}" alt="" />` : '🎞️';
   document.getElementById('now').textContent = hasNow ? (np.title || 'Now Playing') : 'Ready';
@@ -3042,8 +3146,20 @@ function renderStatus(st) {
     };
   }
 
-  // background thumbnail (YouTube supported; others fall back to none)
-  setBg(document.getElementById('nowTopCard'), thumbUrl(np));
+  // hero artwork (YouTube supported; others fall back to glass gradient)
+  setBg(document.getElementById('nHeroArt'), hasNow ? thumbUrl(np) : '');
+
+  const nowCardEl = document.getElementById('nowTopCard');
+  const paused = !!st.paused && hasNow;
+  const activelyPlaying = !!st.playing && !st.paused && hasNow;
+  if (nowCardEl){
+    nowCardEl.classList.toggle('isIdle', !hasNow);
+    nowCardEl.classList.toggle('isPaused', paused);
+  }
+  const stateTag = document.getElementById('nowStateTag');
+  if (stateTag) stateTag.classList.toggle('hidden', !paused);
+  const stateDot = document.getElementById('nowStateDot');
+  if (stateDot) stateDot.classList.toggle('playing', activelyPlaying);
 
   const posTxt = fmtTime(st.position);
   const durTxt = fmtTime(st.duration);
@@ -3056,11 +3172,16 @@ function renderStatus(st) {
   const mute = !!st.mute;
   const mb = document.getElementById('muteBtn');
   if (mb){
-    // update label/icon subtly
-    mb.querySelector('.bIcon').textContent = mute ? '🔇' : '🔈';
-    mb.querySelector('span:last-child').textContent = mute ? 'Unmute' : 'Mute';
+    mb.classList.toggle('muted', mute);
+    const muteLbl = mb.querySelector('.rLabel');
+    if (muteLbl) muteLbl.textContent = mute ? 'Unmute' : 'Mute';
   }
-  document.getElementById('qlen').textContent = st.queue_length || 0;
+  const ppb = document.getElementById('playPauseBtn');
+  if (ppb) ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
+  const qCount = document.getElementById('queueCount');
+  if (qCount) qCount.textContent = String(st.queue_length || 0);
+  const qClear = document.getElementById('queueClearBtn');
+  if (qClear) qClear.classList.toggle('hidden', !(Number(st.queue_length) > 0));
 
   // progress bar fill
   if (!__scrubbing && st.position != null && st.duration != null && st.duration > 0) {
@@ -3085,15 +3206,28 @@ function renderStatus(st) {
     if (item && item.available === false) li.classList.add('isUnavailable');
     li.dataset.index = String(idx);
 
-    setBg(li, thumbUrl(item));
-
-    // Big, faint provider logo behind handle
-    const bg = document.createElement('div');
-    bg.className = 'qProvBg';
-    const bgFav = faviconUrl(item);
-    if (bgFav){
-      bg.innerHTML = `<img src="${bgFav}" alt="" />`;
-      li.appendChild(bg);
+    // Contained 16:9 artwork (not a background: text stays on clean glass)
+    const thumb = document.createElement('div');
+    thumb.className = 'qThumb';
+    const turl = thumbUrl(item);
+    if (turl){
+      const art = document.createElement('img');
+      art.className = 'qThumbImg';
+      art.alt = '';
+      art.loading = 'lazy';
+      art.src = turl;
+      art.onerror = () => { try { art.remove(); } catch(_e) {} };
+      thumb.appendChild(art);
+    }
+    const thumbFav = faviconUrl(item);
+    if (thumbFav){
+      const favBadge = document.createElement('img');
+      favBadge.className = 'qThumbFav';
+      favBadge.alt = '';
+      favBadge.loading = 'lazy';
+      favBadge.src = thumbFav;
+      favBadge.onerror = () => { try { favBadge.remove(); } catch(_e) {} };
+      thumb.appendChild(favBadge);
     }
 
     // Drag handle (hamburger)
@@ -3111,17 +3245,10 @@ function renderStatus(st) {
     const title = document.createElement('div');
     title.className = 'qTitle';
 
-    const favImg = document.createElement('img');
-    favImg.className = 'fav';
-    favImg.alt = '';
-    favImg.loading = 'lazy';
-    favImg.src = faviconUrl(item) || '';
-
     const tspan = document.createElement('span');
     tspan.className = 'qTitleText';
     tspan.textContent = item.title || item.url || '';
 
-    if (favImg.src) title.appendChild(favImg);
     title.appendChild(tspan);
     const titleBadge = _uploadBadge(item);
     if (titleBadge) title.insertAdjacentHTML('beforeend', titleBadge);
@@ -3129,6 +3256,12 @@ function renderStatus(st) {
     const chan = document.createElement('div');
     chan.className = 'qChan';
     chan.textContent = displaySub(item) || '';
+    if (item && item.available === false){
+      const tag = document.createElement('span');
+      tag.className = 'qUnavailTag';
+      tag.textContent = 'unavailable';
+      chan.appendChild(tag);
+    }
 
     body.appendChild(title);
     body.appendChild(chan);
@@ -3139,8 +3272,9 @@ function renderStatus(st) {
     del.title = 'Remove from queue';
     del.onclick = () => qRemove(idx);
 
-    li.appendChild(handle);
+    li.appendChild(thumb);
     li.appendChild(body);
+    li.appendChild(handle);
     li.appendChild(del);
     ol.appendChild(li);
   });
@@ -3154,20 +3288,22 @@ function renderStatus(st) {
 async function refresh() {
   let st = __lastStatus || null;
   let fast = null;
+  let reachedServer = false;
   try {
     fast = await _fetchFastPlaybackState();
+    reachedServer = true;
     st = _mergePlaybackStateIntoStatus(st, fast);
   } catch(_e) {}
 
   try {
     if (_shouldRefreshFullStatus(st, fast)) {
       const full = await _fetchFullStatus();
+      reachedServer = true;
       st = fast ? _mergePlaybackStateIntoStatus(full, fast) : full;
     }
-  } catch(_e) {
-    if (!st) return;
-  }
+  } catch(_e) {}
 
+  _connSignal(reachedServer);
   if (!st) return;
   __lastStatus = st;
   renderStatus(st);
@@ -3247,7 +3383,10 @@ function connectUiEventStream(){
     return;
   }
   __uiEventSource = es;
-  _uiEventMarkAlive();
+  // Record birth only — never the health clock. The stream hasn't proven
+  // itself until a real event (hello/ping) arrives; stamping health here
+  // would let a silent reconnect loop read as healthy forever.
+  __uiEventSourceBornTs = Date.now();
 
   es.addEventListener('hello', (ev) => {
     _uiEventMarkAlive();
@@ -3292,6 +3431,99 @@ function closeHeaderMenu(){
   if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
+// --- Theme override (Auto / Dark / Light) -----------------------------------
+// All light styling lives in `prefers-color-scheme: light` media blocks; the
+// manual override rewrites those rules' media conditions at runtime instead of
+// duplicating every block under a data-attribute selector.
+const __THEME_KEY = 'relaytv_theme';
+const __THEME_RE = /\(prefers-color-scheme:\s*(light|dark)\)/;
+
+function _themeStoredMode(){
+  try {
+    const v = localStorage.getItem(__THEME_KEY);
+    return (v === 'dark' || v === 'light') ? v : 'auto';
+  } catch (_e) { return 'auto'; }
+}
+
+function _themeApplyToSheets(mode){
+  for (const sheet of Array.from(document.styleSheets)){
+    let rules = null;
+    try { rules = sheet.cssRules; } catch (_e) { continue; }
+    if (!rules) continue;
+    for (const rule of Array.from(rules)){
+      if (!rule.media || !rule.media.mediaText) continue;
+      const orig = rule.__relaytvOrigMedia || rule.media.mediaText;
+      const m = orig.match(__THEME_RE);
+      if (!m) continue;
+      rule.__relaytvOrigMedia = orig;
+      if (mode === 'auto'){
+        rule.media.mediaText = orig;
+      } else {
+        // Always/never tokens that stay valid inside `and (...)` chains.
+        const on = (m[1] === mode);
+        rule.media.mediaText = orig.replace(__THEME_RE, on ? '(min-width: 0px)' : '(min-width: 99999px)');
+      }
+    }
+  }
+}
+
+function _themeEffective(mode){
+  if (mode !== 'auto') return mode;
+  try {
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  } catch (_e) { return 'dark'; }
+}
+
+function applyTheme(mode){
+  _themeApplyToSheets(mode);
+  try { document.documentElement.style.colorScheme = (mode === 'auto') ? '' : mode; } catch (_e) {}
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', _themeEffective(mode) === 'light' ? '#edf2ff' : '#05070d');
+  document.querySelectorAll('.mtBtn').forEach((b) => {
+    const on = (b.dataset.themeMode || 'auto') === mode;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
+function bindThemeUi(){
+  document.querySelectorAll('.mtBtn').forEach((b) => {
+    b.onclick = () => {
+      const mode = b.dataset.themeMode || 'auto';
+      try { localStorage.setItem(__THEME_KEY, mode); } catch (_e) {}
+      applyTheme(mode);
+    };
+  });
+  try {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => applyTheme(_themeStoredMode());
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+  } catch (_e) {}
+}
+
+// Apply immediately (deferred script: DOM and stylesheets are already in) so a
+// stored override never flashes the system theme; re-applied on `load` in case
+// a stylesheet finished late.
+try { applyTheme(_themeStoredMode()); } catch (_e) {}
+window.addEventListener('load', () => { try { applyTheme(_themeStoredMode()); } catch (_e) {} });
+
+let __menuFootVersionLoaded = false;
+async function _loadMenuFootVersion(){
+  if (__menuFootVersionLoaded) return;
+  __menuFootVersionLoaded = true;
+  try {
+    const r = await fetch('/app/info', {cache:'no-store'});
+    if (!r.ok) throw new Error('status ' + r.status);
+    const info = await r.json();
+    const v = String(info.version || info.release_version || '').trim();
+    const el = document.getElementById('menuAppVersion');
+    if (el && v) el.textContent = /^\d/.test(v) ? `v${v}` : v;
+  } catch (_e) {
+    __menuFootVersionLoaded = false;
+  }
+}
+
 function bindHeaderMenu(){
   const wrap = document.getElementById('hdrMenuWrap');
   const btn = document.getElementById('hdrMenuBtn');
@@ -3303,6 +3535,7 @@ function bindHeaderMenu(){
     const isHidden = panel.classList.contains('hidden');
     panel.classList.toggle('hidden', !isHidden);
     btn.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+    if (isHidden) _loadMenuFootVersion().catch(() => {});
   };
   panel.addEventListener('pointerdown', (e) => {
     try { e.stopPropagation(); } catch(_){}
@@ -3376,14 +3609,28 @@ async function renderHistory(){
     const row = document.createElement('div');
     row.className = 'histItem';
     if (!available) row.classList.add('isUnavailable');
-    setBg(row, thumbUrl(it));
 
-    const bgFav = faviconUrl(it);
-    if (bgFav){
-      const bg = document.createElement('div');
-      bg.className = 'histProvBg';
-      bg.innerHTML = `<img src="${bgFav}" alt="" />`;
-      row.appendChild(bg);
+    const thumb = document.createElement('div');
+    thumb.className = 'histThumb';
+    const turl = thumbUrl(it);
+    if (turl){
+      const img = document.createElement('img');
+      img.className = 'histThumbImg';
+      img.alt = '';
+      img.loading = 'lazy';
+      img.src = turl;
+      img.onerror = () => { try { img.remove(); } catch(_e){} };
+      thumb.appendChild(img);
+    }
+    const fav = faviconUrl(it);
+    if (fav){
+      const badge = document.createElement('img');
+      badge.className = 'histThumbFav';
+      badge.alt = '';
+      badge.loading = 'lazy';
+      badge.src = fav;
+      badge.onerror = () => { try { badge.remove(); } catch(_e){} };
+      thumb.appendChild(badge);
     }
 
     const resumePos = Number(it.resume_pos);
@@ -3395,7 +3642,7 @@ async function renderHistory(){
       const fill = document.createElement('span');
       fill.style.width = `${Math.max(0, Math.min(100, progressRatio * 100))}%`;
       bar.appendChild(fill);
-      row.appendChild(bar);
+      thumb.appendChild(bar);
     }
 
     const meta = document.createElement('div');
@@ -3403,17 +3650,6 @@ async function renderHistory(){
 
     const title = document.createElement('div');
     title.className = 'histTitle';
-
-    const fav = faviconUrl(it);
-    if (fav){
-      const favImg = document.createElement('img');
-      favImg.className = 'fav';
-      favImg.alt = '';
-      favImg.loading = 'lazy';
-      favImg.src = fav;
-      title.appendChild(favImg);
-    }
-
     const tspan = document.createElement('span');
     tspan.className = 'histTitleText';
     tspan.textContent = it.title || it.url || '(unknown)';
@@ -3425,29 +3661,35 @@ async function renderHistory(){
     channel.className = 'histSub';
     channel.textContent = displaySub(it) || '';
 
-    const sub = document.createElement('div');
-    sub.className = 'histSub';
-    sub.textContent = `${_fmtTs(it.ts)}  •  ${it.mode || ''}`.trim();
+    const when = document.createElement('div');
+    when.className = 'histSub';
+    when.textContent = `${_fmtTs(it.ts)} · ${String(it.mode || '').replace(/_/g, ' ')}`.replace(/ · $/, '');
 
-    const progress = document.createElement('div');
-    progress.className = 'histSub';
-    if (it.completed === true) {
-      progress.textContent = 'Completed · 00:00';
-    } else {
-      const resumePos = Number(it.resume_pos);
-      progress.textContent = Number.isFinite(resumePos) && resumePos > 0
-        ? `Resume · ${fmtTime(resumePos)}`
-        : 'Resume · 00:00';
+    const tags = document.createElement('div');
+    tags.className = 'histTags';
+    if (it.completed === true){
+      const t = document.createElement('span');
+      t.className = 'histTag done';
+      t.textContent = 'Completed';
+      tags.appendChild(t);
+    } else if (Number.isFinite(resumePos) && resumePos > 0){
+      const t = document.createElement('span');
+      t.className = 'histTag resume';
+      t.textContent = `Resume ${fmtTime(resumePos)}`;
+      tags.appendChild(t);
     }
-
-    const url = document.createElement('div');
-    url.className = 'histSub';
-    url.textContent = available ? (it.url || '') : 'Playback unavailable: stored upload was removed';
+    if (!available){
+      const t = document.createElement('span');
+      t.className = 'histTag gone';
+      t.textContent = 'Upload removed';
+      tags.appendChild(t);
+    }
 
     const btns = document.createElement('div');
     btns.className = 'histBtns';
 
     const play = document.createElement('button');
+    play.className = 'histPlayBtn';
     play.textContent = 'Play';
     play.disabled = !available;
     play.onclick = async () => {
@@ -3458,6 +3700,7 @@ async function renderHistory(){
     };
 
     const queue = document.createElement('button');
+    queue.className = 'histQueueBtn';
     queue.textContent = 'Queue';
     queue.disabled = !available;
     queue.onclick = async () => {
@@ -3472,11 +3715,11 @@ async function renderHistory(){
 
     meta.appendChild(title);
     meta.appendChild(channel);
-    meta.appendChild(sub);
-    meta.appendChild(progress);
-    meta.appendChild(url);
+    meta.appendChild(when);
+    if (tags.childElementCount > 0) meta.appendChild(tags);
     meta.appendChild(btns);
 
+    row.appendChild(thumb);
     row.appendChild(meta);
     list.appendChild(row);
   });
@@ -4598,6 +4841,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initRemoteVolumeSlider();
   primeRemoteVolumeSlider().catch(() => {});
   bindHeaderMenu();
+  bindThemeUi();
   bindHistoryUi();
   bindAboutUi();
   bindNowLanguageUi();
@@ -4612,11 +4856,15 @@ window.addEventListener('DOMContentLoaded', () => {
     if (__uiNavDepth > 0) __uiNavDepth = Math.max(0, __uiNavDepth - 1);
     _uiCloseTopLayerFromNav();
   });
-  document.addEventListener('visibilitychange', () => {
+  const wakeReconnect = () => {
     if (document.visibilityState !== 'visible') return;
-    if (!__uiEventSource) connectUiEventStream();
-    if (!_uiEventHealthy()) refresh().catch(() => {});
-  });
+    const wasHealthy = _uiEventHealthy();
+    _ensureUiEventStream();
+    if (!wasHealthy) refresh().catch(() => {});
+  };
+  document.addEventListener('visibilitychange', wakeReconnect);
+  window.addEventListener('online', wakeReconnect);
+  window.addEventListener('pageshow', wakeReconnect);
   connectUiEventStream();
   refresh();
   setInterval(() => {
@@ -4624,8 +4872,7 @@ window.addEventListener('DOMContentLoaded', () => {
     refresh().catch(() => {});
   }, __UI_FALLBACK_REFRESH_MS);
   setInterval(() => {
-    if (__uiEventSource) return;
-    connectUiEventStream();
+    _ensureUiEventStream();
   }, __UI_EVENT_RECONNECT_MS);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;

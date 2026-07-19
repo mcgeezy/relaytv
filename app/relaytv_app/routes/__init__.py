@@ -3174,6 +3174,9 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_playback_mode": _effective_jellyfin_playback_mode(settings_snapshot),
         "pause_reason": state.get_pause_reason() if hasattr(state, "get_pause_reason") else None,
         "resume_available": resume_avail,
+        # Same authoritative signal the fast snapshot carries; without it the
+        # client's fast/full views can disagree at idle and flap the UI.
+        "has_now_playing": isinstance(now_playing, dict),
         "playing": playing,
         "paused": paused,
         "playback_telemetry_source": playback_telemetry_source,
@@ -3263,14 +3266,20 @@ async def _ui_events_sse(request: Request) -> object:
                     last_queue_length = queue_length
                     last_has_now_playing = has_now_playing
 
-                if (time.time() - last_emit_ts) >= 15.0:
+                # Idle ping cadence must stay well inside the client's health
+                # window (app.js _uiEventHealthy) or a quiet stream reads as dead.
+                if (time.time() - last_emit_ts) >= 5.0:
                     ping = _json.dumps({"type": "ping", "ts": time.time()}, separators=(",", ":"), ensure_ascii=False)
                     yield f"event: ping\ndata: {ping}\n\n"
                     last_emit_ts = time.time()
         finally:
             _UI_EVENT_SUBS.discard(q)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/ui/events")
@@ -3301,7 +3310,7 @@ def ui():
 <html lang="en">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0f19" />
+  <meta name="theme-color" content="#05070d" />
   <link rel="manifest" href="/manifest.json" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -3310,7 +3319,7 @@ def ui():
   <link rel="shortcut icon" href="/pwa/brand/logo.svg?v=2" />
   <link rel="apple-touch-icon" href="/pwa/brand/logo.svg?v=2" />
   <title>RelayTV</title>
-  <link rel="stylesheet" href="/static/ui/app.css" />
+  <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3322,55 +3331,67 @@ def ui():
 <body>
   <div class="wrap">
     <header>
-      <h1 id="appBrandName">RelayTV</h1>
+      <div class="hdrBrand">
+        <span class="hdrKicker" aria-hidden="true">RelayTV</span>
+        <h1 id="appBrandName">RelayTV</h1>
+      </div>
       <div class="hdrRight">
-        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfBrand">Jellyfin</span></button>
-        <button id="addUrlBtn" class="hdrAddBtn" title="Add URL">＋</button>
+        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
+        <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
           <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
-            <span class="menuLabel">MENU</span>
-            <span class="menuIcon">☰</span>
+            <svg class="menuGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
           </button>
           <div id="hdrMenuPanel" class="hdrMenuPanel hidden" role="menu" aria-label="Header menu">
-            <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History">History</button>
-            <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV">About</button>
-            <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings">Settings</button>
+            <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5v4H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5.2 9a8 8 0 1 1-1.1 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M12 8.5V12l2.6 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>History</button>
+            <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 11.2v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="12" cy="7.9" r="1.15" fill="currentColor"/></svg>About</button>
+            <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m6 0h2M4 12h2m6 0h8M4 17h10m6 0h0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="9" cy="12" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="17" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>Settings</button>
+            <div class="hdrMenuTheme" role="group" aria-label="Theme">
+              <span class="mtLabel">Theme</span>
+              <div class="mtSeg">
+                <button type="button" class="mtBtn" data-theme-mode="auto" role="menuitemradio" aria-checked="true">Auto</button>
+                <button type="button" class="mtBtn" data-theme-mode="dark" role="menuitemradio" aria-checked="false">Dark</button>
+                <button type="button" class="mtBtn" data-theme-mode="light" role="menuitemradio" aria-checked="false">Light</button>
+              </div>
+            </div>
+            <div class="hdrMenuFoot"><span id="menuDeviceName">RelayTV</span><span id="menuAppVersion"></span></div>
           </div>
         </div>
       </div>
     </header>
 
+    <div id="connBadge" class="connBadge hidden" role="status" aria-live="polite">Reconnecting…</div>
+
     <!-- Hidden by default: manual URL modal (opened via ＋ button) -->
     <div id="addBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal">
+      <div class="modal addModal">
         <div class="modalTop">
-          <div class="modalTitle">Add URL</div>
+          <div class="modalTitle">Send to TV</div>
           <div class="modalBtns">
             <button id="addCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
           </div>
         </div>
 
-        <div class="fieldRow">
-          <input id="addUrlInput" class="urlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
-          <button id="addPasteBtn" class="iconBtn sm" title="Paste from clipboard" aria-label="Paste">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M9 4h6a2 2 0 0 1 2 2v2H7V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-              <path d="M7 8H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </div>
+        <section class="amSection">
+          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 5.43" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M14 10a5 5 0 0 0-7.07 0L4.1 12.83a5 5 0 0 0 7.07 7.07l1.32-1.33" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Play a link</span></div>
+          <div class="fieldRow">
+            <input id="addUrlInput" class="urlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
+            <button id="addPasteBtn" class="iconBtn sm" title="Paste from clipboard" aria-label="Paste">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M9 4h6a2 2 0 0 1 2 2v2H7V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <path d="M7 8H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="modalBtns amActions">
+            <button id="addQueueBtn" title="Add to queue">Queue</button>
+            <button id="addPlayBtn" class="good" title="Play now">Play</button>
+          </div>
+          <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
+        </section>
 
-        <div class="modalBtns" style="margin-top: 12px; justify-content:flex-end;">
-          <button id="addQueueBtn" title="Add to queue">Queue</button>
-          <button id="addPlayBtn" class="good" title="Play now">Play</button>
-        </div>
-
-        <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
-
-        <div class="addDivider" aria-hidden="true"></div>
-
-        <div id="notifySection" class="notifySection">
-          <div class="notifyTitle">Send Toast Notification</div>
+        <section id="notifySection" class="amSection">
+          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Toast notification</span></div>
           <div class="notifyField">
             <label for="notifyTextInput">Text</label>
             <textarea id="notifyTextInput" class="notifyInput" maxlength="500" placeholder="Notification text…"></textarea>
@@ -3400,18 +3421,18 @@ def ui():
             <div id="notifyHelperTxt" class="helperTxt" aria-live="polite"></div>
             <button id="notifySendBtn" class="good" title="Send notification">Send</button>
           </div>
-        </div>
+        </section>
       </div>
     </div>
 
     <!-- Hidden by default: history modal (opened via 🕘 button) -->
     <div id="histBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal">
+      <div class="modal histModal">
         <div class="modalTop">
           <div class="modalTitle">History</div>
           <div class="modalBtns">
             <button id="histClearBtn" class="danger" title="Clear history">Clear</button>
-            <button id="histCloseBtn" title="Close">Close</button>
+            <button id="histCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
           </div>
         </div>
         <div id="histList" class="histList"></div>
@@ -3502,59 +3523,97 @@ def ui():
 
     <div class="topgrid">
       <div class="nowCol">
-      <section id="nowTopCard" class="card">
-        <div class="sectionTitle">NOW PLAYING <button id="nowSkipBtn" class="nowSkipBtn hidden" title="Stop current and play next up" aria-label="Play next up">✕</button></div>
+      <section id="nowTopCard" class="card nowCard">
+        <div class="nHead">
+          <span class="nHeadTitle">Now Playing</span>
+          <span id="nowStateDot" class="nStateDot" aria-hidden="true"></span>
+          <span id="nowStateTag" class="nStateTag hidden">Paused</span>
+          <button id="nowSkipBtn" class="nSkipBtn hidden" title="Stop current and play next up" aria-label="Play next up">Skip</button>
+        </div>
 
-        <div class="nowTitle">
-          <div class="scrim" style="min-width:0;">
-            <div id="now">Ready</div>
-            <div class="nowSubRow">
+        <div class="nHero">
+          <div id="nHeroArt" class="nHeroArt" aria-hidden="true"></div>
+          <div class="nHeroFade" aria-hidden="true"></div>
+          <div class="nHeroBody">
+            <div id="now" class="nTitle">Ready</div>
+            <div class="nMetaRow">
               <span id="picon" class="providerIcon">🎞️</span>
-              <div id="nowSub" class="muted" style="min-width:0;"></div>
+              <div id="nowSub" class="nChan" style="min-width:0;"></div>
+              <div class="nTrackBtns">
+                <button id="nowLangBtn" class="nGhostBtn hidden" title="Audio language" aria-label="Audio language">Audio</button>
+                <button id="nowSubLangBtn" class="nGhostBtn hidden" title="Subtitle language" aria-label="Subtitle language">Subs</button>
+              </div>
             </div>
           </div>
         </div>
 
+        <div class="nIdleMsg" aria-hidden="true">Nothing playing — share a link or pick from the queue</div>
+
         <div id="progress" class="progress" title="Drag to seek (or tap)">
           <div id="progFill" class="progressFill"></div>
         </div>
-        <div class="nowBottomBar">
-          <span class="chip nowPosChip" title="Playback time">⏱ <span id="pos">--:--</span> <span class="chipSep">/</span> <span id="dur">--:--</span></span>
-          <div class="nowMetaActions">
-            <span class="chip" title="Queue length">📥 <span id="qlen">0</span> queued</span>
-            <button id="nowLangBtn" class="nowLangBtn hidden" title="Audio language" aria-label="Audio language">Audio</button>
-            <button id="nowSubLangBtn" class="nowLangBtn hidden" title="Subtitle language" aria-label="Subtitle language">Subs</button>
-          </div>
-        </div>
+        <div class="nTimeRow"><span id="pos">--:--</span><span id="dur">--:--</span></div>
       </section>
 
       <section id="remoteCard" class="card remoteCard">
-        <div class="sectionTitle">REMOTE</div>
-
-        <div class="controls" style="margin-top:12px; grid-template-columns: repeat(2, minmax(0, 1fr));">
-          <button onclick="post('/playback/toggle')"><span class="bIcon">⏯️</span><span>Play/Pause</span></button>
-          <button onclick="post('/next')"><span class="bIcon">⏭️</span><span>Next</span></button>
-          <button onclick="post('/mute')" id="muteBtn"><span class="bIcon">🔇</span><span>Mute</span></button>
-          <button class="danger" onclick="post('/close')" id="closeBtn"><span class="bIcon">✖️</span><span>Close</span></button>
-        </div>
-
-        <div class="controls2">
-          <button onclick="post('/seek',{sec:-10})"><span class="bIcon">↩️</span><span>-10s</span></button>
-          <button onclick="post('/seek',{sec:+30})"><span class="bIcon">↪️</span><span>+30s</span></button>
+        <div class="rGrid">
+          <button id="playPauseBtn" class="rTile rBig" onclick="post('/playback/toggle')" aria-label="Play or pause">
+            <span class="rRing">
+              <svg class="rGlyph rGlyphPlay" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 5.9v12.2a.9.9 0 0 0 1.37.77l9.6-6.1a.9.9 0 0 0 0-1.52l-9.6-6.1a.9.9 0 0 0-1.37.75z" fill="currentColor"/></svg>
+              <svg class="rGlyph rGlyphPause" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="5" width="3.6" height="14" rx="1.3" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.3" fill="currentColor"/></svg>
+            </span>
+            <span class="rLabel">Play/Pause</span>
+          </button>
+          <button class="rTile rBig" onclick="post('/next')" aria-label="Play next">
+            <span class="rRing">
+              <svg class="rGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.6v10.8a.85.85 0 0 0 1.3.72l8.2-5.4a.85.85 0 0 0 0-1.44L7.3 5.88A.85.85 0 0 0 6 6.6z" fill="currentColor"/><rect x="16.6" y="5.6" width="2.6" height="12.8" rx="1.1" fill="currentColor"/></svg>
+            </span>
+            <span class="rLabel">Next</span>
+          </button>
+          <button id="muteBtn" class="rTile rWide rMute" onclick="post('/mute')" aria-label="Toggle mute">
+            <span class="rRing">
+              <svg class="rGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.6v4.8h3.1l4.6 4V5.6l-4.6 4H4z" fill="currentColor"/><path d="M15.6 9.9l4.2 4.2m0-4.2l-4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+            </span>
+            <span class="rLabel">Mute</span>
+          </button>
+          <button id="closeBtn" class="rTile rWide rClose" onclick="post('/close')" aria-label="Close playback">
+            <span class="rRing">
+              <svg class="rGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 7.2l9.6 9.6m0-9.6l-9.6 9.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </span>
+            <span class="rLabel">Close</span>
+          </button>
+          <button class="rTile rSeek" onclick="post('/seek',{sec:-10})" aria-label="Back 10 seconds">
+            <span class="rRing rRingSeek">
+              <svg class="rGlyph rGlyphSeek" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8a8.2 8.2 0 1 1-7.5 4.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.9 3.2v5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.4" text-anchor="middle" font-size="8.2" font-weight="700" fill="currentColor">10</text></svg>
+            </span>
+            <span class="rLabel">−10s</span>
+          </button>
+          <button class="rTile rSeek" onclick="post('/seek',{sec:+30})" aria-label="Forward 30 seconds">
+            <span class="rRing rRingSeek">
+              <svg class="rGlyph rGlyphSeek" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8a8.2 8.2 0 1 0 7.5 4.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M19.1 3.2v5h-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.4" text-anchor="middle" font-size="8.2" font-weight="700" fill="currentColor">30</text></svg>
+            </span>
+            <span class="rLabel">+30s</span>
+          </button>
         </div>
         <div class="remoteVolumeRow">
-          <div id="remoteVolValue" class="remoteVolumeValue">--%</div>
+          <span class="rVolIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 9.6v4.8h3.1l4.6 4V5.6l-4.6 4H4z" fill="currentColor"/><path d="M15.3 9.2a4.4 4.4 0 0 1 0 5.6m2.5-8a8 8 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </span>
           <input id="remoteVolSlider" class="remoteVolumeSlider" type="range" min="0" max="200" step="1" value="100" aria-label="Volume" />
+          <div id="remoteVolValue" class="remoteVolumeValue">--%</div>
         </div>
       </section>
     </div>
 
-      <aside class="card">
-        <div class="sectionTitle">QUEUE</div>
+      <aside class="card queueCard">
+        <div class="qHead">
+          <span class="qHeadTitle">Queue</span>
+          <span id="queueCount" class="qCount">0</span>
+          <button id="queueClearBtn" class="qClearBtn hidden" title="Clear queue" onclick="post('/clear')">Clear</button>
+        </div>
         <ol id="queue" class="queueList"></ol>
         <div class="footerRow">
           <span>Tip: Share again while playing to enqueue</span>
-          <span><a class="link" href="#" onclick="post('/clear');return false;">clear</a></span>
         </div>
       </aside>
     </div>
@@ -3597,7 +3656,7 @@ def ui():
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
-  <script src="/static/ui/app.js" defer></script>
+  <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -3907,4 +3966,19 @@ def ui():
 
 """
     html = html.replace("__IDLE_PANEL_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
-    return HTMLResponse(content=html)
+    html = html.replace("__UI_ASSET_V__", _ui_asset_version())
+    # The shell must never be cached: it carries the asset version stamp that
+    # busts the hour-long static cache on app.js/app.css after a deploy.
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
+
+
+def _ui_asset_version() -> str:
+    stamp = 0
+    for name in ("app.css", "app.js"):
+        path = _resolve_static_asset("ui", name)
+        try:
+            if path:
+                stamp = max(stamp, int(os.path.getmtime(path)))
+        except OSError:
+            pass
+    return str(stamp or int(time.time()))

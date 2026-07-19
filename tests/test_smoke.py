@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 import tomllib
@@ -50,8 +51,9 @@ def test_ui_smoke() -> None:
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
-    assert '<link rel="stylesheet" href="/static/ui/app.css" />' in response.text
-    assert '<script src="/static/ui/app.js" defer></script>' in response.text
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
+    assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
+    assert response.headers.get('cache-control') == 'no-cache'
     assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
     assert '<style>' not in response.text
     assert css_response.status_code == 200
@@ -107,7 +109,9 @@ def test_ui_smoke() -> None:
     assert "const imageUrl = file ? await readNotifyImageDataUrl(file) : String(imageUrlEl?.value || '').trim();" in js
     assert "await _fetchWithTimeout('/overlay'" in js
     assert 'bindAboutUi();' in js
-    assert 'class="nowSubRow"' in response.text
+    assert 'class="nMetaRow"' in response.text
+    assert 'id="nHeroArt"' in response.text
+    assert 'id="nowStateDot"' in response.text
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
     assert 'role="tablist"' in response.text
@@ -141,7 +145,7 @@ def test_ui_smoke() -> None:
     assert 'function _formatUploadSize(bytes)' in js
     assert 'mediaBadge' in js
     assert 'isUnavailable' in js
-    assert 'Playback unavailable: stored upload was removed' in js
+    assert 'Upload removed' in js
     assert 'onclick="post(\'/close\')"' in response.text
     assert "await post('/now_playing/clear');" in js
     assert 'id="jfSearchBtn"' not in response.text
