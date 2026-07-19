@@ -51,6 +51,11 @@ With the token enabled:
 
 Unset or blank `RELAYTV_API_TOKEN` restores the fully open behavior.
 
+Clients can validate write credentials without changing server state by
+calling `POST /auth/check`. A successful response is
+`{"ok": true, "token_required": true|false}`; an incorrect or missing token on
+a protected server receives the same `401` response as other writes.
+
 The token protects control actions; it is not transport security. For
 exposure beyond the trusted LAN, terminate TLS and (optionally) an extra
 auth layer at a reverse proxy. Example with Caddy:

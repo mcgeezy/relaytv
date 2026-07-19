@@ -11,6 +11,7 @@ EXPECTED_ROUTES = {
     ("GET", "/assets/banner.png", "relaytv_banner_png_asset"),
     ("GET", "/assets/banner.svg", "relaytv_banner_svg_asset"),
     ("GET", "/assets/logo.svg", "relaytv_logo_svg_asset"),
+    ("POST", "/auth/check", "auth_check"),
     ("POST", "/clear", "clear"),
     ("POST", "/close", "close"),
     ("GET", "/devices", "get_devices"),
