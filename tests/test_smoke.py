@@ -187,6 +187,10 @@ def test_ui_smoke() -> None:
     assert "progressTrack.className = 'jfMediaProgress';" in jellyfin_js
     assert 'function _jfBindImageFallback' in jellyfin_js
     assert 'function _jfHasFiniteNumber' in jellyfin_js
+    assert "id: 'tv_series_header'" in jellyfin_js
+    assert "id: 'tv_season_chooser'" in jellyfin_js
+    assert "itTitle.textContent = itemType === 'episode' ? (subtitleText || 'Episode') : titleText;" in jellyfin_js
+    assert "itSub.textContent = itemType === 'episode' ? titleText : subtitleText;" in jellyfin_js
     assert "item.backdrop || item.poster_local" in jellyfin_js
     assert "mkBtn('Queue Last', 'play_last')" in jellyfin_js
     assert "const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';" in jellyfin_js
@@ -209,6 +213,9 @@ def test_ui_smoke() -> None:
     assert '.jfModern .jfConnection{' in jellyfin_css
     assert '.jfModern .jfDetail{' in jellyfin_css
     assert '.jfMediaProgress{' in jellyfin_css
+    assert '.jfSeriesHero{' in jellyfin_css
+    assert '.jfSeasonModal{' in jellyfin_css
+    assert '.jfModern .jfScroller:not(.jfCatalogScroller) .jfItem{' in jellyfin_css
     assert "chromium.connect(wsEndpoint)" in jellyfin_playwright
     assert "--${name}=" in jellyfin_playwright
     assert "nestedInteractive" in jellyfin_playwright

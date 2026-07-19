@@ -226,6 +226,25 @@ Status: complete
 Exit: automated browser coverage and live verification evidence are recorded,
 with no known accessibility or functional regression.
 
+### M6A - Design Feedback Polish
+
+Status: complete
+
+- [x] Restore distinct, horizontally scrollable Home rails with comfortable
+  card spacing at phone and desktop widths.
+- [x] Show the Movies heading consistently with the other Home row headings.
+- [x] Replace the TV series image/back tile with a backdrop-led information
+  hero and one Back to Series action.
+- [x] Promote episode/season details to the episode-card heading and move the
+  series name to the supporting line.
+- [x] Replace inline season tiles with a desktop modal and mobile bottom sheet,
+  including current-season state, Escape dismissal, and scroll locking.
+- [x] Queue season-picker input received during a live catalog refresh instead
+  of silently dropping the interaction.
+
+Exit: the requested Home and TV hierarchy changes are present in the running
+container and verified at phone and desktop widths.
+
 ### M7 - Release Handoff And Closeout
 
 Status: awaiting design acceptance
@@ -286,11 +305,12 @@ node scripts/jellyfin-ui-smoke.js \
 
 | Date | Milestone | Commit / PR | Change | Validation |
 | --- | --- | --- | --- | --- |
-| 2026-07-19 | M0 | Planning | Reviewed history and docs; captured live Playwright baseline; created the modernization roadmap and branch strategy. | `ruff check app tests`; 401 tests; `git diff --check` passed on PR #38 before branching. |
+| 2026-07-19 | M0 | `873f016` | Reviewed history and docs; captured live Playwright baseline; created the modernization roadmap and branch strategy. | `ruff check app tests`; 401 tests; `git diff --check` passed on PR #38 before branching. |
 | 2026-07-19 | M0 | `d6eb8cf` | Confirmed PR #38 merged and fast-forwarded the Jellyfin feature branch to its post-merge `main` commit. | Branch ancestry and clean merge state verified with Git and GitHub. |
 | 2026-07-19 | M1 | `b70a392` | Extracted the Jellyfin browse controller and stylesheet into separately cache-busted static assets without changing IDs, APIs, or behavior. | Rebuilt the live container; `/health` and Jellyfin authentication/connection passed; Playwright phone-dark and desktop-light dashboard, Movies, detail, keyboard, asset-load, error, and overflow checks passed. Ruff and all 401 tests passed. |
-| 2026-07-19 | M2 | Milestone commit | Replaced full-library catalog requests with 48-item pages, deduplicated sentinel-driven appends, cancellable browse requests, lazy images, and document-level catalog scrolling. | Rebuilt the live container; direct endpoint pagination passed; remote Playwright via `ws://10.55.55.98:3000/` verified 48-to-96 append, unique IDs, retained focus, no nested or horizontal overflow, bounded sort reloads, TV loading, and aborted obsolete sort/search requests. |
-| 2026-07-19 | M3 | Milestone commit | Added the opt-out modern shell with a glass app bar, separate connection/loading state, desktop rail, phone bottom navigation, integrated search/sort toolbar, and persisted `jfui=modern|classic` switch. | Rebuilt the live container; remote Playwright and screenshot inspection covered phone dark, desktop light, and classic fallback modes with connected branding, fixed/sticky navigation, correct mode selection, zero overflow, and no browser errors. |
-| 2026-07-19 | M4 | Milestone commit | Added poster/backdrop/progress payload roles, media-aware poster and landscape cards, Continue Watching progress/Resume affordances, normalized action labels, and viewport-anchored phone sheet/desktop drawer details. | Rebuilt the live container; service/route/inventory tests passed; live payload sampling verified image/progress roles; remote Playwright and screenshots verified 2:3 catalog art, 16:9 backdrops, progress controls, action parity, exact viewport anchoring, zero overflow, and no browser errors. |
-| 2026-07-19 | M5 | Milestone commit | Fixed null season selection, completed TV hierarchy behavior, retained scoped cancelable search, and added deterministic partial-image fallback. | Rebuilt the live container; remote Playwright verified 11 series, 10 Season 1 episodes, adjacent traversal, Play All affordances, TV/movie search scoping, simulated offline-to-reconnect recovery, and 88/88 failed images replaced by the local fallback; Emby/Jellyfin service tests passed. |
-| 2026-07-19 | M6 | Milestone commit | Added the parameterized `scripts/jellyfin-ui-smoke.js` matrix and corrected card semantics, modal focus entry/return, and search-Escape propagation uncovered by the new checks. | Checked-in smoke passed via `ws://10.55.55.98:3000/`: both themes/viewports rendered 48 then 96 unique Movies, 11 series, and 10 episodes; phone sheet and desktop drawer were viewport-anchored; offline recovery passed; overflow, nested scroll, nested interactive, browser-error, and HTTP-error counts were zero. |
+| 2026-07-19 | M2 | `2d9d20a` | Replaced full-library catalog requests with 48-item pages, deduplicated sentinel-driven appends, cancellable browse requests, lazy images, and document-level catalog scrolling. | Rebuilt the live container; direct endpoint pagination passed; remote Playwright via `ws://10.55.55.98:3000/` verified 48-to-96 append, unique IDs, retained focus, no nested or horizontal overflow, bounded sort reloads, TV loading, and aborted obsolete sort/search requests. |
+| 2026-07-19 | M3 | `1f70424` | Added the opt-out modern shell with a glass app bar, separate connection/loading state, desktop rail, phone bottom navigation, integrated search/sort toolbar, and persisted `jfui=modern|classic` switch. | Rebuilt the live container; remote Playwright and screenshot inspection covered phone dark, desktop light, and classic fallback modes with connected branding, fixed/sticky navigation, correct mode selection, zero overflow, and no browser errors. |
+| 2026-07-19 | M4 | `b556f01` | Added poster/backdrop/progress payload roles, media-aware poster and landscape cards, Continue Watching progress/Resume affordances, normalized action labels, and viewport-anchored phone sheet/desktop drawer details. | Rebuilt the live container; service/route/inventory tests passed; live payload sampling verified image/progress roles; remote Playwright and screenshots verified 2:3 catalog art, 16:9 backdrops, progress controls, action parity, exact viewport anchoring, zero overflow, and no browser errors. |
+| 2026-07-19 | M5 | `4ea31a4` | Fixed null season selection, completed TV hierarchy behavior, retained scoped cancelable search, and added deterministic partial-image fallback. | Rebuilt the live container; remote Playwright verified 11 series, 10 Season 1 episodes, adjacent traversal, Play All affordances, TV/movie search scoping, simulated offline-to-reconnect recovery, and 88/88 failed images replaced by the local fallback; Emby/Jellyfin service tests passed. |
+| 2026-07-19 | M6 | `ed2c947` | Added the parameterized `scripts/jellyfin-ui-smoke.js` matrix and corrected card semantics, modal focus entry/return, and search-Escape propagation uncovered by the new checks. | Checked-in smoke passed via `ws://10.55.55.98:3000/`: both themes/viewports rendered 48 then 96 unique Movies, 11 series, and 10 episodes; phone sheet and desktop drawer were viewport-anchored; offline recovery passed; overflow, nested scroll, nested interactive, browser-error, and HTTP-error counts were zero. |
+| 2026-07-19 | M6A | Milestone commit | Applied design feedback to Home rails, row headings, the TV series hero, episode typography, and the responsive season chooser; retained clicks received during live refreshes. | Rebuilt the running container; phone-dark and desktop-light Playwright checks verified 48-to-96 pagination, 11 series, 10 episodes, responsive detail/modal geometry, offline recovery, focus behavior, no nested controls or scroll regions, and no viewport overflow. |

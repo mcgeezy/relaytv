@@ -15,9 +15,11 @@ function check(condition, message) {
 }
 
 async function waitForItems(page, rowId) {
-  await page.waitForFunction((id) => {
-    return document.querySelectorAll(`.jfRow[data-row-id="${id}"] .jfItem`).length > 0;
+  const ready = await page.waitForFunction((id) => {
+    const count = document.querySelectorAll(`.jfRow[data-row-id="${id}"] .jfItem`).length;
+    return count > 0 ? count : 0;
   }, rowId, { timeout: 15000 });
+  return ready.jsonValue();
 }
 
 async function waitForCatalog(page, rowId) {
@@ -152,10 +154,17 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     check(seriesCount > 0 && seriesCount <= 48, `${scenario.name}: TV series page was not bounded`);
     await seriesCards.first().focus();
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.querySelector('.jfRow[data-row-id="tv_selection"]'));
-    await waitForItems(page, 'tv_episodes');
-    const episodeCount = await page.locator('.jfRow[data-row-id="tv_episodes"] .jfItem').count();
-    check(episodeCount > 0, `${scenario.name}: series hierarchy did not render episodes`);
+    await page.waitForFunction(() => document.querySelector('.jfRow[data-row-id="tv_series_header"]'));
+    const episodeCount = await waitForItems(page, 'tv_episodes');
+    // Jellyfin push updates may replace the series header while the catalog is
+    // refreshing. Dispatch the click without Playwright's stability wait; the
+    // UI queues the toggle whenever a refresh is already in flight.
+    await page.locator('[data-jf-action="toggle_tv_season_chooser"]').click({ force: true });
+    await page.locator('.jfSeasonModal[role="dialog"]').waitFor();
+    check((await page.locator('.jfSeasonOption').count()) > 0, `${scenario.name}: season chooser has no options`);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.jfSeasonModal'));
+    check(!(await page.locator('#jellyfinShell').evaluate((shell) => shell.classList.contains('hidden'))), `${scenario.name}: season Escape closed the shell`);
 
     const a11y = await page.evaluate(() => {
       const shell = document.querySelector('#jellyfinShell');
@@ -224,16 +233,16 @@ async function runRecoveryScenario(browser, baseUrl) {
     await page.goto(`${baseUrl}/ui?jfui=modern`, { waitUntil: 'domcontentloaded' });
     await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('#jellyfinOpenBtn').click();
-    await page.locator('.jfUnavailable').waitFor();
-    check(
-      (await page.locator('#jfConnectionLabel').textContent()) === 'Unavailable',
-      'recovery: simulated outage did not set the connection state',
-    );
+    await page.waitForFunction(() => {
+      const label = document.querySelector('#jfConnectionLabel');
+      const unavailable = document.querySelector('.jfUnavailable');
+      return !!unavailable && String(label?.textContent || '').trim().startsWith('Unavailable');
+    });
     outage = false;
     await page.locator('.jfReconnectInline').click();
     await waitForItems(page, 'continue_watching');
     check(
-      (await page.locator('#jfConnectionLabel').textContent()) === 'Connected',
+      String(await page.locator('#jfConnectionLabel').textContent()).trim().startsWith('Connected'),
       'recovery: reconnect did not restore the connection state',
     );
     return { name: 'offline-recovery', homeCalls, recoveredRows: await page.locator('.jfRow').count() };

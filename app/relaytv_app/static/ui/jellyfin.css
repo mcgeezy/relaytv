@@ -1174,6 +1174,339 @@
   }
 }
 
+/* Accepted polish: roomy Home rails and the TV series workspace. */
+.jfModern .jfRows{
+  gap: 22px;
+}
+.jfModern .jfRow{
+  gap: 9px;
+}
+.jfModern .jfRowTitle{
+  padding: 0 2px;
+  color: #c8d6ea;
+  font-size: 15px;
+  font-weight: 760;
+  letter-spacing: -.01em;
+  text-transform: none;
+}
+.jfModern .jfScroller:not(.jfCatalogScroller){
+  gap: 13px;
+  margin-inline: -2px;
+  padding: 2px 2px 10px;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.jfModern .jfScroller:not(.jfCatalogScroller) .jfItem{
+  flex: 0 0 210px;
+  width: 210px;
+  scroll-snap-align: start;
+}
+.jfModern .jfCatalogEpisodes .jfMeta{
+  grid-template-rows: minmax(34px, auto) 16px 28px;
+  row-gap: 4px;
+}
+.jfModern .jfCatalogEpisodes .jfItemTitle{
+  display: -webkit-box;
+  min-height: 34px;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.jfModern .jfCatalogEpisodes .jfItemSub{
+  min-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jfSeriesHeroRow{
+  min-width: 0;
+}
+.jfSeriesHero{
+  position: relative;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid var(--jf-line);
+  border-radius: 22px;
+  background: #071326;
+  box-shadow: 0 24px 58px rgba(1, 6, 18, .30);
+  color: #f4f8ff;
+  isolation: isolate;
+}
+.jfSeriesHeroArt,
+.jfSeriesHeroShade{
+  position: absolute;
+  inset: 0;
+}
+.jfSeriesHeroArt img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: .72;
+}
+.jfSeriesHeroShade{
+  z-index: 1;
+  background:
+    linear-gradient(90deg, rgba(3, 10, 24, .96) 0%, rgba(3, 10, 24, .78) 44%, rgba(3, 10, 24, .20) 78%),
+    linear-gradient(0deg, rgba(3, 10, 24, .92), transparent 58%);
+}
+.jfSeriesHeroContent{
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  width: min(680px, 72%);
+  min-height: 300px;
+  padding: 22px;
+}
+.jfSeriesBackBtn{
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 999px;
+  background: rgba(3, 10, 24, .58);
+  color: #f4f8ff;
+  font-size: 12px;
+  font-weight: 720;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.jfSeriesBackBtn:hover{
+  transform: none;
+  background: rgba(12, 27, 52, .82);
+}
+.jfSeriesHeroEyebrow{
+  margin-bottom: 5px;
+  color: #7ddcff;
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.jfSeriesHeroTitle{
+  margin: 0;
+  font-size: clamp(28px, 4vw, 46px);
+  line-height: 1.02;
+  letter-spacing: -.04em;
+}
+.jfSeriesHeroMeta{
+  min-height: 18px;
+  margin-top: 8px;
+  color: #c0cde0;
+  font-size: 13px;
+}
+.jfSeriesHeroOverview{
+  display: -webkit-box;
+  max-width: 620px;
+  margin: 10px 0 0;
+  overflow: hidden;
+  color: #d9e4f3;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.jfSeriesHeroActions{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 15px;
+}
+.jfSeriesHeroActions .btn{
+  min-height: 40px;
+  border-color: rgba(255,255,255,.18);
+  border-radius: 12px;
+}
+.jfSeriesHeroActions .btn:hover{
+  transform: none;
+}
+.jfSeasonChooseBtn{
+  background: linear-gradient(135deg, rgba(56, 189, 248, .94), rgba(57, 120, 246, .94));
+  color: #fff;
+}
+.jfSeriesPlayAllBtn{
+  background: rgba(3, 10, 24, .60);
+  color: #f4f8ff;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.jfShell.jfSeasonChooserOpen{
+  overflow: hidden;
+}
+.jfSeasonModalRow{
+  position: fixed;
+  inset: 0;
+  z-index: 1550;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+.jfSeasonModalBackdrop{
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(1, 6, 18, .68);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.jfSeasonModalBackdrop:hover,
+.jfSeasonModalBackdrop:active{
+  transform: none;
+  background: rgba(1, 6, 18, .68);
+}
+.jfSeasonModal{
+  position: relative;
+  z-index: 1;
+  width: min(620px, 100%);
+  max-height: min(78dvh, 720px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--jf-line);
+  border-radius: 22px;
+  background: var(--jf-glass-strong);
+  box-shadow: 0 30px 90px rgba(1, 6, 18, .54), inset 0 1px rgba(255,255,255,.07);
+  animation: jfSeasonModalIn .18s ease-out;
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+}
+@keyframes jfSeasonModalIn{
+  from{ opacity: .55; transform: translateY(14px) scale(.98); }
+  to{ opacity: 1; transform: none; }
+}
+.jfSeasonModalHead{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.jfSeasonModalHead h3{
+  margin: 0;
+  color: var(--text);
+  font-size: 19px;
+  letter-spacing: -.02em;
+}
+.jfSeasonModalClose{
+  flex: 0 0 38px;
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 50%;
+}
+.jfSeasonOptions{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.jfSeasonOption{
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-height: 70px;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid var(--jf-line);
+  border-radius: 14px;
+  background: var(--jf-glass-soft);
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 720;
+}
+.jfSeasonOption:hover{
+  transform: none;
+  border-color: rgba(98, 214, 255, .38);
+  background: rgba(61, 136, 236, .14);
+}
+.jfSeasonOption.active{
+  border-color: var(--jf-accent);
+  box-shadow: inset 3px 0 var(--jf-accent), 0 0 0 2px rgba(98, 214, 255, .10);
+}
+.jfSeasonOption img{
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: rgba(148,163,184,.12);
+}
+.jfSeasonOptionMark{
+  color: var(--muted2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.jfSeasonOption.active .jfSeasonOptionMark{
+  color: var(--jf-accent);
+}
+
+@media (prefers-color-scheme: light){
+  .jfModern .jfRowTitle{ color: #2d4665; }
+  .jfSeriesHero{ box-shadow: 0 24px 58px rgba(30, 64, 110, .18); }
+  .jfSeasonModal{ box-shadow: 0 30px 90px rgba(30, 64, 110, .28); }
+}
+
+@media (max-width: 720px){
+  .jfModern .jfRows{ gap: 18px; }
+  .jfModern .jfScroller:not(.jfCatalogScroller) .jfItem{
+    flex-basis: min(72vw, 238px);
+    width: min(72vw, 238px);
+  }
+  .jfSeriesHero{
+    min-height: 390px;
+    border-radius: 18px;
+  }
+  .jfSeriesHeroShade{
+    background:
+      linear-gradient(0deg, rgba(3, 10, 24, .98) 0%, rgba(3, 10, 24, .76) 62%, rgba(3, 10, 24, .18) 100%);
+  }
+  .jfSeriesHeroContent{
+    width: 100%;
+    min-height: 390px;
+    padding: 16px;
+  }
+  .jfSeriesBackBtn{
+    top: 12px;
+    left: 12px;
+  }
+  .jfSeriesHeroTitle{ font-size: 30px; }
+  .jfSeriesHeroOverview{ -webkit-line-clamp: 3; }
+  .jfSeasonModalRow{
+    align-items: end;
+    padding: 0;
+  }
+  .jfSeasonModal{
+    width: 100%;
+    max-height: min(82dvh, 760px);
+    padding: 14px 12px max(16px, env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 24px 24px 0 0;
+  }
+  .jfSeasonModal::before{
+    content: '';
+    display: block;
+    width: 42px;
+    height: 4px;
+    margin: 0 auto 10px;
+    border-radius: 999px;
+    background: rgba(148,163,184,.48);
+  }
+  .jfSeasonOptions{
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Media-aware cards and modern detail surfaces. */
 .jfThumb{ position: relative; }
 .jfMediaBadge{
