@@ -17,6 +17,30 @@ Idle default note:
 - The older native Qt idle layer is deprecated and retained only as an explicit override via `RELAYTV_QT_NATIVE_IDLE=1`.
 - Native Qt toast delivery is also deprecated as a compatibility override via `RELAYTV_QT_NATIVE_TOASTS=1`.
 
+## Supported Hosts and Prerequisites
+
+Published RelayTV images support native 64-bit Linux on `amd64`/`x86_64` and
+`arm64`/`aarch64`. This includes 64-bit Raspberry Pi OS, Debian, Ubuntu,
+Fedora, RHEL, and CentOS hosts. The television runtime depends on native host
+networking plus direct display, audio, and device access, so WSL and Docker
+Desktop on macOS or Windows are not supported install targets.
+
+RelayTV requires [Docker Engine](https://docs.docker.com/engine/install/) and
+the [Docker Compose v2 plugin](https://docs.docker.com/compose/install/linux/).
+When Docker is absent, the interactive bootstrap offers to install it from
+Docker's official package repository on the distributions above. The
+installer downloads Docker's official installation script to a temporary file
+before running it with administrator access; it does not pipe the script
+directly into a shell.
+
+Use `--install-docker` to approve dependency installation up front,
+`--no-install-docker` to require an existing Docker installation, or `--yes`
+for a fully non-interactive install. RelayTV does not add users to the
+`docker` group because [that group grants root-level
+privileges](https://docs.docker.com/engine/install/linux-postinstall/). If the
+current account cannot access Docker, bootstrap commands use `sudo` for that
+installation and print matching operator commands at completion.
+
 ## Quick Start
 
 Published-image one-line install:
@@ -41,8 +65,14 @@ Common bootstrap options:
 # Install into a specific directory
 curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --dir /opt/relaytv
 
-# Non-interactive install; skips optional CEC unless explicitly enabled
+# Non-interactive install; installs Docker if needed and skips optional CEC
 mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --yes
+
+# Approve Docker installation if it is missing
+mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --install-docker
+
+# Require Docker Engine and Compose v2 to be installed already
+mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --no-install-docker
 
 # Force optional CEC passthrough when /dev/cec* exists
 mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --enable-cec
@@ -78,9 +108,16 @@ docker compose up -d --build
 `scripts/install.sh`:
 
 - detects the active runtime (`wayland`, `x11`, or `drm`)
-- writes only the `.env` keys needed for the detected runtime plus non-default overrides
+- atomically refreshes installer-owned `.env` keys while preserving
+  operator-owned values such as `RELAYTV_API_TOKEN` and `RELAYTV_PORT`
+- restricts `.env` permissions to the target user (`0600`)
 - emits Docker build bundle flags only when an optional runtime path needs them
-- generates host device overrides for Raspberry Pi V4L2 devices and optional HDMI-CEC passthrough
+- generates host integration overrides only for existing system paths and
+  devices, including desktop sockets, Raspberry Pi V4L2 devices, and optional
+  HDMI-CEC passthrough
+- refuses to overwrite an unmarked, user-managed `docker-compose.override.yml`
+- disables container SELinux labeling in the generated override on enforcing
+  SELinux hosts, avoiding relabeling of shared system paths
 - records host identity (`PUID`, `PGID`, render group gid)
 - selects a runtime profile (`native-qt` by default)
 - leaves `MPV_AUDIO_DEVICE` blank so runtime auto-detect chooses audio output
@@ -88,12 +125,17 @@ docker compose up -d --build
 Root `install.sh`:
 
 - bootstraps published-image installs from GitHub raw files
+- validates native Linux and the published image architecture before download
+- offers to install Docker Engine and Compose v2 when missing, then validates
+  daemon and socket access
 - defaults to the current directory and prompts before writing service files
 - writes a release-only `docker-compose.yml` with no source build dependency
 - downloads `scripts/install.sh`, `scripts/doctor.sh`, and `scripts/host-ops.sh`
 - runs `scripts/install.sh` to generate `.env`
 - delegates HDMI-CEC detection and the optional prompt to `scripts/install.sh`
 - pulls and starts the configured published image by default
+- waits for `/health` and reports container status and recent logs if startup
+  does not become healthy within the configured timeout
 
 Published-image defaults:
 
@@ -271,7 +313,15 @@ Published images still require the same Linux media-host integration as local bu
   NVIDIA driver capabilities for decode/playback.
 - host display/session env such as `DISPLAY`, `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR`
 - host networking
-- `/run/user/<uid>` and X11 socket mounts for desktop session access
+- existing `/run/user/<uid>` and X11 socket mounts for desktop session access
+
+All optional host bind mounts use Compose long syntax with
+`create_host_path: false`. Missing host paths are omitted, so Compose cannot
+create a directory in place of an absent system file. In particular,
+`/etc/timezone` is not mounted; `/etc/localtime` is included only when it
+exists. This follows Docker's [bind-mount
+behavior](https://docs.docker.com/engine/storage/bind-mounts/) while keeping
+the generated host contract explicit.
 
 Pulled images are an operator convenience, not a generic desktop-container portability layer.
 
