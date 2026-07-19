@@ -3320,6 +3320,7 @@ def ui():
   <link rel="apple-touch-icon" href="/pwa/brand/logo.svg?v=2" />
   <title>RelayTV</title>
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3618,45 +3619,59 @@ def ui():
       </aside>
     </div>
 
-    <div id="jellyfinShell" class="jfShell hidden" aria-hidden="true">
+    <div id="jellyfinShell" class="jfShell jfModern hidden" aria-hidden="true">
       <div class="jfShellInner">
-        <div class="jfShellHead">
-          <button id="jfShellBackBtn" class="jfShellBack">← Back</button>
-          <div class="jfShellTitle"><span class="jfBrand">Jellyfin</span></div>
-        </div>
-        <div class="jfTabs" role="tablist" aria-label="Jellyfin sections">
-          <button class="jfTabBtn active" id="jfTabDashboardBtn" data-jf-tab="dashboard" role="tab" aria-selected="true" aria-controls="jellyfinCard" tabindex="0">Dashboard</button>
-          <button class="jfTabBtn" id="jfTabMoviesBtn" data-jf-tab="movies" role="tab" aria-selected="false" aria-controls="jellyfinCard" tabindex="-1">Movies</button>
-          <button class="jfTabBtn" id="jfTabTvBtn" data-jf-tab="tv" role="tab" aria-selected="false" aria-controls="jellyfinCard" tabindex="-1">TV</button>
-        </div>
-        <section id="jellyfinCard" class="card jellyfinCard" role="tabpanel">
-          <div class="sectionTitle jfCardHead">
-            <span class="jfCardHeadLabel" id="jfCardHeadLabel">JELLYFIN</span>
-            <div class="jfCardSearchWrap">
-              <input id="jfSearchInput" class="input jfCardSearch" placeholder="Search Jellyfin titles…" aria-label="Search Jellyfin" />
+        <header class="jfShellHead">
+          <button id="jfShellBackBtn" class="jfShellBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>
+          <div class="jfShellIdentity">
+            <span class="jfShellMark" aria-hidden="true">▶</span>
+            <div>
+              <div class="jfShellEyebrow">RelayTV library</div>
+              <div class="jfShellTitle"><span class="jfBrand">Jellyfin</span></div>
             </div>
           </div>
-          <div class="jfTop">
-            <select id="jfSortSelect" class="jfSort hiddenCtl" aria-label="Sort catalog"></select>
-            <span id="jfStatus" class="jfStatus">Loading…</span>
-            <div class="jfHint">Arrows navigate • 1/2/3 switch tabs • Enter opens detail • P/N/L/R trigger Play/Next/Last/Resume</div>
-            <div id="jfActionStatus" class="jfActionStatus" aria-live="polite"></div>
+          <div id="jfConnection" class="jfConnection" role="status" aria-live="polite">
+            <span class="jfConnectionDot" aria-hidden="true"></span>
+            <span id="jfConnectionLabel">Checking…</span>
           </div>
-          <div id="jfGrid" class="jfGrid">
-            <div class="jfRowsPad">
-              <div id="jfRows" class="jfRows"></div>
+        </header>
+        <div class="jfWorkspace">
+          <nav class="jfTabs" role="tablist" aria-label="Jellyfin sections">
+            <button class="jfTabBtn active" id="jfTabDashboardBtn" data-jf-tab="dashboard" role="tab" aria-selected="true" aria-controls="jellyfinCard" tabindex="0"><span class="jfTabIcon" aria-hidden="true">⌂</span><span>Home</span></button>
+            <button class="jfTabBtn" id="jfTabMoviesBtn" data-jf-tab="movies" role="tab" aria-selected="false" aria-controls="jellyfinCard" tabindex="-1"><span class="jfTabIcon" aria-hidden="true">▰</span><span>Movies</span></button>
+            <button class="jfTabBtn" id="jfTabTvBtn" data-jf-tab="tv" role="tab" aria-selected="false" aria-controls="jellyfinCard" tabindex="-1"><span class="jfTabIcon" aria-hidden="true">▣</span><span>TV</span></button>
+          </nav>
+          <section id="jellyfinCard" class="card jellyfinCard" role="tabpanel">
+            <div class="jfCardHead">
+              <span class="jfCardHeadLabel" id="jfCardHeadLabel">JELLYFIN</span>
+              <div class="jfCardSearchWrap">
+                <span class="jfSearchIcon" aria-hidden="true">⌕</span>
+                <input id="jfSearchInput" class="input jfCardSearch" placeholder="Search Jellyfin titles…" aria-label="Search Jellyfin" />
+              </div>
+              <select id="jfSortSelect" class="jfSort hiddenCtl" aria-label="Sort catalog"></select>
             </div>
-            <div id="jfDetailBackdrop" class="jfDetailBackdrop" aria-hidden="true"></div>
-            <aside id="jfDetail" class="jfDetail muted">Select an item to view details.</aside>
-            <div id="jfAlphaIndicator" class="jfAlphaIndicator" aria-hidden="true">A</div>
-          </div>
-        </section>
+            <div class="jfTop">
+              <span id="jfStatus" class="jfStatus" role="status" aria-live="polite">Loading…</span>
+              <div class="jfHint">Arrows navigate • 1/2/3 switch tabs • Enter opens detail • P/N/L/R trigger Play/Next/Last/Resume</div>
+              <div id="jfActionStatus" class="jfActionStatus" aria-live="polite"></div>
+            </div>
+            <div id="jfGrid" class="jfGrid">
+              <div class="jfRowsPad">
+                <div id="jfRows" class="jfRows"></div>
+              </div>
+              <div id="jfDetailBackdrop" class="jfDetailBackdrop" aria-hidden="true"></div>
+              <aside id="jfDetail" class="jfDetail muted" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="jfDetailTitle">Select an item to view details.</aside>
+              <div id="jfAlphaIndicator" class="jfAlphaIndicator" aria-hidden="true">A</div>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -3968,13 +3983,13 @@ def ui():
     html = html.replace("__IDLE_PANEL_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
     html = html.replace("__UI_ASSET_V__", _ui_asset_version())
     # The shell must never be cached: it carries the asset version stamp that
-    # busts the hour-long static cache on app.js/app.css after a deploy.
+    # busts the hour-long static UI asset cache after a deploy.
     return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
 
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "app.js"):
+    for name in ("app.css", "jellyfin.css", "app.js", "jellyfin.js"):
         path = _resolve_static_asset("ui", name)
         try:
             if path:

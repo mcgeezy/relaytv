@@ -1,0 +1,1751 @@
+/* Jellyfin browse */
+.jellyfinCard{ margin-top: 14px; }
+.jfShell{
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(1200px 600px at 10% 0%, rgba(120,180,255,.22), transparent 55%),
+    radial-gradient(900px 520px at 90% 10%, rgba(180,120,255,.16), transparent 60%),
+    radial-gradient(800px 600px at 50% 110%, rgba(120,255,190,.12), transparent 55%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
+  overflow: auto;
+}
+.jfShellInner{
+  max-width: 1140px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+}
+.jfShellHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 10px;
+}
+.jfShellBack{
+  min-height: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.jfShellTitle{
+  font-size: 14px;
+  color: var(--muted2);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.jfCardHead{
+  display:flex;
+  align-items:center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.jfCardHeadLabel{
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.jfCardSearchWrap{
+  flex: 1 1 180px;
+  width: clamp(150px, 54vw, 360px);
+  min-width: 150px;
+  max-width: 360px;
+  margin-left: auto;
+}
+.jfCardSearch{
+  width: 100%;
+  height: 38px;
+  padding: 0 15px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, .30);
+  background: linear-gradient(180deg, rgba(15, 23, 42, .90), rgba(30, 41, 59, .72));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 8px 22px rgba(2, 6, 23, .22);
+  color: #edf4ff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  text-transform: none;
+}
+.jfCardSearch::placeholder{
+  color: rgba(219, 228, 245, .68);
+}
+.jfCardSearch:focus{
+  outline: none;
+  border-color: rgba(96, 165, 250, .72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 3px rgba(96, 165, 250, .16), 0 10px 24px rgba(30, 64, 175, .22);
+}
+@media (max-width: 420px){
+  .jfCardHead{
+    gap: 6px;
+  }
+  .jfCardSearchWrap{
+    flex-basis: 140px;
+    width: clamp(140px, 52vw, 220px);
+    min-width: 140px;
+  }
+}
+@media (max-width: 340px){
+  .jfCardHead{
+    flex-wrap: wrap;
+  }
+  .jfCardSearchWrap{
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+}
+.jfTabs{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, .30);
+  background: rgba(8, 16, 34, .58);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+}
+.jfTabBtn{
+  min-height: 0;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  border: 1px solid rgba(148, 163, 184, .24);
+  background: rgba(22, 33, 58, .70);
+  color: #dbe4f5;
+  transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+.jfTabBtn.active{
+  border-color: rgba(56, 189, 248, .92);
+  background: linear-gradient(180deg, rgba(56, 189, 248, .95), rgba(37, 99, 235, .95));
+  color: #f8fbff;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, .45), 0 8px 18px rgba(30, 64, 175, .35);
+}
+.jfTabBtn:hover{
+  transform: none;
+  background: rgba(36, 52, 88, .84);
+}
+.jfTabBtn.active:hover{
+  background: linear-gradient(180deg, rgba(56, 189, 248, .98), rgba(37, 99, 235, .98));
+}
+.jfTabBtn:focus-visible{
+  outline: 2px solid rgba(147, 197, 253, .95);
+  outline-offset: 1px;
+}
+.jellyfinCard.jfOffline{
+  border-color: rgba(248,113,113,.45);
+  box-shadow: 0 0 0 1px rgba(239,68,68,.18) inset;
+}
+.jfTop{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top: 10px; }
+.jfSearch{ flex: 1 1 320px; }
+.hiddenCtl{ display:none !important; }
+.jfTop.hiddenCtl{ display:none; }
+.jfSort{
+  min-height: 0;
+  height: 36px;
+  border-radius: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,.08);
+  color: var(--text);
+}
+.jfAlphaIndicator{
+  position: absolute;
+  right: 20px;
+  top: 10px;
+  z-index: 4;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  padding: 4px 9px;
+  color: #dbeafe;
+  background: rgba(2, 6, 23, .72);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+}
+.jfAlphaIndicator.show{
+  opacity: 1;
+  transform: translateY(0);
+}
+.jfStatus{
+  font-size: 12px;
+  color: var(--muted2);
+  margin-left: auto;
+}
+.jfStatus.ok{ color:#9df6b7; }
+.jfStatus.err{ color:#ffb0b9; }
+.jfHint{
+  width: 100%;
+  font-size: 11px;
+  color: var(--muted2);
+}
+.jfActionStatus{
+  display: none;
+  width: 100%;
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--muted2);
+}
+.jfActionStatus:not(:empty){ display:block; }
+.jfActionStatus.ok{ color:#9df6b7; }
+.jfActionStatus.err{ color:#ffb0b9; }
+.jfUnavailable{
+  border: 1px dashed var(--stroke);
+  border-radius: 12px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  color: var(--muted2);
+  background: rgba(255,255,255,.03);
+}
+.jfUnavailableTitle{
+  font-size: 13px;
+  color: #ffb0b9;
+}
+.jfGrid{
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+  min-height: 220px;
+}
+.jfRows{ display: grid; gap: 10px; min-width: 0; }
+.jfRowsPad{ padding-right: 0; }
+.jfRow{ display:grid; gap: 6px; }
+.jfRowTitle{ font-size: 13px; color: var(--muted2); letter-spacing: .02em; text-transform: uppercase; }
+.jfTvSelectionRow{ gap: 0; }
+.jfTvSelectionBar{
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(120,180,255,.48);
+  background: linear-gradient(180deg, rgba(30, 64, 175, .46), rgba(15, 23, 42, .58));
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.jfTvSelectionBar:hover{ border-color: rgba(147,197,253,.84); }
+.jfTvSelectionBar:focus-visible{
+  outline: 2px solid rgba(147,197,253,.95);
+  outline-offset: 2px;
+}
+.jfTvSelectionLabel{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+}
+.jfTvSelectionHint{
+  flex: 0 0 auto;
+  color: var(--muted2);
+  font-size: 12px;
+  font-weight: 650;
+}
+.jfScroller{
+  display:flex;
+  gap:10px;
+  overflow-x:auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.jfRow.catalogNoTitle .jfRowTitle{ display:none; }
+.jfCatalogScroller{
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 10px;
+  overflow: visible;
+}
+.jfCatalogScroller .jfItem{
+  width: auto;
+  min-height: 216px;
+  grid-template-rows: 120px minmax(96px, auto);
+}
+.jfCatalogScroller .jfItem:hover{
+  transform: none;
+}
+.jfCatalogScroller .jfThumb{
+  height: 120px;
+}
+.jfCatalogScroller .jfMeta{
+  min-height: 96px;
+  display: grid;
+  grid-template-rows: minmax(30px, auto) 16px 28px;
+  align-content: stretch;
+  align-items: start;
+  row-gap: 4px;
+}
+.jfCatalogScroller .jfItemTitle,
+.jfCatalogScroller .jfItemSub{
+  line-height: 1.25;
+}
+.jfCatalogScroller .jfItemTitle{
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 34px;
+}
+.jfCatalogScroller .jfItemSub{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 16px;
+}
+.jfCatalogScroller .jfQuickRow{
+  margin-top: 0;
+  align-self: end;
+}
+.jfCatalogMovies .jfMeta{
+  grid-template-rows: 18px 16px 28px;
+}
+.jfCatalogMovies .jfItemTitle{
+  white-space: nowrap;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  min-height: 18px;
+}
+.jfCatalogTv .jfMeta{
+  grid-template-rows: 18px 16px 28px;
+  row-gap: 0;
+}
+.jfCatalogTv .jfItemTitle{
+  white-space: nowrap;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  min-height: 18px;
+}
+.jfCatalogEpisodes{
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+.jfCatalogSentinel{
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  min-height: 54px;
+  padding: 6px 0 2px;
+}
+.jfCatalogSentinel.complete{
+  min-height: 36px;
+  opacity: .72;
+}
+.jfCatalogSentinel.loading .jfCatalogMoreBtn{
+  opacity: .72;
+  pointer-events: none;
+}
+.jfCatalogSentinel.loading .jfCatalogMoreBtn::after{
+  content: '…';
+}
+.jfItem{
+  min-height: 0;
+  padding: 0;
+  width: 196px;
+  border-radius: 14px;
+  text-align: left;
+  display: grid;
+  grid-template-rows: 110px auto;
+  background: var(--card2);
+  border: 1px solid var(--stroke);
+  cursor: pointer;
+}
+.jfItem:hover{ transform: translateY(-1px); }
+.jfItem:focus-visible{
+  outline: 2px solid rgba(120,180,255,.75);
+  outline-offset: 2px;
+}
+.jfItem.selected{
+  border-color: rgba(120,180,255,.72);
+  box-shadow: 0 0 0 2px rgba(120,180,255,.25), 0 10px 24px rgba(0,0,0,.35);
+}
+.jfThumb{
+  border-radius: 13px 13px 0 0;
+  overflow: hidden;
+  background: rgba(255,255,255,.06);
+}
+.jfThumb img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display:block;
+}
+.jfMeta{
+  padding: 10px;
+  display:grid;
+  gap:4px;
+}
+.jfQuickRow{
+  margin-top: 6px;
+  display:flex;
+  gap:6px;
+}
+.jfQuickBtn{
+  min-height: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(56, 189, 248, .72);
+  background: linear-gradient(180deg, rgba(56, 189, 248, .95), rgba(37, 99, 235, .92));
+  color: #f8fbff;
+  box-shadow: 0 6px 14px rgba(30, 64, 175, .30);
+}
+.jfQuickBtn:hover{
+  background: linear-gradient(180deg, rgba(56, 189, 248, .98), rgba(29, 78, 216, .96));
+}
+.jfQuickBtn:active{
+  background: linear-gradient(180deg, rgba(37, 99, 235, .94), rgba(29, 78, 216, .90));
+}
+.jfQuickBtn:focus-visible{
+  outline: 2px solid rgba(147, 197, 253, .95);
+  outline-offset: 1px;
+}
+.jfItemTitle{
+  font-size: 14px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jfItemSub{
+  font-size: 12px;
+  color: var(--muted2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jfDetail{
+  display: none;
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #132f56 0%, #0c2444 100%);
+  padding: 10px;
+  min-height: 220px;
+  position: absolute;
+  z-index: 1301;
+  top: 0;
+  right: 0;
+  transform: none;
+  width: min(430px, calc(100% - 8px));
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+  box-shadow: 0 20px 46px rgba(0,0,0,.45);
+}
+.jfGrid.detailOpen .jfRowsPad{ padding-right: min(440px, 38vw); }
+.jfGrid.detailOpen .jfDetail{ display: block; }
+.jfDetailBackdrop{
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  background: rgba(2, 8, 24, .62);
+  pointer-events: none;
+}
+.jfGrid.detailOpen .jfDetailBackdrop{ display: block; }
+.jfDetailClose{
+  min-height: 0;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.jfDetailThumbWrap{
+  position: relative;
+}
+.jfDetailThumb{
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,.06);
+}
+.jfThumbNav{
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.30);
+  background: rgba(0,0,0,.42);
+  color: #fff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  z-index: 2;
+}
+.jfThumbNav:hover{
+  background: rgba(0,0,0,.56);
+  transform: translateY(-50%);
+}
+.jfThumbNav:active{ transform: translateY(-50%); }
+.jfThumbNav:focus-visible{ transform: translateY(-50%); }
+.jfThumbNav:disabled{
+  opacity: .38;
+  cursor: default;
+}
+.jfThumbNav.prev{ left: 10px; }
+.jfThumbNav.next{ right: 10px; }
+.jfDetailTitle{ font-size: 18px; font-weight: 700; margin-top: 8px; }
+.jfDetailSub{ font-size: 13px; color: var(--muted2); margin-top: 4px; }
+.jfDetailBody{ font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.35; }
+.jfChips{
+  margin-top: 8px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.jfChip{
+  font-size: 11px;
+  color: var(--muted2);
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,.05);
+  border-radius: 999px;
+  padding: 3px 8px;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.jfActionRow{
+  margin-top: 10px;
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap:8px;
+}
+.jfActionMsg{
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted2);
+  min-height: 16px;
+}
+.jfActionMsg.ok{ color:#9df6b7; }
+.jfActionMsg.err{ color:#ffb0b9; }
+@media (prefers-color-scheme: light){
+  .jfShell{
+    background:
+      radial-gradient(1200px 600px at 10% 0%, rgba(59, 130, 246, .16), transparent 55%),
+      radial-gradient(900px 520px at 90% 10%, rgba(14, 165, 233, .10), transparent 60%),
+      radial-gradient(800px 600px at 50% 110%, rgba(16, 185, 129, .08), transparent 55%),
+      linear-gradient(180deg, #eef4ff, #f8fbff);
+  }
+  .jellyfinCard{
+    background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(245, 249, 255, .92));
+    border-color: rgba(15, 23, 42, .12);
+    box-shadow: 0 20px 46px rgba(15, 23, 42, .10);
+  }
+  .jfShellTitle,
+  .jfStatus,
+  .jfHint,
+  .jfRowTitle,
+  .jfActionStatus,
+  .jfDetailSub,
+  .jfChip,
+  .jfItemSub{
+    color: rgba(15, 23, 42, .62);
+  }
+  .jfCardSearch{
+    border-color: rgba(59, 130, 246, .18);
+    background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(239, 246, 255, .94));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 8px 22px rgba(15, 23, 42, .08);
+    color: #0f172a;
+  }
+  .jfCardSearch::placeholder{
+    color: rgba(15, 23, 42, .42);
+  }
+  .jfTabs{
+    border-color: rgba(59, 130, 246, .16);
+    background: rgba(255,255,255,.80);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.72), 0 10px 24px rgba(15, 23, 42, .06);
+  }
+  .jfTabBtn{
+    border-color: rgba(59, 130, 246, .14);
+    background: rgba(255,255,255,.88);
+    color: rgba(15, 23, 42, .72);
+  }
+  .jfTabBtn:hover{
+    background: rgba(219, 234, 254, .88);
+  }
+  .jfAlphaIndicator{
+    border-color: rgba(59, 130, 246, .18);
+    color: #0f172a;
+    background: rgba(255,255,255,.88);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, .08);
+  }
+  .jfUnavailable{
+    border-color: rgba(15, 23, 42, .12);
+    background: rgba(255,255,255,.72);
+  }
+  .jfItem{
+    background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(244, 249, 255, .94));
+    border-color: rgba(15, 23, 42, .12);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .08);
+  }
+  .jfItem:hover{
+    box-shadow: 0 16px 34px rgba(15, 23, 42, .12);
+  }
+  .jfItem.selected{
+    border-color: rgba(37, 99, 235, .48);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, .16), 0 16px 36px rgba(15, 23, 42, .14);
+  }
+  .jfTvSelectionBar{
+    border-color: rgba(37,99,235,.32);
+    background: linear-gradient(180deg, rgba(239,246,255,.98), rgba(219,234,254,.88));
+    color: #0f172a;
+  }
+  .jfTvSelectionBar:hover{ border-color: rgba(37,99,235,.56); }
+  .jfThumb{
+    background: linear-gradient(180deg, rgba(226, 232, 240, .90), rgba(241, 245, 249, .98));
+  }
+  .jfMeta{
+    background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.08));
+  }
+  .jfItemTitle,
+  .jfDetailTitle,
+  .jfDetailBody{
+    color: #0f172a;
+  }
+  .jfDetail{
+    border-color: rgba(15, 23, 42, .12);
+    background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(244, 248, 255, .95));
+    box-shadow: 0 24px 56px rgba(15, 23, 42, .14);
+  }
+  .jfDetailThumb{
+    background: rgba(226, 232, 240, .70);
+    border-color: rgba(15, 23, 42, .10);
+  }
+  .jfThumbNav{
+    border-color: rgba(15, 23, 42, .12);
+    background: rgba(255,255,255,.82);
+    color: #0f172a;
+  }
+  .jfThumbNav:hover{
+    background: rgba(255,255,255,.94);
+  }
+  .jfChip{
+    border-color: rgba(15, 23, 42, .10);
+    background: rgba(255,255,255,.72);
+  }
+}
+@media (max-width: 980px){
+  .jfGrid{ grid-template-columns: 1fr; }
+  .jfGrid.detailOpen .jfRowsPad{ padding-right: 0; }
+  .jfShell.jfDetailLock{
+    overflow: hidden;
+    touch-action: none;
+  }
+  .jfGrid.detailOpen .jfDetailBackdrop{
+    pointer-events: auto;
+  }
+  .jfCatalogScroller{
+    grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+  }
+  .jfCatalogScroller .jfItem{
+    min-height: 188px;
+    grid-template-rows: 102px minmax(84px, auto);
+  }
+  .jfCatalogScroller .jfThumb{
+    height: 102px;
+  }
+  .jfCatalogEpisodes{
+    grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
+  }
+  .jfSeasonWrap{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+    gap: 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    max-height: min(34vh, 340px);
+    padding-right: 4px;
+  }
+  .jfSeasonWrap .jfItem{
+    width: auto;
+    min-height: 168px;
+    grid-template-rows: 96px minmax(72px, auto);
+  }
+  .jfSeasonWrap .jfThumb{
+    height: 96px;
+  }
+  .jfSeasonWrap .jfMeta{
+    min-height: 72px;
+    grid-template-rows: 16px 14px 28px;
+    row-gap: 2px;
+    padding: 8px;
+  }
+  .jfSeasonWrap .jfItemTitle{
+    font-size: 13px;
+    white-space: nowrap;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    -webkit-line-clamp: unset;
+    -webkit-box-orient: unset;
+    min-height: 16px;
+  }
+  .jfSeasonWrap .jfItemSub{
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 14px;
+  }
+  .jfSeasonWrap .jfQuickBtn{
+    width: 100%;
+  }
+  .jfDetail{
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -50%);
+    width: min(660px, calc(100vw - 18px));
+    max-height: min(86vh, 760px);
+    border-radius: 14px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom) / 2);
+  }
+}
+
+/* RelayTV Jellyfin/Emby browse shell. */
+.jfShellIdentity{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.jfShellMark{
+  display: grid;
+  place-items: center;
+}
+.jfShellEyebrow{
+  font-size: 10px;
+  color: var(--muted2);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.jfConnection{
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.jfConnectionDot{
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+.jfSearchIcon{
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.jfShell.jfModern{
+  --jf-glass: rgba(8, 18, 38, .72);
+  --jf-glass-strong: rgba(10, 23, 46, .90);
+  --jf-glass-soft: rgba(19, 36, 65, .58);
+  --jf-line: rgba(148, 180, 220, .18);
+  --jf-accent: #62d6ff;
+  --jf-accent-strong: #3978f6;
+  --jf-good: #55e9a4;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgba(32, 161, 255, .22), transparent 62%),
+    radial-gradient(720px 520px at 92% 12%, rgba(119, 74, 255, .16), transparent 64%),
+    linear-gradient(155deg, #07101f 0%, #09152a 54%, #07111f 100%);
+}
+.jfModern .jfShellInner{
+  max-width: 1320px;
+  gap: 16px;
+}
+.jfModern .jfShellHead{
+  position: sticky;
+  top: -1px;
+  z-index: 20;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--jf-line);
+  border-radius: 18px;
+  background: var(--jf-glass);
+  box-shadow: 0 18px 50px rgba(1, 6, 18, .26), inset 0 1px rgba(255,255,255,.06);
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+}
+.jfModern .jfShellBack{
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--jf-line);
+  background: rgba(255,255,255,.055);
+  color: #e8f1ff;
+}
+.jfModern .jfShellBack:hover{
+  transform: none;
+  background: rgba(255,255,255,.10);
+}
+.jfModern .jfShellIdentity{
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.jfModern .jfShellMark{
+  width: 34px;
+  height: 34px;
+  padding-left: 2px;
+  border-radius: 11px;
+  background: linear-gradient(145deg, var(--jf-accent), var(--jf-accent-strong));
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(45, 124, 246, .36), inset 0 1px rgba(255,255,255,.38);
+  font-size: 12px;
+}
+.jfModern .jfShellTitle{
+  color: #f2f7ff;
+  font-size: 17px;
+  line-height: 1.2;
+  font-weight: 760;
+  letter-spacing: -.015em;
+  text-transform: none;
+}
+.jfModern .jfConnection{
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(85, 233, 164, .24);
+  border-radius: 999px;
+  background: rgba(34, 197, 94, .08);
+  color: #bdfbd9;
+  font-size: 12px;
+  font-weight: 680;
+}
+.jfModern .jfConnectionDot{
+  background: var(--jf-good);
+  box-shadow: 0 0 0 4px rgba(85, 233, 164, .10), 0 0 14px rgba(85, 233, 164, .55);
+}
+.jfModern.jfOffline .jfConnection{
+  border-color: rgba(248, 113, 113, .28);
+  background: rgba(239, 68, 68, .09);
+  color: #fecaca;
+}
+.jfModern.jfOffline .jfConnectionDot{
+  background: #fb7185;
+  box-shadow: 0 0 0 4px rgba(251, 113, 133, .10);
+}
+.jfModern.jfLoading .jfConnectionDot{
+  animation: jfConnectionPulse 1.25s ease-in-out infinite;
+}
+@keyframes jfConnectionPulse{
+  50%{ opacity: .42; transform: scale(.78); }
+}
+.jfModern .jfWorkspace{
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+.jfModern .jfTabs{
+  position: sticky;
+  top: 82px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: auto;
+  padding: 8px;
+  border-radius: 18px;
+  background: var(--jf-glass);
+  border-color: var(--jf-line);
+  box-shadow: 0 18px 50px rgba(1, 6, 18, .20), inset 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+}
+.jfModern .jfTabBtn{
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 13px;
+  border-color: transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #aebed5;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 13px;
+}
+.jfModern .jfTabIcon{
+  display: grid;
+  place-items: center;
+  width: 23px;
+  color: #8da4c2;
+  font-size: 17px;
+}
+.jfModern .jfTabBtn:hover{
+  background: rgba(125, 166, 218, .10);
+}
+.jfModern .jfTabBtn.active,
+.jfModern .jfTabBtn.active:hover{
+  border-color: rgba(98, 214, 255, .28);
+  background: linear-gradient(135deg, rgba(56, 189, 248, .20), rgba(57, 120, 246, .18));
+  color: #f4f9ff;
+  box-shadow: inset 3px 0 var(--jf-accent), inset 0 1px rgba(255,255,255,.08), 0 8px 22px rgba(20, 82, 180, .14);
+}
+.jfModern .jfTabBtn.active .jfTabIcon{
+  color: var(--jf-accent);
+}
+.jfModern .jellyfinCard{
+  min-width: 0;
+  margin-top: 0;
+  padding: 16px;
+  border-radius: 22px;
+  border-color: var(--jf-line);
+  background: linear-gradient(150deg, rgba(12, 27, 52, .82), rgba(8, 20, 42, .72));
+  box-shadow: 0 22px 64px rgba(1, 6, 18, .28), inset 0 1px rgba(255,255,255,.05);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.jfModern .jfCardHead{
+  position: sticky;
+  top: 82px;
+  z-index: 12;
+  padding: 6px;
+  border: 1px solid var(--jf-line);
+  border-radius: 16px;
+  background: var(--jf-glass-strong);
+  box-shadow: 0 14px 34px rgba(1, 6, 18, .22);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+}
+.jfModern .jfCardHeadLabel{
+  display: none;
+}
+.jfModern .jfCardSearchWrap{
+  position: relative;
+  flex: 1 1 320px;
+  width: auto;
+  max-width: none;
+  margin-left: 0;
+}
+.jfModern .jfSearchIcon{
+  z-index: 1;
+  color: #8ca4c2;
+  font-size: 20px;
+}
+.jfModern .jfCardSearch{
+  height: 42px;
+  padding: 0 15px 0 39px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255,255,255,.055);
+  box-shadow: none;
+  color: #f2f7ff;
+}
+.jfModern .jfCardSearch:focus{
+  background: rgba(255,255,255,.08);
+  box-shadow: 0 0 0 2px rgba(98, 214, 255, .24);
+}
+.jfModern .jfSort{
+  flex: 0 0 auto;
+  height: 42px;
+  max-width: 190px;
+  padding: 0 34px 0 12px;
+  border-radius: 12px;
+  border-color: var(--jf-line);
+  background-color: rgba(255,255,255,.055);
+}
+.jfModern .jfTop{
+  min-height: 26px;
+  margin: 10px 3px 0;
+}
+.jfModern .jfStatus{
+  order: 0;
+  margin-left: 0;
+  color: #94a8c4;
+}
+.jfModern .jfStatus.ok{ color: #9cf3c7; }
+.jfModern .jfStatus.err{ color: #fda4af; }
+.jfModern .jfHint{
+  order: 1;
+  margin-left: auto;
+  width: auto;
+  text-align: right;
+}
+.jfModern .jfActionStatus{
+  order: 2;
+}
+
+@media (prefers-color-scheme: light){
+  .jfShell.jfModern{
+    --jf-glass: rgba(255,255,255,.76);
+    --jf-glass-strong: rgba(249,252,255,.92);
+    --jf-glass-soft: rgba(239,246,255,.72);
+    --jf-line: rgba(30, 64, 120, .13);
+    --jf-accent: #0ea5e9;
+    --jf-accent-strong: #2563eb;
+    background:
+      radial-gradient(900px 520px at 12% -8%, rgba(14, 165, 233, .16), transparent 62%),
+      radial-gradient(720px 520px at 92% 12%, rgba(99, 102, 241, .11), transparent 64%),
+      linear-gradient(155deg, #edf5ff 0%, #f7faff 54%, #edf4fb 100%);
+  }
+  .jfModern .jfShellHead,
+  .jfModern .jfTabs{
+    box-shadow: 0 18px 50px rgba(30, 64, 110, .10), inset 0 1px rgba(255,255,255,.80);
+  }
+  .jfModern .jfShellBack{
+    background: rgba(255,255,255,.64);
+    color: #17304f;
+  }
+  .jfModern .jfShellTitle{ color: #10243f; }
+  .jfModern .jfShellEyebrow{ color: #68809e; }
+  .jfModern .jfConnection{ color: #14764b; }
+  .jfModern .jfTabBtn{ color: #58708d; }
+  .jfModern .jfTabIcon{ color: #7189a6; }
+  .jfModern .jfTabBtn:hover{ background: rgba(37, 99, 235, .07); }
+  .jfModern .jfTabBtn.active,
+  .jfModern .jfTabBtn.active:hover{
+    color: #14325a;
+    background: linear-gradient(135deg, rgba(14, 165, 233, .12), rgba(37, 99, 235, .10));
+  }
+  .jfModern .jellyfinCard{
+    border-color: var(--jf-line);
+    background: linear-gradient(150deg, rgba(255,255,255,.88), rgba(246,250,255,.78));
+    box-shadow: 0 22px 64px rgba(30, 64, 110, .11), inset 0 1px rgba(255,255,255,.92);
+  }
+  .jfModern .jfCardHead{
+    box-shadow: 0 14px 34px rgba(30, 64, 110, .10);
+  }
+  .jfModern .jfCardSearch{
+    background: rgba(226, 237, 250, .64);
+    color: #10243f;
+  }
+  .jfModern .jfCardSearch:focus{ background: rgba(219, 234, 254, .82); }
+  .jfModern .jfSearchIcon{ color: #68809e; }
+  .jfModern .jfSort{
+    background-color: rgba(226, 237, 250, .76);
+    color: #17304f;
+  }
+  .jfModern .jfStatus,
+  .jfModern .jfHint{ color: #68809e; }
+}
+
+@media (max-width: 720px){
+  .jfShell.jfModern{
+    padding: 0 0 calc(78px + env(safe-area-inset-bottom));
+  }
+  .jfModern .jfShellInner{
+    display: block;
+  }
+  .jfModern .jfShellHead{
+    top: 0;
+    min-height: 62px;
+    padding: max(9px, env(safe-area-inset-top)) 10px 9px;
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+  .jfModern .jfShellBack{
+    min-height: 38px;
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+  }
+  .jfModern .jfShellBack span:last-child{ display: none; }
+  .jfModern .jfShellIdentity{
+    gap: 8px;
+  }
+  .jfModern .jfShellMark{
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+  }
+  .jfModern .jfShellEyebrow{ display: none; }
+  .jfModern .jfShellTitle{ font-size: 15px; }
+  .jfModern .jfConnection{
+    min-height: 34px;
+    max-width: 116px;
+    padding: 0 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .jfModern .jfWorkspace{
+    display: block;
+    padding: 10px;
+  }
+  .jfModern .jfTabs{
+    position: fixed;
+    z-index: 1400;
+    inset: auto 8px max(8px, env(safe-area-inset-bottom)) 8px;
+    top: auto;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex-direction: initial;
+    gap: 5px;
+    padding: 6px;
+    border-radius: 19px;
+    box-shadow: 0 18px 48px rgba(1, 6, 18, .38), inset 0 1px rgba(255,255,255,.08);
+  }
+  .jfModern .jfTabBtn{
+    justify-content: center;
+    gap: 5px;
+    min-height: 50px;
+    padding: 0 6px;
+    flex-direction: column;
+    font-size: 10px;
+  }
+  .jfModern .jfTabIcon{
+    width: auto;
+    height: 17px;
+    font-size: 16px;
+  }
+  .jfModern .jfTabBtn.active,
+  .jfModern .jfTabBtn.active:hover{
+    box-shadow: inset 0 2px var(--jf-accent), inset 0 1px rgba(255,255,255,.08);
+  }
+  .jfModern .jellyfinCard{
+    padding: 10px;
+    border-radius: 18px;
+  }
+  .jfModern .jfCardHead{
+    top: calc(62px + env(safe-area-inset-top));
+    gap: 6px;
+  }
+  .jfModern .jfCardSearchWrap{
+    min-width: 0;
+    flex-basis: 160px;
+  }
+  .jfModern .jfSort{
+    max-width: 124px;
+    padding-left: 9px;
+    font-size: 11px;
+  }
+  .jfModern .jfTop{
+    margin-top: 7px;
+  }
+  .jfModern .jfHint{ display: none; }
+}
+
+@media (max-width: 390px){
+  .jfModern .jfConnection{
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .jfModern .jfConnection span:last-child{ display: none; }
+  .jfModern .jfCardHead{
+    flex-wrap: wrap;
+  }
+  .jfModern .jfCardSearchWrap{
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+  .jfModern .jfSort{
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+}
+
+/* Accepted polish: roomy Home rails and the TV series workspace. */
+.jfModern .jfRows{
+  gap: 22px;
+}
+.jfModern .jfRow{
+  gap: 9px;
+}
+.jfModern .jfRowTitle{
+  padding: 0 2px;
+  color: #c8d6ea;
+  font-size: 15px;
+  font-weight: 760;
+  letter-spacing: -.01em;
+  text-transform: none;
+}
+.jfModern .jfScroller:not(.jfCatalogScroller){
+  gap: 13px;
+  margin-inline: -2px;
+  padding: 2px 2px 10px;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.jfModern .jfScroller:not(.jfCatalogScroller) .jfItem{
+  flex: 0 0 210px;
+  width: 210px;
+  scroll-snap-align: start;
+}
+.jfModern .jfCatalogEpisodes .jfMeta{
+  grid-template-rows: minmax(34px, auto) 16px 28px;
+  row-gap: 4px;
+}
+.jfModern .jfCatalogEpisodes .jfItemTitle{
+  display: -webkit-box;
+  min-height: 34px;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.jfModern .jfCatalogEpisodes .jfItemSub{
+  min-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jfSeriesHeroRow{
+  min-width: 0;
+}
+.jfSeriesHero{
+  position: relative;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid var(--jf-line);
+  border-radius: 22px;
+  background: #071326;
+  box-shadow: 0 24px 58px rgba(1, 6, 18, .30);
+  color: #f4f8ff;
+  isolation: isolate;
+}
+.jfSeriesHeroArt,
+.jfSeriesHeroShade{
+  position: absolute;
+  inset: 0;
+}
+.jfSeriesHeroArt img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: .72;
+}
+.jfSeriesHeroShade{
+  z-index: 1;
+  background:
+    linear-gradient(90deg, rgba(3, 10, 24, .96) 0%, rgba(3, 10, 24, .78) 44%, rgba(3, 10, 24, .20) 78%),
+    linear-gradient(0deg, rgba(3, 10, 24, .92), transparent 58%);
+}
+.jfSeriesHeroContent{
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  width: min(680px, 72%);
+  min-height: 300px;
+  padding: 22px;
+}
+.jfSeriesBackBtn{
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 999px;
+  background: rgba(3, 10, 24, .58);
+  color: #f4f8ff;
+  font-size: 12px;
+  font-weight: 720;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.jfSeriesBackBtn:hover{
+  transform: none;
+  background: rgba(12, 27, 52, .82);
+}
+.jfSeriesHeroEyebrow{
+  margin-bottom: 5px;
+  color: #7ddcff;
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.jfSeriesHeroTitle{
+  margin: 0;
+  font-size: clamp(28px, 4vw, 46px);
+  line-height: 1.02;
+  letter-spacing: -.04em;
+}
+.jfSeriesHeroMeta{
+  min-height: 18px;
+  margin-top: 8px;
+  color: #c0cde0;
+  font-size: 13px;
+}
+.jfSeriesHeroOverview{
+  display: -webkit-box;
+  max-width: 620px;
+  margin: 10px 0 0;
+  overflow: hidden;
+  color: #d9e4f3;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.jfSeriesHeroActions{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 15px;
+}
+.jfSeriesHeroActions .btn{
+  min-height: 40px;
+  border-color: rgba(255,255,255,.18);
+  border-radius: 12px;
+}
+.jfSeriesHeroActions .btn:hover{
+  transform: none;
+}
+.jfSeasonChooseBtn{
+  background: linear-gradient(135deg, rgba(56, 189, 248, .94), rgba(57, 120, 246, .94));
+  color: #fff;
+}
+.jfSeriesPlayAllBtn{
+  background: rgba(3, 10, 24, .60);
+  color: #f4f8ff;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.jfShell.jfSeasonChooserOpen{
+  overflow: hidden;
+}
+.jfSeasonModalRow{
+  position: fixed;
+  inset: 0;
+  z-index: 1550;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+.jfSeasonModalBackdrop{
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(1, 6, 18, .68);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.jfSeasonModalBackdrop:hover,
+.jfSeasonModalBackdrop:active{
+  transform: none;
+  background: rgba(1, 6, 18, .68);
+}
+.jfSeasonModal{
+  position: relative;
+  z-index: 1;
+  width: min(620px, 100%);
+  max-height: min(78dvh, 720px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--jf-line);
+  border-radius: 22px;
+  background: var(--jf-glass-strong);
+  box-shadow: 0 30px 90px rgba(1, 6, 18, .54), inset 0 1px rgba(255,255,255,.07);
+  animation: jfSeasonModalIn .18s ease-out;
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+}
+@keyframes jfSeasonModalIn{
+  from{ opacity: .55; transform: translateY(14px) scale(.98); }
+  to{ opacity: 1; transform: none; }
+}
+.jfSeasonModalHead{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.jfSeasonModalHead h3{
+  margin: 0;
+  color: var(--text);
+  font-size: 19px;
+  letter-spacing: -.02em;
+}
+.jfSeasonModalClose{
+  flex: 0 0 38px;
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 50%;
+}
+.jfSeasonOptions{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.jfSeasonOption{
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-height: 70px;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid var(--jf-line);
+  border-radius: 14px;
+  background: var(--jf-glass-soft);
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 720;
+}
+.jfSeasonOption:hover{
+  transform: none;
+  border-color: rgba(98, 214, 255, .38);
+  background: rgba(61, 136, 236, .14);
+}
+.jfSeasonOption.active{
+  border-color: var(--jf-accent);
+  box-shadow: inset 3px 0 var(--jf-accent), 0 0 0 2px rgba(98, 214, 255, .10);
+}
+.jfSeasonOption img{
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: rgba(148,163,184,.12);
+}
+.jfSeasonOptionMark{
+  color: var(--muted2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.jfSeasonOption.active .jfSeasonOptionMark{
+  color: var(--jf-accent);
+}
+
+@media (prefers-color-scheme: light){
+  .jfModern .jfRowTitle{ color: #2d4665; }
+  .jfSeriesHero{ box-shadow: 0 24px 58px rgba(30, 64, 110, .18); }
+  .jfSeasonModal{ box-shadow: 0 30px 90px rgba(30, 64, 110, .28); }
+}
+
+@media (max-width: 720px){
+  .jfModern .jfRows{ gap: 18px; }
+  .jfModern .jfScroller:not(.jfCatalogScroller) .jfItem{
+    flex-basis: min(72vw, 238px);
+    width: min(72vw, 238px);
+  }
+  .jfSeriesHero{
+    min-height: 390px;
+    border-radius: 18px;
+  }
+  .jfSeriesHeroShade{
+    background:
+      linear-gradient(0deg, rgba(3, 10, 24, .98) 0%, rgba(3, 10, 24, .76) 62%, rgba(3, 10, 24, .18) 100%);
+  }
+  .jfSeriesHeroContent{
+    width: 100%;
+    min-height: 390px;
+    padding: 16px;
+  }
+  .jfSeriesBackBtn{
+    top: 12px;
+    left: 12px;
+  }
+  .jfSeriesHeroTitle{ font-size: 30px; }
+  .jfSeriesHeroOverview{ -webkit-line-clamp: 3; }
+  .jfSeasonModalRow{
+    align-items: end;
+    padding: 0;
+  }
+  .jfSeasonModal{
+    width: 100%;
+    max-height: min(82dvh, 760px);
+    padding: 14px 12px max(16px, env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 24px 24px 0 0;
+  }
+  .jfSeasonModal::before{
+    content: '';
+    display: block;
+    width: 42px;
+    height: 4px;
+    margin: 0 auto 10px;
+    border-radius: 999px;
+    background: rgba(148,163,184,.48);
+  }
+  .jfSeasonOptions{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Media-aware cards and modern detail surfaces. */
+.jfThumb{ position: relative; }
+.jfMediaBadge{
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  padding: 3px 7px;
+  border: 1px solid rgba(255,255,255,.20);
+  border-radius: 999px;
+  background: rgba(2, 8, 23, .70);
+  color: #f8fbff;
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.jfMediaProgress{
+  position: absolute;
+  z-index: 3;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(2, 8, 23, .68);
+  box-shadow: 0 1px 4px rgba(0,0,0,.28);
+}
+.jfMediaProgress > span{
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #3978f6);
+}
+.jfThumb img.jfImageFallback,
+.jfDetailThumb.jfImageFallback{
+  object-fit: contain;
+  padding: 18px;
+  opacity: .68;
+  filter: grayscale(.25);
+}
+.jfModern .jfItem{
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--jf-glass-soft);
+  border-color: var(--jf-line);
+  box-shadow: 0 12px 28px rgba(1, 6, 18, .18);
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.jfModern .jfItem:hover{
+  transform: translateY(-2px);
+  border-color: rgba(98, 214, 255, .34);
+  box-shadow: 0 18px 36px rgba(1, 6, 18, .28);
+}
+.jfModern .jfItem:focus-visible{
+  outline: 2px solid var(--jf-accent);
+  outline-offset: 2px;
+}
+.jfModern .jfThumb img{
+  transition: transform .28s ease, filter .28s ease;
+}
+.jfModern .jfItem:hover .jfThumb img{
+  transform: scale(1.025);
+  filter: saturate(1.06);
+}
+.jfModern .jfMeta{
+  background: linear-gradient(180deg, rgba(255,255,255,.035), transparent);
+}
+.jfModern .jfItemTitle{
+  font-weight: 720;
+  letter-spacing: -.01em;
+}
+.jfModern .jfQuickRow{
+  gap: 5px;
+}
+.jfModern .jfQuickBtn{
+  min-height: 28px;
+  border-color: rgba(98, 214, 255, .20);
+  background: rgba(61, 136, 236, .14);
+  box-shadow: none;
+  color: #dceeff;
+}
+.jfModern .jfQuickBtn:hover{
+  transform: none;
+  border-color: rgba(98, 214, 255, .42);
+  background: rgba(61, 136, 236, .24);
+}
+.jfModern .jfCatalogMovies,
+.jfModern .jfCatalogTv{
+  grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+  gap: 14px;
+}
+.jfModern .jfCatalogMovies .jfItem,
+.jfModern .jfCatalogTv .jfType-series{
+  min-height: 0;
+  grid-template-rows: auto minmax(88px, auto);
+}
+.jfModern .jfCatalogMovies .jfThumb,
+.jfModern .jfCatalogTv .jfType-series .jfThumb{
+  height: auto;
+  aspect-ratio: 2 / 3;
+}
+.jfModern .jfCatalogEpisodes .jfItem,
+.jfModern .jfRowItem-next_up,
+.jfModern .jfRowItem-continue_watching{
+  grid-template-rows: auto minmax(88px, auto);
+}
+.jfModern .jfCatalogEpisodes .jfThumb,
+.jfModern .jfRowItem-next_up .jfThumb,
+.jfModern .jfRowItem-continue_watching .jfThumb{
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.jfModern .jfGrid.detailOpen .jfRowsPad{
+  padding-right: 0;
+}
+.jfModern .jfDetailBackdrop,
+.jfModern .jfGrid.detailOpen .jfDetailBackdrop{
+  position: fixed;
+  z-index: 1450;
+  pointer-events: auto;
+  background: rgba(1, 6, 18, .58);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.jfModern .jfDetail{
+  position: fixed;
+  z-index: 1451;
+  inset: 0 0 0 auto;
+  transform: none;
+  width: min(460px, 92vw);
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  border-width: 0 0 0 1px;
+  border-radius: 24px 0 0 24px;
+  border-color: var(--jf-line);
+  background: var(--jf-glass-strong);
+  box-shadow: -24px 0 70px rgba(1, 6, 18, .44);
+  animation: jfDrawerIn .20s ease-out;
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+}
+@keyframes jfDrawerIn{
+  from{ opacity: .5; transform: translateX(30px); }
+  to{ opacity: 1; transform: translateX(0); }
+}
+.jfModern .jfDetailClose{
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border: 1px solid var(--jf-line);
+  background: var(--jf-glass-strong);
+  color: var(--text);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.jfModern .jfDetailThumb{
+  max-height: none;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 16px;
+  border-color: var(--jf-line);
+}
+.jfModern .jfDetailType-movie .jfDetailThumb,
+.jfModern .jfDetailType-series .jfDetailThumb{
+  aspect-ratio: 16 / 9;
+}
+.jfModern .jfDetailTitle{
+  margin-top: 14px;
+  font-size: 23px;
+  line-height: 1.15;
+  letter-spacing: -.025em;
+}
+.jfModern .jfDetailBody{
+  line-height: 1.55;
+}
+.jfModern .jfActionRow{
+  position: sticky;
+  bottom: -1px;
+  padding: 10px 0 2px;
+  background: linear-gradient(180deg, transparent, var(--jf-glass-strong) 18%);
+}
+
+@media (prefers-color-scheme: light){
+  .jfModern .jfItem{
+    background: rgba(255,255,255,.82);
+    border-color: var(--jf-line);
+    box-shadow: 0 12px 28px rgba(30, 64, 110, .10);
+  }
+  .jfModern .jfMeta{ background: linear-gradient(180deg, rgba(239,246,255,.30), rgba(255,255,255,.60)); }
+  .jfModern .jfQuickBtn{
+    border-color: rgba(37, 99, 235, .16);
+    background: rgba(37, 99, 235, .08);
+    color: #1d4f91;
+  }
+  .jfModern .jfDetail{
+    border-color: var(--jf-line);
+    background: var(--jf-glass-strong);
+    box-shadow: -24px 0 70px rgba(30, 64, 110, .20);
+  }
+}
+
+@media (max-width: 720px){
+  .jfModern .jfCatalogMovies,
+  .jfModern .jfCatalogTv{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .jfModern .jfDetail{
+    inset: auto 0 0;
+    width: 100%;
+    height: auto;
+    max-height: min(84dvh, 780px);
+    padding: 10px 12px max(16px, env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 24px 24px 0 0;
+    animation-name: jfSheetIn;
+  }
+  @keyframes jfSheetIn{
+    from{ opacity: .5; transform: translateY(30px); }
+    to{ opacity: 1; transform: translateY(0); }
+  }
+  .jfModern .jfDetail::before{
+    content: '';
+    display: block;
+    width: 42px;
+    height: 4px;
+    margin: 0 auto 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, .48);
+  }
+  .jfModern .jfDetailThumb{
+    max-height: 220px;
+  }
+}

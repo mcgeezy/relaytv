@@ -519,6 +519,41 @@ def test_home_rows_match_server_capabilities(monkeypatch, server_type, expected_
         assert not any("/Items/Resume" in url or "/Shows/NextUp" in url for url in requested_urls)
 
 
+def test_normalize_catalog_item_exposes_image_roles_and_progress(monkeypatch) -> None:
+    def attach(item):
+        item["thumbnail_local"] = "/thumbs/cached.jpg"
+        return item
+
+    monkeypatch.setattr(jellyfin_receiver, "_attach_thumb", attach)
+
+    item = jellyfin_receiver._normalize_catalog_item(
+        {
+            "Id": "movie 1",
+            "Name": "Movie",
+            "Type": "Movie",
+            "ImageTags": {"Primary": "primary-tag"},
+            "BackdropImageTags": ["backdrop-tag"],
+            "RunTimeTicks": 1_000_000_000,
+            "UserData": {
+                "PlaybackPositionTicks": 250_000_000,
+                "Played": False,
+                "IsFavorite": True,
+            },
+        },
+        base="http://media.local",
+        token="secret token",
+    )
+
+    assert item["poster"] == item["thumbnail"]
+    assert item["poster_local"] == "/thumbs/cached.jpg"
+    assert item["backdrop"] == (
+        "http://media.local/Items/movie%201/Images/Backdrop/0?tag=backdrop-tag&api_key=secret+token"
+    )
+    assert item["progress_percent"] == 25.0
+    assert item["is_played"] is False
+    assert item["is_favorite"] is True
+
+
 def test_persist_server_type_writes_only_on_change(monkeypatch) -> None:
     updates: list[dict[str, object]] = []
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "emby")

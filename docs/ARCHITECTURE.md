@@ -12,8 +12,11 @@ milestone logs live in git history.
   aggregation. Domain routers own public endpoint registration; the
   aggregate package (`routes/__init__.py`) still owns shared route
   helpers and cross-domain glue.
-- `app/relaytv_app/static/ui/`: main web UI stylesheet and JavaScript
-  loaded by `/ui`.
+- `app/relaytv_app/static/ui/`: browser UI assets loaded by `/ui`.
+  `app.js`/`app.css` own the shared remote, while
+  `jellyfin.js`/`jellyfin.css` own the Jellyfin/Emby browse shell. The browse
+  controller consumes public route payloads and does not own catalog or
+  playback product behavior.
 - `app/relaytv_app/config.py`: runtime config service — typed env
   parsing, the settings bus, and the explicit subprocess env-mirroring
   boundary. Runtime code reads configuration through it instead of
@@ -72,8 +75,8 @@ UI — stay open. See `app/relaytv_app/api_auth.py` and
 
 Carried from the review, in rough value order:
 
-1. One browser (Playwright) smoke path for `/ui` — settings modal, queue
-   actions, Jellyfin shell visibility (still string-asserted today).
+1. Extend the checked-in browser smoke beyond the Jellyfin shell to settings,
+   general queue actions, and the remaining `/ui` surfaces.
 2. Versioned models for queue/history/session/settings — migrations
    remain implicit.
 3. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle

@@ -1080,7 +1080,10 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
 
     tags = data.get("ImageTags") if isinstance(data.get("ImageTags"), dict) else {}
     primary_tag = str(tags.get("Primary") or data.get("PrimaryImageTag") or "").strip()
+    backdrop_tags = data.get("BackdropImageTags") if isinstance(data.get("BackdropImageTags"), list) else []
+    backdrop_tag = str(backdrop_tags[0] if backdrop_tags else "").strip()
     thumb = ""
+    backdrop = ""
     if iid and base:
         thumb = f"{base}/Items/{_urlparse.quote(iid)}/Images/Primary"
         q: dict[str, str] = {}
@@ -1090,10 +1093,25 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
             q["api_key"] = token
         if q:
             thumb = f"{thumb}?{_urlparse.urlencode(q)}"
+        if backdrop_tag:
+            backdrop = f"{base}/Items/{_urlparse.quote(iid)}/Images/Backdrop/0"
+            backdrop_q: dict[str, str] = {"tag": backdrop_tag}
+            if token:
+                backdrop_q["api_key"] = token
+            backdrop = f"{backdrop}?{_urlparse.urlencode(backdrop_q)}"
 
     user_data = data.get("UserData") if isinstance(data.get("UserData"), dict) else {}
     resume_pos = _ticks_to_seconds(user_data.get("PlaybackPositionTicks"))
     runtime_sec = _ticks_to_seconds(data.get("RunTimeTicks"))
+    progress_percent = 0.0
+    try:
+        reported_progress = user_data.get("PlayedPercentage")
+        if reported_progress is not None:
+            progress_percent = max(0.0, min(100.0, float(reported_progress)))
+        elif resume_pos is not None and runtime_sec is not None and runtime_sec > 0:
+            progress_percent = max(0.0, min(100.0, (resume_pos / runtime_sec) * 100.0))
+    except Exception:
+        progress_percent = 0.0
     audio_streams, subtitle_streams, audio_language, subtitle_language = _extract_stream_languages(data)
     video_codec = ""
     video_profile = ""
@@ -1132,9 +1150,14 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "series_name": series_name,
         "series_id": str(data.get("SeriesId") or "").strip(),
         "thumbnail": thumb,
+        "poster": thumb,
+        "backdrop": backdrop,
         "year": year,
         "runtime_sec": runtime_sec,
         "resume_pos": resume_pos,
+        "progress_percent": round(progress_percent, 2),
+        "is_played": bool(user_data.get("Played")),
+        "is_favorite": bool(user_data.get("IsFavorite")),
         "media_source_id": media_source_id,
         "overview": str(data.get("Overview") or "").strip(),
         "season_number": season_num,
@@ -1151,7 +1174,10 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "video_fps": video_fps,
         "video_bitrate": video_bitrate,
     }
-    return _attach_thumb(out)
+    _attach_thumb(out)
+    if out.get("thumbnail_local"):
+        out["poster_local"] = out["thumbnail_local"]
+    return out
 
 
 def _extract_items(payload: object) -> list[dict[str, object]]:
@@ -1196,7 +1222,7 @@ def get_item_detail(item_id: str, *, refresh: bool = False) -> dict[str, object]
             return _attach_thumb(dict(cached))
     quoted = _urlparse.quote(iid)
     fields = (
-        "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesId,"
+        "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesId,"
         "SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex"
     )
     candidates: list[str] = []
@@ -1592,7 +1618,7 @@ def get_adjacent_episodes(item_id: str, *, refresh: bool = False) -> dict[str, o
         return payload
 
     fields = (
-        "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesId,"
+        "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesId,"
         "SeriesName,ParentIndexNumber,IndexNumber"
     )
     candidates: list[str] = []
@@ -1809,7 +1835,7 @@ def search_catalog(query: str, *, limit: int = 30, refresh: bool = False) -> dic
             "Recursive": "true",
             "Limit": str(lim),
             "IncludeItemTypes": "Movie,Episode,Series",
-            "Fields": "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber",
+            "Fields": "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber",
         }
     )
     candidates: list[str] = []
@@ -1860,7 +1886,7 @@ def get_home_rows(*, limit: int = 24, refresh: bool = False) -> dict[str, object
                 "rows": norm_rows,
                 "generated_ts": int(cached.get("generated_ts") or int(time.time())),
             }
-    fields = "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber"
+    fields = "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber"
 
     def _first_items(urls: list[str]) -> list[dict[str, object]]:
         timeout = float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5"))
@@ -1990,7 +2016,7 @@ def list_movies(
                 "starts_with": str(cached.get("starts_with") or letter),
             }
 
-    fields = "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber"
+    fields = "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber"
     params: dict[str, str] = {
         "IncludeItemTypes": "Movie",
         "Recursive": "true",
@@ -2095,7 +2121,7 @@ def list_series(
                 "starts_with": str(cached.get("starts_with") or letter),
             }
 
-    fields = "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber"
+    fields = "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber"
     params: dict[str, str] = {
         "IncludeItemTypes": "Series",
         "Recursive": "true",
@@ -2234,7 +2260,7 @@ def list_series_episodes(
                 "count": int(cached.get("count") or len(eps)),
             }
 
-    fields = "Overview,ImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex"
+    fields = "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex"
     timeout = float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5"))
 
     rows: list[dict[str, object]] = []
