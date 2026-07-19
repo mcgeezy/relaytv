@@ -37,7 +37,7 @@
 
 Paste a media URL into the Web UI from any phone or computer. For one-tap
 sharing, use **RelayTV Play** or **RelayTV Queue** from the
-[Android share sheet](https://github.com/mcgeezy/relaytv-android), or send links
+[Android Companion App](https://github.com/mcgeezy/relaytv-android), or send links
 through the Home Assistant Companion app with the
 [`mobile_app.share` automation](https://github.com/mcgeezy/relaytv-ha#home-assistant-companion-app-share-automation).
 
