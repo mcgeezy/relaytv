@@ -66,7 +66,7 @@ function _fetchWithTimeout(url, opts, timeoutMs){
   return fetch(url, finalOpts).finally(() => clearTimeout(timer));
 }
 
-async function post(path, body) {
+async function post(path, body, postOpts) {
   const opts = {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -78,11 +78,13 @@ async function post(path, body) {
   try {
     await _fetchWithTimeout(path, opts, 5000);
     ok = true;
-  } catch(e) {
-    // Retry only when the request never left (connection refused / network
-    // error). An abort may have landed server-side, and most commands are
-    // toggles or relative seeks where a blind resend would double-apply.
-    if (!e || e.name !== 'AbortError') {
+  } catch(_e) {
+    // A network error doesn't prove the request never reached the server (the
+    // connection can drop after the command lands), and most commands are
+    // toggles or relative seeks where a resend would double-apply. Only
+    // retry commands the caller marked idempotent (absolute sets); everything
+    // else surfaces the failure so the user can retap.
+    if (postOpts && postOpts.idempotent) {
       try {
         await _fetchWithTimeout(path, opts, 5000);
         ok = true;
@@ -293,6 +295,7 @@ let __lastStatus = null;
 let __lastStatusFullFetchTs = 0;
 let __uiEventSource = null;
 let __uiEventSourceLastTs = 0;
+let __uiEventSourceBornTs = 0;
 let __uiEventReconnectTimer = 0;
 let __remoteVolumeKnownValue = null;
 
@@ -360,8 +363,11 @@ function _uiEventMarkAlive(){
 
 function _uiEventHealthy(){
   // Server pings every 5s when idle; allow two missed pings before we call
-  // the stream dead.
-  return !!(__uiEventSource && ((Date.now() - __uiEventSourceLastTs) < 12000));
+  // the stream dead. Only real events stamp the clock, so a stream that never
+  // delivers anything can never read as healthy — the fallback poll and the
+  // reconnect badge stay armed while reconnect attempts are unproven.
+  return !!(__uiEventSource && __uiEventSourceLastTs
+    && ((Date.now() - __uiEventSourceLastTs) < 12000));
 }
 
 function _closeUiEventStream(){
@@ -374,7 +380,13 @@ function _closeUiEventStream(){
 // Android screen-off/Doze or an AP roam often die without ever firing onerror,
 // leaving a zombie EventSource that would otherwise block reconnects forever.
 function _ensureUiEventStream(){
-  if (__uiEventSource && _uiEventHealthy()) return;
+  if (__uiEventSource){
+    if (_uiEventHealthy()) return;
+    // A fresh stream gets time to connect and deliver its first event before
+    // we recycle it — but it stays "unhealthy" until that event arrives, so
+    // this grace never suppresses the fallback poll.
+    if ((Date.now() - __uiEventSourceBornTs) < 12000) return;
+  }
   _closeUiEventStream();
   connectUiEventStream();
 }
@@ -839,7 +851,7 @@ function initRemoteVolumeSlider(){
     const val = Math.max(0, Math.min(200, Number(slider.value || 0)));
     slider.__draggingVolume = false;
     _renderRemoteVolume(val, {source:'user'});
-    await post('/volume', {set: val});
+    await post('/volume', {set: val}, {idempotent: true});
   };
 
   slider.addEventListener('pointerdown', () => { slider.__draggingVolume = true; });
@@ -888,7 +900,7 @@ async function _commitSeekFromPct(pct){
   const dur = __lastStatus.duration;
   if (dur == null || isNaN(dur) || dur <= 0) return;
   const sec = pct * dur;
-  await post('/seek_abs', {sec: sec});
+  await post('/seek_abs', {sec: sec}, {idempotent: true});
 }
 
 function initScrubber(){
@@ -3369,10 +3381,10 @@ function connectUiEventStream(){
     return;
   }
   __uiEventSource = es;
-  // Stamp the health clock without signalling connectivity: the stream hasn't
-  // proven itself until a real event (hello/ping) arrives, and a false "ok"
-  // here would flicker the reconnect badge on every failed attempt.
-  __uiEventSourceLastTs = Date.now();
+  // Record birth only — never the health clock. The stream hasn't proven
+  // itself until a real event (hello/ping) arrives; stamping health here
+  // would let a silent reconnect loop read as healthy forever.
+  __uiEventSourceBornTs = Date.now();
 
   es.addEventListener('hello', (ev) => {
     _uiEventMarkAlive();
