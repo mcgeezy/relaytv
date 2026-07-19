@@ -2679,3 +2679,49 @@
         background: linear-gradient(180deg, rgb(37,54,96), rgb(21,32,60));
       }
     }
+
+/* --- Compact mobile experiment: heading + now playing + remote share one
+   phone screen; only the queue scrolls below the fold. The now-playing
+   header collapses into chips floating over the hero art. --- */
+@media (max-width: 520px){
+  .wrap{ gap: 12px; }
+  .topgrid{ gap: 12px; }
+
+  .nowCard{ position: relative; padding: 12px; }
+  .nowCard .nHead{
+    position: absolute;
+    top: 22px;
+    left: 22px;
+    right: 22px;
+    z-index: 6;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border-bottom: 0;
+    pointer-events: none;
+  }
+  .nowCard .nHead > *{ pointer-events: auto; }
+  .nowCard .nHeadTitle{ display: none; }
+  .nowCard .nSkipBtn{ margin-left: 0; }
+  /* Floating over the art needs its own contrast in both themes */
+  .nowCard .nStateTag,
+  .nowCard .nSkipBtn{
+    background: rgba(5, 10, 22, .60);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .nowCard .nSkipBtn{ color: rgba(222, 236, 255, .92); }
+  /* Idle hides the hero, so the row gets its inline spot back */
+  .nowCard.isIdle .nHead{ position: static; margin: 0; }
+
+  .nHero{ aspect-ratio: 2 / 1; }
+  .nowCard .progress{ margin-top: 10px; }
+
+  .remoteCard{ padding: 12px; }
+  .rGrid{ gap: 10px; }
+  .rBig{ aspect-ratio: auto; min-height: 104px; gap: 8px; padding: 12px 10px; }
+  .rTile{ min-height: 56px; padding: 12px 14px; }
+  .rSeek{ min-height: 58px; }
+  .remoteVolumeRow{ margin-top: 10px; }
+}
