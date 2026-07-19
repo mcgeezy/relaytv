@@ -165,14 +165,14 @@ and image work are bounded, and loading another page does not duplicate cards.
 
 ### M3 - Modern Shell
 
-Status: in progress
+Status: complete
 
-- [ ] Add the responsive app bar and phone/desktop navigation treatments.
-- [ ] Integrate search, sort, connection state, loading, empty, and offline
+- [x] Add the responsive app bar and phone/desktop navigation treatments.
+- [x] Integrate search, sort, connection state, loading, empty, and offline
   states.
-- [ ] Apply the glass design tokens in dark, light, and automatic modes.
-- [ ] Keep Jellyfin and Emby labels driven by detected server type.
-- [ ] Provide a query/local-storage experiment switch while the old shell is
+- [x] Apply the glass design tokens in dark, light, and automatic modes.
+- [x] Keep Jellyfin and Emby labels driven by detected server type.
+- [x] Provide a query/local-storage experiment switch while the old shell is
   still needed for comparison.
 
 Exit: users can navigate every top-level view in the modern shell without
@@ -180,7 +180,7 @@ losing existing features.
 
 ### M4 - Media Cards And Detail
 
-Status: pending
+Status: in progress
 
 - [ ] Add additive poster/backdrop image roles to normalized catalog payloads.
 - [ ] Build media-type-aware Home, movie, series, and episode cards.
@@ -280,3 +280,4 @@ Browser validation should capture:
 | 2026-07-19 | M0 | `d6eb8cf` | Confirmed PR #38 merged and fast-forwarded the Jellyfin feature branch to its post-merge `main` commit. | Branch ancestry and clean merge state verified with Git and GitHub. |
 | 2026-07-19 | M1 | `b70a392` | Extracted the Jellyfin browse controller and stylesheet into separately cache-busted static assets without changing IDs, APIs, or behavior. | Rebuilt the live container; `/health` and Jellyfin authentication/connection passed; Playwright phone-dark and desktop-light dashboard, Movies, detail, keyboard, asset-load, error, and overflow checks passed. Ruff and all 401 tests passed. |
 | 2026-07-19 | M2 | Milestone commit | Replaced full-library catalog requests with 48-item pages, deduplicated sentinel-driven appends, cancellable browse requests, lazy images, and document-level catalog scrolling. | Rebuilt the live container; direct endpoint pagination passed; remote Playwright via `ws://10.55.55.98:3000/` verified 48-to-96 append, unique IDs, retained focus, no nested or horizontal overflow, bounded sort reloads, TV loading, and aborted obsolete sort/search requests. |
+| 2026-07-19 | M3 | Milestone commit | Added the opt-out modern shell with a glass app bar, separate connection/loading state, desktop rail, phone bottom navigation, integrated search/sort toolbar, and persisted `jfui=modern|classic` switch. | Rebuilt the live container; remote Playwright and screenshot inspection covered phone dark, desktop light, and classic fallback modes with connected branding, fixed/sticky navigation, correct mode selection, zero overflow, and no browser errors. |

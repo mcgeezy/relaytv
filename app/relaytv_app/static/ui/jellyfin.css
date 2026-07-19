@@ -732,3 +732,444 @@
     padding-bottom: calc(10px + env(safe-area-inset-bottom) / 2);
   }
 }
+
+/* Modern Jellyfin shell (`?jfui=classic` keeps the comparison skin). */
+.jfShellIdentity{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.jfShellMark{
+  display: grid;
+  place-items: center;
+}
+.jfShellEyebrow{
+  font-size: 10px;
+  color: var(--muted2);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.jfConnection{
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.jfConnectionDot{
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+.jfSearchIcon{
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.jfShell.jfModern{
+  --jf-glass: rgba(8, 18, 38, .72);
+  --jf-glass-strong: rgba(10, 23, 46, .90);
+  --jf-glass-soft: rgba(19, 36, 65, .58);
+  --jf-line: rgba(148, 180, 220, .18);
+  --jf-accent: #62d6ff;
+  --jf-accent-strong: #3978f6;
+  --jf-good: #55e9a4;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgba(32, 161, 255, .22), transparent 62%),
+    radial-gradient(720px 520px at 92% 12%, rgba(119, 74, 255, .16), transparent 64%),
+    linear-gradient(155deg, #07101f 0%, #09152a 54%, #07111f 100%);
+}
+.jfModern .jfShellInner{
+  max-width: 1320px;
+  gap: 16px;
+}
+.jfModern .jfShellHead{
+  position: sticky;
+  top: -1px;
+  z-index: 20;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--jf-line);
+  border-radius: 18px;
+  background: var(--jf-glass);
+  box-shadow: 0 18px 50px rgba(1, 6, 18, .26), inset 0 1px rgba(255,255,255,.06);
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+}
+.jfModern .jfShellBack{
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--jf-line);
+  background: rgba(255,255,255,.055);
+  color: #e8f1ff;
+}
+.jfModern .jfShellBack:hover{
+  transform: none;
+  background: rgba(255,255,255,.10);
+}
+.jfModern .jfShellIdentity{
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.jfModern .jfShellMark{
+  width: 34px;
+  height: 34px;
+  padding-left: 2px;
+  border-radius: 11px;
+  background: linear-gradient(145deg, var(--jf-accent), var(--jf-accent-strong));
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(45, 124, 246, .36), inset 0 1px rgba(255,255,255,.38);
+  font-size: 12px;
+}
+.jfModern .jfShellTitle{
+  color: #f2f7ff;
+  font-size: 17px;
+  line-height: 1.2;
+  font-weight: 760;
+  letter-spacing: -.015em;
+  text-transform: none;
+}
+.jfModern .jfConnection{
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(85, 233, 164, .24);
+  border-radius: 999px;
+  background: rgba(34, 197, 94, .08);
+  color: #bdfbd9;
+  font-size: 12px;
+  font-weight: 680;
+}
+.jfModern .jfConnectionDot{
+  background: var(--jf-good);
+  box-shadow: 0 0 0 4px rgba(85, 233, 164, .10), 0 0 14px rgba(85, 233, 164, .55);
+}
+.jfModern.jfOffline .jfConnection{
+  border-color: rgba(248, 113, 113, .28);
+  background: rgba(239, 68, 68, .09);
+  color: #fecaca;
+}
+.jfModern.jfOffline .jfConnectionDot{
+  background: #fb7185;
+  box-shadow: 0 0 0 4px rgba(251, 113, 133, .10);
+}
+.jfModern.jfLoading .jfConnectionDot{
+  animation: jfConnectionPulse 1.25s ease-in-out infinite;
+}
+@keyframes jfConnectionPulse{
+  50%{ opacity: .42; transform: scale(.78); }
+}
+.jfModern .jfWorkspace{
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+.jfModern .jfTabs{
+  position: sticky;
+  top: 82px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: auto;
+  padding: 8px;
+  border-radius: 18px;
+  background: var(--jf-glass);
+  border-color: var(--jf-line);
+  box-shadow: 0 18px 50px rgba(1, 6, 18, .20), inset 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+}
+.jfModern .jfTabBtn{
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 13px;
+  border-color: transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #aebed5;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 13px;
+}
+.jfModern .jfTabIcon{
+  display: grid;
+  place-items: center;
+  width: 23px;
+  color: #8da4c2;
+  font-size: 17px;
+}
+.jfModern .jfTabBtn:hover{
+  background: rgba(125, 166, 218, .10);
+}
+.jfModern .jfTabBtn.active,
+.jfModern .jfTabBtn.active:hover{
+  border-color: rgba(98, 214, 255, .28);
+  background: linear-gradient(135deg, rgba(56, 189, 248, .20), rgba(57, 120, 246, .18));
+  color: #f4f9ff;
+  box-shadow: inset 3px 0 var(--jf-accent), inset 0 1px rgba(255,255,255,.08), 0 8px 22px rgba(20, 82, 180, .14);
+}
+.jfModern .jfTabBtn.active .jfTabIcon{
+  color: var(--jf-accent);
+}
+.jfModern .jellyfinCard{
+  min-width: 0;
+  margin-top: 0;
+  padding: 16px;
+  border-radius: 22px;
+  border-color: var(--jf-line);
+  background: linear-gradient(150deg, rgba(12, 27, 52, .82), rgba(8, 20, 42, .72));
+  box-shadow: 0 22px 64px rgba(1, 6, 18, .28), inset 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+}
+.jfModern .jfCardHead{
+  position: sticky;
+  top: 82px;
+  z-index: 12;
+  padding: 6px;
+  border: 1px solid var(--jf-line);
+  border-radius: 16px;
+  background: var(--jf-glass-strong);
+  box-shadow: 0 14px 34px rgba(1, 6, 18, .22);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+}
+.jfModern .jfCardHeadLabel{
+  display: none;
+}
+.jfModern .jfCardSearchWrap{
+  position: relative;
+  flex: 1 1 320px;
+  width: auto;
+  max-width: none;
+  margin-left: 0;
+}
+.jfModern .jfSearchIcon{
+  z-index: 1;
+  color: #8ca4c2;
+  font-size: 20px;
+}
+.jfModern .jfCardSearch{
+  height: 42px;
+  padding: 0 15px 0 39px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255,255,255,.055);
+  box-shadow: none;
+  color: #f2f7ff;
+}
+.jfModern .jfCardSearch:focus{
+  background: rgba(255,255,255,.08);
+  box-shadow: 0 0 0 2px rgba(98, 214, 255, .24);
+}
+.jfModern .jfSort{
+  flex: 0 0 auto;
+  height: 42px;
+  max-width: 190px;
+  padding: 0 34px 0 12px;
+  border-radius: 12px;
+  border-color: var(--jf-line);
+  background-color: rgba(255,255,255,.055);
+}
+.jfModern .jfTop{
+  min-height: 26px;
+  margin: 10px 3px 0;
+}
+.jfModern .jfStatus{
+  order: 0;
+  margin-left: 0;
+  color: #94a8c4;
+}
+.jfModern .jfStatus.ok{ color: #9cf3c7; }
+.jfModern .jfStatus.err{ color: #fda4af; }
+.jfModern .jfHint{
+  order: 1;
+  margin-left: auto;
+  width: auto;
+  text-align: right;
+}
+.jfModern .jfActionStatus{
+  order: 2;
+}
+
+@media (prefers-color-scheme: light){
+  .jfShell.jfModern{
+    --jf-glass: rgba(255,255,255,.76);
+    --jf-glass-strong: rgba(249,252,255,.92);
+    --jf-glass-soft: rgba(239,246,255,.72);
+    --jf-line: rgba(30, 64, 120, .13);
+    --jf-accent: #0ea5e9;
+    --jf-accent-strong: #2563eb;
+    background:
+      radial-gradient(900px 520px at 12% -8%, rgba(14, 165, 233, .16), transparent 62%),
+      radial-gradient(720px 520px at 92% 12%, rgba(99, 102, 241, .11), transparent 64%),
+      linear-gradient(155deg, #edf5ff 0%, #f7faff 54%, #edf4fb 100%);
+  }
+  .jfModern .jfShellHead,
+  .jfModern .jfTabs{
+    box-shadow: 0 18px 50px rgba(30, 64, 110, .10), inset 0 1px rgba(255,255,255,.80);
+  }
+  .jfModern .jfShellBack{
+    background: rgba(255,255,255,.64);
+    color: #17304f;
+  }
+  .jfModern .jfShellTitle{ color: #10243f; }
+  .jfModern .jfShellEyebrow{ color: #68809e; }
+  .jfModern .jfConnection{ color: #14764b; }
+  .jfModern .jfTabBtn{ color: #58708d; }
+  .jfModern .jfTabIcon{ color: #7189a6; }
+  .jfModern .jfTabBtn:hover{ background: rgba(37, 99, 235, .07); }
+  .jfModern .jfTabBtn.active,
+  .jfModern .jfTabBtn.active:hover{
+    color: #14325a;
+    background: linear-gradient(135deg, rgba(14, 165, 233, .12), rgba(37, 99, 235, .10));
+  }
+  .jfModern .jellyfinCard{
+    border-color: var(--jf-line);
+    background: linear-gradient(150deg, rgba(255,255,255,.88), rgba(246,250,255,.78));
+    box-shadow: 0 22px 64px rgba(30, 64, 110, .11), inset 0 1px rgba(255,255,255,.92);
+  }
+  .jfModern .jfCardHead{
+    box-shadow: 0 14px 34px rgba(30, 64, 110, .10);
+  }
+  .jfModern .jfCardSearch{
+    background: rgba(226, 237, 250, .64);
+    color: #10243f;
+  }
+  .jfModern .jfCardSearch:focus{ background: rgba(219, 234, 254, .82); }
+  .jfModern .jfSearchIcon{ color: #68809e; }
+  .jfModern .jfSort{
+    background-color: rgba(226, 237, 250, .76);
+    color: #17304f;
+  }
+  .jfModern .jfStatus,
+  .jfModern .jfHint{ color: #68809e; }
+}
+
+@media (max-width: 720px){
+  .jfShell.jfModern{
+    padding: 0 0 calc(78px + env(safe-area-inset-bottom));
+  }
+  .jfModern .jfShellInner{
+    display: block;
+  }
+  .jfModern .jfShellHead{
+    top: 0;
+    min-height: 62px;
+    padding: max(9px, env(safe-area-inset-top)) 10px 9px;
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+  .jfModern .jfShellBack{
+    min-height: 38px;
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+  }
+  .jfModern .jfShellBack span:last-child{ display: none; }
+  .jfModern .jfShellIdentity{
+    gap: 8px;
+  }
+  .jfModern .jfShellMark{
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+  }
+  .jfModern .jfShellEyebrow{ display: none; }
+  .jfModern .jfShellTitle{ font-size: 15px; }
+  .jfModern .jfConnection{
+    min-height: 34px;
+    max-width: 116px;
+    padding: 0 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .jfModern .jfWorkspace{
+    display: block;
+    padding: 10px;
+  }
+  .jfModern .jfTabs{
+    position: fixed;
+    z-index: 1400;
+    inset: auto 8px max(8px, env(safe-area-inset-bottom)) 8px;
+    top: auto;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex-direction: initial;
+    gap: 5px;
+    padding: 6px;
+    border-radius: 19px;
+    box-shadow: 0 18px 48px rgba(1, 6, 18, .38), inset 0 1px rgba(255,255,255,.08);
+  }
+  .jfModern .jfTabBtn{
+    justify-content: center;
+    gap: 5px;
+    min-height: 50px;
+    padding: 0 6px;
+    flex-direction: column;
+    font-size: 10px;
+  }
+  .jfModern .jfTabIcon{
+    width: auto;
+    height: 17px;
+    font-size: 16px;
+  }
+  .jfModern .jfTabBtn.active,
+  .jfModern .jfTabBtn.active:hover{
+    box-shadow: inset 0 2px var(--jf-accent), inset 0 1px rgba(255,255,255,.08);
+  }
+  .jfModern .jellyfinCard{
+    padding: 10px;
+    border-radius: 18px;
+  }
+  .jfModern .jfCardHead{
+    top: calc(62px + env(safe-area-inset-top));
+    gap: 6px;
+  }
+  .jfModern .jfCardSearchWrap{
+    min-width: 0;
+    flex-basis: 160px;
+  }
+  .jfModern .jfSort{
+    max-width: 124px;
+    padding-left: 9px;
+    font-size: 11px;
+  }
+  .jfModern .jfTop{
+    margin-top: 7px;
+  }
+  .jfModern .jfHint{ display: none; }
+}
+
+@media (max-width: 390px){
+  .jfModern .jfConnection{
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .jfModern .jfConnection span:last-child{ display: none; }
+  .jfModern .jfCardHead{
+    flex-wrap: wrap;
+  }
+  .jfModern .jfCardSearchWrap{
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+  .jfModern .jfSort{
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+}

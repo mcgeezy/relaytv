@@ -129,6 +129,9 @@ def test_ui_smoke() -> None:
     assert 'id="jfDetailBackdrop"' in response.text
     assert 'id="jfSortSelect"' in response.text
     assert 'id="jfAlphaIndicator"' in response.text
+    assert 'id="jfConnection"' in response.text
+    assert 'class="jfWorkspace"' in response.text
+    assert 'class="jfShellEyebrow">RelayTV library' in response.text
     assert 'id="remoteVolSlider"' in response.text
     assert 'id="remoteVolValue"' in response.text
     assert 'id="setUploadMaxSize"' in response.text
@@ -178,6 +181,9 @@ def test_ui_smoke() -> None:
     assert 'function _jfSyncTabControls' in jellyfin_js
     assert 'function _jfScheduleSearch' in jellyfin_js
     assert 'function _jfBuildRowItemCard' in jellyfin_js
+    assert "const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';" in jellyfin_js
+    assert "params.get('jfui')" in jellyfin_js
+    assert "shell.classList.toggle('jfModern', mode === 'modern');" in jellyfin_js
     assert 'const __JF_CATALOG_PAGE_SIZE = 48;' in jellyfin_js
     assert 'function _jfLoadNextCatalogPage' in jellyfin_js
     assert 'new IntersectionObserver' in jellyfin_js
@@ -191,6 +197,8 @@ def test_ui_smoke() -> None:
     assert 'function _applyQueueSnapshot' in js
     assert 'touch-action: none;' in jellyfin_css
     assert '.jfCatalogSentinel{' in jellyfin_css
+    assert '.jfModern .jfWorkspace{' in jellyfin_css
+    assert '.jfModern .jfConnection{' in jellyfin_css
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js

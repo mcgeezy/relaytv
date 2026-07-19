@@ -38,6 +38,7 @@ let __jfCatalogObserver = null;
 const __JF_CATALOG_PAGE_SIZE = 48;
 const __JF_REQ_TIMEOUT_MS = 12000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
+const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';
 const __jfCatalogState = {
   movies: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
   tv: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
@@ -46,6 +47,30 @@ const __jfCatalogState = {
 let __jfServerType = 'jellyfin';
 let __jfServerConfigured = false;
 let __jfBrandApplied = false;
+
+function _jfUiMode(){
+  let queryMode = '';
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    queryMode = String(params.get('jfui') || params.get('jf_ui') || '').trim().toLowerCase();
+    if (queryMode === 'legacy') queryMode = 'classic';
+    if (queryMode === 'modern' || queryMode === 'classic') {
+      localStorage.setItem(__JF_UI_MODE_KEY, queryMode);
+      return queryMode;
+    }
+    const stored = String(localStorage.getItem(__JF_UI_MODE_KEY) || '').trim().toLowerCase();
+    if (stored === 'modern' || stored === 'classic') return stored;
+  } catch (_e) {}
+  return 'modern';
+}
+
+function _jfApplyUiMode(){
+  const shell = document.getElementById('jellyfinShell');
+  if (!shell) return;
+  const mode = _jfUiMode();
+  shell.dataset.jfUi = mode;
+  shell.classList.toggle('jfModern', mode === 'modern');
+}
 
 function jfBrandName(){
   if (!__jfServerConfigured) return 'Jellyfin / Emby';
@@ -112,6 +137,7 @@ function openJellyfinShell(){
   if (!__jfLaunchVisible) return;
   if (__jfUiVisible) return;
   __jfLastFocus = document.activeElement || null;
+  _jfApplyUiMode();
   _jfSetShellVisible(true);
   _uiPushLayer();
   _jfSetActiveTab(__jfActiveTab || 'dashboard', {refresh:false});
@@ -437,14 +463,21 @@ function _jfSetStatus(text, kind){
   el.textContent = text || '';
   el.classList.remove('ok', 'err');
   if (kind === 'ok' || kind === 'err') el.classList.add(kind);
+  const busy = /^(loading|searching|checking|reconnecting)/i.test(String(text || '').trim());
+  const card = document.getElementById('jellyfinCard');
+  const shell = document.getElementById('jellyfinShell');
+  if (card) card.setAttribute('aria-busy', busy ? 'true' : 'false');
+  if (shell) shell.classList.toggle('jfLoading', busy);
 }
 
 function _jfSetConn(up, text){
   __jfConnected = !!up;
   const card = document.getElementById('jellyfinCard');
+  const shell = document.getElementById('jellyfinShell');
+  const label = document.getElementById('jfConnectionLabel');
   if (card) card.classList.toggle('jfOffline', !__jfConnected);
-  // Connection indicator is represented by jfStatus only.
-  void text;
+  if (shell) shell.classList.toggle('jfOffline', !__jfConnected);
+  if (label) label.textContent = String(text || (__jfConnected ? 'Connected' : 'Unavailable'));
 }
 
 function _jfSetActionStatus(text, kind, holdMs){
@@ -1868,6 +1901,7 @@ async function jellyfinDetailAction(kind){
 }
 
 function bindJellyfinUi(){
+  _jfApplyUiMode();
   const launchBtn = document.getElementById('jellyfinOpenBtn');
   const shellBack = document.getElementById('jfShellBackBtn');
   const detailBackdrop = document.getElementById('jfDetailBackdrop');
