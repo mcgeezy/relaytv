@@ -930,8 +930,8 @@
   border-color: var(--jf-line);
   background: linear-gradient(150deg, rgba(12, 27, 52, .82), rgba(8, 20, 42, .72));
   box-shadow: 0 22px 64px rgba(1, 6, 18, .28), inset 0 1px rgba(255,255,255,.05);
-  backdrop-filter: blur(18px) saturate(125%);
-  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .jfModern .jfCardHead{
   position: sticky;
@@ -1171,5 +1171,241 @@
     flex: 1 1 100%;
     width: 100%;
     max-width: none;
+  }
+}
+
+/* Media-aware cards and modern detail surfaces. */
+.jfThumb{ position: relative; }
+.jfMediaBadge{
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  padding: 3px 7px;
+  border: 1px solid rgba(255,255,255,.20);
+  border-radius: 999px;
+  background: rgba(2, 8, 23, .70);
+  color: #f8fbff;
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.jfMediaProgress{
+  position: absolute;
+  z-index: 3;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(2, 8, 23, .68);
+  box-shadow: 0 1px 4px rgba(0,0,0,.28);
+}
+.jfMediaProgress > span{
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #3978f6);
+}
+.jfModern .jfItem{
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--jf-glass-soft);
+  border-color: var(--jf-line);
+  box-shadow: 0 12px 28px rgba(1, 6, 18, .18);
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.jfModern .jfItem:hover{
+  transform: translateY(-2px);
+  border-color: rgba(98, 214, 255, .34);
+  box-shadow: 0 18px 36px rgba(1, 6, 18, .28);
+}
+.jfModern .jfItem:focus-visible{
+  outline: 2px solid var(--jf-accent);
+  outline-offset: 2px;
+}
+.jfModern .jfThumb img{
+  transition: transform .28s ease, filter .28s ease;
+}
+.jfModern .jfItem:hover .jfThumb img{
+  transform: scale(1.025);
+  filter: saturate(1.06);
+}
+.jfModern .jfMeta{
+  background: linear-gradient(180deg, rgba(255,255,255,.035), transparent);
+}
+.jfModern .jfItemTitle{
+  font-weight: 720;
+  letter-spacing: -.01em;
+}
+.jfModern .jfQuickRow{
+  gap: 5px;
+}
+.jfModern .jfQuickBtn{
+  min-height: 28px;
+  border-color: rgba(98, 214, 255, .20);
+  background: rgba(61, 136, 236, .14);
+  box-shadow: none;
+  color: #dceeff;
+}
+.jfModern .jfQuickBtn:hover{
+  transform: none;
+  border-color: rgba(98, 214, 255, .42);
+  background: rgba(61, 136, 236, .24);
+}
+.jfModern .jfCatalogMovies,
+.jfModern .jfCatalogTv{
+  grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+  gap: 14px;
+}
+.jfModern .jfCatalogMovies .jfItem,
+.jfModern .jfCatalogTv .jfType-series{
+  min-height: 0;
+  grid-template-rows: auto minmax(88px, auto);
+}
+.jfModern .jfCatalogMovies .jfThumb,
+.jfModern .jfCatalogTv .jfType-series .jfThumb{
+  height: auto;
+  aspect-ratio: 2 / 3;
+}
+.jfModern .jfCatalogEpisodes .jfItem,
+.jfModern .jfRowItem-next_up,
+.jfModern .jfRowItem-continue_watching{
+  grid-template-rows: auto minmax(88px, auto);
+}
+.jfModern .jfCatalogEpisodes .jfThumb,
+.jfModern .jfRowItem-next_up .jfThumb,
+.jfModern .jfRowItem-continue_watching .jfThumb{
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.jfModern .jfGrid.detailOpen .jfRowsPad{
+  padding-right: 0;
+}
+.jfModern .jfDetailBackdrop,
+.jfModern .jfGrid.detailOpen .jfDetailBackdrop{
+  position: fixed;
+  z-index: 1450;
+  pointer-events: auto;
+  background: rgba(1, 6, 18, .58);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.jfModern .jfDetail{
+  position: fixed;
+  z-index: 1451;
+  inset: 0 0 0 auto;
+  transform: none;
+  width: min(460px, 92vw);
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  border-width: 0 0 0 1px;
+  border-radius: 24px 0 0 24px;
+  border-color: var(--jf-line);
+  background: var(--jf-glass-strong);
+  box-shadow: -24px 0 70px rgba(1, 6, 18, .44);
+  animation: jfDrawerIn .20s ease-out;
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+}
+@keyframes jfDrawerIn{
+  from{ opacity: .5; transform: translateX(30px); }
+  to{ opacity: 1; transform: translateX(0); }
+}
+.jfModern .jfDetailClose{
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border: 1px solid var(--jf-line);
+  background: var(--jf-glass-strong);
+  color: var(--text);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.jfModern .jfDetailThumb{
+  max-height: none;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 16px;
+  border-color: var(--jf-line);
+}
+.jfModern .jfDetailType-movie .jfDetailThumb,
+.jfModern .jfDetailType-series .jfDetailThumb{
+  aspect-ratio: 16 / 9;
+}
+.jfModern .jfDetailTitle{
+  margin-top: 14px;
+  font-size: 23px;
+  line-height: 1.15;
+  letter-spacing: -.025em;
+}
+.jfModern .jfDetailBody{
+  line-height: 1.55;
+}
+.jfModern .jfActionRow{
+  position: sticky;
+  bottom: -1px;
+  padding: 10px 0 2px;
+  background: linear-gradient(180deg, transparent, var(--jf-glass-strong) 18%);
+}
+
+@media (prefers-color-scheme: light){
+  .jfModern .jfItem{
+    background: rgba(255,255,255,.82);
+    border-color: var(--jf-line);
+    box-shadow: 0 12px 28px rgba(30, 64, 110, .10);
+  }
+  .jfModern .jfMeta{ background: linear-gradient(180deg, rgba(239,246,255,.30), rgba(255,255,255,.60)); }
+  .jfModern .jfQuickBtn{
+    border-color: rgba(37, 99, 235, .16);
+    background: rgba(37, 99, 235, .08);
+    color: #1d4f91;
+  }
+  .jfModern .jfDetail{
+    border-color: var(--jf-line);
+    background: var(--jf-glass-strong);
+    box-shadow: -24px 0 70px rgba(30, 64, 110, .20);
+  }
+}
+
+@media (max-width: 720px){
+  .jfModern .jfCatalogMovies,
+  .jfModern .jfCatalogTv{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .jfModern .jfDetail{
+    inset: auto 0 0;
+    width: 100%;
+    height: auto;
+    max-height: min(84dvh, 780px);
+    padding: 10px 12px max(16px, env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 24px 24px 0 0;
+    animation-name: jfSheetIn;
+  }
+  @keyframes jfSheetIn{
+    from{ opacity: .5; transform: translateY(30px); }
+    to{ opacity: 1; transform: translateY(0); }
+  }
+  .jfModern .jfDetail::before{
+    content: '';
+    display: block;
+    width: 42px;
+    height: 4px;
+    margin: 0 auto 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, .48);
+  }
+  .jfModern .jfDetailThumb{
+    max-height: 220px;
   }
 }

@@ -180,14 +180,14 @@ losing existing features.
 
 ### M4 - Media Cards And Detail
 
-Status: in progress
+Status: complete
 
-- [ ] Add additive poster/backdrop image roles to normalized catalog payloads.
-- [ ] Build media-type-aware Home, movie, series, and episode cards.
-- [ ] Add Continue Watching progress presentation.
-- [ ] Implement the bottom-sheet/side-drawer detail surface.
-- [ ] Normalize duplicated metadata and action terminology.
-- [ ] Preserve Play, Resume, Play Next, queue-last, Play All, and adjacent
+- [x] Add additive poster/backdrop image roles to normalized catalog payloads.
+- [x] Build media-type-aware Home, movie, series, and episode cards.
+- [x] Add Continue Watching progress presentation.
+- [x] Implement the bottom-sheet/side-drawer detail surface.
+- [x] Normalize duplicated metadata and action terminology.
+- [x] Preserve Play, Resume, Play Next, queue-last, Play All, and adjacent
   episode behavior.
 
 Exit: catalog art uses the correct aspect ratio, detail prioritizes the likely
@@ -195,7 +195,7 @@ action, and no playback command semantics regress.
 
 ### M5 - TV, Search, And Resilience
 
-Status: pending
+Status: in progress
 
 - [ ] Complete series to season to episode navigation.
 - [ ] Validate Play All and previous/next episode traversal.
@@ -281,3 +281,4 @@ Browser validation should capture:
 | 2026-07-19 | M1 | `b70a392` | Extracted the Jellyfin browse controller and stylesheet into separately cache-busted static assets without changing IDs, APIs, or behavior. | Rebuilt the live container; `/health` and Jellyfin authentication/connection passed; Playwright phone-dark and desktop-light dashboard, Movies, detail, keyboard, asset-load, error, and overflow checks passed. Ruff and all 401 tests passed. |
 | 2026-07-19 | M2 | Milestone commit | Replaced full-library catalog requests with 48-item pages, deduplicated sentinel-driven appends, cancellable browse requests, lazy images, and document-level catalog scrolling. | Rebuilt the live container; direct endpoint pagination passed; remote Playwright via `ws://10.55.55.98:3000/` verified 48-to-96 append, unique IDs, retained focus, no nested or horizontal overflow, bounded sort reloads, TV loading, and aborted obsolete sort/search requests. |
 | 2026-07-19 | M3 | Milestone commit | Added the opt-out modern shell with a glass app bar, separate connection/loading state, desktop rail, phone bottom navigation, integrated search/sort toolbar, and persisted `jfui=modern|classic` switch. | Rebuilt the live container; remote Playwright and screenshot inspection covered phone dark, desktop light, and classic fallback modes with connected branding, fixed/sticky navigation, correct mode selection, zero overflow, and no browser errors. |
+| 2026-07-19 | M4 | Milestone commit | Added poster/backdrop/progress payload roles, media-aware poster and landscape cards, Continue Watching progress/Resume affordances, normalized action labels, and viewport-anchored phone sheet/desktop drawer details. | Rebuilt the live container; service/route/inventory tests passed; live payload sampling verified image/progress roles; remote Playwright and screenshots verified 2:3 catalog art, 16:9 backdrops, progress controls, action parity, exact viewport anchoring, zero overflow, and no browser errors. |

@@ -312,6 +312,18 @@ function _jfSetDetailScrollLock(locked){
 function _jfPositionDetailPanel(){
   const detail = document.getElementById('jfDetail');
   if (!detail) return;
+  const shellMode = document.getElementById('jellyfinShell');
+  if (shellMode && shellMode.classList.contains('jfModern')) {
+    detail.style.position = '';
+    detail.style.width = '';
+    detail.style.maxWidth = '';
+    detail.style.maxHeight = '';
+    detail.style.left = '';
+    detail.style.right = '';
+    detail.style.top = '';
+    detail.style.transform = '';
+    return;
+  }
   if (_jfIsNarrowViewport()) {
     const shell = document.getElementById('jellyfinShell');
     const grid = document.getElementById('jfGrid');
@@ -688,7 +700,8 @@ function _jfApplySelectionUi(){
 function _jfRenderDetail(item){
   const host = document.getElementById('jfDetail');
   if (!host) return;
-  host.className = 'jfDetail';
+  const itemType = String(item && item.type || '').trim().toLowerCase();
+  host.className = `jfDetail jfDetailType-${itemType || 'item'}`;
   host.innerHTML = '';
 
   const closeBtn = document.createElement('button');
@@ -698,7 +711,7 @@ function _jfRenderDetail(item){
   closeBtn.onclick = () => _jfCloseDetailPanel();
   host.appendChild(closeBtn);
 
-  const isEpisode = String(item && item.type || '').trim().toLowerCase() === 'episode';
+  const isEpisode = itemType === 'episode';
   const thumbWrap = document.createElement('div');
   thumbWrap.className = 'jfDetailThumbWrap';
 
@@ -706,7 +719,7 @@ function _jfRenderDetail(item){
   thumb.className = 'jfDetailThumb';
   thumb.alt = '';
   thumb.loading = 'eager';
-  thumb.src = item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
+  thumb.src = item.backdrop || item.poster_local || item.poster || item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
   thumb.addEventListener('load', () => _jfPositionDetailPanel(), {once:true});
   thumb.addEventListener('error', () => _jfPositionDetailPanel(), {once:true});
   thumbWrap.appendChild(thumb);
@@ -748,11 +761,12 @@ function _jfRenderDetail(item){
   const sub = document.createElement('div');
   sub.className = 'jfDetailSub';
   const parts = [];
-  if (item.subtitle) parts.push(item.subtitle);
-  if (item.year) parts.push(String(item.year));
+  const detailSubtitle = String(item.subtitle || '').trim();
+  const detailYear = String(item.year || '').trim();
+  if (detailSubtitle) parts.push(detailSubtitle);
+  if (detailYear && !detailSubtitle.includes(detailYear)) parts.push(detailYear);
   const rt = _jfFmtSec(item.runtime_sec);
   if (rt) parts.push(rt);
-  if (item.resume_pos && Number(item.resume_pos) > 0) parts.push(`Resume ${_jfFmtSec(item.resume_pos)}`);
   sub.textContent = parts.join(' · ');
   host.appendChild(sub);
 
@@ -816,7 +830,7 @@ function _jfRenderDetail(item){
 
   actions.appendChild(mkBtn('Play Now', 'play_now'));
   actions.appendChild(mkBtn('Play Next', 'play_next'));
-  actions.appendChild(mkBtn('Play Last', 'play_last'));
+  actions.appendChild(mkBtn('Queue Last', 'play_last'));
   actions.appendChild(mkBtn('Resume', 'resume'));
   host.appendChild(actions);
 
@@ -828,7 +842,7 @@ function _jfRenderDetail(item){
   requestAnimationFrame(() => _jfPositionDetailPanel());
 }
 
-function _jfBuildRowItemCard(item){
+function _jfBuildRowItemCard(item, rowId){
   const premiereText = String(item.premiere_date || item.PremiereDate || '').trim();
   const yearFromPremiere = (/^\d{4}/.test(premiereText) ? premiereText.slice(0, 4) : '');
   const titleText = String(
@@ -841,6 +855,7 @@ function _jfBuildRowItemCard(item){
     item.year || item.production_year || item.ProductionYear || yearFromPremiere || ''
   ).trim();
   const itemType = String(item.type || item.Type || '').trim().toLowerCase();
+  const normalizedRowId = String(rowId || '').trim().toLowerCase();
   let subtitleText = subtitleTextRaw;
   if (itemType === 'movie' && subtitleTextRaw) {
     const m = subtitleTextRaw.match(/\b(19|20)\d{2}\b/);
@@ -851,6 +866,8 @@ function _jfBuildRowItemCard(item){
   }
   const btn = document.createElement('div');
   btn.className = 'jfItem';
+  if (itemType) btn.classList.add(`jfType-${itemType.replace(/[^a-z0-9_-]/g, '')}`);
+  if (normalizedRowId) btn.classList.add(`jfRowItem-${normalizedRowId.replace(/[^a-z0-9_-]/g, '')}`);
   btn.tabIndex = 0;
   btn.setAttribute('role', 'button');
   btn.dataset.itemId = String(item.item_id || '').trim();
@@ -874,8 +891,37 @@ function _jfBuildRowItemCard(item){
   img.alt = '';
   img.loading = 'lazy';
   img.decoding = 'async';
-  img.src = item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
+  img.src = item.poster_local || item.poster || item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
   tWrap.appendChild(img);
+
+  const badgeText = (itemType === 'episode' && item.season_number != null && item.episode_number != null)
+    ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
+    : (yearText || (itemType ? itemType.charAt(0).toUpperCase() + itemType.slice(1) : ''));
+  if (badgeText) {
+    const badge = document.createElement('span');
+    badge.className = 'jfMediaBadge';
+    badge.textContent = badgeText;
+    tWrap.appendChild(badge);
+  }
+  const resumePos = Math.max(0, Number(item.resume_pos || 0));
+  const runtimeSec = Math.max(0, Number(item.runtime_sec || 0));
+  const reportedProgress = Number(item.progress_percent);
+  const progress = Number.isFinite(reportedProgress) && reportedProgress > 0
+    ? Math.min(100, reportedProgress)
+    : (resumePos > 0 && runtimeSec > 0 ? Math.min(100, (resumePos / runtimeSec) * 100) : 0);
+  if (progress > 0 && progress < 100) {
+    const progressTrack = document.createElement('div');
+    progressTrack.className = 'jfMediaProgress';
+    progressTrack.setAttribute('role', 'progressbar');
+    progressTrack.setAttribute('aria-label', `${Math.round(progress)}% watched`);
+    progressTrack.setAttribute('aria-valuemin', '0');
+    progressTrack.setAttribute('aria-valuemax', '100');
+    progressTrack.setAttribute('aria-valuenow', String(Math.round(progress)));
+    const progressFill = document.createElement('span');
+    progressFill.style.width = `${progress}%`;
+    progressTrack.appendChild(progressFill);
+    tWrap.appendChild(progressTrack);
+  }
 
   const meta = document.createElement('div');
   meta.className = 'jfMeta';
@@ -921,8 +967,9 @@ function _jfBuildRowItemCard(item){
     const bPlay = document.createElement('button');
     bPlay.type = 'button';
     bPlay.className = 'jfQuickBtn';
-    bPlay.setAttribute('data-jf-action', 'play_now');
-    bPlay.textContent = 'Play Now';
+    const canResume = resumePos > 0 && normalizedRowId === 'continue_watching';
+    bPlay.setAttribute('data-jf-action', canResume ? 'resume' : 'play_now');
+    bPlay.textContent = canResume ? 'Resume' : 'Play';
     const bNext = document.createElement('button');
     bNext.type = 'button';
     bNext.className = 'jfQuickBtn';
@@ -1092,7 +1139,7 @@ async function _jfLoadNextCatalogPage(kind){
     state.nextStart = nextStart !== null && nextStart > start ? nextStart : null;
     const liveSentinel = document.querySelector(`.jfCatalogSentinel[data-jf-catalog="${kind}"]`);
     const frag = document.createDocumentFragment();
-    added.forEach((item) => frag.appendChild(_jfBuildRowItemCard(item)));
+    added.forEach((item) => frag.appendChild(_jfBuildRowItemCard(item, _jfCatalogRowId(kind))));
     if (liveSentinel && liveSentinel.parentNode) liveSentinel.parentNode.insertBefore(frag, liveSentinel);
     _jfApplySelectionUi();
     _jfUpdateCatalogSentinel(kind);
@@ -1167,7 +1214,7 @@ function _jfRenderRows(rows){
       scroller.appendChild(empty);
     } else {
       const itemFrag = document.createDocumentFragment();
-      items.forEach((item) => itemFrag.appendChild(_jfBuildRowItemCard(item)));
+      items.forEach((item) => itemFrag.appendChild(_jfBuildRowItemCard(item, rowId)));
       scroller.appendChild(itemFrag);
     }
 

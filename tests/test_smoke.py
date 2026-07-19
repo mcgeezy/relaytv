@@ -181,6 +181,10 @@ def test_ui_smoke() -> None:
     assert 'function _jfSyncTabControls' in jellyfin_js
     assert 'function _jfScheduleSearch' in jellyfin_js
     assert 'function _jfBuildRowItemCard' in jellyfin_js
+    assert "btn.classList.add(`jfType-${itemType.replace" in jellyfin_js
+    assert "progressTrack.className = 'jfMediaProgress';" in jellyfin_js
+    assert "item.backdrop || item.poster_local" in jellyfin_js
+    assert "mkBtn('Queue Last', 'play_last')" in jellyfin_js
     assert "const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';" in jellyfin_js
     assert "params.get('jfui')" in jellyfin_js
     assert "shell.classList.toggle('jfModern', mode === 'modern');" in jellyfin_js
@@ -199,6 +203,8 @@ def test_ui_smoke() -> None:
     assert '.jfCatalogSentinel{' in jellyfin_css
     assert '.jfModern .jfWorkspace{' in jellyfin_css
     assert '.jfModern .jfConnection{' in jellyfin_css
+    assert '.jfModern .jfDetail{' in jellyfin_css
+    assert '.jfMediaProgress{' in jellyfin_css
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js
