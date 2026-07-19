@@ -102,6 +102,14 @@ async function captureTvRuntime(browser, baseUrl) {
   }
 }
 
+async function captureBanner(baseUrl) {
+  const response = await fetch(`${baseUrl}/assets/banner.png`);
+  if (!response.ok) {
+    throw new Error(`Banner request failed with HTTP ${response.status}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
 function phoneStageHtml(image, label, eyebrow) {
   return `<!doctype html>
   <html><head><meta charset="utf-8"><style>
@@ -202,18 +210,20 @@ async function main() {
     const remote = await captureRemote(browser, baseUrl);
     const library = await captureLibrary(browser, baseUrl);
     const tv = await captureTvRuntime(browser, baseUrl);
+    const banner = await captureBanner(baseUrl);
 
     await composePhone(browser, remote, path.join(outputDir, 'remote-phone.png'), 'Remote and queue', 'Control');
     await composePhone(browser, library, path.join(outputDir, 'library-phone.png'), 'Series and seasons', 'Browse');
     await composeHero(browser, baseUrl, remote, library, tv, path.join(outputDir, 'hero.png'));
     fs.writeFileSync(path.join(outputDir, 'tv-runtime.png'), tv);
+    fs.writeFileSync(path.join(outputDir, 'relaytv-banner.png'), banner);
 
     process.stdout.write(`${JSON.stringify({
       ok: true,
       wsEndpoint,
       baseUrl,
       outputDir,
-      files: ['hero.png', 'remote-phone.png', 'library-phone.png', 'tv-runtime.png'],
+      files: ['hero.png', 'remote-phone.png', 'library-phone.png', 'tv-runtime.png', 'relaytv-banner.png'],
     }, null, 2)}\n`);
   } finally {
     await browser.close();
