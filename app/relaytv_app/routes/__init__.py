@@ -3619,7 +3619,7 @@ def ui():
       </aside>
     </div>
 
-    <div id="jellyfinShell" class="jfShell hidden" aria-hidden="true">
+    <div id="jellyfinShell" class="jfShell jfModern hidden" aria-hidden="true">
       <div class="jfShellInner">
         <header class="jfShellHead">
           <button id="jfShellBackBtn" class="jfShellBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>

@@ -34,7 +34,6 @@ let __jfTvViewMode = 'series';
 let __jfLastFocus = null;
 let __jfAlphaIndicatorTimer = 0;
 let __jfResizeBound = false;
-let __jfViewportBound = false;
 let __jfBrowseRequestId = 0;
 let __jfBrowseController = null;
 let __jfCatalogPageController = null;
@@ -42,7 +41,6 @@ let __jfCatalogObserver = null;
 const __JF_CATALOG_PAGE_SIZE = 48;
 const __JF_REQ_TIMEOUT_MS = 12000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
-const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';
 const __jfCatalogState = {
   movies: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
   tv: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
@@ -51,30 +49,6 @@ const __jfCatalogState = {
 let __jfServerType = 'jellyfin';
 let __jfServerConfigured = false;
 let __jfBrandApplied = false;
-
-function _jfUiMode(){
-  let queryMode = '';
-  try {
-    const params = new URLSearchParams(window.location.search || '');
-    queryMode = String(params.get('jfui') || params.get('jf_ui') || '').trim().toLowerCase();
-    if (queryMode === 'legacy') queryMode = 'classic';
-    if (queryMode === 'modern' || queryMode === 'classic') {
-      localStorage.setItem(__JF_UI_MODE_KEY, queryMode);
-      return queryMode;
-    }
-    const stored = String(localStorage.getItem(__JF_UI_MODE_KEY) || '').trim().toLowerCase();
-    if (stored === 'modern' || stored === 'classic') return stored;
-  } catch (_e) {}
-  return 'modern';
-}
-
-function _jfApplyUiMode(){
-  const shell = document.getElementById('jellyfinShell');
-  if (!shell) return;
-  const mode = _jfUiMode();
-  shell.dataset.jfUi = mode;
-  shell.classList.toggle('jfModern', mode === 'modern');
-}
 
 function jfBrandName(){
   if (!__jfServerConfigured) return 'Jellyfin / Emby';
@@ -142,7 +116,6 @@ function openJellyfinShell(){
   if (!__jfLaunchVisible) return;
   if (__jfUiVisible) return;
   __jfLastFocus = document.activeElement || null;
-  _jfApplyUiMode();
   _jfSetShellVisible(true);
   _uiPushLayer();
   _jfSetActiveTab(__jfActiveTab || 'dashboard', {refresh:false});
@@ -314,64 +287,6 @@ function _jfSetDetailScrollLock(locked){
   document.body.classList.toggle('jfNoScroll', lock);
 }
 
-function _jfPositionDetailPanel(){
-  const detail = document.getElementById('jfDetail');
-  if (!detail) return;
-  const shellMode = document.getElementById('jellyfinShell');
-  if (shellMode && shellMode.classList.contains('jfModern')) {
-    detail.style.position = '';
-    detail.style.width = '';
-    detail.style.maxWidth = '';
-    detail.style.maxHeight = '';
-    detail.style.left = '';
-    detail.style.right = '';
-    detail.style.top = '';
-    detail.style.transform = '';
-    return;
-  }
-  if (_jfIsNarrowViewport()) {
-    const shell = document.getElementById('jellyfinShell');
-    const grid = document.getElementById('jfGrid');
-    if (shell && grid) {
-      const shellRect = shell.getBoundingClientRect();
-      const gridRect = grid.getBoundingClientRect();
-      const gutter = 12;
-      const gridWidth = Math.max(0, Math.floor(grid.clientWidth || gridRect.width || shellRect.width || 0));
-      const maxW = Math.max(220, Math.min(660, Math.floor(gridWidth - (gutter * 2))));
-      const maxH = Math.max(220, Math.floor(shell.clientHeight - (gutter * 2)));
-      detail.style.position = 'absolute';
-      detail.style.left = `${Math.max(0, Math.round((grid.clientWidth - maxW) / 2))}px`;
-      detail.style.right = 'auto';
-      detail.style.width = `${maxW}px`;
-      detail.style.maxWidth = `${maxW}px`;
-      detail.style.maxHeight = `${maxH}px`;
-      detail.style.transform = 'none';
-      const panelH = Math.min(detail.offsetHeight || maxH, maxH);
-      const rawTop = gutter - (gridRect.top - shellRect.top);
-      const maxTop = Math.max(0, grid.scrollHeight - panelH - gutter);
-      const top = Math.min(Math.round(rawTop), maxTop);
-      detail.style.top = `${top}px`;
-      return;
-    }
-  }
-  detail.style.position = '';
-  detail.style.width = '';
-  detail.style.maxWidth = '';
-  detail.style.maxHeight = '';
-  detail.style.left = '';
-  detail.style.right = '';
-  detail.style.transform = '';
-  const shell = document.getElementById('jellyfinShell');
-  const grid = document.getElementById('jfGrid');
-  if (!shell || !grid || !detail || !_jfIsDetailOpen()) return;
-  const shellRect = shell.getBoundingClientRect();
-  const gridRect = grid.getBoundingClientRect();
-  const rawTop = 14 - (gridRect.top - shellRect.top);
-  const maxTop = Math.max(0, grid.scrollHeight - detail.offsetHeight - 8);
-  const top = Math.max(0, Math.min(Math.round(rawTop), maxTop));
-  detail.style.top = `${top}px`;
-}
-
 function _jfCloseDetailPanel(opts){
   const grid = document.getElementById('jfGrid');
   const fromNav = !!(opts && opts.fromNav);
@@ -405,7 +320,6 @@ function _jfOpenDetailPanel(){
   if (detail) detail.setAttribute('aria-hidden', 'false');
   if (!wasOpen) _uiPushLayer();
   _jfSetDetailScrollLock(true);
-  requestAnimationFrame(() => _jfPositionDetailPanel());
 }
 
 function _jfIsDetailOpen(){
@@ -755,8 +669,6 @@ function _jfRenderDetail(item){
   thumb.loading = 'eager';
   thumb.src = item.backdrop || item.poster_local || item.poster || item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
   _jfBindImageFallback(thumb);
-  thumb.addEventListener('load', () => _jfPositionDetailPanel(), {once:true});
-  thumb.addEventListener('error', () => _jfPositionDetailPanel(), {once:true});
   thumbWrap.appendChild(thumb);
 
   const prevBtn = document.createElement('button');
@@ -875,10 +787,7 @@ function _jfRenderDetail(item){
   msg.className = 'jfActionMsg';
   host.appendChild(msg);
   _jfOpenDetailPanel();
-  requestAnimationFrame(() => {
-    _jfPositionDetailPanel();
-    closeBtn.focus();
-  });
+  requestAnimationFrame(() => closeBtn.focus());
 }
 
 function _jfBuildRowItemCard(item, rowId){
@@ -2151,7 +2060,6 @@ async function jellyfinDetailAction(kind){
 }
 
 function bindJellyfinUi(){
-  _jfApplyUiMode();
   const launchBtn = document.getElementById('jellyfinOpenBtn');
   const shellBack = document.getElementById('jfShellBackBtn');
   const detailBackdrop = document.getElementById('jfDetailBackdrop');
@@ -2165,23 +2073,11 @@ function bindJellyfinUi(){
     const onResize = () => {
       if (!_jfIsDetailOpen()) return;
       _jfSetDetailScrollLock(true);
-      _jfPositionDetailPanel();
     };
     window.addEventListener('resize', onResize, {passive:true});
     window.addEventListener('orientationchange', onResize, {passive:true});
     __jfResizeBound = true;
   }
-  if (!__jfViewportBound && window.visualViewport && typeof window.visualViewport.addEventListener === 'function') {
-    const onViewportChange = () => {
-      if (!_jfIsDetailOpen()) return;
-      _jfSetDetailScrollLock(true);
-      _jfPositionDetailPanel();
-    };
-    window.visualViewport.addEventListener('resize', onViewportChange, {passive:true});
-    window.visualViewport.addEventListener('scroll', onViewportChange, {passive:true});
-    __jfViewportBound = true;
-  }
-
   if (launchBtn) launchBtn.onclick = () => openJellyfinShell();
   if (shellBack) shellBack.onclick = () => closeJellyfinShell();
   if (detailBackdrop) detailBackdrop.onclick = () => {

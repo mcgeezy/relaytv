@@ -52,7 +52,9 @@ docker compose up -d --build
 - **Send links from Android to the TV** and start playback in seconds
 - **Queue videos for later** without interrupting what’s already playing
 - **Use Home Assistant as the control layer** for a dedicated TV box
-- **Browse Jellyfin** with a clean interface built for desktop/mobile control for playback on TV.
+- **Browse Jellyfin or Emby** with responsive Home rails, paginated catalogs,
+  rich series pages, and phone/desktop detail surfaces built for controlling
+  playback on TV.
 - **Trigger playback or on-screen notifications** from automations
 - **Build AI agent workflows** that control TV playback through the API
 

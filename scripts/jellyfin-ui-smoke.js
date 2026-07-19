@@ -53,14 +53,16 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
   });
 
   try {
-    await page.goto(`${baseUrl}/ui?jfui=modern`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
     await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('#jellyfinOpenBtn').click();
     await page.locator('#jellyfinShell:not(.hidden)').waitFor();
     await waitForItems(page, 'continue_watching');
 
-    const shellMode = await page.locator('#jellyfinShell').getAttribute('data-jf-ui');
-    check(shellMode === 'modern', `${scenario.name}: modern shell was not selected`);
+    check(
+      await page.locator('#jellyfinShell').evaluate((shell) => shell.classList.contains('jfModern')),
+      `${scenario.name}: product shell styling is missing`,
+    );
     check(
       (await page.locator('#jfConnectionLabel').textContent()) === 'Connected',
       `${scenario.name}: Jellyfin did not connect`,
@@ -230,7 +232,7 @@ async function runRecoveryScenario(browser, baseUrl) {
     body: JSON.stringify({ ok: true }),
   }));
   try {
-    await page.goto(`${baseUrl}/ui?jfui=modern`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
     await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('#jellyfinOpenBtn').click();
     await page.waitForFunction(() => {

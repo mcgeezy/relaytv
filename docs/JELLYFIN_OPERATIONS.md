@@ -7,6 +7,28 @@ This document covers runtime configuration, reconnect behavior, and first-line t
 RelayTV now treats the native Jellyfin client as the only supported Jellyfin UX in the public release.
 The old Jellyfin server plugin is deprecated and no longer ships in the public release.
 
+## Browser Library Experience
+
+The `/ui` remote includes a responsive Jellyfin/Emby library shell for phones
+and desktop browsers. Its product behavior remains backed by the existing
+Jellyfin routes and integration service; the dedicated browser assets are
+`static/ui/jellyfin.js` and `static/ui/jellyfin.css`.
+
+- Home presents Continue Watching, Next Up, Movies, Shows, and recently added
+  content as horizontally scrollable rails.
+- Movies and TV catalogs load in bounded 48-item pages and append on demand.
+- Series pages provide series metadata, season selection, Play All, and an
+  episode grid. The season selector is a bottom sheet on phones and a modal on
+  wider screens.
+- Item details use a phone bottom sheet and desktop side drawer with keyboard
+  focus entry and restoration.
+- Jellyfin and Emby labels remain driven by detected server type. Unsupported
+  Emby rows are omitted without changing supported browse and playback flows.
+
+The modern browse shell is the sole supported presentation. The former
+`jfui=modern|classic` comparison switch and its local-storage preference were
+removed after design acceptance.
+
 Discovery:
 
 - RelayTV can advertise itself on LAN via mDNS (`_relaytv._tcp`) for server-side auto-discovery/bridge workflows.
@@ -266,6 +288,21 @@ cd /path/to/relaytv
 curl -sS http://127.0.0.1:8787/status
 curl -sS http://127.0.0.1:8787/integrations/jellyfin/status
 ```
+
+From a host with Playwright installed, validate the running server with the
+checked-in browser matrix:
+
+```bash
+node scripts/jellyfin-ui-smoke.js \
+  --ws=ws://PLAYWRIGHT_HOST:3000/ \
+  --base=http://RELAYTV_HOST:8787
+```
+
+The matrix covers phone-dark and desktop-light layouts, bounded catalog
+pagination, search, TV hierarchy, detail/modal focus, viewport overflow,
+nested interactive controls, and offline recovery. The WebSocket endpoint is
+the Playwright browser server; the browser itself must be able to reach the
+RelayTV base URL.
 
 ### Multi-TV Naming And Profile Validation
 

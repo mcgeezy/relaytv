@@ -733,7 +733,7 @@
   }
 }
 
-/* Modern Jellyfin shell (`?jfui=classic` keeps the comparison skin). */
+/* RelayTV Jellyfin/Emby browse shell. */
 .jfShellIdentity{
   display: flex;
   align-items: center;

@@ -175,8 +175,7 @@ def test_ui_smoke() -> None:
     assert 'function _renderNowSubtitleOptions' in js
     assert 'function openNowSubtitleModal' in js
     assert 'function bindNowSubtitleUi' in js
-    assert 'const shellRect = shell.getBoundingClientRect();' in jellyfin_js
-    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in jellyfin_js
+    assert 'class="jfShell jfModern hidden"' in response.text
     assert 'function loadJellyfinMovies' in jellyfin_js
     assert 'function loadJellyfinTvSeries' in jellyfin_js
     assert 'function _jfPlayAllSeries' in jellyfin_js
@@ -193,9 +192,8 @@ def test_ui_smoke() -> None:
     assert "itSub.textContent = itemType === 'episode' ? titleText : subtitleText;" in jellyfin_js
     assert "item.backdrop || item.poster_local" in jellyfin_js
     assert "mkBtn('Queue Last', 'play_last')" in jellyfin_js
-    assert "const __JF_UI_MODE_KEY = 'relaytv_jellyfin_ui';" in jellyfin_js
-    assert "params.get('jfui')" in jellyfin_js
-    assert "shell.classList.toggle('jfModern', mode === 'modern');" in jellyfin_js
+    assert "params.get('jfui')" not in jellyfin_js
+    assert "relaytv_jellyfin_ui" not in jellyfin_js
     assert 'const __JF_CATALOG_PAGE_SIZE = 48;' in jellyfin_js
     assert 'function _jfLoadNextCatalogPage' in jellyfin_js
     assert 'new IntersectionObserver' in jellyfin_js
