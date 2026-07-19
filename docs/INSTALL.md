@@ -115,6 +115,7 @@ docker compose up -d --build
 - generates host integration overrides only for existing system paths and
   devices, including desktop sockets, Raspberry Pi V4L2 devices, and optional
   HDMI-CEC passthrough
+- refuses to overwrite an unmarked, user-managed `docker-compose.override.yml`
 - disables container SELinux labeling in the generated override on enforcing
   SELinux hosts, avoiding relabeling of shared system paths
 - records host identity (`PUID`, `PGID`, render group gid)

@@ -226,8 +226,10 @@ validate_host_platform
 
 if command -v curl >/dev/null 2>&1; then
   FETCH=(curl -fsSL)
+  FETCH_TOOL="curl"
 elif command -v wget >/dev/null 2>&1; then
   FETCH=(wget -qO-)
+  FETCH_TOOL="wget"
 else
   die "Missing curl or wget"
 fi
@@ -377,7 +379,8 @@ wait_for_relaytv_health() {
   deadline=$((SECONDS + timeout))
   say "Waiting for RelayTV health at ${health_url}..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if "${FETCH[@]}" "$health_url" >/dev/null 2>&1; then
+    if { [ "$FETCH_TOOL" = "curl" ] && curl -fsS --max-time 2 "$health_url" >/dev/null 2>&1; } ||
+      { [ "$FETCH_TOOL" = "wget" ] && wget -qO- --timeout=2 "$health_url" >/dev/null 2>&1; }; then
       say "RelayTV is healthy."
       return 0
     fi

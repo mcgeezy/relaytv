@@ -94,6 +94,19 @@ def test_host_override_uses_only_existing_long_syntax_binds(tmp_path: Path) -> N
     assert "/etc/timezone" not in override
     assert "source: \"/sys\"" in override
     assert "/tmp/.X11-unix" not in override
+    assert "/run/user/" not in override
+
+
+def test_host_installer_does_not_overwrite_user_compose_override(tmp_path: Path) -> None:
+    custom_override = "services:\n  relaytv:\n    environment:\n      CUSTOM_VALUE: kept\n"
+    override_path = tmp_path / "docker-compose.override.yml"
+    override_path.write_text(custom_override, encoding="utf-8")
+
+    result = _run_host_installer(tmp_path)
+
+    assert result.returncode != 0
+    assert "is user-managed; refusing to overwrite it" in result.stderr
+    assert override_path.read_text(encoding="utf-8") == custom_override
 
 
 def test_generated_override_is_valid_compose(tmp_path: Path) -> None:
