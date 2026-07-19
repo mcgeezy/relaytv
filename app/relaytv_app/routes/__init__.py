@@ -3346,6 +3346,14 @@ def ui():
             <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5v4H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5.2 9a8 8 0 1 1-1.1 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M12 8.5V12l2.6 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>History</button>
             <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 11.2v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="12" cy="7.9" r="1.15" fill="currentColor"/></svg>About</button>
             <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m6 0h2M4 12h2m6 0h8M4 17h10m6 0h0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="9" cy="12" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="17" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>Settings</button>
+            <div class="hdrMenuTheme" role="group" aria-label="Theme">
+              <span class="mtLabel">Theme</span>
+              <div class="mtSeg">
+                <button type="button" class="mtBtn" data-theme-mode="auto" role="menuitemradio" aria-checked="true">Auto</button>
+                <button type="button" class="mtBtn" data-theme-mode="dark" role="menuitemradio" aria-checked="false">Dark</button>
+                <button type="button" class="mtBtn" data-theme-mode="light" role="menuitemradio" aria-checked="false">Light</button>
+              </div>
+            </div>
             <div class="hdrMenuFoot"><span id="menuDeviceName">RelayTV</span><span id="menuAppVersion"></span></div>
           </div>
         </div>

@@ -3431,6 +3431,83 @@ function closeHeaderMenu(){
   if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
+// --- Theme override (Auto / Dark / Light) -----------------------------------
+// All light styling lives in `prefers-color-scheme: light` media blocks; the
+// manual override rewrites those rules' media conditions at runtime instead of
+// duplicating every block under a data-attribute selector.
+const __THEME_KEY = 'relaytv_theme';
+const __THEME_RE = /\(prefers-color-scheme:\s*(light|dark)\)/;
+
+function _themeStoredMode(){
+  try {
+    const v = localStorage.getItem(__THEME_KEY);
+    return (v === 'dark' || v === 'light') ? v : 'auto';
+  } catch (_e) { return 'auto'; }
+}
+
+function _themeApplyToSheets(mode){
+  for (const sheet of Array.from(document.styleSheets)){
+    let rules = null;
+    try { rules = sheet.cssRules; } catch (_e) { continue; }
+    if (!rules) continue;
+    for (const rule of Array.from(rules)){
+      if (!rule.media || !rule.media.mediaText) continue;
+      const orig = rule.__relaytvOrigMedia || rule.media.mediaText;
+      const m = orig.match(__THEME_RE);
+      if (!m) continue;
+      rule.__relaytvOrigMedia = orig;
+      if (mode === 'auto'){
+        rule.media.mediaText = orig;
+      } else {
+        // Always/never tokens that stay valid inside `and (...)` chains.
+        const on = (m[1] === mode);
+        rule.media.mediaText = orig.replace(__THEME_RE, on ? '(min-width: 0px)' : '(min-width: 99999px)');
+      }
+    }
+  }
+}
+
+function _themeEffective(mode){
+  if (mode !== 'auto') return mode;
+  try {
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  } catch (_e) { return 'dark'; }
+}
+
+function applyTheme(mode){
+  _themeApplyToSheets(mode);
+  try { document.documentElement.style.colorScheme = (mode === 'auto') ? '' : mode; } catch (_e) {}
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', _themeEffective(mode) === 'light' ? '#edf2ff' : '#05070d');
+  document.querySelectorAll('.mtBtn').forEach((b) => {
+    const on = (b.dataset.themeMode || 'auto') === mode;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
+function bindThemeUi(){
+  document.querySelectorAll('.mtBtn').forEach((b) => {
+    b.onclick = () => {
+      const mode = b.dataset.themeMode || 'auto';
+      try { localStorage.setItem(__THEME_KEY, mode); } catch (_e) {}
+      applyTheme(mode);
+    };
+  });
+  try {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => applyTheme(_themeStoredMode());
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+  } catch (_e) {}
+}
+
+// Apply immediately (deferred script: DOM and stylesheets are already in) so a
+// stored override never flashes the system theme; re-applied on `load` in case
+// a stylesheet finished late.
+try { applyTheme(_themeStoredMode()); } catch (_e) {}
+window.addEventListener('load', () => { try { applyTheme(_themeStoredMode()); } catch (_e) {} });
+
 let __menuFootVersionLoaded = false;
 async function _loadMenuFootVersion(){
   if (__menuFootVersionLoaded) return;
@@ -4754,6 +4831,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initRemoteVolumeSlider();
   primeRemoteVolumeSlider().catch(() => {});
   bindHeaderMenu();
+  bindThemeUi();
   bindHistoryUi();
   bindAboutUi();
   bindNowLanguageUi();
