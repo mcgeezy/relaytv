@@ -12,6 +12,11 @@ from ..thumb_cache import THUMB_DIR, ensure_cached_sync
 router = APIRouter()
 
 _RELAYTV_THEME = "#0b0f19"
+_THUMBNAIL_HEADERS = {
+    "Cache-Control": "public, max-age=86400",
+    "Access-Control-Allow-Origin": "*",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+}
 _STATIC_ROOT = os.getenv("RELAYTV_STATIC_DIR") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 _PWA_STATIC_ROOT = os.path.join(_STATIC_ROOT, "pwa")
 
@@ -243,12 +248,12 @@ async def thumbs(filename: str):
         return Response(status_code=400)
     path = os.path.join(THUMB_DIR, filename)
     if os.path.exists(path):
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(path, media_type="image/jpeg", headers=_THUMBNAIL_HEADERS)
     # Try to materialize on-demand from the stored mapping (best effort).
     thumb_id = filename[:-4] if filename.lower().endswith(".jpg") else filename
     ok = await asyncio.to_thread(ensure_cached_sync, thumb_id)
     if ok and os.path.exists(path):
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(path, media_type="image/jpeg", headers=_THUMBNAIL_HEADERS)
     return Response(status_code=404)
 
 
