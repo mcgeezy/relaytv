@@ -135,23 +135,23 @@ and the worktree is ready for isolated Jellyfin commits.
 
 ### M1 - Frontend Containment
 
-Status: pending
+Status: complete
 
-- [ ] Mechanically extract Jellyfin JavaScript into
+- [x] Mechanically extract Jellyfin JavaScript into
   `static/ui/jellyfin.js` without changing behavior.
-- [ ] Extract Jellyfin styles into `static/ui/jellyfin.css`.
-- [ ] Extend the static asset allowlist and asset-version stamp.
-- [ ] Keep current IDs and entrypoints stable until the modern renderer is
+- [x] Extract Jellyfin browse styles into `static/ui/jellyfin.css`.
+- [x] Extend the static asset allowlist and asset-version stamp.
+- [x] Keep current IDs and entrypoints stable until the modern renderer is
   covered by browser tests.
-- [ ] Split Jellyfin UI assertions out of the oversized smoke test where
-  practical.
+- [x] Route Jellyfin asset assertions to their dedicated files in the current
+  smoke test; defer a separate browser-test module to M6.
 
 Exit: the existing UI behaves identically, but Jellyfin work no longer expands
 the shared frontend monolith.
 
 ### M2 - Catalog Performance Foundation
 
-Status: pending
+Status: in progress
 
 - [ ] Replace the 5,000-item request with bounded pages (target 36-48 items).
 - [ ] Append using `next_start_index` and an `IntersectionObserver` sentinel.
@@ -278,3 +278,4 @@ Browser validation should capture:
 | --- | --- | --- | --- | --- |
 | 2026-07-19 | M0 | Planning | Reviewed history and docs; captured live Playwright baseline; created the modernization roadmap and branch strategy. | `ruff check app tests`; 401 tests; `git diff --check` passed on PR #38 before branching. |
 | 2026-07-19 | M0 | `d6eb8cf` | Confirmed PR #38 merged and fast-forwarded the Jellyfin feature branch to its post-merge `main` commit. | Branch ancestry and clean merge state verified with Git and GitHub. |
+| 2026-07-19 | M1 | Milestone commit | Extracted the Jellyfin browse controller and stylesheet into separately cache-busted static assets without changing IDs, APIs, or behavior. | Rebuilt the live container; `/health` and Jellyfin authentication/connection passed; Playwright phone-dark and desktop-light dashboard, Movies, detail, keyboard, asset-load, error, and overflow checks passed. Ruff and all 401 tests passed. |

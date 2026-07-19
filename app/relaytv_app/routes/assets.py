@@ -324,7 +324,12 @@ def pwa_weather_asset(asset_name: str, theme: str | None = None):
 @router.get("/static/ui/{asset_name}")
 def ui_static_asset(asset_name: str):
     safe_name = os.path.basename(asset_name)
-    if safe_name != asset_name or safe_name not in {"app.css", "app.js"}:
+    if safe_name != asset_name or safe_name not in {
+        "app.css",
+        "app.js",
+        "jellyfin.css",
+        "jellyfin.js",
+    }:
         return Response(status_code=400)
     path = _resolve_static_asset("ui", safe_name)
     if path and os.path.exists(path) and os.path.isfile(path):

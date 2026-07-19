@@ -47,21 +47,31 @@ def test_ui_smoke() -> None:
 
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
+    jellyfin_css_response = client.get('/static/ui/jellyfin.css')
     js_response = client.get('/static/ui/app.js')
+    jellyfin_js_response = client.get('/static/ui/jellyfin.js')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
     assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
+    assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert response.headers.get('cache-control') == 'no-cache'
     assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
     assert '<style>' not in response.text
     assert css_response.status_code == 200
     assert 'text/css' in css_response.headers['content-type']
     css = css_response.text
+    assert jellyfin_css_response.status_code == 200
+    assert 'text/css' in jellyfin_css_response.headers['content-type']
+    jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200
     assert 'javascript' in js_response.headers['content-type']
     js = js_response.text
+    assert jellyfin_js_response.status_code == 200
+    assert 'javascript' in jellyfin_js_response.headers['content-type']
+    jellyfin_js = jellyfin_js_response.text
     assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
@@ -151,27 +161,27 @@ def test_ui_smoke() -> None:
     assert 'id="jfSearchBtn"' not in response.text
     assert 'id="jfRefreshBtn"' not in response.text
     assert 'id="jfReconnectBtn"' not in response.text
-    assert 'function _jfSetActionStatus' in js
-    assert 'function _jfSetLaunchVisible' in js
-    assert 'function _jfCloseDetailPanel' in js
+    assert 'function _jfSetActionStatus' in jellyfin_js
+    assert 'function _jfSetLaunchVisible' in jellyfin_js
+    assert 'function _jfCloseDetailPanel' in jellyfin_js
     assert 'function _labelNowSubtitleLanguage' in js
     assert 'function _renderNowSubtitleButton' in js
     assert 'function _fetchNowSubtitleOptions' in js
     assert 'function _renderNowSubtitleOptions' in js
     assert 'function openNowSubtitleModal' in js
     assert 'function bindNowSubtitleUi' in js
-    assert 'const shellRect = shell.getBoundingClientRect();' in js
-    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in js
-    assert 'function loadJellyfinMovies' in js
-    assert 'function loadJellyfinTvSeries' in js
-    assert 'function _jfPlayAllSeries' in js
-    assert 'function _jfSyncTabControls' in js
-    assert 'function _jfScheduleSearch' in js
-    assert 'function _jfBuildRowItemCard' in js
-    assert 'const __JF_REQ_TIMEOUT_MS' in js
-    assert 'function _jfFetchWithTimeout' in js
+    assert 'const shellRect = shell.getBoundingClientRect();' in jellyfin_js
+    assert 'const rawTop = gutter - (gridRect.top - shellRect.top);' in jellyfin_js
+    assert 'function loadJellyfinMovies' in jellyfin_js
+    assert 'function loadJellyfinTvSeries' in jellyfin_js
+    assert 'function _jfPlayAllSeries' in jellyfin_js
+    assert 'function _jfSyncTabControls' in jellyfin_js
+    assert 'function _jfScheduleSearch' in jellyfin_js
+    assert 'function _jfBuildRowItemCard' in jellyfin_js
+    assert 'const __JF_REQ_TIMEOUT_MS' in jellyfin_js
+    assert 'function _jfFetchWithTimeout' in jellyfin_js
     assert 'function _applyQueueSnapshot' in js
-    assert 'touch-action: none;' in css
+    assert 'touch-action: none;' in jellyfin_css
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js

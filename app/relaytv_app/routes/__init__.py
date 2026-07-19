@@ -3320,6 +3320,7 @@ def ui():
   <link rel="apple-touch-icon" href="/pwa/brand/logo.svg?v=2" />
   <title>RelayTV</title>
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3657,6 +3658,7 @@ def ui():
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -3968,13 +3970,13 @@ def ui():
     html = html.replace("__IDLE_PANEL_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
     html = html.replace("__UI_ASSET_V__", _ui_asset_version())
     # The shell must never be cached: it carries the asset version stamp that
-    # busts the hour-long static cache on app.js/app.css after a deploy.
+    # busts the hour-long static UI asset cache after a deploy.
     return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
 
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "app.js"):
+    for name in ("app.css", "jellyfin.css", "app.js", "jellyfin.js"):
         path = _resolve_static_asset("ui", name)
         try:
             if path:
