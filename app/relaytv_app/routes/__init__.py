@@ -3331,19 +3331,22 @@ def ui():
 <body>
   <div class="wrap">
     <header>
-      <h1 id="appBrandName">RelayTV</h1>
+      <div class="hdrBrand">
+        <span class="hdrKicker" aria-hidden="true">RelayTV</span>
+        <h1 id="appBrandName">RelayTV</h1>
+      </div>
       <div class="hdrRight">
-        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfBrand">Jellyfin</span></button>
-        <button id="addUrlBtn" class="hdrAddBtn" title="Add URL">＋</button>
+        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
+        <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
           <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
-            <span class="menuLabel">MENU</span>
-            <span class="menuIcon">☰</span>
+            <svg class="menuGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
           </button>
           <div id="hdrMenuPanel" class="hdrMenuPanel hidden" role="menu" aria-label="Header menu">
-            <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History">History</button>
-            <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV">About</button>
-            <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings">Settings</button>
+            <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5v4H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5.2 9a8 8 0 1 1-1.1 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M12 8.5V12l2.6 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>History</button>
+            <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 11.2v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="12" cy="7.9" r="1.15" fill="currentColor"/></svg>About</button>
+            <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m6 0h2M4 12h2m6 0h8M4 17h10m6 0h0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="9" cy="12" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="17" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>Settings</button>
+            <div class="hdrMenuFoot"><span id="menuDeviceName">RelayTV</span><span id="menuAppVersion"></span></div>
           </div>
         </div>
       </div>

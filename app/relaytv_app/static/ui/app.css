@@ -56,6 +56,9 @@
       display: grid;
       gap: 14px;
     }
+    /* Grid items refuse to shrink below min-content by default, so one long
+       nowrap title would widen the shared column past the viewport. */
+    .wrap > *, .topgrid > *{ min-width: 0; }
 
     header{
       display:flex;
@@ -64,120 +67,187 @@
       gap: 10px;
       padding: 2px 2px 6px;
     }
+    .hdrBrand{
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 0;
+    }
+    .hdrKicker{
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .32em;
+      text-transform: uppercase;
+      color: rgba(148, 180, 255, .58);
+    }
     h1{
       margin: 0;
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: .2px;
-      font-size: clamp(18px, 2.6vw, 26px);
+      font-size: clamp(19px, 2.6vw, 26px);
+      line-height: 1.12;
+      background: linear-gradient(180deg, #f2f7ff, #b9ccf2);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 0 14px rgba(96, 165, 250, .22));
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .pill{
-      display:flex;
-      align-items:center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      background: var(--card2);
-      border: 1px solid var(--stroke);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      font-size: 13px;
-      color: var(--muted);
-    }
+    .hdrRight{ display:flex; align-items:center; gap: 9px; }
 
-    .hdrRight{ display:flex; align-items:center; gap: 10px; }
-    .jfLaunch{
-      display: none;
+    /* Header controls share one glass-chip material */
+    .jfLaunch, .hdrAddBtn, .hdrMenuBtn{
       min-height: 0 !important;
+      height: 36px;
       width: auto !important;
-      padding: 8px 12px !important;
+      padding: 0 12px !important;
       border-radius: 12px !important;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: .04em;
-      text-transform: uppercase;
-    }
-    .jfLaunch.show{ display: inline-flex; }
-    .hdrAddBtn{
-      min-height: 0 !important;
-      width: auto !important;
-      padding: 8px 12px !important;
-      border-radius: 12px !important;
-      font-size: 20px;
-      line-height: 1;
-      font-weight: 800;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      gap: 7px;
+      background: linear-gradient(180deg, rgba(148,178,255,.15), rgba(96,130,255,.07));
+      border: 1px solid rgba(148,180,255,.30);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--text);
     }
+    .jfLaunch:hover, .hdrAddBtn:hover, .hdrMenuBtn:hover{
+      transform: none;
+      border-color: rgba(148,180,255,.55);
+      background: linear-gradient(180deg, rgba(148,178,255,.22), rgba(96,130,255,.11));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 2px rgba(120,180,255,.14);
+    }
+    .jfLaunch:active, .hdrAddBtn:active, .hdrMenuBtn:active{ transform: none; }
+
+    .jfLaunch{
+      display: none;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .jfLaunch.show{ display: inline-flex; }
+    .jfDot{
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      background: linear-gradient(135deg, #aa5cc3, #00a4dc);
+      box-shadow: 0 0 8px rgba(0, 164, 220, .55);
+    }
+
+    /* Add is the primary header action: the one accented chip */
+    .hdrAddBtn{
+      padding: 0 13px !important;
+      font-size: 19px;
+      line-height: 1;
+      font-weight: 800;
+      background: linear-gradient(180deg, rgba(56,189,248,.82), rgba(37,99,235,.74));
+      border-color: rgba(125,211,252,.62);
+      color: #f0f9ff;
+      text-shadow: 0 1px 2px rgba(2,6,23,.35);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 4px 14px rgba(37,99,235,.32);
+    }
+    .hdrAddBtn:hover{
+      background: linear-gradient(180deg, rgba(94,207,255,.9), rgba(59,120,246,.82));
+      border-color: rgba(165,225,255,.75);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.32), 0 4px 16px rgba(37,99,235,.42);
+    }
+
     .hdrMenuWrap{
       position: relative;
       display: inline-flex;
       align-items: center;
     }
-    .hdrMenuBtn{
-      min-height: 0 !important;
-      width: auto !important;
-      border-radius: 12px !important;
-      padding: 8px 10px !important;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--muted);
-      background: var(--card2);
-      border: 1px solid var(--stroke);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-    }
-    .hdrMenuBtn .menuLabel{
-      text-transform: uppercase;
-      letter-spacing: .05em;
-      font-weight: 700;
-      font-size: 12px;
-      color: var(--muted2);
-    }
-    .hdrMenuBtn .menuIcon{
-      font-size: 16px;
-      line-height: 1;
-      opacity: .9;
+    .hdrMenuBtn{ padding: 0 10px !important; }
+    .hdrMenuBtn .menuGlyph{
+      width: 18px;
+      height: 18px;
+      color: rgba(190, 208, 255, .92);
     }
     .hdrMenuBtn[aria-expanded="true"]{
       border-color: rgba(120,180,255,.72);
-      box-shadow: 0 0 0 2px rgba(120,180,255,.20), 0 10px 24px rgba(0,0,0,.28);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 2px rgba(120,180,255,.20);
     }
+
     .hdrMenuPanel{
       position: absolute;
       right: 0;
-      top: calc(100% + 8px);
-      min-width: 176px;
+      top: calc(100% + 10px);
+      min-width: 216px;
+      max-width: calc(100vw - 28px);
       z-index: 60;
       display: grid;
-      gap: 6px;
-      padding: 8px;
-      border-radius: 12px;
-      background: rgba(8, 16, 34, .96);
-      border: 1px solid var(--stroke);
-      box-shadow: 0 16px 38px rgba(0,0,0,.40);
+      padding: 6px;
+      border-radius: 16px;
+      background: linear-gradient(165deg, rgba(13,22,44,.97), rgba(5,9,20,.98));
+      border: 1px solid rgba(148,180,255,.26);
+      box-shadow: 0 22px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      transform-origin: top right;
+      animation: menuPop .14s ease;
+    }
+    @keyframes menuPop{
+      from{ opacity: 0; transform: scale(.94) translateY(-4px); }
+      to{ opacity: 1; transform: none; }
     }
     .hdrMenuItem{
       min-height: 0 !important;
       width: 100% !important;
       justify-content: flex-start;
+      gap: 11px;
+      border: 0;
       border-radius: 10px !important;
-      padding: 9px 10px !important;
-      font-size: 13px;
-      font-weight: 700;
+      padding: 11px 12px !important;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: .01em;
       box-shadow: none !important;
-      background: rgba(255,255,255,.08);
-      border: 1px solid var(--stroke);
+      background: transparent;
+      color: var(--text);
+    }
+    .hdrMenuItem + .hdrMenuItem{
+      border-top: 1px solid rgba(148,180,255,.10);
+      border-top-left-radius: 0 !important;
+      border-top-right-radius: 0 !important;
+    }
+    .hdrMenuItem .miIcon{
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      color: rgba(148, 180, 255, .85);
     }
     .hdrMenuItem:hover{
       transform: none;
-      background: rgba(120,180,255,.22);
-      border-color: rgba(120,180,255,.52);
+      background: rgba(120,180,255,.14);
     }
     .hdrMenuItem:active{ transform: none; }
+    .hdrMenuFoot{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 12px 7px;
+      margin-top: 2px;
+      border-top: 1px solid rgba(148,180,255,.12);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: rgba(148, 180, 255, .55);
+      white-space: nowrap;
+    }
+    .hdrMenuFoot > span{
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hdrMenuFoot #menuAppVersion{ flex: 0 0 auto; }
     .iconBtn{
       height: 36px;
       width: 40px;
@@ -1225,6 +1295,7 @@
       display: grid;
       gap: 10px;
     }
+    .queueList > *{ min-width: 0; }
     .queueList:empty::after{
       content: "Queue is empty";
       display: block;
@@ -1732,28 +1803,37 @@
   box-shadow: 0 8px 20px rgba(30, 64, 175, .28), inset 0 1px 0 rgba(255, 255, 255, .16);
 }
 @media (prefers-color-scheme: light){
-  .hdrMenuPanel{
-    background: linear-gradient(180deg, rgba(186, 227, 255, .96), rgba(145, 202, 255, .92));
-    border-color: rgba(37, 99, 235, .24);
-    box-shadow: 0 18px 36px rgba(37, 99, 235, .18);
+  .hdrKicker{ color: rgba(37, 99, 235, .60); }
+  h1{
+    background: linear-gradient(180deg, #111c38, #31456f);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: none;
   }
-  .hdrMenuItem{
-    background: rgba(255,255,255,.72);
-    border-color: rgba(37, 99, 235, .16);
-    color: #0c1324;
-  }
-  .hdrMenuItem:hover{
-    background: rgba(219, 239, 255, .92);
-    border-color: rgba(56, 189, 248, .48);
-  }
-  .hdrMenuBtn{
+  .jfLaunch, .hdrMenuBtn{
     background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(223, 238, 255, .88));
-    border-color: rgba(37, 99, 235, .16);
+    border-color: rgba(37, 99, 235, .22);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
     color: #0c1324;
   }
-  .hdrMenuBtn .menuLabel,
-  .hdrMenuBtn .menuIcon{
-    color: rgba(12,19,36,.72);
+  .jfLaunch:hover, .hdrMenuBtn:hover{
+    background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(210, 232, 255, .95));
+    border-color: rgba(37, 99, 235, .40);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 0 0 2px rgba(56,140,248,.14);
+  }
+  .hdrMenuBtn .menuGlyph{ color: rgba(30, 58, 138, .78); }
+  .hdrMenuPanel{
+    background: linear-gradient(165deg, rgba(255,255,255,.97), rgba(233, 241, 255, .98));
+    border-color: rgba(37, 99, 235, .20);
+    box-shadow: 0 22px 44px rgba(37, 99, 235, .16), inset 0 1px 0 rgba(255,255,255,.9);
+  }
+  .hdrMenuItem{ color: #0c1324; }
+  .hdrMenuItem + .hdrMenuItem{ border-top-color: rgba(37, 99, 235, .12); }
+  .hdrMenuItem .miIcon{ color: rgba(37, 99, 235, .72); }
+  .hdrMenuItem:hover{ background: rgba(56, 140, 248, .12); }
+  .hdrMenuFoot{
+    border-top-color: rgba(37, 99, 235, .14);
+    color: rgba(37, 99, 235, .58);
   }
   .settingsGroup{
     background: linear-gradient(180deg, rgba(191, 228, 255, .62), rgba(227, 241, 255, .54));

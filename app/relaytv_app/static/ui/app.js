@@ -3094,6 +3094,8 @@ function renderStatus(st) {
   const brand = document.getElementById('appBrandName');
   const sess = st.state || (st.playing ? (st.paused ? 'paused' : 'playing') : 'idle');
   if (brand) brand.textContent = st.device_name || 'RelayTV';
+  const menuDev = document.getElementById('menuDeviceName');
+  if (menuDev) menuDev.textContent = st.device_name || 'RelayTV';
   if (dot) {
     dot.className = 'dot' + (sess === 'playing' ? ' playing' : (sess === 'paused' ? ' paused' : (sess === 'closed' ? ' closed' : '')));
   }
@@ -3429,6 +3431,22 @@ function closeHeaderMenu(){
   if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
+let __menuFootVersionLoaded = false;
+async function _loadMenuFootVersion(){
+  if (__menuFootVersionLoaded) return;
+  __menuFootVersionLoaded = true;
+  try {
+    const r = await fetch('/app/info', {cache:'no-store'});
+    if (!r.ok) throw new Error('status ' + r.status);
+    const info = await r.json();
+    const v = String(info.version || info.release_version || '').trim();
+    const el = document.getElementById('menuAppVersion');
+    if (el && v) el.textContent = /^\d/.test(v) ? `v${v}` : v;
+  } catch (_e) {
+    __menuFootVersionLoaded = false;
+  }
+}
+
 function bindHeaderMenu(){
   const wrap = document.getElementById('hdrMenuWrap');
   const btn = document.getElementById('hdrMenuBtn');
@@ -3440,6 +3458,7 @@ function bindHeaderMenu(){
     const isHidden = panel.classList.contains('hidden');
     panel.classList.toggle('hidden', !isHidden);
     btn.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+    if (isHidden) _loadMenuFootVersion().catch(() => {});
   };
   panel.addEventListener('pointerdown', (e) => {
     try { e.stopPropagation(); } catch(_){}
