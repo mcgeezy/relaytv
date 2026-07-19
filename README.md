@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/relaytv_app/static/brand/banner.svg" alt="RelayTV" width="620">
+  <img src="app/relaytv_app/static/brand/banner.png" alt="RelayTV" width="620">
 </p>
 
 <h1 align="center">Your media. Your TV. Your rules.</h1>
@@ -33,25 +33,20 @@
 
 ## One box. Every way you watch.
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <h3>📲 Send it</h3>
-      Share a media link from Android, choose Play Now or add it to the queue,
-      and let the TV box take over.
-    </td>
-    <td width="33%" valign="top">
-      <h3>🎬 Browse it</h3>
-      Explore Jellyfin or Emby from a responsive library built for phones and
-      desktops, then launch playback on the connected display.
-    </td>
-    <td width="33%" valign="top">
-      <h3>🏠 Automate it</h3>
-      Control playback from Home Assistant, HTTP requests, dashboards, scripts,
-      and agent workflows on your own network.
-    </td>
-  </tr>
-</table>
+### 📲 Send it
+
+Share a media link from Android, choose Play Now or add it to the queue, and let
+the TV box take over.
+
+### 🎬 Browse it
+
+Explore Jellyfin or Emby from a responsive library built for phones and
+desktops, then launch playback on the connected display.
+
+### 🏠 Automate it
+
+Control playback from Home Assistant, HTTP requests, dashboards, scripts, and
+agent workflows on your own network.
 
 RelayTV keeps the playback engine beside the TV while your phone stays a
 lightweight remote. Queues survive restarts, playback advances automatically,
