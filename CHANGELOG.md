@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.7.0](https://github.com/mcgeezy/relaytv/compare/v0.6.1...v0.7.0) (2026-07-19)
+
+
+### Features
+
+* add a visual product overview above generated GitHub Release notes ([3681b20](https://github.com/mcgeezy/relaytv/commit/3681b20fecccc173bc2a5463e36a5a31d8adbf28))
+* modernize RelayTV branding and the built-in idle-screen banner ([3681b20](https://github.com/mcgeezy/relaytv/commit/3681b20fecccc173bc2a5463e36a5a31d8adbf28))
+* modernize the Jellyfin browsing UI ([#40](https://github.com/mcgeezy/relaytv/issues/40)) ([296044a](https://github.com/mcgeezy/relaytv/commit/296044abc6ef0e7eeffe8454ab09c22eb40185dc))
+* redesign the README as a product landing page with current phone and TV visuals ([3681b20](https://github.com/mcgeezy/relaytv/commit/3681b20fecccc173bc2a5463e36a5a31d8adbf28))
+* redesign the remote, queue, and now-playing UI as a neon-glass control system with light mode ([d6eb8cf](https://github.com/mcgeezy/relaytv/commit/d6eb8cf12098c408e04c8b9c4988a71f0a7086b9))
+
+
+### Bug Fixes
+
+* cache-bust UI assets so deploys reach already-installed clients ([d6eb8cf](https://github.com/mcgeezy/relaytv/commit/d6eb8cf12098c408e04c8b9c4988a71f0a7086b9))
+* harden the remote UI against silent connection loss on mobile ([d6eb8cf](https://github.com/mcgeezy/relaytv/commit/d6eb8cf12098c408e04c8b9c4988a71f0a7086b9))
+* install and validate Docker dependencies on supported Linux hosts ([37fa7f1](https://github.com/mcgeezy/relaytv/commit/37fa7f18e6ac74ac2bee415a03a70bd4fa4f56e3))
+* preserve operator environment settings across installer reruns ([37fa7f1](https://github.com/mcgeezy/relaytv/commit/37fa7f18e6ac74ac2bee415a03a70bd4fa4f56e3))
+* prevent Compose from creating missing system bind paths ([37fa7f1](https://github.com/mcgeezy/relaytv/commit/37fa7f18e6ac74ac2bee415a03a70bd4fa4f56e3))
+* protect user-managed Compose overrides during host detection ([37fa7f1](https://github.com/mcgeezy/relaytv/commit/37fa7f18e6ac74ac2bee415a03a70bd4fa4f56e3))
+* publish a cache-safe README banner so GitHub renders the current brand asset ([3681b20](https://github.com/mcgeezy/relaytv/commit/3681b20fecccc173bc2a5463e36a5a31d8adbf28))
+* stop the now-playing card flashing to idle every few seconds ([d6eb8cf](https://github.com/mcgeezy/relaytv/commit/d6eb8cf12098c408e04c8b9c4988a71f0a7086b9))
+
+
+### Documentation
+
+* add a reproducible Playwright workflow for refreshing README imagery ([3681b20](https://github.com/mcgeezy/relaytv/commit/3681b20fecccc173bc2a5463e36a5a31d8adbf28))
+* document the native Linux support and Docker installation contract ([37fa7f1](https://github.com/mcgeezy/relaytv/commit/37fa7f18e6ac74ac2bee415a03a70bd4fa4f56e3))
+
 ## [0.6.1](https://github.com/mcgeezy/relaytv/compare/v0.6.0...v0.6.1) (2026-07-18)
 
 
