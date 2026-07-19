@@ -3609,14 +3609,28 @@ async function renderHistory(){
     const row = document.createElement('div');
     row.className = 'histItem';
     if (!available) row.classList.add('isUnavailable');
-    setBg(row, thumbUrl(it));
 
-    const bgFav = faviconUrl(it);
-    if (bgFav){
-      const bg = document.createElement('div');
-      bg.className = 'histProvBg';
-      bg.innerHTML = `<img src="${bgFav}" alt="" />`;
-      row.appendChild(bg);
+    const thumb = document.createElement('div');
+    thumb.className = 'histThumb';
+    const turl = thumbUrl(it);
+    if (turl){
+      const img = document.createElement('img');
+      img.className = 'histThumbImg';
+      img.alt = '';
+      img.loading = 'lazy';
+      img.src = turl;
+      img.onerror = () => { try { img.remove(); } catch(_e){} };
+      thumb.appendChild(img);
+    }
+    const fav = faviconUrl(it);
+    if (fav){
+      const badge = document.createElement('img');
+      badge.className = 'histThumbFav';
+      badge.alt = '';
+      badge.loading = 'lazy';
+      badge.src = fav;
+      badge.onerror = () => { try { badge.remove(); } catch(_e){} };
+      thumb.appendChild(badge);
     }
 
     const resumePos = Number(it.resume_pos);
@@ -3628,7 +3642,7 @@ async function renderHistory(){
       const fill = document.createElement('span');
       fill.style.width = `${Math.max(0, Math.min(100, progressRatio * 100))}%`;
       bar.appendChild(fill);
-      row.appendChild(bar);
+      thumb.appendChild(bar);
     }
 
     const meta = document.createElement('div');
@@ -3636,17 +3650,6 @@ async function renderHistory(){
 
     const title = document.createElement('div');
     title.className = 'histTitle';
-
-    const fav = faviconUrl(it);
-    if (fav){
-      const favImg = document.createElement('img');
-      favImg.className = 'fav';
-      favImg.alt = '';
-      favImg.loading = 'lazy';
-      favImg.src = fav;
-      title.appendChild(favImg);
-    }
-
     const tspan = document.createElement('span');
     tspan.className = 'histTitleText';
     tspan.textContent = it.title || it.url || '(unknown)';
@@ -3658,29 +3661,35 @@ async function renderHistory(){
     channel.className = 'histSub';
     channel.textContent = displaySub(it) || '';
 
-    const sub = document.createElement('div');
-    sub.className = 'histSub';
-    sub.textContent = `${_fmtTs(it.ts)}  •  ${it.mode || ''}`.trim();
+    const when = document.createElement('div');
+    when.className = 'histSub';
+    when.textContent = `${_fmtTs(it.ts)} · ${String(it.mode || '').replace(/_/g, ' ')}`.replace(/ · $/, '');
 
-    const progress = document.createElement('div');
-    progress.className = 'histSub';
-    if (it.completed === true) {
-      progress.textContent = 'Completed · 00:00';
-    } else {
-      const resumePos = Number(it.resume_pos);
-      progress.textContent = Number.isFinite(resumePos) && resumePos > 0
-        ? `Resume · ${fmtTime(resumePos)}`
-        : 'Resume · 00:00';
+    const tags = document.createElement('div');
+    tags.className = 'histTags';
+    if (it.completed === true){
+      const t = document.createElement('span');
+      t.className = 'histTag done';
+      t.textContent = 'Completed';
+      tags.appendChild(t);
+    } else if (Number.isFinite(resumePos) && resumePos > 0){
+      const t = document.createElement('span');
+      t.className = 'histTag resume';
+      t.textContent = `Resume ${fmtTime(resumePos)}`;
+      tags.appendChild(t);
     }
-
-    const url = document.createElement('div');
-    url.className = 'histSub';
-    url.textContent = available ? (it.url || '') : 'Playback unavailable: stored upload was removed';
+    if (!available){
+      const t = document.createElement('span');
+      t.className = 'histTag gone';
+      t.textContent = 'Upload removed';
+      tags.appendChild(t);
+    }
 
     const btns = document.createElement('div');
     btns.className = 'histBtns';
 
     const play = document.createElement('button');
+    play.className = 'histPlayBtn';
     play.textContent = 'Play';
     play.disabled = !available;
     play.onclick = async () => {
@@ -3691,6 +3700,7 @@ async function renderHistory(){
     };
 
     const queue = document.createElement('button');
+    queue.className = 'histQueueBtn';
     queue.textContent = 'Queue';
     queue.disabled = !available;
     queue.onclick = async () => {
@@ -3705,11 +3715,11 @@ async function renderHistory(){
 
     meta.appendChild(title);
     meta.appendChild(channel);
-    meta.appendChild(sub);
-    meta.appendChild(progress);
-    meta.appendChild(url);
+    meta.appendChild(when);
+    if (tags.childElementCount > 0) meta.appendChild(tags);
     meta.appendChild(btns);
 
+    row.appendChild(thumb);
     row.appendChild(meta);
     list.appendChild(row);
   });

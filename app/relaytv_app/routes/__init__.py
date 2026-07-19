@@ -3427,12 +3427,12 @@ def ui():
 
     <!-- Hidden by default: history modal (opened via 🕘 button) -->
     <div id="histBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal">
+      <div class="modal histModal">
         <div class="modalTop">
           <div class="modalTitle">History</div>
           <div class="modalBtns">
             <button id="histClearBtn" class="danger" title="Clear history">Clear</button>
-            <button id="histCloseBtn" title="Close">Close</button>
+            <button id="histCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
           </div>
         </div>
         <div id="histList" class="histList"></div>

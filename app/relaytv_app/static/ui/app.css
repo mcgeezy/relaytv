@@ -330,9 +330,10 @@
     .helperTxt.err{ color: #ff9aa8; }
     .helperTxt.ok{ color: #9df6b7; }
 
-    /* Send-to-TV modal: opaque glass slab with one contained panel per tool.
-       .modal.addModal outranks the generic .modal shell that follows later. */
-    .modal.addModal{
+    /* Send-to-TV + History modals: opaque glass slabs. The compound selector
+       outranks the generic .modal shell that follows later in the file. */
+    .modal.addModal,
+    .modal.histModal{
       width: min(720px, 100%);
       background: linear-gradient(165deg, rgba(13,22,44,.97), rgba(5,9,20,.985));
       border: 1px solid rgba(148,180,255,.28);
@@ -345,7 +346,8 @@
       display: grid;
       gap: 14px;
     }
-    .addModal .modalTitle{
+    .addModal .modalTitle,
+    .histModal .modalTitle{
       font-size: 13px;
       font-weight: 700;
       letter-spacing: .14em;
@@ -381,17 +383,40 @@
     .addModal .fieldRow{ margin-top: 0; }
     .addModal .helperTxt{ margin-top: 0; }
     .amActions{ justify-content: flex-end; }
-    .addModal .iconBtn{
+    .addModal .iconBtn,
+    .histModal .iconBtn{
       background: linear-gradient(180deg, rgba(148,178,255,.14), rgba(96,130,255,.06));
       border: 1px solid rgba(148,180,255,.30);
       color: #dceaff;
       box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
     }
-    .addModal .iconBtn:hover{
+    .addModal .iconBtn:hover,
+    .histModal .iconBtn:hover{
       transform: none;
       border-color: rgba(148,180,255,.55);
       background: linear-gradient(180deg, rgba(148,178,255,.20), rgba(96,130,255,.10));
       box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 2px rgba(120,180,255,.14);
+    }
+    .histModal #histClearBtn{
+      min-height: 0;
+      width: auto;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: rgba(255, 172, 184, .90);
+      background: rgba(90, 20, 30, .28);
+      border: 1px solid rgba(255,120,140,.38);
+      box-shadow: none;
+    }
+    .histModal #histClearBtn:hover{
+      transform: none;
+      color: #ffe2e6;
+      background: rgba(140, 30, 45, .45);
+      border-color: rgba(255,140,160,.60);
+      box-shadow: 0 0 12px rgba(255,90,110,.20);
     }
     .addModal .urlInput,
     .addModal .notifyInput{
@@ -445,12 +470,26 @@
     #notifySendBtn:active,
     #addQueueBtn:active{ transform: translateY(1px); }
     @media (prefers-color-scheme: light){
-      .modal.addModal{
+      .modal.addModal,
+      .modal.histModal{
         background: linear-gradient(165deg, rgba(255,255,255,.97), rgba(233, 241, 255, .98));
         border-color: rgba(37, 99, 235, .20);
         box-shadow: 0 24px 54px rgba(37, 99, 235, .18), inset 0 1px 0 rgba(255,255,255,.9);
       }
-      .addModal .modalTitle{ color: #0c1324; }
+      .addModal .modalTitle,
+      .histModal .modalTitle{ color: #0c1324; }
+      .histModal #histClearBtn{
+        color: rgba(185, 28, 48, .95);
+        background: rgba(255, 235, 238, .90);
+        border-color: rgba(220, 60, 80, .40);
+      }
+      .histModal #histClearBtn:hover{
+        color: #8f1626;
+        background: rgb(255, 224, 228);
+        border-color: rgba(220, 60, 80, .60);
+        box-shadow: none;
+      }
+      .histList .muted{ color: rgba(12, 19, 36, .55); }
       .amSection{
         border-color: rgba(37, 99, 235, .14);
         background: linear-gradient(180deg, rgba(255,255,255,.65), rgba(223, 238, 255, .45));
@@ -472,6 +511,7 @@
         box-shadow: 0 0 0 2px rgba(56, 140, 248, .16);
       }
       .addModal .iconBtn,
+      .histModal .iconBtn,
       #addQueueBtn{
         background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(223, 238, 255, .88));
         border-color: rgba(37, 99, 235, .22);
@@ -479,6 +519,7 @@
         box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
       }
       .addModal .iconBtn:hover,
+      .histModal .iconBtn:hover,
       #addQueueBtn:hover{
         background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(210, 232, 255, .95));
         border-color: rgba(37, 99, 235, .40);
@@ -591,70 +632,94 @@
     .modalTop{ display:flex; align-items:center; justify-content:space-between; gap: 10px; }
     .modalTitle{ font-weight: 700; letter-spacing: .2px; }
     .modalBtns{ display:flex; gap: 10px; }
-    .histList{ display:grid; gap: 10px; margin-top: 12px; }
+    .histList{ display:grid; gap: 10px; }
+    .histList > *{ min-width: 0; }
+    .histList .muted{
+      padding: 22px 6px;
+      text-align: center;
+      font-size: 13px;
+      letter-spacing: .04em;
+      color: rgba(210,225,250,.45);
+    }
+    /* History tiles mirror the queue's contained-thumb design and stay dark
+       glass in both themes so the artwork pops. */
     .histItem{
       position: relative;
-      display:flex;
-      gap: 10px;
-      align-items: stretch;
-      padding: 12px;
-      border-radius: 18px;
-      background: var(--card2);
-      border: 1px solid var(--stroke);
-      overflow: hidden;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgb(31,45,82), rgb(17,26,50));
+      border: 1px solid rgba(120,180,255,.24);
+      box-shadow: inset 0 1px 0 rgba(190,220,255,.10);
     }
     .histItem.isUnavailable{
       opacity: .72;
       filter: saturate(.78);
     }
-    .histProvBg{
-      position:absolute;
-      inset: 0;
-      pointer-events:none;
-      opacity: .12;
-      display:flex;
-      align-items:center;
-      justify-content:flex-start;
-      padding-left: 10px;
+    .histThumb{
+      position: relative;
+      flex: 0 0 auto;
+      width: 118px;
+      aspect-ratio: 16 / 9;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(120,180,255,.18);
+      background:
+        radial-gradient(80% 80% at 30% 20%, rgba(43,108,231,.30), transparent 60%),
+        linear-gradient(150deg, rgba(20,34,66,.85), rgba(8,14,30,.90));
     }
-    .histProvBg img{
-      width: 84px;
-      height: 84px;
-      border-radius: 22px;
-      border: 1px solid rgba(255,255,255,.10);
+    .histThumbImg{
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .histThumbFav{
+      position: absolute;
+      right: 5px;
+      bottom: 5px;
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      border: 1px solid rgba(8,14,30,.65);
+      background: rgba(8,14,30,.80);
+      padding: 2px;
+      z-index: 2;
     }
     .histProgress{
       position: absolute;
       left: 0;
       right: 0;
       bottom: 0;
-      height: 5px;
-      z-index: 3;
+      height: 4px;
+      z-index: 2;
       overflow: hidden;
-      background: rgba(15,23,42,.68);
+      background: rgba(8, 14, 30, .70);
       pointer-events: none;
     }
     .histProgress > span{
       display: block;
       height: 100%;
       background: #38bdf8;
-      box-shadow: 0 0 10px rgba(56,189,248,.80);
+      box-shadow: 0 0 8px rgba(56,189,248,.80);
     }
     .histMeta{
-      min-width:0;
+      min-width: 0;
       flex: 1 1 auto;
-      position: relative;
-      z-index: 2;
-      display:flex;
+      display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 3px;
     }
     .histTitle{
       font-weight: 650;
-      line-height: 1.2;
+      font-size: 14px;
+      line-height: 1.25;
       min-width: 0;
-      display:flex;
-      align-items:flex-start;
+      color: #eaf3ff;
+      display: flex;
+      align-items: flex-start;
       gap: 8px;
     }
     .histTitleText{
@@ -665,9 +730,85 @@
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
     }
-    .histSub{ font-size: 12px; color: var(--muted2); margin-top: 4px; word-break: break-word; }
-    .histBtns{ margin-top: 8px; display:flex; gap: 8px; flex-wrap: wrap; }
-    .histBtns button{ min-height: 0; padding: 8px 12px; font-size: 13px; border-radius: 12px; }
+    .histSub{
+      font-size: 12px;
+      color: rgba(210,225,250,.62);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .histTags{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+    }
+    .histTag{
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .histTag.resume{
+      color: rgba(150, 205, 255, .92);
+      border: 1px solid rgba(96, 170, 255, .40);
+      background: rgba(24, 60, 130, .35);
+    }
+    .histTag.done{
+      color: rgba(150, 240, 190, .92);
+      border: 1px solid rgba(110, 230, 170, .35);
+      background: rgba(20, 90, 55, .30);
+    }
+    .histTag.gone{
+      color: rgba(255, 205, 130, .92);
+      border: 1px solid rgba(255, 190, 110, .40);
+      background: rgba(90, 60, 18, .35);
+    }
+    .histBtns{ margin-top: 6px; display:flex; gap: 8px; flex-wrap: wrap; }
+    .histPlayBtn,
+    .histQueueBtn{
+      min-height: 0;
+      width: auto;
+      padding: 7px 16px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      border-radius: 10px;
+      box-shadow: none;
+    }
+    .histPlayBtn{
+      border: 1px solid rgba(125,211,252,.62);
+      background: linear-gradient(180deg, rgba(56,189,248,.82), rgba(37,99,235,.74));
+      color: #f0f9ff;
+      text-shadow: 0 1px 2px rgba(2,6,23,.35);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
+    }
+    .histPlayBtn:hover:not(:disabled){
+      transform: none;
+      background: linear-gradient(180deg, rgba(94,207,255,.9), rgba(59,120,246,.82));
+      border-color: rgba(165,225,255,.75);
+    }
+    .histQueueBtn{
+      background: linear-gradient(180deg, rgba(148,178,255,.14), rgba(96,130,255,.06));
+      border: 1px solid rgba(148,180,255,.30);
+      color: #dceaff;
+    }
+    .histQueueBtn:hover:not(:disabled){
+      transform: none;
+      border-color: rgba(148,180,255,.55);
+      background: linear-gradient(180deg, rgba(148,178,255,.20), rgba(96,130,255,.10));
+    }
+    .histPlayBtn:disabled,
+    .histQueueBtn:disabled{
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    @media (max-width: 480px){
+      .histThumb{ width: 96px; }
+    }
     .mediaBadge{
       display:inline-flex;
       align-items:center;

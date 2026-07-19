@@ -145,7 +145,7 @@ def test_ui_smoke() -> None:
     assert 'function _formatUploadSize(bytes)' in js
     assert 'mediaBadge' in js
     assert 'isUnavailable' in js
-    assert 'Playback unavailable: stored upload was removed' in js
+    assert 'Upload removed' in js
     assert 'onclick="post(\'/close\')"' in response.text
     assert "await post('/now_playing/clear');" in js
     assert 'id="jfSearchBtn"' not in response.text
