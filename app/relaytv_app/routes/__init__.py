@@ -20,7 +20,7 @@ import socket
 import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from .. import config, state, resolver, player, playback_service, discovery_mdns, video_profile, upload_store, x11_overlay
+from .. import config, discovery_mdns, playback_service, player, public_media, resolver, state, upload_store, video_profile, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import jellyfin_receiver, jellyfin_service
@@ -976,7 +976,7 @@ def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_l
 
 
 def _annotate_upload_item(item: object) -> object:
-    return upload_store.annotate_item(item)
+    return public_media.public_media_item(upload_store.annotate_item(item))
 
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:

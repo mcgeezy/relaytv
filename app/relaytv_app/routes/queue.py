@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, playback_service, state, upload_store
+from .. import player, playback_service, public_media, state, upload_store
 from ..debug import get_logger
 
 
@@ -59,7 +59,7 @@ def _play_now_from_history(payload: dict[str, object]) -> dict:
 
 
 def _annotate_upload_item(item: object) -> object:
-    return upload_store.annotate_item(item)
+    return public_media.public_media_item(upload_store.annotate_item(item))
 
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:
