@@ -2535,3 +2535,67 @@
     padding-bottom: calc(10px + env(safe-area-inset-bottom) / 2);
   }
 }
+
+    /* ===== Light mode: lighter section backgrounds =====
+       The three glass sections lighten; inner tiles (blue remote tiles,
+       dark-glass queue tiles, charcoal Close) keep their identity. Only
+       text sitting directly on the section surface flips dark. */
+    @media (prefers-color-scheme: light){
+      .remoteCard,
+      .queueCard,
+      .nowCard{
+        background: linear-gradient(165deg, rgba(255,255,255,.94), rgba(233,241,255,.97)) !important;
+        border-color: rgba(37,99,235,.22);
+        box-shadow:
+          0 0 24px rgba(56,130,246,.10),
+          0 14px 36px rgba(15,23,42,.14),
+          inset 0 1px 0 rgba(255,255,255,.90);
+      }
+      .qHead, .nHead{ border-bottom-color: rgba(37,99,235,.16); }
+      .qHeadTitle, .nHeadTitle{ color: #14295e; text-shadow: none; }
+      .qClearBtn, .nSkipBtn, .nGhostBtn{
+        color: rgba(23,52,120,.85);
+        border-color: rgba(37,99,235,.30);
+        background: rgba(219,232,255,.55);
+      }
+      .qClearBtn:hover, .nSkipBtn:hover, .nGhostBtn:hover{
+        color: #0c1f4d;
+        border-color: rgba(37,99,235,.50);
+        background: rgba(199,220,255,.80);
+        box-shadow: 0 0 12px rgba(72,150,255,.25);
+      }
+      .queueList:empty::after{ color: rgba(30,50,100,.48); }
+      .queueCard .footerRow{ color: rgba(30,50,100,.58); }
+      .nIdleMsg{ color: rgba(30,50,100,.52); }
+      .nTimeRow{ color: #1d4ed8; }
+      .remoteVolumeValue{ color: #1d4ed8; }
+      .rVolIcon{ color: #1e3a8a; }
+      .remoteVolumeSlider{
+        --remote-vol-track-start: rgba(37,99,235,.20);
+        --remote-vol-track-end: rgba(37,99,235,.13);
+        --remote-vol-track-border: rgba(37,99,235,.22);
+      }
+      .nowCard .progress{
+        background: linear-gradient(180deg, rgba(37,99,235,.16), rgba(37,99,235,.11));
+        border-color: rgba(37,99,235,.20);
+      }
+      .nStateDot{ background: rgba(30,64,175,.28); }
+      .nHero{ border-color: rgba(37,99,235,.16); }
+      .nHeroFade{
+        background: linear-gradient(180deg, rgba(240,246,255,0) 30%, rgba(240,246,255,.55) 62%, rgba(242,247,255,.96) 100%);
+      }
+      .nTitle{ color: #0c1324; text-shadow: 0 1px 10px rgba(255,255,255,.80); }
+      .nChan{ color: rgba(30,50,100,.75); text-shadow: 0 1px 8px rgba(255,255,255,.70); }
+      .nHeroBody .providerIcon{ background: rgba(255,255,255,.85); border-color: rgba(15,23,42,.12); }
+      /* Queue tiles keep their dark identity on the light section, but must
+         be opaque: the translucent dark gradient blends muddy over white. */
+      .qTile{
+        background: linear-gradient(180deg, rgb(31,45,82), rgb(17,26,50));
+        border-color: rgba(37,99,235,.30);
+        box-shadow: 0 6px 16px rgba(15,23,42,.18), inset 0 1px 0 rgba(190,220,255,.14);
+      }
+      .qTile:hover{
+        border-color: rgba(96,165,250,.48);
+        background: linear-gradient(180deg, rgb(37,54,96), rgb(21,32,60));
+      }
+    }
