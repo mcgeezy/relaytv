@@ -92,8 +92,9 @@ companion apps and automations remain optional ways to control it.
 
 ## Install in minutes
 
-RelayTV is built for Raspberry Pi-class devices, Intel mini PCs, NUCs, HTPCs,
-and other Linux hosts connected directly to a television.
+RelayTV is built for 64-bit Raspberry Pi-class devices, Intel mini PCs, NUCs,
+HTPCs, and other `amd64` or `arm64` Linux hosts connected directly to a
+television. The installer can set up Docker with your approval when needed.
 
 ```bash
 mkdir -p ~/relaytv
