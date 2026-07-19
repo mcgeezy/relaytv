@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/relaytv_app/static/brand/banner.png" alt="RelayTV" width="620">
+  <img src="app/relaytv_app/static/brand/banner.png?v=20260719" alt="RelayTV" width="620">
 </p>
 
 <h1 align="center">Your media. Your TV. Your rules.</h1>
