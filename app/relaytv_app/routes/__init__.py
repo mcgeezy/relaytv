@@ -3364,35 +3364,34 @@ def ui():
 
     <!-- Hidden by default: manual URL modal (opened via ＋ button) -->
     <div id="addBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal">
+      <div class="modal addModal">
         <div class="modalTop">
-          <div class="modalTitle">Add URL</div>
+          <div class="modalTitle">Send to TV</div>
           <div class="modalBtns">
             <button id="addCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
           </div>
         </div>
 
-        <div class="fieldRow">
-          <input id="addUrlInput" class="urlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
-          <button id="addPasteBtn" class="iconBtn sm" title="Paste from clipboard" aria-label="Paste">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M9 4h6a2 2 0 0 1 2 2v2H7V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-              <path d="M7 8H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </div>
+        <section class="amSection">
+          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 5.43" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M14 10a5 5 0 0 0-7.07 0L4.1 12.83a5 5 0 0 0 7.07 7.07l1.32-1.33" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Play a link</span></div>
+          <div class="fieldRow">
+            <input id="addUrlInput" class="urlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
+            <button id="addPasteBtn" class="iconBtn sm" title="Paste from clipboard" aria-label="Paste">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M9 4h6a2 2 0 0 1 2 2v2H7V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <path d="M7 8H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="modalBtns amActions">
+            <button id="addQueueBtn" title="Add to queue">Queue</button>
+            <button id="addPlayBtn" class="good" title="Play now">Play</button>
+          </div>
+          <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
+        </section>
 
-        <div class="modalBtns" style="margin-top: 12px; justify-content:flex-end;">
-          <button id="addQueueBtn" title="Add to queue">Queue</button>
-          <button id="addPlayBtn" class="good" title="Play now">Play</button>
-        </div>
-
-        <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
-
-        <div class="addDivider" aria-hidden="true"></div>
-
-        <div id="notifySection" class="notifySection">
-          <div class="notifyTitle">Send Toast Notification</div>
+        <section id="notifySection" class="amSection">
+          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Toast notification</span></div>
           <div class="notifyField">
             <label for="notifyTextInput">Text</label>
             <textarea id="notifyTextInput" class="notifyInput" maxlength="500" placeholder="Notification text…"></textarea>
@@ -3422,7 +3421,7 @@ def ui():
             <div id="notifyHelperTxt" class="helperTxt" aria-live="polite"></div>
             <button id="notifySendBtn" class="good" title="Send notification">Send</button>
           </div>
-        </div>
+        </section>
       </div>
     </div>
 

@@ -326,28 +326,181 @@
       color: var(--text);
       outline: none;
     }
-    @media (prefers-color-scheme: light){
-      .urlInput,
-      .notifyInput{ background: rgba(255,255,255,.92); }
-    }
     .helperTxt{ font-size: 12px; color: var(--muted2); margin-top: 8px; min-height: 16px; }
     .helperTxt.err{ color: #ff9aa8; }
     .helperTxt.ok{ color: #9df6b7; }
-    .addDivider{
-      height: 1px;
-      margin: 16px 0 14px;
-      background: linear-gradient(90deg, transparent, rgba(125,211,252,.42), transparent);
-    }
-    .notifySection{
+
+    /* Send-to-TV modal: opaque glass slab with one contained panel per tool.
+       .modal.addModal outranks the generic .modal shell that follows later. */
+    .modal.addModal{
+      width: min(720px, 100%);
+      background: linear-gradient(165deg, rgba(13,22,44,.97), rgba(5,9,20,.985));
+      border: 1px solid rgba(148,180,255,.28);
+      border-radius: 22px;
+      box-shadow:
+        0 0 42px rgba(56,130,246,.14),
+        0 24px 60px rgba(0,0,0,.60),
+        inset 0 1px 0 rgba(190,220,255,.12);
+      padding: 16px;
       display: grid;
-      gap: 10px;
+      gap: 14px;
     }
-    .notifyTitle{
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: .08em;
+    .addModal .modalTitle{
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .14em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: #dceaff;
+    }
+    .amSection{
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(148,180,255,.16);
+      background: linear-gradient(180deg, rgba(148,178,255,.07), rgba(96,130,255,.03));
+    }
+    .amHead{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: rgba(170, 198, 255, .85);
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(148,180,255,.12);
+    }
+    .amHead svg{
+      width: 15px;
+      height: 15px;
+      flex: 0 0 auto;
+      color: rgba(120, 180, 255, .85);
+    }
+    .addModal .fieldRow{ margin-top: 0; }
+    .addModal .helperTxt{ margin-top: 0; }
+    .amActions{ justify-content: flex-end; }
+    .addModal .iconBtn{
+      background: linear-gradient(180deg, rgba(148,178,255,.14), rgba(96,130,255,.06));
+      border: 1px solid rgba(148,180,255,.30);
+      color: #dceaff;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+    }
+    .addModal .iconBtn:hover{
+      transform: none;
+      border-color: rgba(148,180,255,.55);
+      background: linear-gradient(180deg, rgba(148,178,255,.20), rgba(96,130,255,.10));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 2px rgba(120,180,255,.14);
+    }
+    .addModal .urlInput,
+    .addModal .notifyInput{
+      background: rgba(4, 8, 18, .55);
+      border: 1px solid rgba(148,180,255,.22);
+      border-radius: 12px;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .addModal .urlInput:focus,
+    .addModal .notifyInput:focus{
+      border-color: rgba(125,211,252,.65);
+      box-shadow: 0 0 0 2px rgba(56,140,248,.18);
+    }
+    #addQueueBtn{
+      min-height: 42px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      font-weight: 700;
+      background: linear-gradient(180deg, rgba(148,178,255,.14), rgba(96,130,255,.06));
+      border: 1px solid rgba(148,180,255,.30);
+      color: #dceaff;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+    }
+    #addQueueBtn:hover{
+      transform: none;
+      border-color: rgba(148,180,255,.55);
+      background: linear-gradient(180deg, rgba(148,178,255,.20), rgba(96,130,255,.10));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 2px rgba(120,180,255,.14);
+    }
+    #addPlayBtn,
+    #notifySendBtn{
+      min-height: 42px;
+      padding: 10px 20px;
+      border-radius: 12px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      border: 1px solid rgba(125,211,252,.62);
+      background: linear-gradient(180deg, rgba(56,189,248,.82), rgba(37,99,235,.74));
+      color: #f0f9ff;
+      text-shadow: 0 1px 2px rgba(2,6,23,.35);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 4px 14px rgba(37,99,235,.32);
+    }
+    #addPlayBtn:hover,
+    #notifySendBtn:hover{
+      transform: none;
+      background: linear-gradient(180deg, rgba(94,207,255,.9), rgba(59,120,246,.82));
+      border-color: rgba(165,225,255,.75);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.32), 0 4px 16px rgba(37,99,235,.42);
+    }
+    #addPlayBtn:active,
+    #notifySendBtn:active,
+    #addQueueBtn:active{ transform: translateY(1px); }
+    @media (prefers-color-scheme: light){
+      .modal.addModal{
+        background: linear-gradient(165deg, rgba(255,255,255,.97), rgba(233, 241, 255, .98));
+        border-color: rgba(37, 99, 235, .20);
+        box-shadow: 0 24px 54px rgba(37, 99, 235, .18), inset 0 1px 0 rgba(255,255,255,.9);
+      }
+      .addModal .modalTitle{ color: #0c1324; }
+      .amSection{
+        border-color: rgba(37, 99, 235, .14);
+        background: linear-gradient(180deg, rgba(255,255,255,.65), rgba(223, 238, 255, .45));
+      }
+      .amHead{
+        color: rgba(30, 64, 175, .75);
+        border-bottom-color: rgba(37, 99, 235, .12);
+      }
+      .amHead svg{ color: rgba(37, 99, 235, .70); }
+      .addModal .urlInput,
+      .addModal .notifyInput{
+        background: rgba(255,255,255,.92);
+        border-color: rgba(37, 99, 235, .18);
+        color: #0c1324;
+      }
+      .addModal .urlInput:focus,
+      .addModal .notifyInput:focus{
+        border-color: rgba(56, 140, 248, .55);
+        box-shadow: 0 0 0 2px rgba(56, 140, 248, .16);
+      }
+      .addModal .iconBtn,
+      #addQueueBtn{
+        background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(223, 238, 255, .88));
+        border-color: rgba(37, 99, 235, .22);
+        color: #0c1324;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
+      }
+      .addModal .iconBtn:hover,
+      #addQueueBtn:hover{
+        background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(210, 232, 255, .95));
+        border-color: rgba(37, 99, 235, .40);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 0 0 2px rgba(56,140,248,.14);
+      }
+      .addModal .notifyFile{ color: rgba(12, 19, 36, .60); }
+      .addModal .notifyFile::file-selector-button{
+        background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(223, 238, 255, .88));
+        border-color: rgba(37, 99, 235, .22);
+        color: #0c1324;
+      }
+      #addPlayBtn,
+      #notifySendBtn{
+        background: linear-gradient(180deg, rgb(56, 152, 248), rgb(29, 78, 216));
+        border-color: rgba(29, 78, 216, .55);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.30), 0 4px 14px rgba(37, 99, 235, .28);
+      }
+      #addPlayBtn:hover,
+      #notifySendBtn:hover{
+        background: linear-gradient(180deg, rgb(76, 165, 250), rgb(37, 90, 230));
+        border-color: rgba(29, 78, 216, .70);
+      }
     }
     .notifyGrid{
       display: grid;
@@ -385,7 +538,18 @@
     }
     .notifyFile{
       font-size: 12px;
-      color: var(--muted);
+      color: rgba(200, 216, 255, .60);
+    }
+    .notifyFile::file-selector-button{
+      margin-right: 10px;
+      padding: 7px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(148,180,255,.30);
+      background: linear-gradient(180deg, rgba(148,178,255,.15), rgba(96,130,255,.07));
+      color: #eaf3ff;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
     }
     .notifyActions{
       display:flex;
