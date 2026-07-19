@@ -1,184 +1,81 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <svg
-   class="brandLogo"
-   viewBox="0 0 396.39529 101.72774"
-   role="img"
-   aria-label="RelayTV logo"
-   version="1.1"
-   id="svg7"
-   sodipodi:docname="banner.svg"
-   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
-   width="396.39529"
-   height="101.72775"
-   inkscape:export-filename="banner.png"
-   inkscape:export-xdpi="96"
-   inkscape:export-ydpi="96"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns:xlink="http://www.w3.org/1999/xlink"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
-  <sodipodi:namedview
-     id="namedview7"
-     pagecolor="#ffffff"
-     bordercolor="#000000"
-     borderopacity="0.25"
-     inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
-     inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="0.78808592"
-     inkscape:cx="147.82652"
-     inkscape:cy="-106.58736"
-     inkscape:window-width="1150"
-     inkscape:window-height="1032"
-     inkscape:window-x="23"
-     inkscape:window-y="42"
-     inkscape:window-maximized="0"
-     inkscape:current-layer="svg7" />
-  <defs
-     id="defs4">
-    <linearGradient
-       id="rtvBorder"
-       x1="26"
-       y1="23"
-       x2="26"
-       y2="104"
-       gradientUnits="userSpaceOnUse"
-       gradientTransform="translate(-19.999998,-13.243268)">
-      <stop
-         offset="0"
-         stop-color="#36D9F4"
-         id="stop1" />
-      <stop
-         offset="1"
-         stop-color="#2D89FF"
-         id="stop2" />
+  class="brandLogo"
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 480 150"
+  width="480"
+  height="150"
+  role="img"
+  aria-labelledby="relaytv-title relaytv-description"
+>
+  <title id="relaytv-title">RelayTV</title>
+  <desc id="relaytv-description">RelayTV network play mark and wordmark</desc>
+
+  <defs>
+    <linearGradient id="rtvBorder" x1="26" y1="23" x2="26" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36d9f4"/>
+      <stop offset="1" stop-color="#2d89ff"/>
     </linearGradient>
-    <linearGradient
-       id="rtvNode"
-       x1="44"
-       y1="52"
-       x2="85"
-       y2="80"
-       gradientUnits="userSpaceOnUse">
-      <stop
-         offset="0"
-         stop-color="#36D9F4"
-         id="stop3" />
-      <stop
-         offset="1"
-         stop-color="#2D89FF"
-         id="stop4" />
+    <linearGradient id="rtvNode" x1="44" y1="52" x2="85" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36d9f4"/>
+      <stop offset="1" stop-color="#2d89ff"/>
     </linearGradient>
-    <linearGradient
-       inkscape:collect="always"
-       xlink:href="#rtvNode"
-       id="linearGradient7"
-       gradientUnits="userSpaceOnUse"
-       x1="44"
-       y1="52"
-       x2="85"
-       y2="80"
-       gradientTransform="translate(-17.399474,-42.091217)" />
-    <linearGradient
-       inkscape:collect="always"
-       xlink:href="#rtvNode"
-       id="linearGradient8"
-       gradientUnits="userSpaceOnUse"
-       x1="44"
-       y1="52"
-       x2="85"
-       y2="80"
-       gradientTransform="matrix(0.69654129,0,0,0.69654129,-13.427051,-22.426211)" />
-    <linearGradient
-       inkscape:collect="always"
-       xlink:href="#rtvNode"
-       id="linearGradient9"
-       gradientUnits="userSpaceOnUse"
-       x1="44"
-       y1="52"
-       x2="85"
-       y2="80"
-       gradientTransform="matrix(1.4231088,0,0,1.4231088,-70.8848,-25.403203)" />
-    <linearGradient
-       inkscape:collect="always"
-       xlink:href="#rtvNode"
-       id="linearGradient10"
-       gradientUnits="userSpaceOnUse"
-       x1="44"
-       y1="52"
-       x2="85"
-       y2="80"
-       gradientTransform="translate(-14.933749,-28.195964)" />
+    <linearGradient id="rtvTV" x1="447" y1="42" x2="542" y2="125" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#59e8fa"/>
+      <stop offset="0.48" stop-color="#36d9f4"/>
+      <stop offset="1" stop-color="#2d89ff"/>
+    </linearGradient>
+    <linearGradient id="rtvRelay" x1="158" y1="41" x2="158" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ccecff"/>
+    </linearGradient>
+    <filter id="rtvShadow" x="-20%" y="-25%" width="150%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#020817" flood-opacity="0.4"/>
+    </filter>
   </defs>
-  <g
-     id="g3">
+
+  <g transform="translate(20 19) scale(1.2)" filter="url(#rtvShadow)" aria-hidden="true">
     <path
-       d="m 0,13.4876 v 74.538263 c 0,5.480756 2.192302,9.865356 6.576907,12.057657 4.384602,2.1923 8.769207,2.1923 13.153811,0 L 89.884375,62.814391 c 4.3846,-2.192301 6.5769,-6.576904 6.5769,-12.05766 0,-5.480755 -2.1923,-9.865358 -6.5769,-12.05766 L 19.730718,1.4299397 C 10.487672,-3.1915832 0,4.0684897 0,13.4876 Z"
-       fill="#1b2439"
-       id="path4-9"
-       sodipodi:nodetypes="sssccsccs"
-       style="fill:#ffffff;stroke-width:1.09615" />
+      d="M0 13.4876v74.538263c0 5.480756 2.192302 9.865356 6.576907 12.057657 4.384602 2.1923 8.769207 2.1923 13.153811 0L89.884375 62.814391c4.3846-2.192301 6.5769-6.576904 6.5769-12.05766 0-5.480755-2.1923-9.865358-6.5769-12.05766L19.730718 1.42994C10.487672-3.191583 0 4.06849 0 13.4876Z"
+      fill="#fff"
+    />
     <path
-       d="m 4,16.756732 v 68 c 0,5 2,8.999997 6.000001,10.999997 4,2 8,2 12,0 L 86,61.756732 c 3.999995,-2 5.999995,-6 5.999995,-11 0,-5 -2,-9 -5.999995,-11 L 22.000001,5.7567317 C 13.567727,1.5405947 4,8.1638357 4,16.756732 Z"
-       fill="#1b2439"
-       id="path4"
-       sodipodi:nodetypes="sssccsccs" />
+      d="M4 16.756732v68c0 5 2 8.999997 6.000001 10.999997 4 2 8 2 12 0L86 61.756732c3.999995-2 5.999995-6 5.999995-11 0-5-2-9-5.999995-11L22.000001 5.756732C13.567727 1.540595 4 8.163836 4 16.756732Z"
+      fill="#111a2d"
+    />
     <path
-       d="M 51.911507,30.198274 C 48.345521,27.69148 25.965479,15.154491 21.03112,12.896217 c -5.764742,-2.63831 -10.273365,1.854728 -9.880923,5.883937 0.172465,1.770705 0.181759,57.55271 0.209974,63.088644 0.04095,8.033864 5.24639,8.104474 8.462933,7.161964 5.13517,-1.41245 28.584861,-15.178429 29.632012,-15.777348"
-       fill="none"
-       stroke="url(#rtvBorder)"
-       stroke-width="5"
-       stroke-linecap="round"
-       stroke-linejoin="round"
-       id="path5"
-       sodipodi:nodetypes="cssscc"
-       style="stroke:url(#rtvBorder)" />
+      d="M51.911507 30.198274C48.345521 27.69148 25.965479 15.154491 21.03112 12.896217c-5.764742-2.63831-10.273365 1.854728-9.880923 5.883937.172465 1.770705.181759 57.55271.209974 63.088644.04095 8.033864 5.24639 8.104474 8.462933 7.161964 5.13517-1.41245 28.584861-15.178429 29.632012-15.777348"
+      fill="none"
+      stroke="url(#rtvBorder)"
+      stroke-width="5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
     <path
-       d="M 53.304426,63.219945 C 52.119757,63.046302 39.389999,60.432734 37.42577,60.309437 M 54.712015,41.653178 C 52.122433,42.905426 36.217873,52.576804 36.217873,52.576804"
-       fill="none"
-       stroke="url(#rtvNode)"
-       stroke-width="4"
-       stroke-linecap="round"
-       id="path7"
-       style="stroke:url(#linearGradient7)"
-       sodipodi:nodetypes="cccc" />
-    <circle
-       cx="60.033497"
-       cy="65.018974"
-       r="6.9654131"
-       fill="url(#rtvNode)"
-       id="circle5"
-       style="fill:url(#linearGradient8);stroke-width:0.696541" />
-    <circle
-       cx="31.886841"
-       cy="56.938633"
-       r="9.9617615"
-       fill="url(#rtvNode)"
-       id="circle6"
-       style="fill:url(#linearGradient9);stroke-width:1.42311" />
-    <circle
-       cx="61.261433"
-       cy="39.182331"
-       r="7"
-       fill="url(#rtvNode)"
-       id="circle7"
-       style="fill:url(#linearGradient10)" />
+      d="M53.304426 63.219945c-1.184669-.173643-13.914427-2.787211-15.878656-2.910508M54.712015 41.653178c-2.589582 1.252248-18.494142 10.923626-18.494142 10.923626"
+      fill="none"
+      stroke="url(#rtvNode)"
+      stroke-width="4"
+      stroke-linecap="round"
+    />
+    <circle cx="60.033497" cy="65.018974" r="6.965413" fill="url(#rtvNode)"/>
+    <circle cx="31.886841" cy="56.938633" r="9.961762" fill="url(#rtvNode)"/>
+    <circle cx="61.261433" cy="39.182331" r="7" fill="url(#rtvNode)"/>
   </g>
-  <text
-     xml:space="preserve"
-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:68.9363px;font-family:Montserrat;-inkscape-font-specification:Montserrat;text-align:start;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#35d2f5;stroke-width:14.3475"
-     x="108.58627"
-     y="69.511162"
-     id="text1"><tspan
-       sodipodi:role="line"
-       id="tspan1"
-       x="108.58627"
-       y="69.511162"
-       style="stroke-width:14.3475"><tspan
-         style="font-style:normal;font-variant:normal;font-weight:600;font-stretch:normal;font-family:Montserrat;-inkscape-font-specification:'Montserrat Semi-Bold';fill:#1f2933;fill-opacity:1;stroke-width:14.3475"
-         id="tspan3">Relay</tspan><tspan
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-family:Montserrat;-inkscape-font-specification:'Montserrat Bold';fill:#1e88e5;fill-opacity:1;stroke-width:14.3475"
-         id="tspan2">TV</tspan></tspan></text>
+
+  <g
+    font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="86"
+    font-weight="750"
+    letter-spacing="-4"
+    stroke="#0b1224"
+    stroke-width="2.5"
+    stroke-linejoin="round"
+    paint-order="stroke fill"
+    filter="url(#rtvShadow)"
+    aria-hidden="true"
+  >
+    <text x="158" y="111" fill="url(#rtvRelay)">Relay</text>
+    <text x="357" y="111" fill="url(#rtvTV)" font-weight="850" letter-spacing="-5">TV</text>
+  </g>
 </svg>
