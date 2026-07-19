@@ -31,9 +31,17 @@ let __jfLastFocus = null;
 let __jfAlphaIndicatorTimer = 0;
 let __jfResizeBound = false;
 let __jfViewportBound = false;
-const __JF_CATALOG_LIMIT = 5000;
+let __jfBrowseRequestId = 0;
+let __jfBrowseController = null;
+let __jfCatalogPageController = null;
+let __jfCatalogObserver = null;
+const __JF_CATALOG_PAGE_SIZE = 48;
 const __JF_REQ_TIMEOUT_MS = 12000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
+const __jfCatalogState = {
+  movies: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
+  tv: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
+};
 
 let __jfServerType = 'jellyfin';
 let __jfServerConfigured = false;
@@ -133,7 +141,9 @@ function closeJellyfinShell(opts){
 
 function _jfSetActiveTab(tab, opts){
   const next = String(tab || 'dashboard').toLowerCase();
-  __jfActiveTab = (next === 'movies' || next === 'tv') ? next : 'dashboard';
+  const activeTab = (next === 'movies' || next === 'tv') ? next : 'dashboard';
+  if (activeTab !== __jfActiveTab) _jfAbortBrowseRequest();
+  __jfActiveTab = activeTab;
   document.querySelectorAll('.jfTabBtn').forEach((b) => {
     const isActive = String(b.getAttribute('data-jf-tab') || '') === __jfActiveTab;
     b.classList.toggle('active', isActive);
@@ -829,7 +839,7 @@ function _jfBuildRowItemCard(item){
   tWrap.className = 'jfThumb';
   const img = document.createElement('img');
   img.alt = '';
-  img.loading = (__jfActiveTab === 'dashboard') ? 'lazy' : 'eager';
+  img.loading = 'lazy';
   img.decoding = 'async';
   img.src = item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
   tWrap.appendChild(img);
@@ -893,6 +903,174 @@ function _jfBuildRowItemCard(item){
   btn.appendChild(tWrap);
   btn.appendChild(meta);
   return btn;
+}
+
+function _jfCancelCatalogPagination(){
+  if (__jfCatalogObserver) {
+    __jfCatalogObserver.disconnect();
+    __jfCatalogObserver = null;
+  }
+  if (__jfCatalogPageController) {
+    try { __jfCatalogPageController.abort(); } catch (_e) {}
+    __jfCatalogPageController = null;
+  }
+}
+
+function _jfAbortBrowseRequest(){
+  if (__jfBrowseController) {
+    try { __jfBrowseController.abort(); } catch (_e) {}
+    __jfBrowseController = null;
+  }
+  _jfCancelCatalogPagination();
+  __jfBrowseRequestId += 1;
+}
+
+function _jfBeginBrowseRequest(){
+  _jfAbortBrowseRequest();
+  __jfBrowseController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  return {
+    id: __jfBrowseRequestId,
+    controller: __jfBrowseController,
+    signal: __jfBrowseController ? __jfBrowseController.signal : undefined,
+  };
+}
+
+function _jfBrowseRequestIsCurrent(request){
+  return !!request && request.id === __jfBrowseRequestId;
+}
+
+function _jfFinishBrowseRequest(request){
+  if (_jfBrowseRequestIsCurrent(request) && __jfBrowseController === request.controller) {
+    __jfBrowseController = null;
+  }
+}
+
+function _jfIsAbortError(error){
+  return String(error && error.name || '') === 'AbortError';
+}
+
+function _jfResetCatalogState(kind, sort){
+  const state = __jfCatalogState[kind];
+  state.items = [];
+  state.itemIds = new Set();
+  state.nextStart = null;
+  state.count = 0;
+  state.sort = String(sort || '');
+  return state;
+}
+
+function _jfAddCatalogItems(state, items){
+  const added = [];
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const itemId = String(item && item.item_id || '').trim();
+    if (itemId && state.itemIds.has(itemId)) return;
+    if (itemId) state.itemIds.add(itemId);
+    state.items.push(item);
+    added.push(item);
+  });
+  return added;
+}
+
+function _jfNextStart(value){
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
+
+function _jfCatalogKindIsActive(kind){
+  return (__jfActiveTab === 'movies' && kind === 'movies') ||
+    (__jfActiveTab === 'tv' && __jfTvViewMode === 'series' && kind === 'tv');
+}
+
+function _jfCatalogEndpoint(kind){
+  return kind === 'movies' ? '/jellyfin/movies' : '/jellyfin/tv/series';
+}
+
+function _jfCatalogRowId(kind){
+  return kind === 'movies' ? 'movies' : 'tv_series';
+}
+
+function _jfCatalogStatus(kind, loaded, total){
+  const noun = kind === 'movies' ? 'Movies' : 'TV';
+  const suffix = kind === 'movies' ? 'item(s)' : 'series';
+  const target = Math.max(Number(total || 0), Number(loaded || 0));
+  return `${noun} · ${Number(loaded || 0)} of ${target} ${suffix}`;
+}
+
+function _jfUpdateCatalogSentinel(kind){
+  const sentinel = document.querySelector(`.jfCatalogSentinel[data-jf-catalog="${kind}"]`);
+  if (!sentinel) return;
+  const state = __jfCatalogState[kind];
+  const button = sentinel.querySelector('button');
+  const hasMore = state.nextStart !== null;
+  sentinel.classList.toggle('complete', !hasMore);
+  if (button) {
+    button.disabled = !hasMore;
+    button.textContent = hasMore
+      ? `Load more (${state.items.length} of ${Math.max(state.count, state.items.length)})`
+      : `All ${state.items.length} loaded`;
+  }
+}
+
+function _jfArmCatalogPagination(kind){
+  _jfCancelCatalogPagination();
+  const rowId = _jfCatalogRowId(kind);
+  const scroller = document.querySelector(`.jfRow[data-row-id="${rowId}"] .jfCatalogScroller`);
+  if (!scroller) return;
+  const sentinel = document.createElement('div');
+  sentinel.className = 'jfCatalogSentinel';
+  sentinel.dataset.jfCatalog = kind;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn jfCatalogMoreBtn';
+  button.onclick = () => _jfLoadNextCatalogPage(kind);
+  sentinel.appendChild(button);
+  scroller.appendChild(sentinel);
+  _jfUpdateCatalogSentinel(kind);
+  if (__jfCatalogState[kind].nextStart === null || typeof IntersectionObserver === 'undefined') return;
+  __jfCatalogObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) _jfLoadNextCatalogPage(kind);
+  }, {root: null, rootMargin: '120px 0px'});
+  __jfCatalogObserver.observe(sentinel);
+}
+
+async function _jfLoadNextCatalogPage(kind){
+  const state = __jfCatalogState[kind];
+  const start = state.nextStart;
+  if (start === null || __jfCatalogPageController || !_jfCatalogKindIsActive(kind)) return;
+  const expectedSort = kind === 'movies' ? __jfMoviesSort : __jfTvSort;
+  if (state.sort !== expectedSort) return;
+  const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  __jfCatalogPageController = controller || {abort: () => {}};
+  const sentinel = document.querySelector(`.jfCatalogSentinel[data-jf-catalog="${kind}"]`);
+  if (sentinel) sentinel.classList.add('loading');
+  try {
+    const qs = new URLSearchParams();
+    qs.set('sort', expectedSort);
+    qs.set('limit', String(__JF_CATALOG_PAGE_SIZE));
+    qs.set('start', String(start));
+    const j = await _jfFetchJson(`${_jfCatalogEndpoint(kind)}?${qs.toString()}`, {
+      signal: controller ? controller.signal : undefined,
+    });
+    if (!_jfCatalogKindIsActive(kind) || state.sort !== expectedSort || state.nextStart !== start) return;
+    const added = _jfAddCatalogItems(state, j.items);
+    state.count = Math.max(0, Number(j.count || state.items.length));
+    const nextStart = _jfNextStart(j.next_start_index);
+    state.nextStart = nextStart !== null && nextStart > start ? nextStart : null;
+    const liveSentinel = document.querySelector(`.jfCatalogSentinel[data-jf-catalog="${kind}"]`);
+    const frag = document.createDocumentFragment();
+    added.forEach((item) => frag.appendChild(_jfBuildRowItemCard(item)));
+    if (liveSentinel && liveSentinel.parentNode) liveSentinel.parentNode.insertBefore(frag, liveSentinel);
+    _jfApplySelectionUi();
+    _jfUpdateCatalogSentinel(kind);
+    _jfSetStatus(_jfCatalogStatus(kind, state.items.length, state.count), 'ok');
+  } catch (e) {
+    if (!_jfIsAbortError(e)) _jfSetStatus(`More items failed: ${String(e?.message || e)}`, 'err');
+  } finally {
+    if (__jfCatalogPageController === controller || !controller) __jfCatalogPageController = null;
+    const liveSentinel = document.querySelector(`.jfCatalogSentinel[data-jf-catalog="${kind}"]`);
+    if (liveSentinel) liveSentinel.classList.remove('loading');
+  }
 }
 
 function _jfRenderRows(rows){
@@ -1034,10 +1212,21 @@ async function _jfFetchWithTimeout(url, options, timeoutMs){
   const useTimeout = Number.isFinite(ms) && ms > 0;
   let timer = 0;
   let controller = null;
+  let timedOut = false;
+  const externalSignal = opts.signal;
+  let abortFromExternal = null;
   if (useTimeout && typeof AbortController !== 'undefined') {
     controller = new AbortController();
     opts.signal = controller.signal;
+    if (externalSignal) {
+      abortFromExternal = () => {
+        try { controller.abort(); } catch (_e) {}
+      };
+      if (externalSignal.aborted) abortFromExternal();
+      else externalSignal.addEventListener('abort', abortFromExternal, {once: true});
+    }
     timer = setTimeout(() => {
+      timedOut = true;
       try { controller.abort(); } catch (_e) {}
     }, ms);
   }
@@ -1045,18 +1234,22 @@ async function _jfFetchWithTimeout(url, options, timeoutMs){
     return await fetch(url, opts);
   } catch (e) {
     const name = String(e && e.name || '');
-    if (name === 'AbortError') {
+    if (name === 'AbortError' && timedOut) {
       const sec = Math.max(1, Math.round((useTimeout ? ms : __JF_REQ_TIMEOUT_MS) / 1000));
       throw new Error(`Request timed out (${sec}s)`);
     }
     throw e;
   } finally {
     if (timer) clearTimeout(timer);
+    if (externalSignal && abortFromExternal) {
+      externalSignal.removeEventListener('abort', abortFromExternal);
+    }
   }
 }
 
-async function _jfFetchJson(url){
-  const r = await _jfFetchWithTimeout(url, {cache:'no-store'}, __JF_REQ_TIMEOUT_MS);
+async function _jfFetchJson(url, options){
+  const opts = Object.assign({cache:'no-store'}, options || {});
+  const r = await _jfFetchWithTimeout(url, opts, __JF_REQ_TIMEOUT_MS);
   let body = {};
   try { body = await r.json(); } catch (_e) {}
   if (!r.ok) {
@@ -1067,12 +1260,12 @@ async function _jfFetchJson(url){
 }
 
 async function loadJellyfinHome(force){
-  if (__jfBusy) return;
-  __jfBusy = true;
+  const request = _jfBeginBrowseRequest();
   try {
     _jfSetStatus('Loading…');
     _jfSetConn(false, 'Checking…');
-    const j = await _jfFetchJson(`/jellyfin/home?limit=24${force ? '&refresh=1' : ''}`);
+    const j = await _jfFetchJson(`/jellyfin/home?limit=24${force ? '&refresh=1' : ''}`, {signal: request.signal});
+    if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'dashboard') return;
     __jfDashboardRows = Array.isArray(j.rows) ? j.rows : [];
     if (__jfActiveTab === 'dashboard') _jfRenderRows(__jfDashboardRows);
     __jfLastMode = 'home';
@@ -1084,32 +1277,31 @@ async function loadJellyfinHome(force){
     if (!up) _jfSetBrowseUnavailable(reason);
     _jfSetStatus(j.connected ? 'Ready' : 'Ready (degraded)', j.connected ? 'ok' : '');
   } catch (e) {
+    if (_jfIsAbortError(e)) return;
     const msg = String(e?.message || e);
     _jfSetBrowseUnavailable(msg);
     _jfDetailPlaceholder(`${jfBrandName()} unavailable.`);
     _jfSetConn(false, 'Unavailable');
     _jfSetStatus(`Error: ${msg}`, 'err');
   } finally {
-    __jfBusy = false;
-    _jfFlushPendingSearch();
+    _jfFinishBrowseRequest(request);
   }
 }
 
 async function runJellyfinSearch(force){
-  if (__jfBusy) {
-    _jfQueuePendingSearch(force);
-    return;
-  }
   const q = (document.getElementById('jfSearchInput')?.value || '').trim();
   if (!q) {
     await _jfLoadActiveTabDefault(true);
     return;
   }
-  __jfBusy = true;
+  const request = _jfBeginBrowseRequest();
+  const activeTab = __jfActiveTab;
   try {
     _jfSetStatus(`Searching "${q}"…`);
     _jfSetConn(false, 'Checking…');
-    const j = await _jfFetchJson(`/jellyfin/search?q=${encodeURIComponent(q)}&limit=30${force ? '&refresh=1' : ''}`);
+    const j = await _jfFetchJson(`/jellyfin/search?q=${encodeURIComponent(q)}&limit=30${force ? '&refresh=1' : ''}`, {signal: request.signal});
+    const currentQuery = (document.getElementById('jfSearchInput')?.value || '').trim();
+    if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== activeTab || currentQuery !== q) return;
     const scopedItems = _jfFilterSearchItems(j.items || []);
     _jfRenderRows([{id:'search', title:_jfSearchTitle(q), items: scopedItems}]);
     __jfLastMode = 'search';
@@ -1121,31 +1313,36 @@ async function runJellyfinSearch(force){
     if (!up) _jfSetBrowseUnavailable(reason);
     _jfSetStatus(`${scopedItems.length} result(s)`, 'ok');
   } catch (e) {
+    if (_jfIsAbortError(e)) return;
     _jfSetBrowseUnavailable(String(e?.message || e));
     _jfSetConn(false, 'Unavailable');
     _jfSetStatus(`Search failed: ${String(e?.message || e)}`, 'err');
   } finally {
-    __jfBusy = false;
-    _jfFlushPendingSearch();
+    _jfFinishBrowseRequest(request);
   }
 }
 
 async function loadJellyfinMovies(force){
-  if (__jfBusy) return;
-  __jfBusy = true;
+  const request = _jfBeginBrowseRequest();
+  const sort = __jfMoviesSort || 'added';
+  const state = _jfResetCatalogState('movies', sort);
   try {
     _jfSetStatus('Loading movies…');
     _jfSetConn(false, 'Checking…');
     const qs = new URLSearchParams();
-    qs.set('sort', __jfMoviesSort || 'added');
-    qs.set('limit', String(__JF_CATALOG_LIMIT));
+    qs.set('sort', sort);
+    qs.set('limit', String(__JF_CATALOG_PAGE_SIZE));
     qs.set('start', '0');
     if (force) qs.set('refresh', '1');
-    const j = await _jfFetchJson(`/jellyfin/movies?${qs.toString()}`);
-    const items = Array.isArray(j.items) ? j.items : [];
-    __jfMoviesLimit = Math.max(1, Number(j.limit || __JF_CATALOG_LIMIT));
-    __jfMoviesCount = Math.max(0, Number(j.count || items.length));
-    _jfRenderRows([{id:'movies', title:'Movies', items}]);
+    const j = await _jfFetchJson(`/jellyfin/movies?${qs.toString()}`, {signal: request.signal});
+    if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'movies' || __jfMoviesSort !== sort) return;
+    _jfAddCatalogItems(state, j.items);
+    state.nextStart = _jfNextStart(j.next_start_index);
+    state.count = Math.max(0, Number(j.count || state.items.length));
+    __jfMoviesLimit = Math.max(1, Number(j.limit || __JF_CATALOG_PAGE_SIZE));
+    __jfMoviesCount = state.count;
+    _jfRenderRows([{id:'movies', title:'Movies', items: state.items}]);
+    _jfArmCatalogPagination('movies');
     __jfLastMode = 'movies';
     __jfLastQuery = '';
     _jfApplySelectionUi();
@@ -1153,35 +1350,40 @@ async function loadJellyfinMovies(force){
     const reason = String(j.last_error || '').trim();
     _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
     if (!up) _jfSetBrowseUnavailable(reason);
-    _jfSetStatus(`Movies · ${Number(j.count || items.length)} item(s)`, up ? 'ok' : '');
+    _jfSetStatus(_jfCatalogStatus('movies', state.items.length, state.count), up ? 'ok' : '');
     _jfSyncTabControls();
   } catch (e) {
+    if (_jfIsAbortError(e)) return;
     const msg = String(e?.message || e);
     _jfSetBrowseUnavailable(msg);
     _jfSetConn(false, 'Unavailable');
     _jfSetStatus(`Movies failed: ${msg}`, 'err');
   } finally {
-    __jfBusy = false;
-    _jfFlushPendingSearch();
+    _jfFinishBrowseRequest(request);
   }
 }
 
 async function loadJellyfinTvSeries(force){
-  if (__jfBusy) return;
-  __jfBusy = true;
+  const request = _jfBeginBrowseRequest();
+  const sort = __jfTvSort || 'title_asc';
+  const state = _jfResetCatalogState('tv', sort);
   try {
     _jfSetStatus('Loading series…');
     _jfSetConn(false, 'Checking…');
     const qs = new URLSearchParams();
-    qs.set('sort', __jfTvSort || 'title_asc');
-    qs.set('limit', String(__JF_CATALOG_LIMIT));
+    qs.set('sort', sort);
+    qs.set('limit', String(__JF_CATALOG_PAGE_SIZE));
     qs.set('start', '0');
     if (force) qs.set('refresh', '1');
-    const j = await _jfFetchJson(`/jellyfin/tv/series?${qs.toString()}`);
-    const items = Array.isArray(j.items) ? j.items : [];
-    __jfTvLimit = Math.max(1, Number(j.limit || __JF_CATALOG_LIMIT));
-    __jfTvCount = Math.max(0, Number(j.count || items.length));
-    _jfRenderRows([{id:'tv_series', title:'TV Series', items}]);
+    const j = await _jfFetchJson(`/jellyfin/tv/series?${qs.toString()}`, {signal: request.signal});
+    if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'tv' || __jfTvSort !== sort) return;
+    _jfAddCatalogItems(state, j.items);
+    state.nextStart = _jfNextStart(j.next_start_index);
+    state.count = Math.max(0, Number(j.count || state.items.length));
+    __jfTvLimit = Math.max(1, Number(j.limit || __JF_CATALOG_PAGE_SIZE));
+    __jfTvCount = state.count;
+    _jfRenderRows([{id:'tv_series', title:'TV Series', items: state.items}]);
+    _jfArmCatalogPagination('tv');
     __jfLastMode = 'tv';
     __jfLastQuery = '';
     _jfApplySelectionUi();
@@ -1195,16 +1397,16 @@ async function loadJellyfinTvSeries(force){
     const reason = String(j.last_error || '').trim();
     _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
     if (!up) _jfSetBrowseUnavailable(reason);
-    _jfSetStatus(`TV · ${Number(j.count || items.length)} series`, up ? 'ok' : '');
+    _jfSetStatus(_jfCatalogStatus('tv', state.items.length, state.count), up ? 'ok' : '');
     _jfSyncTabControls();
   } catch (e) {
+    if (_jfIsAbortError(e)) return;
     const msg = String(e?.message || e);
     _jfSetBrowseUnavailable(msg);
     _jfSetConn(false, 'Unavailable');
     _jfSetStatus(`TV failed: ${msg}`, 'err');
   } finally {
-    __jfBusy = false;
-    _jfFlushPendingSearch();
+    _jfFinishBrowseRequest(request);
   }
 }
 
@@ -1760,7 +1962,10 @@ function bindJellyfinUi(){
   }
 
   if (searchInput) {
-    searchInput.addEventListener('input', () => _jfScheduleSearch(false));
+    searchInput.addEventListener('input', () => {
+      _jfAbortBrowseRequest();
+      _jfScheduleSearch(false);
+    });
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') _jfScheduleSearch(true, 0);
       if (e.key === 'ArrowDown') {
@@ -2078,4 +2283,3 @@ function bindJellyfinUi(){
     }
   });
 }
-

@@ -178,10 +178,19 @@ def test_ui_smoke() -> None:
     assert 'function _jfSyncTabControls' in jellyfin_js
     assert 'function _jfScheduleSearch' in jellyfin_js
     assert 'function _jfBuildRowItemCard' in jellyfin_js
+    assert 'const __JF_CATALOG_PAGE_SIZE = 48;' in jellyfin_js
+    assert 'function _jfLoadNextCatalogPage' in jellyfin_js
+    assert 'new IntersectionObserver' in jellyfin_js
+    assert "img.loading = 'lazy';" in jellyfin_js
+    assert "qs.set('limit', String(__JF_CATALOG_PAGE_SIZE));" in jellyfin_js
+    assert 'qs.set(\'limit\', String(__JF_CATALOG_LIMIT));' not in jellyfin_js
+    assert 'state.itemIds.has(itemId)' in jellyfin_js
+    assert 'function _jfAbortBrowseRequest' in jellyfin_js
     assert 'const __JF_REQ_TIMEOUT_MS' in jellyfin_js
     assert 'function _jfFetchWithTimeout' in jellyfin_js
     assert 'function _applyQueueSnapshot' in js
     assert 'touch-action: none;' in jellyfin_css
+    assert '.jfCatalogSentinel{' in jellyfin_css
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js

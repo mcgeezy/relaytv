@@ -272,21 +272,7 @@
   display:grid;
   grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
   gap: 10px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  max-height: clamp(300px, calc(100vh - 310px), 75vh);
-  padding-right: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148,163,184,.45) rgba(15,23,42,.30);
-}
-.jfCatalogScroller::-webkit-scrollbar{ width: 10px; }
-.jfCatalogScroller::-webkit-scrollbar-thumb{
-  background: rgba(148,163,184,.45);
-  border-radius: 999px;
-}
-.jfCatalogScroller::-webkit-scrollbar-track{
-  background: rgba(15,23,42,.30);
-  border-radius: 999px;
+  overflow: visible;
 }
 .jfCatalogScroller .jfItem{
   width: auto;
@@ -355,7 +341,24 @@
 }
 .jfCatalogEpisodes{
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  max-height: clamp(220px, calc(100vh - 420px), 52vh);
+}
+.jfCatalogSentinel{
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  min-height: 54px;
+  padding: 6px 0 2px;
+}
+.jfCatalogSentinel.complete{
+  min-height: 36px;
+  opacity: .72;
+}
+.jfCatalogSentinel.loading .jfCatalogMoreBtn{
+  opacity: .72;
+  pointer-events: none;
+}
+.jfCatalogSentinel.loading .jfCatalogMoreBtn::after{
+  content: '…';
 }
 .jfItem{
   min-height: 0;
@@ -600,15 +603,6 @@
     border-color: rgba(15, 23, 42, .12);
     background: rgba(255,255,255,.72);
   }
-  .jfCatalogScroller{
-    scrollbar-color: rgba(148,163,184,.55) rgba(226,232,240,.82);
-  }
-  .jfCatalogScroller::-webkit-scrollbar-thumb{
-    background: rgba(148,163,184,.55);
-  }
-  .jfCatalogScroller::-webkit-scrollbar-track{
-    background: rgba(226,232,240,.82);
-  }
   .jfItem{
     background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(244, 249, 255, .94));
     border-color: rgba(15, 23, 42, .12);
@@ -672,7 +666,6 @@
   }
   .jfCatalogScroller{
     grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
-    max-height: min(60vh, 680px);
   }
   .jfCatalogScroller .jfItem{
     min-height: 188px;
@@ -683,7 +676,6 @@
   }
   .jfCatalogEpisodes{
     grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
-    max-height: min(45vh, 420px);
   }
   .jfSeasonWrap{
     display: grid;

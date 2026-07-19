@@ -151,21 +151,21 @@ the shared frontend monolith.
 
 ### M2 - Catalog Performance Foundation
 
-Status: in progress
+Status: complete
 
-- [ ] Replace the 5,000-item request with bounded pages (target 36-48 items).
-- [ ] Append using `next_start_index` and an `IntersectionObserver` sentinel.
-- [ ] Deduplicate by item ID and cancel obsolete search, sort, and tab requests.
-- [ ] Lazy-load every off-screen image.
-- [ ] Remove the phone's nested catalog scroll region.
-- [ ] Preserve selection and keyboard movement as pages append.
+- [x] Replace the 5,000-item request with bounded pages (target 36-48 items).
+- [x] Append using `next_start_index` and an `IntersectionObserver` sentinel.
+- [x] Deduplicate by item ID and cancel obsolete search, sort, and tab requests.
+- [x] Lazy-load every off-screen image.
+- [x] Remove the phone's nested catalog scroll region.
+- [x] Preserve selection and keyboard movement as pages append.
 
 Exit: the first Movies render never fetches the full live library, initial DOM
 and image work are bounded, and loading another page does not duplicate cards.
 
 ### M3 - Modern Shell
 
-Status: pending
+Status: in progress
 
 - [ ] Add the responsive app bar and phone/desktop navigation treatments.
 - [ ] Integrate search, sort, connection state, loading, empty, and offline
@@ -278,4 +278,5 @@ Browser validation should capture:
 | --- | --- | --- | --- | --- |
 | 2026-07-19 | M0 | Planning | Reviewed history and docs; captured live Playwright baseline; created the modernization roadmap and branch strategy. | `ruff check app tests`; 401 tests; `git diff --check` passed on PR #38 before branching. |
 | 2026-07-19 | M0 | `d6eb8cf` | Confirmed PR #38 merged and fast-forwarded the Jellyfin feature branch to its post-merge `main` commit. | Branch ancestry and clean merge state verified with Git and GitHub. |
-| 2026-07-19 | M1 | Milestone commit | Extracted the Jellyfin browse controller and stylesheet into separately cache-busted static assets without changing IDs, APIs, or behavior. | Rebuilt the live container; `/health` and Jellyfin authentication/connection passed; Playwright phone-dark and desktop-light dashboard, Movies, detail, keyboard, asset-load, error, and overflow checks passed. Ruff and all 401 tests passed. |
+| 2026-07-19 | M1 | `b70a392` | Extracted the Jellyfin browse controller and stylesheet into separately cache-busted static assets without changing IDs, APIs, or behavior. | Rebuilt the live container; `/health` and Jellyfin authentication/connection passed; Playwright phone-dark and desktop-light dashboard, Movies, detail, keyboard, asset-load, error, and overflow checks passed. Ruff and all 401 tests passed. |
+| 2026-07-19 | M2 | Milestone commit | Replaced full-library catalog requests with 48-item pages, deduplicated sentinel-driven appends, cancellable browse requests, lazy images, and document-level catalog scrolling. | Rebuilt the live container; direct endpoint pagination passed; remote Playwright via `ws://10.55.55.98:3000/` verified 48-to-96 append, unique IDs, retained focus, no nested or horizontal overflow, bounded sort reloads, TV loading, and aborted obsolete sort/search requests. |
