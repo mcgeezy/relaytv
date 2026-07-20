@@ -18,7 +18,9 @@ def _readable_file(path: Path) -> bool:
 def resolve_xauthority(env: Mapping[str, str]) -> str | None:
     """Return the best current Xauthority file visible to this process.
 
-    Mutter gives its Xwayland cookie a session-scoped filename. Consider an
+    Display managers give the cookie a session-scoped filename: mutter writes
+    ``.mutter-Xwaylandauth.*``, sddm writes ``xauth_*``, and some compositors
+    keep a plain ``Xauthority`` in the runtime directory. Consider an
     explicitly configured file and credentials in the mounted XDG runtime
     directory, then select the newest readable candidate.
     """
@@ -30,10 +32,12 @@ def resolve_xauthority(env: Mapping[str, str]) -> str | None:
     runtime_dir = (env.get("XDG_RUNTIME_DIR") or "").strip()
     if runtime_dir:
         root = Path(runtime_dir)
-        try:
-            candidates.extend(root.glob(".mutter-Xwaylandauth.*"))
-        except OSError:
-            pass
+        for pattern in (".mutter-Xwaylandauth.*", "xauth_*"):
+            try:
+                candidates.extend(root.glob(pattern))
+            except OSError:
+                pass
+        candidates.append(root / "Xauthority")
         candidates.append(root / "gdm" / "Xauthority")
 
     try:

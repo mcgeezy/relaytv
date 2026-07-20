@@ -20,9 +20,26 @@ def _copy_host_installer(tmp_path: Path) -> Path:
     return installer
 
 
-def _run_host_installer(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_host_installer(
+    tmp_path: Path,
+    args: list[str] | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     installer = _copy_host_installer(tmp_path)
     env = os.environ.copy()
+    for key in (
+        "DISPLAY",
+        "QT_QPA_PLATFORM",
+        "RELAYTV_HOST_PROFILE",
+        "RELAYTV_INSTALL_MODE",
+        "RELAYTV_MODE",
+        "RELAYTV_TARGET_HOME",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_RUNTIME_DIR",
+        "XDG_SESSION_TYPE",
+    ):
+        env.pop(key, None)
     env.update(
         {
             "RELAYTV_TARGET_USER": pwd.getpwuid(os.getuid()).pw_name,
@@ -30,8 +47,10 @@ def _run_host_installer(tmp_path: Path) -> subprocess.CompletedProcess[str]:
             "RELAYTV_PI_VIDEO_DEVICES_ENABLED": "0",
         }
     )
+    if env_overrides:
+        env.update(env_overrides)
     return subprocess.run(
-        [str(installer), "--mode", "headless"],
+        [str(installer), *(args or ["--mode", "headless"])],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -97,6 +116,70 @@ def test_host_override_uses_only_existing_long_syntax_binds(tmp_path: Path) -> N
     assert "source: \"/sys\"" in override
     assert "/tmp/.X11-unix" not in override
     assert "/run/user/" not in override
+
+
+def test_raspi_wayland_installer_defaults_to_xcb_with_xauthority(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "wayland-0").touch()
+    target_home = tmp_path / "home"
+    target_home.mkdir()
+    (target_home / ".Xauthority").write_text("cookie", encoding="utf-8")
+
+    result = _run_host_installer(
+        tmp_path,
+        args=["--use-shell-env"],
+        env_overrides={
+            "DISPLAY": ":0",
+            "RELAYTV_HOST_PROFILE": "raspi",
+            "RELAYTV_TARGET_HOME": str(target_home),
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_RUNTIME_DIR": str(runtime_dir),
+            "XDG_SESSION_TYPE": "wayland",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "RELAYTV_MODE=wayland" in env_text
+    assert "WAYLAND_DISPLAY=wayland-0" in env_text
+    assert "QT_QPA_PLATFORM=xcb" in env_text
+    assert "XAUTHORITY=/tmp/.Xauthority" in env_text
+    assert "RELAYTV_HOST_PROFILE=raspi" in env_text
+    assert f'source: "{target_home}/.Xauthority"' in override
+    assert 'target: "/tmp/.Xauthority"' in override
+
+
+def test_raspi_wayland_installer_preserves_explicit_wayland_qpa(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "wayland-0").touch()
+    target_home = tmp_path / "home"
+    target_home.mkdir()
+    (target_home / ".Xauthority").write_text("cookie", encoding="utf-8")
+
+    result = _run_host_installer(
+        tmp_path,
+        args=["--use-shell-env"],
+        env_overrides={
+            "DISPLAY": ":0",
+            "QT_QPA_PLATFORM": "wayland",
+            "RELAYTV_HOST_PROFILE": "raspi",
+            "RELAYTV_TARGET_HOME": str(target_home),
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_RUNTIME_DIR": str(runtime_dir),
+            "XDG_SESSION_TYPE": "wayland",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "RELAYTV_MODE=wayland" in env_text
+    assert "QT_QPA_PLATFORM=wayland" in env_text
+    assert "XAUTHORITY=/tmp/.Xauthority" not in env_text
+    assert ".Xauthority" not in override
 
 
 def test_host_installer_does_not_overwrite_user_compose_override(tmp_path: Path) -> None:

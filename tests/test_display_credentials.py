@@ -36,6 +36,28 @@ def test_resolve_xauthority_uses_valid_explicit_file_without_newer_session_file(
     assert resolve_xauthority(env) == str(explicit)
 
 
+def test_resolve_xauthority_finds_sddm_session_file(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    current = runtime_dir / "xauth_AbC123"
+    current.write_text("cookie", encoding="utf-8")
+
+    env = {"DISPLAY": ":0", "XDG_RUNTIME_DIR": str(runtime_dir)}
+
+    assert resolve_xauthority(env) == str(current)
+
+
+def test_resolve_xauthority_finds_plain_runtime_dir_file(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    current = runtime_dir / "Xauthority"
+    current.write_text("cookie", encoding="utf-8")
+
+    env = {"DISPLAY": ":0", "XDG_RUNTIME_DIR": str(runtime_dir)}
+
+    assert resolve_xauthority(env) == str(current)
+
+
 def test_refresh_display_credentials_clears_missing_xauthority(tmp_path: Path) -> None:
     env = {
         "DISPLAY": ":0",
