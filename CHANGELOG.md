@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/mcgeezy/relaytv/compare/v0.7.2...v0.7.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* mount stable Xauthority for Raspberry Pi Wayland installs ([#47](https://github.com/mcgeezy/relaytv/issues/47)) ([4a4e9e9](https://github.com/mcgeezy/relaytv/commit/4a4e9e913c8d2f73453ce27721edf7188a8b4b39))
+
 ## [0.7.2](https://github.com/mcgeezy/relaytv/compare/v0.7.1...v0.7.2) (2026-07-20)
 
 
