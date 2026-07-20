@@ -76,7 +76,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Add product overview to release notes
+      - name: Add hero image to release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELAYTV_RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
@@ -97,9 +97,6 @@ jobs:
           {
             printf '%s\n\n' "$marker"
             printf '[![RelayTV on phone and TV](%s)](https://github.com/%s#readme)\n\n' "$hero_url" "$GITHUB_REPOSITORY"
-            printf '## Your media. Your TV. Your rules.\n\n'
-            printf 'RelayTV turns the Linux device connected to your display into a local-first playback target you can control from your phone, media library, Home Assistant, scripts, and companion apps. This release brings the modern RelayTV experience together across the remote, Jellyfin and Emby browsing, the idle screen, and the project home page.\n\n'
-            printf -- '---\n\n'
             cat "$existing_notes"
           } > "$updated_notes"
 
