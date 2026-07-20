@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/mcgeezy/relaytv/compare/v0.7.1...v0.7.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* resolve rotating display credentials at runtime ([c288fd3](https://github.com/mcgeezy/relaytv/commit/c288fd31756a9f68be11c7cc2d0f3925cfb6b2d5))
+
 ## [0.7.1](https://github.com/mcgeezy/relaytv/compare/v0.7.0...v0.7.1) (2026-07-20)
 
 
