@@ -313,7 +313,8 @@ Published images still require the same Linux media-host integration as local bu
   NVIDIA driver capabilities for decode/playback.
 - host display/session env such as `DISPLAY`, `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR`
 - host networking
-- existing `/run/user/<uid>` and X11 socket mounts for desktop session access
+- the stable `/run/user` parent and X11 socket directory for desktop session
+  access; RelayTV selects the current session credential inside the container
 
 All optional host bind mounts use Compose long syntax with
 `create_host_path: false`. Missing host paths are omitted, so Compose cannot
@@ -322,6 +323,13 @@ create a directory in place of an absent system file. In particular,
 exists. This follows Docker's [bind-mount
 behavior](https://docs.docker.com/engine/storage/bind-mounts/) while keeping
 the generated host contract explicit.
+
+GNOME/Mutter Xwayland credentials use session-scoped names such as
+`.mutter-Xwaylandauth.ABC123`. The installer never writes one of those names
+as a Compose bind source. It mounts the stable runtime parent instead, and the
+RelayTV app resolves the newest readable credential whenever it launches a
+display process. Rerunning the installer migrates older generated overrides
+and removes the former `RELAYTV_XAUTHORITY_HOST_PATH` entry from `.env`.
 
 Pulled images are an operator convenience, not a generic desktop-container portability layer.
 

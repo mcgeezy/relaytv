@@ -3,6 +3,7 @@ import os
 import importlib.util
 from .config import env_bool as _env_bool
 from .config import runtime_config
+from .display_credentials import refresh_display_credentials
 import shlex
 import subprocess
 import json
@@ -1102,7 +1103,7 @@ def _start_qt_shell(
 
     _stop_qt_shell()
     with QT_SHELL_LOCK:
-        QT_SHELL_PROC = subprocess.Popen(args)
+        QT_SHELL_PROC = subprocess.Popen(args, env=refresh_display_credentials(os.environ))
     return False
 
 
@@ -1314,12 +1315,11 @@ def _start_qt_external_mpv(
             "player",
             f"Qt external mpv using auto-detected WAYLAND_DISPLAY={launch_env.get('WAYLAND_DISPLAY')}",
         )
+    launch_env = refresh_display_credentials(launch_env or os.environ)
     debug = _env_bool("MPV_DEBUG") or _env_bool("RELAYTV_DEBUG")
     if debug:
         logger.info("starting_external_mpv args=%s", " ".join(shlex.quote(a) for a in args))
-    if launch_env is not None:
-        return subprocess.Popen(args, env=launch_env)
-    return subprocess.Popen(args)
+    return subprocess.Popen(args, env=launch_env)
 
 
 def ensure_qt_shell_idle(*, force: bool = False, allow_notification_fallback: bool = False) -> None:
@@ -1385,7 +1385,12 @@ def _start_idle_browser() -> bool:
         if _idle_browser_process_running():
             return True
         try:
-            IDLE_BROWSER_PROC = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            IDLE_BROWSER_PROC = subprocess.Popen(
+                args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=refresh_display_credentials(os.environ),
+            )
         except Exception as e:
             print("Failed to launch idle browser:", e)
             IDLE_BROWSER_PROC = None
@@ -1501,7 +1506,10 @@ def start_splash_screen() -> None:
 
         for m in try_modes:
             try:
-                SPLASH_PROC = subprocess.Popen(_build_splash_args(image_path, m))
+                SPLASH_PROC = subprocess.Popen(
+                    _build_splash_args(image_path, m),
+                    env=refresh_display_credentials(os.environ),
+                )
             except Exception as e:
                 logger.warning("splash_start_failed mode=%s error=%s", m, e)
                 SPLASH_PROC = None
@@ -3007,7 +3015,7 @@ def start_mpv(
         )
         if debug:
             logger.info("starting_mpv mode=%s args=%s", mode_to_use, " ".join(shlex.quote(a) for a in args))
-        return subprocess.Popen(args)
+        return subprocess.Popen(args, env=refresh_display_credentials(os.environ))
 
     if mode == "x11":
         MPV_PROC = _spawn("x11")

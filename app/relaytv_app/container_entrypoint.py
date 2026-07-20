@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import config
 from .debug import configure_logging, get_logger, access_logging_enabled
+from .display_credentials import refresh_display_credentials
 
 
 configure_logging()
@@ -428,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "uvicorn" and (not access_logging_enabled()) and "--no-access-log" not in args:
         args.append("--no-access-log")
 
-    env = dict(os.environ)
+    env = refresh_display_credentials(os.environ)
     helper_procs: list[subprocess.Popen] = []
     main_proc: subprocess.Popen | None = None
 

@@ -238,9 +238,10 @@ curl -sS http://127.0.0.1:8787/status | jq '{
 
 On Wayland, RelayTV defaults the embedded overlay to software rendering because
 QtWebEngine can initialize before the compositor/GPU path is ready during host
-startup. If a host is Wayland-only, keep `RELAYTV_XAUTHORITY_HOST_PATH=/dev/null`
-instead of pinning a boot-specific `.mutter-Xwaylandauth.*` path; those filenames
-change across reboots and Docker can recreate stale paths as directories.
+startup. Mutter's `.mutter-Xwaylandauth.*` filenames change across graphical
+sessions, so they must not be used as Compose bind sources. The installer mounts
+the stable `/run/user` parent and RelayTV resolves the current credential when it
+launches each display process.
 
 If the host journal shows an early `python3.13` segfault in `libQt6Core.so.6` or
 Mutter logs `meta_window_set_stack_position_no_sync` while RelayTV is starting,

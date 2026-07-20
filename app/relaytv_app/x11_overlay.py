@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 from .config import runtime_config
+from .display_credentials import refresh_display_credentials
 import subprocess
 import sys
 import threading
@@ -22,36 +23,6 @@ from typing import Optional
 
 _OVERLAY_LOCK = threading.Lock()
 _OVERLAY_PROC: Optional[subprocess.Popen] = None
-
-def _xauthority_file(env: dict[str, str]) -> str | None:
-    candidates: list[Path] = []
-    path = env.get("XAUTHORITY")
-    if path:
-        try:
-            env_candidate = Path(path)
-            if env_candidate.is_file():
-                candidates.append(env_candidate)
-        except Exception:
-            pass
-    runtime_dir = env.get("XDG_RUNTIME_DIR")
-    if runtime_dir:
-        try:
-            candidates.extend(Path(runtime_dir).glob(".mutter-Xwaylandauth.*"))
-        except Exception:
-            pass
-    if not candidates:
-        return None
-    try:
-        candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
-    except Exception:
-        pass
-    for candidate in candidates:
-        try:
-            if candidate.is_file():
-                return str(candidate)
-        except Exception:
-            continue
-    return None
 
 def x11_session() -> bool:
     # DISPLAY is the useful signal here: on Wayland hosts the container may
@@ -103,7 +74,7 @@ def start_overlay() -> None:
         if overlay_running():
             return
         try:
-            env = os.environ.copy()
+            env = refresh_display_credentials(os.environ)
             env.setdefault("RELAYTV_OVERLAY_CLICKTHROUGH", "1")
             # The main Qt shell may run on Wayland, but this overlay relies on
             # X11/Xwayland semantics for transparent, click-through desktop use.
@@ -111,9 +82,6 @@ def start_overlay() -> None:
                 env["QT_QPA_PLATFORM"] = "xcb"
                 env["XDG_SESSION_TYPE"] = "x11"
                 env.pop("WAYLAND_DISPLAY", None)
-                xauthority = _xauthority_file(env)
-                if xauthority:
-                    env["XAUTHORITY"] = xauthority
             log_path = Path(env.get("RELAYTV_OVERLAY_LOG", "/tmp/relaytv-overlay.log"))
             try:
                 log_handle = log_path.open("ab")
