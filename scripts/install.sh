@@ -168,7 +168,6 @@ XDG_SESSION_TYPE_VAL=""
 WAYLAND_DISPLAY_VAL=""
 QT_QPA_PLATFORM_VAL=""
 QT_QPA_PLATFORM_FROM_ENV="0"
-XAUTH_HOST_PATH="${RELAYTV_XAUTHORITY_HOST_PATH:-}"
 XDG_RUNTIME_DIR_VAL=""
 if [ "$CLEAN_AUTODETECT" = "0" ]; then
   DISPLAY_VAL="${DISPLAY:-}"
@@ -177,9 +176,6 @@ if [ "$CLEAN_AUTODETECT" = "0" ]; then
   QT_QPA_PLATFORM_VAL="${QT_QPA_PLATFORM:-}"
   if [ -n "$QT_QPA_PLATFORM_VAL" ]; then
     QT_QPA_PLATFORM_FROM_ENV="1"
-  fi
-  if [ -z "$XAUTH_HOST_PATH" ]; then
-    XAUTH_HOST_PATH="${XAUTHORITY:-}"
   fi
   XDG_RUNTIME_DIR_VAL="${XDG_RUNTIME_DIR:-}"
 fi
@@ -263,11 +259,9 @@ detect_from_session_leader() {
   [ -r "/proc/${leader}/environ" ] || return 0
 
   local disp=""
-  local xauth=""
   local wayland=""
   local xdg_runtime=""
   disp="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="DISPLAY"{print $2; exit}')"
-  xauth="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="XAUTHORITY"{print $2; exit}')"
   wayland="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="WAYLAND_DISPLAY"{print $2; exit}')"
   xdg_runtime="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="XDG_RUNTIME_DIR"{print $2; exit}')"
 
@@ -275,11 +269,6 @@ detect_from_session_leader() {
     DISPLAY_VAL="$disp"
   elif [ -z "$DISPLAY_VAL" ] && [ -n "$disp" ]; then
     DISPLAY_VAL="$disp"
-  fi
-  if [ "$CLEAN_AUTODETECT" = "1" ]; then
-    XAUTH_HOST_PATH="$xauth"
-  elif [ -z "$XAUTH_HOST_PATH" ] && [ -n "$xauth" ]; then
-    XAUTH_HOST_PATH="$xauth"
   fi
   if [ "$CLEAN_AUTODETECT" = "1" ]; then
     WAYLAND_DISPLAY_VAL="$wayland"
@@ -291,31 +280,6 @@ detect_from_session_leader() {
   elif [ -z "$XDG_RUNTIME_DIR_VAL" ] && [ -n "$xdg_runtime" ]; then
     XDG_RUNTIME_DIR_VAL="$xdg_runtime"
   fi
-}
-
-latest_mutter_xwayland_auth() {
-  local runtime_dir="$1"
-  [ -n "$runtime_dir" ] || return 0
-  [ -d "$runtime_dir" ] || return 0
-
-  local cand=""
-  cand="$(ls -1t "${runtime_dir}"/.mutter-Xwaylandauth.* 2>/dev/null | head -n 1 || true)"
-  if [ -n "$cand" ] && [ -f "$cand" ] && [ -r "$cand" ]; then
-    printf "%s" "$cand"
-  fi
-}
-
-fallback_xauth_for_user() {
-  local runtime_dir="$1"
-  if [ -n "$runtime_dir" ] && [ -f "${runtime_dir}/gdm/Xauthority" ] && [ -r "${runtime_dir}/gdm/Xauthority" ]; then
-    printf "%s" "${runtime_dir}/gdm/Xauthority"
-    return 0
-  fi
-  if [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ] && [ -r "${TARGET_HOME}/.Xauthority" ]; then
-    printf "%s" "${TARGET_HOME}/.Xauthority"
-    return 0
-  fi
-  printf ""
 }
 
 detect_via_loginctl() {
@@ -408,22 +372,6 @@ if [ -z "$WAYLAND_DISPLAY_VAL" ] && [ "$XDG_SESSION_TYPE_VAL" = "wayland" ] && [
   fi
 fi
 
-# Select a readable XAUTHORITY path for X11/Xwayland bridges.
-runtime_auth_dir="$XDG_RUNTIME_DIR_VAL"
-if [ -z "$runtime_auth_dir" ] || [ ! -d "$runtime_auth_dir" ]; then
-  runtime_auth_dir="/run/user/${PUID}"
-fi
-if [ -n "$XAUTH_HOST_PATH" ] && { [ ! -f "$XAUTH_HOST_PATH" ] || [ ! -r "$XAUTH_HOST_PATH" ]; }; then
-  XAUTH_HOST_PATH=""
-fi
-mutter_xauth="$(latest_mutter_xwayland_auth "$runtime_auth_dir")"
-if [ -n "$mutter_xauth" ] && { [ "$CLEAN_AUTODETECT" = "1" ] || [ -z "$XAUTH_HOST_PATH" ]; }; then
-  XAUTH_HOST_PATH="$mutter_xauth"
-fi
-if [ -z "$XAUTH_HOST_PATH" ]; then
-  XAUTH_HOST_PATH="$(fallback_xauth_for_user "$runtime_auth_dir")"
-fi
-
 detect_connected_drm_connector() {
   local status_file status name connector
   for status_file in /sys/class/drm/card*-*/status; do
@@ -482,11 +430,6 @@ if [ "$MODE" = "wayland" ] && [ -z "$DISPLAY_VAL" ] && [ -d /tmp/.X11-unix ]; th
       DISPLAY_VAL=":${x_num}"
     fi
   fi
-fi
-
-# Non-windowed runs should not inherit Xauthority hints.
-if [ "$MODE" = "headless" ] || [ "$MODE" = "drm" ]; then
-  XAUTH_HOST_PATH=""
 fi
 
 if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
@@ -843,11 +786,21 @@ ensure_host_device_override() {
   if [ -n "$DISPLAY_VAL" ] || [ "$MODE" = "x11" ]; then
     append_bind_mount "/tmp/.X11-unix" "/tmp/.X11-unix" "false"
   fi
-  if [ -n "$XAUTH_HOST_PATH" ]; then
-    append_bind_mount "$XAUTH_HOST_PATH" "/tmp/.Xauthority" "true"
-  fi
+  # Mutter rotates its .mutter-Xwaylandauth.* filename with each graphical
+  # session. Mount the stable runtime parent and let RelayTV resolve the live
+  # credential when it launches a display process.
   if [ -n "$XDG_RUNTIME_DIR_VAL" ] && { [ "$MODE" = "wayland" ] || [ "$MODE" = "x11" ]; }; then
-    append_bind_mount "$XDG_RUNTIME_DIR_VAL" "$XDG_RUNTIME_DIR_VAL" "false"
+    if [[ "$XDG_RUNTIME_DIR_VAL" == /run/user/* ]] && [ -d /run/user ]; then
+      append_bind_mount "/run/user" "/run/user" "false"
+    elif [ "$XDG_RUNTIME_DIR_VAL" != "/tmp" ]; then
+      append_bind_mount "$XDG_RUNTIME_DIR_VAL" "$XDG_RUNTIME_DIR_VAL" "false"
+    fi
+  fi
+  # Traditional X11 normally keeps a stable cookie file in the user's home.
+  # Keep that compatibility mount limited to X11; Wayland/Xwayland uses the
+  # runtime-directory discovery above.
+  if [ "$MODE" = "x11" ] && [ -n "${TARGET_HOME:-}" ]; then
+    append_bind_mount "${TARGET_HOME}/.Xauthority" "/tmp/.Xauthority" "true"
   fi
   if selinux_is_enforcing; then
     security_block=$(cat <<'EOF'
@@ -1088,11 +1041,6 @@ if [ -n "${QT_QPA_PLATFORM_VAL}" ]; then
   DISPLAY_ENV_BLOCK+=$(emit_env_line "QT_QPA_PLATFORM" "${QT_QPA_PLATFORM_VAL}")
   DISPLAY_ENV_BLOCK+=$'\n'
 fi
-if [ -n "${XAUTH_HOST_PATH}" ]; then
-  DISPLAY_ENV_BLOCK+=$(emit_env_line "RELAYTV_XAUTHORITY_HOST_PATH" "${XAUTH_HOST_PATH}")
-  DISPLAY_ENV_BLOCK+=$'\n'
-fi
-
 RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_MODE" "${MODE}")
 RUNTIME_ENV_BLOCK+=$'\n'
 if [ "${X11_OVERLAY_VAL}" != "0" ]; then
@@ -1300,7 +1248,7 @@ say "  DISPLAY: ${DISPLAY_VAL:-<unset>}"
 say "  XDG_SESSION_TYPE: ${XDG_SESSION_TYPE_VAL:-<unset>}"
 say "  WAYLAND_DISPLAY: ${WAYLAND_DISPLAY_VAL:-<unset>}"
 say "  QT_QPA_PLATFORM: ${QT_QPA_PLATFORM_VAL:-<unset>}"
-say "  XAUTHORITY host path: ${XAUTH_HOST_PATH:-<unset>}"
+say "  XAUTHORITY: resolved from the mounted session directory at runtime"
 say "  RELAYTV_MODE: ${MODE}"
 say "  RELAYTV_X11_OVERLAY: ${X11_OVERLAY_VAL}"
 say "  RELAYTV_VIDEO_MODE: ${VIDEO_MODE_VAL}"

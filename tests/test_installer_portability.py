@@ -68,7 +68,8 @@ def test_host_installer_preserves_operator_env_and_replaces_owned_values(tmp_pat
         "# operator settings\n"
         f"RELAYTV_API_TOKEN={secret}\n"
         "RELAYTV_PORT=8899\n"
-        "RELAYTV_MODE=x11\n",
+        "RELAYTV_MODE=x11\n"
+        "RELAYTV_XAUTHORITY_HOST_PATH=/run/user/1000/.mutter-Xwaylandauth.OLD\n",
         encoding="utf-8",
     )
 
@@ -80,6 +81,7 @@ def test_host_installer_preserves_operator_env_and_replaces_owned_values(tmp_pat
     assert "RELAYTV_PORT=8899" in env_text
     assert env_text.count("RELAYTV_MODE=") == 1
     assert "RELAYTV_MODE=headless" in env_text
+    assert "RELAYTV_XAUTHORITY_HOST_PATH" not in env_text
     assert secret not in result.stdout
     assert secret not in result.stderr
     assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
@@ -137,7 +139,18 @@ def test_base_compose_files_do_not_bind_optional_system_paths() -> None:
         assert "/run/udev" not in compose
         assert "/tmp/.X11-unix" not in compose
         assert "RELAYTV_XAUTHORITY_HOST_PATH" not in compose
+        assert "XAUTHORITY=/tmp/.Xauthority" not in compose
         assert "- /run/user/${PUID:-1000}:" not in compose
+
+
+def test_installer_never_pins_session_scoped_xauthority() -> None:
+    installer = (ROOT_DIR / "scripts" / "install.sh").read_text(encoding="utf-8")
+
+    assert "append_bind_mount \"$XAUTH_HOST_PATH\"" not in installer
+    assert "latest_mutter_xwayland_auth" not in installer
+    assert 'append_bind_mount "/run/user" "/run/user" "false"' in installer
+    # Keep the legacy name installer-owned so reruns remove it from old .env files.
+    assert "RELAYTV_XAUTHORITY_HOST_PATH|" in installer
 
 
 def test_bootstrap_rejects_unsupported_published_image_architecture(tmp_path: Path) -> None:
