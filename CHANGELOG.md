@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/mcgeezy/relaytv/compare/v0.7.0...v0.7.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* harden public playback data for Home Assistant ([#43](https://github.com/mcgeezy/relaytv/issues/43)) ([b477e72](https://github.com/mcgeezy/relaytv/commit/b477e7234f6c3ee52384527a0c0db7d7a2cc1058))
+
 ## [0.7.0](https://github.com/mcgeezy/relaytv/compare/v0.6.1...v0.7.0) (2026-07-19)
 
 
