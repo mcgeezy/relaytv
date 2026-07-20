@@ -130,6 +130,8 @@ fi
 
 PUID="$(id -u "$TARGET_USER")"
 PGID="$(id -g "$TARGET_USER")"
+# RELAYTV_TARGET_HOME and RELAYTV_HOST_PROFILE override autodetection for the
+# test suite; they are not supported operator configuration.
 TARGET_HOME="${RELAYTV_TARGET_HOME:-$(getent passwd "$TARGET_USER" | awk -F: '{print $6}')}"
 HOST_ARCH="$(uname -m 2>/dev/null || printf '%s' unknown)"
 HOST_MODEL=""
@@ -506,6 +508,14 @@ if [ "$HOST_PROFILE" = "raspi" ] && [ "$MODE" = "wayland" ] && [ "$QT_SHELL_MODU
   fi
 fi
 
+needs_stable_xauthority_bind() {
+  # X11 and explicit Xwayland bridge mode need a stable cookie file visible
+  # inside the container. Mutter session-scoped runtime cookies are handled
+  # through the mounted /run/user parent instead.
+  { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } \
+    && [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ]
+}
+
 if [ -z "$QT_RUNTIME_MODE_VAL" ]; then
   case "$MODE" in
     wayland|x11) QT_RUNTIME_MODE_VAL="embed" ;;
@@ -797,10 +807,7 @@ ensure_host_device_override() {
       append_bind_mount "$XDG_RUNTIME_DIR_VAL" "$XDG_RUNTIME_DIR_VAL" "false"
     fi
   fi
-  # X11 and explicit Xwayland bridge mode need a stable cookie file visible
-  # inside the container. Mutter session-scoped runtime cookies are still
-  # handled through the mounted /run/user parent above.
-  if { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } && [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ]; then
+  if needs_stable_xauthority_bind; then
     append_bind_mount "${TARGET_HOME}/.Xauthority" "/tmp/.Xauthority" "true"
   fi
   if selinux_is_enforcing; then
@@ -1042,7 +1049,7 @@ if [ -n "${QT_QPA_PLATFORM_VAL}" ]; then
   DISPLAY_ENV_BLOCK+=$(emit_env_line "QT_QPA_PLATFORM" "${QT_QPA_PLATFORM_VAL}")
   DISPLAY_ENV_BLOCK+=$'\n'
 fi
-if { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } && [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ]; then
+if needs_stable_xauthority_bind; then
   DISPLAY_ENV_BLOCK+=$(emit_env_line "XAUTHORITY" "/tmp/.Xauthority")
   DISPLAY_ENV_BLOCK+=$'\n'
 fi

@@ -115,6 +115,10 @@ The screenshot must show video during playback and the RelayTV idle dashboard
 after close. A black frame means the runtime is still broken even if telemetry
 claims the overlay loaded.
 
+Known recovery: if `~/.Xauthority` is removed after install, container
+recreation fails with `bind source path does not exist`. Rerun the installer to
+regenerate the override.
+
 ## Pi Native Wayland Opt-In
 
 Native Qt Wayland remains an explicit operator opt-in for Pi hosts:

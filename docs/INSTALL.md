@@ -304,6 +304,10 @@ explicitly:
 QT_QPA_PLATFORM=wayland ./scripts/install.sh --use-shell-env
 ```
 
+If `~/.Xauthority` is deleted after install, container recreation fails with
+`bind source path does not exist`. Rerun the installer to regenerate the
+override without the stale mount.
+
 ## Verify Generated Runtime Env
 
 ```bash
