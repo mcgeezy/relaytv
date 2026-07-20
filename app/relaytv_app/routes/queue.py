@@ -84,7 +84,12 @@ def enqueue(req: EnqueueReq):
     except Exception:
         pass
     _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="enqueue")
-    return {"status": "queued", "item": item, "queue_length": qlen, "now_playing": state.NOW_PLAYING}
+    return {
+        "status": "queued",
+        "item": _annotate_upload_item(item),
+        "queue_length": qlen,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
 
 
 @router.post("/clear")
@@ -189,7 +194,12 @@ def queue_remove(req: QueueRemoveReq):
         pass
     _ui_event_push_queue("remove", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_remove")
 
-    return {"status": "removed", "removed": removed, "queue": snapshot["queue"], "queue_length": len(snapshot["queue"])}
+    return {
+        "status": "removed",
+        "removed": _annotate_upload_item(removed),
+        "queue": _annotate_upload_items(snapshot["queue"]),
+        "queue_length": len(snapshot["queue"]),
+    }
 
 
 def _queue_item_dedupe_key(item: object) -> tuple[str, str]:
@@ -245,7 +255,7 @@ def queue_dedupe():
         "changed": changed,
         "removed_count": removed,
         "queue_length": len(state.QUEUE),
-        "queue": list(state.QUEUE),
+        "queue": _annotate_upload_items(state.QUEUE),
     }
 
 
@@ -273,4 +283,4 @@ def queue_move(req: QueueMoveReq):
         pass
     _ui_event_push_queue("move", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_move")
 
-    return {"status": "moved", "queue": snapshot["queue"], "queue_length": len(snapshot["queue"])}
+    return {"status": "moved", "queue": _annotate_upload_items(snapshot["queue"]), "queue_length": len(snapshot["queue"])}

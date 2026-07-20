@@ -61,7 +61,7 @@ def sanitize_public_url(value: object) -> str:
     hostname = parsed.hostname or ""
     if not hostname:
         return ""
-    netloc = hostname
+    netloc = f"[{hostname}]" if ":" in hostname else hostname
     if parsed.port is not None:
         netloc = f"{netloc}:{parsed.port}"
 

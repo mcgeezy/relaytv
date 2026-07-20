@@ -2651,7 +2651,7 @@ def _resume_paused_current_session_in_place(*, action: str = "resume") -> dict[s
         "ok": True,
         "action": action,
         "paused": False,
-        "now_playing": state.NOW_PLAYING,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
         **_control_ack_payload(result),
     }
 
