@@ -51,6 +51,11 @@ With the token enabled:
 
 Unset or blank `RELAYTV_API_TOKEN` restores the fully open behavior.
 
+Clients can validate write credentials without changing server state by
+calling `POST /auth/check`. A successful response is
+`{"ok": true, "token_required": true|false}`; an incorrect or missing token on
+a protected server receives the same `401` response as other writes.
+
 The token protects control actions; it is not transport security. For
 exposure beyond the trusted LAN, terminate TLS and (optionally) an extra
 auth layer at a reverse proxy. Example with Caddy:
@@ -337,6 +342,11 @@ History endpoints:
 - `GET /history`
 - `POST /history/play`
   - body: `{"index": int}`
+- `POST /history/requeue`
+  - body: `{"index": int}`
+  - queues the item using the server-stored URL; use this instead of
+    `POST /enqueue` with a history payload URL, since public history
+    URLs are display-safe copies with credentials stripped
 - `POST /history/clear`
 
 ## Notifications and overlay delivery

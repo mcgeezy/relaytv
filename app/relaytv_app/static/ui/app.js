@@ -1627,8 +1627,9 @@ async function renderHistory(){
     queue.disabled = !available;
     queue.onclick = async () => {
       if (!available) return;
-      if (!it.url) return;
-      await fetch('/enqueue', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: it.url})});
+      // Requeue by index so the server uses its stored (unredacted) URL —
+      // the url in this payload is display-safe and may lack credentials.
+      await fetch('/history/requeue', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index: idx})});
       await refresh();
     };
 

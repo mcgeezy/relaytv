@@ -77,6 +77,12 @@ def _control_result_or_raise(result: dict | None, *, action: str) -> dict[str, o
     return control_result_or_raise(result, action=action)
 
 
+def _annotate_upload_item(item: object) -> object:
+    from . import _annotate_upload_item as annotate_upload_item
+
+    return annotate_upload_item(item)
+
+
 def _seek_transition_hold_sec() -> float:
     from . import _seek_transition_hold_sec as seek_transition_hold_sec
 
@@ -269,7 +275,7 @@ def play(req: PlayReq):
         mode="play",
         start_pos=(float(start_pos) if start_pos is not None else None),
     )
-    return {"status": "playing", "now_playing": now}
+    return {"status": "playing", "now_playing": _annotate_upload_item(now)}
 
 
 @router.post("/next")
@@ -280,6 +286,8 @@ def next_track():
         raise HTTPException(status_code=400, detail="Queue is empty")
     if result.get("method") == "dequeue_play_item":
         result.pop("method", None)
+    if "now_playing" in result:
+        result["now_playing"] = _annotate_upload_item(result.get("now_playing"))
     return result
 
 
@@ -347,8 +355,8 @@ def play_now(req: PlayNowReq):
             return {
                 "ok": True,
                 "action": "skipped_post_live_processing",
-                "now_playing": now,
-                "preserved": preserved,
+                "now_playing": _annotate_upload_item(now),
+                "preserved": _annotate_upload_item(preserved),
                 "queue_length": qlen,
             }
         _rollback_play_now_preserve(preserved)
@@ -381,7 +389,13 @@ def play_now(req: PlayNowReq):
         queue_snapshot = list(state.QUEUE)
     if preserved is not None or qlen:
         _ui_event_push_queue("play_now", queue=queue_snapshot, queue_length=qlen, source="play_now")
-    return {"ok": True, "action": "played", "now_playing": now, "preserved": preserved, "queue_length": qlen}
+    return {
+        "ok": True,
+        "action": "played",
+        "now_playing": _annotate_upload_item(now),
+        "preserved": _annotate_upload_item(preserved),
+        "queue_length": qlen,
+    }
 
 
 @router.post("/play_temporary")
@@ -420,7 +434,7 @@ def play_temporary(req: PlayTemporaryReq):
         pass
     timeout = float(req.timeout_sec) if req.timeout_sec is not None and req.timeout_sec > 0 else None
     _threading_module().Thread(target=_temporary_watchdog, args=(frame_id, timeout), daemon=True).start()
-    return {"ok": True, "temporary_id": frame_id, "now_playing": now, "stack_depth": len(stack)}
+    return {"ok": True, "temporary_id": frame_id, "now_playing": _annotate_upload_item(now), "stack_depth": len(stack)}
 
 
 @router.post("/play_temporary/cancel")
@@ -507,7 +521,7 @@ def share(url: str | None = None, link: str | None = None, cec: bool = True):
         mode="share",
         start_pos=(float(start_pos) if start_pos is not None else None),
     )
-    return {"status": "playing", "now_playing": now, "source": "share_target"}
+    return {"status": "playing", "now_playing": _annotate_upload_item(now), "source": "share_target"}
 
 
 @router.post("/smart")
@@ -520,7 +534,12 @@ def smart(req: PlayReq):
             _push_queue_added_toast_async(item, req.url or "item")
         except Exception:
             pass
-        return {"status": "queued", "item": item, "queue_length": qlen, "now_playing": state.NOW_PLAYING}
+        return {
+            "status": "queued",
+            "item": _annotate_upload_item(item),
+            "queue_length": qlen,
+            "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+        }
 
     item = _smart_item_from_url(req.url or "")
     start_pos = item.get("resume_pos") if isinstance(item, dict) else None
@@ -532,7 +551,7 @@ def smart(req: PlayReq):
         mode="smart_play",
         start_pos=(float(start_pos) if start_pos is not None else None),
     )
-    return {"status": "playing", "now_playing": now}
+    return {"status": "playing", "now_playing": _annotate_upload_item(now)}
 
 
 @router.post("/now_playing/clear")
@@ -592,7 +611,7 @@ def resume_session():
         raise HTTPException(status_code=400, detail="No item to resume")
 
     _resumed, resume_result = playback_service.resume_session()
-    return {"status": "resumed", "now_playing": state.NOW_PLAYING, **_control_ack_payload(resume_result)}
+    return {"status": "resumed", "now_playing": _annotate_upload_item(state.NOW_PLAYING), **_control_ack_payload(resume_result)}
 
 
 @router.post("/stop")
@@ -654,7 +673,7 @@ def playback_play():
             "ok": True,
             "action": ("pause" if target else "resume"),
             "paused": target,
-            "now_playing": state.NOW_PLAYING,
+            "now_playing": _annotate_upload_item(state.NOW_PLAYING),
             **_control_ack_payload(result),
         }
 
@@ -696,7 +715,12 @@ def playback_play():
             resumed["mode"] = "resume"
             resumed["closed"] = False
             playback_service.mark_resumed_now_playing(resumed)
-            return {"ok": True, "action": "resume_session", "now_playing": state.NOW_PLAYING, **_control_ack_payload(resume_result)}
+            return {
+                "ok": True,
+                "action": "resume_session",
+                "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+                **_control_ack_payload(resume_result),
+            }
 
         # Fallback: re-resolve/play via play_item
         resumed = playback_service.play_now(
@@ -709,14 +733,14 @@ def playback_play():
         )
         resumed["closed"] = False
         playback_service.mark_resumed_now_playing(resumed)
-        return {"ok": True, "action": "resume_session", "now_playing": state.NOW_PLAYING}
+        return {"ok": True, "action": "resume_session", "now_playing": _annotate_upload_item(state.NOW_PLAYING)}
 
     # Else: play next queue item.
     try:
         handoff = playback_service.advance_queue(mode="play_next", prefer_playlist_next=False)
     except playback_service.QueueAdvanceEmptyError:
         raise HTTPException(status_code=400, detail="Queue is empty")
-    return {"ok": True, "action": "play_next", "now_playing": handoff.get("now_playing")}
+    return {"ok": True, "action": "play_next", "now_playing": _annotate_upload_item(handoff.get("now_playing"))}
 
 
 @router.post("/playback/toggle")

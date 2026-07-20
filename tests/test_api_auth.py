@@ -113,6 +113,27 @@ def test_write_with_correct_token_accepted(monkeypatch) -> None:
     assert response.json() == {"status": "cleared"}
 
 
+def test_auth_check_validates_without_mutating_state(monkeypatch) -> None:
+    _enable_token(monkeypatch)
+    client = _client()
+
+    assert client.post("/auth/check").status_code == 401
+    accepted = client.post("/auth/check", headers={"Authorization": f"Bearer {TOKEN}"})
+
+    assert accepted.status_code == 200
+    assert accepted.json() == {"ok": True, "token_required": True}
+
+
+def test_auth_check_reports_unprotected_server(monkeypatch) -> None:
+    monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    runtime_config.refresh_from_env()
+
+    response = _client().post("/auth/check")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "token_required": False}
+
+
 # --- token on: reads stay open -------------------------------------------------
 
 

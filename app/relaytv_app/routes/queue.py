@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, playback_service, state, upload_store
+from .. import player, playback_service, public_media, state, upload_store
 from ..debug import get_logger
 
 
@@ -59,7 +59,7 @@ def _play_now_from_history(payload: dict[str, object]) -> dict:
 
 
 def _annotate_upload_item(item: object) -> object:
-    return upload_store.annotate_item(item)
+    return public_media.public_media_item(upload_store.annotate_item(item))
 
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:
@@ -84,7 +84,12 @@ def enqueue(req: EnqueueReq):
     except Exception:
         pass
     _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="enqueue")
-    return {"status": "queued", "item": item, "queue_length": qlen, "now_playing": state.NOW_PLAYING}
+    return {
+        "status": "queued",
+        "item": _annotate_upload_item(item),
+        "queue_length": qlen,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
 
 
 @router.post("/clear")
@@ -129,6 +134,43 @@ def history_clear():
         state.HISTORY.clear()
     state.persist_history()
     return {"status": "cleared"}
+
+
+@router.post("/history/requeue")
+def history_requeue(req: HistoryPlayReq):
+    """Queue an item from history by index using the server-stored URL.
+
+    Public history payloads carry display-safe URLs with credentials
+    stripped, so clients requeue by index and the server rebuilds the
+    item from its unredacted copy.
+    """
+    idx = int(req.index)
+    with state.HISTORY_LOCK:
+        if idx < 0 or idx >= len(state.HISTORY):
+            raise HTTPException(status_code=400, detail="index out of range")
+        it = dict(state.HISTORY[idx])
+    url = it.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise HTTPException(status_code=400, detail="history item missing url")
+
+    item = _smart_item_from_url(url.strip(), lightweight=True)
+    if isinstance(item, dict):
+        for key in ("title", "thumbnail", "thumbnail_local", "history_id"):
+            val = it.get(key)
+            if val and not item.get(key):
+                item[key] = val
+    qlen, queue_snapshot = playback_service.queue_item(item)
+    try:
+        _push_queue_added_toast_async(item, str(it.get("title") or url or "item"))
+    except Exception:
+        pass
+    _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="history_requeue")
+    return {
+        "status": "queued",
+        "item": _annotate_upload_item(item),
+        "queue_length": qlen,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
 
 
 @router.post("/history/play")
@@ -189,7 +231,12 @@ def queue_remove(req: QueueRemoveReq):
         pass
     _ui_event_push_queue("remove", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_remove")
 
-    return {"status": "removed", "removed": removed, "queue": snapshot["queue"], "queue_length": len(snapshot["queue"])}
+    return {
+        "status": "removed",
+        "removed": _annotate_upload_item(removed),
+        "queue": _annotate_upload_items(snapshot["queue"]),
+        "queue_length": len(snapshot["queue"]),
+    }
 
 
 def _queue_item_dedupe_key(item: object) -> tuple[str, str]:
@@ -245,7 +292,7 @@ def queue_dedupe():
         "changed": changed,
         "removed_count": removed,
         "queue_length": len(state.QUEUE),
-        "queue": list(state.QUEUE),
+        "queue": _annotate_upload_items(state.QUEUE),
     }
 
 
@@ -273,4 +320,4 @@ def queue_move(req: QueueMoveReq):
         pass
     _ui_event_push_queue("move", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_move")
 
-    return {"status": "moved", "queue": snapshot["queue"], "queue_length": len(snapshot["queue"])}
+    return {"status": "moved", "queue": _annotate_upload_items(snapshot["queue"]), "queue_length": len(snapshot["queue"])}
