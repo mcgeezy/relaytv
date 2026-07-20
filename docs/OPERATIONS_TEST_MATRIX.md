@@ -123,7 +123,7 @@ Common steps (all profiles):
 ### `raspi-wayland-native-qt-embed`
 
 - Bring-up: `host-ops.sh up --wayland-native --stable-playback` on the Pi.
-- Expect: GLES mpv args injected
+- Expect: xcb Qt bridge with GLES mpv args injected
   (`docker exec relaytv env | grep RELAYTV_QT_SHELL_MPV_ARGS` →
   `--gpu-api=opengl --opengl-es=yes`), `decode_profile=arm_safe`,
   `av1_allowed=False` (AV1 content must transcode or fall back), playback

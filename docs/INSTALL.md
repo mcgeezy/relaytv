@@ -291,6 +291,19 @@ Overrides:
 - `RELAYTV_PI_VIDEO_DEVICES_ENABLED=1` force on
 - `RELAYTV_PI_VIDEO_DEVICES_ENABLED=0` force off
 
+Raspberry Pi Wayland installs use an Xwayland/xcb Qt bridge by default because
+native Wayland Qt can produce black video on Pi graphics stacks. When the
+target user's `.Xauthority` file exists, the installer mounts it into the
+container and writes `XAUTHORITY=/tmp/.Xauthority` so the bridge can connect to
+the host display.
+
+If a host specifically works better with native Qt Wayland, opt into it
+explicitly:
+
+```bash
+QT_QPA_PLATFORM=wayland ./scripts/install.sh --use-shell-env
+```
+
 ## Verify Generated Runtime Env
 
 ```bash

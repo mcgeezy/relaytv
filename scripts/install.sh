@@ -130,7 +130,7 @@ fi
 
 PUID="$(id -u "$TARGET_USER")"
 PGID="$(id -g "$TARGET_USER")"
-TARGET_HOME="$(getent passwd "$TARGET_USER" | awk -F: '{print $6}')"
+TARGET_HOME="${RELAYTV_TARGET_HOME:-$(getent passwd "$TARGET_USER" | awk -F: '{print $6}')}"
 HOST_ARCH="$(uname -m 2>/dev/null || printf '%s' unknown)"
 HOST_MODEL=""
 if [ -r /proc/device-tree/model ]; then
@@ -161,7 +161,7 @@ detect_host_profile() {
   esac
 }
 
-HOST_PROFILE="$(detect_host_profile "$HOST_ARCH" "$HOST_MODEL")"
+HOST_PROFILE="${RELAYTV_HOST_PROFILE:-$(detect_host_profile "$HOST_ARCH" "$HOST_MODEL")}"
 
 DISPLAY_VAL=""
 XDG_SESSION_TYPE_VAL=""
@@ -499,7 +499,8 @@ if [ -z "$QT_SHELL_MODULE_VAL" ]; then
 fi
 
 if [ "$HOST_PROFILE" = "raspi" ] && [ "$MODE" = "wayland" ] && [ "$QT_SHELL_MODULE_VAL" = "relaytv_app.qt_shell_app" ]; then
-  # Stable Pi native profile: prefer X11 bridge for Qt shell/mpv embedding.
+  # Raspberry Pi Wayland/libmpv is not reliably visible with native Wayland Qt.
+  # Prefer Xwayland unless the operator explicitly selected a Qt platform.
   if [ "$QT_QPA_PLATFORM_FROM_ENV" != "1" ]; then
     QT_QPA_PLATFORM_VAL="xcb"
   fi
@@ -796,10 +797,10 @@ ensure_host_device_override() {
       append_bind_mount "$XDG_RUNTIME_DIR_VAL" "$XDG_RUNTIME_DIR_VAL" "false"
     fi
   fi
-  # Traditional X11 normally keeps a stable cookie file in the user's home.
-  # Keep that compatibility mount limited to X11; Wayland/Xwayland uses the
-  # runtime-directory discovery above.
-  if [ "$MODE" = "x11" ] && [ -n "${TARGET_HOME:-}" ]; then
+  # X11 and explicit Xwayland bridge mode need a stable cookie file visible
+  # inside the container. Mutter session-scoped runtime cookies are still
+  # handled through the mounted /run/user parent above.
+  if { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } && [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ]; then
     append_bind_mount "${TARGET_HOME}/.Xauthority" "/tmp/.Xauthority" "true"
   fi
   if selinux_is_enforcing; then
@@ -992,7 +993,7 @@ emit_section() {
 
 installer_owned_env_key() {
   case "$1" in
-    PUID|PGID|DISPLAY|XDG_SESSION_TYPE|XDG_RUNTIME_DIR|WAYLAND_DISPLAY|QT_QPA_PLATFORM|MPV_AUDIO_DEVICE|\
+    PUID|PGID|DISPLAY|XAUTHORITY|XDG_SESSION_TYPE|XDG_RUNTIME_DIR|WAYLAND_DISPLAY|QT_QPA_PLATFORM|MPV_AUDIO_DEVICE|\
     RELAYTV_CEC|RELAYTV_CEC_ENABLED|RELAYTV_CEC_MONITOR|RELAYTV_DRM_CONNECTOR|\
     RELAYTV_HEADLESS_REMOTE_DISPLAY|RELAYTV_HEADLESS_REMOTE_ENABLED|RELAYTV_HEADLESS_REMOTE_RESOLUTION|\
     RELAYTV_HEADLESS_REMOTE_SOFTWARE|RELAYTV_HEADLESS_VNC_ENABLED|RELAYTV_HEADLESS_VNC_LISTEN|\
@@ -1039,6 +1040,10 @@ if [ -n "${WAYLAND_DISPLAY_VAL}" ]; then
 fi
 if [ -n "${QT_QPA_PLATFORM_VAL}" ]; then
   DISPLAY_ENV_BLOCK+=$(emit_env_line "QT_QPA_PLATFORM" "${QT_QPA_PLATFORM_VAL}")
+  DISPLAY_ENV_BLOCK+=$'\n'
+fi
+if { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } && [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ]; then
+  DISPLAY_ENV_BLOCK+=$(emit_env_line "XAUTHORITY" "/tmp/.Xauthority")
   DISPLAY_ENV_BLOCK+=$'\n'
 fi
 RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_MODE" "${MODE}")
