@@ -23,6 +23,17 @@ def test_sanitize_public_url_removes_credentials_and_signature() -> None:
     assert "signed" not in result
 
 
+def test_sanitize_public_url_strips_emby_jellyfin_and_jwt_auth_keys() -> None:
+    url = (
+        "https://media.example/Videos/abc/stream"
+        "?static=true&X-Emby-Token=secret&X-Jellyfin-Token=secret&jwt=secret&auth=secret&exp=123"
+    )
+
+    result = sanitize_public_url(url)
+
+    assert result == "https://media.example/Videos/abc/stream?static=true"
+
+
 def test_sanitize_public_url_preserves_ipv6_hosts() -> None:
     url = "http://[fd00::a1]:8096/Videos/abc/stream?api_key=secret&static=true"
 
@@ -127,6 +138,38 @@ def test_queue_remove_response_redacts_items_without_mutating_state(monkeypatch)
     assert body["queue"] == [_SAFE_ITEM]
     assert "secret" not in json.dumps(body)
     assert routes.state.QUEUE[0]["_resolved_stream"].endswith("token=secret")
+
+
+def test_history_requeue_uses_server_stored_url(monkeypatch) -> None:
+    monkeypatch.setattr(routes.state, "QUEUE", [], raising=False)
+    monkeypatch.setattr(routes.state, "HISTORY", [_secret_item()], raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", None, raising=False)
+    monkeypatch.setattr(routes.state, "persist_queue", lambda: None)
+    monkeypatch.setattr(routes.state, "persist_queue_payload", lambda payload: None)
+    rebuilt_from: dict[str, str] = {}
+
+    def _fake_smart_item(url, **kwargs):
+        rebuilt_from["url"] = str(url)
+        return {"url": str(url)}
+
+    monkeypatch.setattr(routes, "_smart_item_from_url", _fake_smart_item)
+    monkeypatch.setattr(routes.player, "prefetch_queue_item_stream", lambda item: None)
+    monkeypatch.setattr(routes.player, "prime_mpv_up_next_from_queue", lambda force=True: None)
+    monkeypatch.setattr(routes, "_push_queue_added_toast_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda action, **payload: None)
+    client = TestClient(create_app(testing=True))
+
+    response = client.post("/history/requeue", json={"index": 0})
+
+    assert response.status_code == 200
+    assert rebuilt_from["url"] == _secret_item()["url"]
+    assert routes.state.QUEUE[0]["url"] == _secret_item()["url"]
+    body = response.json()
+    assert body["status"] == "queued"
+    assert body["item"] == {"title": "Movie", "url": _SAFE_ITEM["url"]}
+    assert "secret" not in json.dumps(body)
+
+    assert client.post("/history/requeue", json={"index": 5}).status_code == 400
 
 
 def test_play_response_redacts_now_playing(monkeypatch) -> None:

@@ -25,17 +25,22 @@ _SENSITIVE_QUERY_KEYS = {
     "access_token",
     "apikey",
     "api_key",
+    "auth",
     "authorization",
     "auth_token",
     "cookie",
+    "exp",
     "expires",
     "hdnea",
     "hdnts",
+    "jwt",
     "key-pair-id",
     "policy",
     "sig",
     "signature",
     "token",
+    "x-emby-token",
+    "x-jellyfin-token",
 }
 
 _URL_FIELDS = {"art", "image", "input", "poster", "thumbnail", "thumbnail_local", "url"}

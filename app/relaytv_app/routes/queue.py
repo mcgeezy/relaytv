@@ -136,6 +136,43 @@ def history_clear():
     return {"status": "cleared"}
 
 
+@router.post("/history/requeue")
+def history_requeue(req: HistoryPlayReq):
+    """Queue an item from history by index using the server-stored URL.
+
+    Public history payloads carry display-safe URLs with credentials
+    stripped, so clients requeue by index and the server rebuilds the
+    item from its unredacted copy.
+    """
+    idx = int(req.index)
+    with state.HISTORY_LOCK:
+        if idx < 0 or idx >= len(state.HISTORY):
+            raise HTTPException(status_code=400, detail="index out of range")
+        it = dict(state.HISTORY[idx])
+    url = it.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise HTTPException(status_code=400, detail="history item missing url")
+
+    item = _smart_item_from_url(url.strip(), lightweight=True)
+    if isinstance(item, dict):
+        for key in ("title", "thumbnail", "thumbnail_local", "history_id"):
+            val = it.get(key)
+            if val and not item.get(key):
+                item[key] = val
+    qlen, queue_snapshot = playback_service.queue_item(item)
+    try:
+        _push_queue_added_toast_async(item, str(it.get("title") or url or "item"))
+    except Exception:
+        pass
+    _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="history_requeue")
+    return {
+        "status": "queued",
+        "item": _annotate_upload_item(item),
+        "queue_length": qlen,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
+
+
 @router.post("/history/play")
 def history_play(req: HistoryPlayReq):
     """Play an item from history by index while preserving current playback."""

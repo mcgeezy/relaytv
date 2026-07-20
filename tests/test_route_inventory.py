@@ -22,6 +22,7 @@ EXPECTED_ROUTES = {
     ("GET", "/history", "history"),
     ("POST", "/history/clear", "history_clear"),
     ("POST", "/history/play", "history_play"),
+    ("POST", "/history/requeue", "history_requeue"),
     ("GET", "/idle", "idle_page"),
     ("GET", "/idle/weather", "get_idle_weather"),
     ("POST", "/ingest/media", "ingest_media"),

@@ -342,6 +342,11 @@ History endpoints:
 - `GET /history`
 - `POST /history/play`
   - body: `{"index": int}`
+- `POST /history/requeue`
+  - body: `{"index": int}`
+  - queues the item using the server-stored URL; use this instead of
+    `POST /enqueue` with a history payload URL, since public history
+    URLs are display-safe copies with credentials stripped
 - `POST /history/clear`
 
 ## Notifications and overlay delivery
