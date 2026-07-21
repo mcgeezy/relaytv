@@ -46,6 +46,12 @@ through the Home Assistant Companion app with the
 Explore Jellyfin or Emby from a responsive library built for phones and
 desktops, then launch playback on the connected display.
 
+### 📺 Watch it live
+
+Add IPTV playlists — M3U URLs, pasted lists, or a built-in free-provider
+directory — then curate a **My Channels** list, favorite what you watch most,
+and play a live channel straight to the TV. Opt-in and disabled by default.
+
 ### 🏠 Automate it
 
 Control playback from Home Assistant, HTTP requests, dashboards, scripts, and
@@ -76,6 +82,17 @@ and every control surface speaks to the same local endpoint.
       <h3>Your Jellyfin or Emby library, beautifully connected</h3>
       Scroll Home rails, search bounded catalogs, browse rich series pages,
       choose seasons, and start or queue media on the TV.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/readme/iptv-phone.png" alt="RelayTV My Channels IPTV page with favorites and live channels on a phone" width="100%">
+    </td>
+    <td valign="middle">
+      <h3>Live TV, curated the way you watch</h3>
+      Add M3U playlists or pick from the free-provider directory, then build a
+      <strong>My Channels</strong> list, pin favorites to the top, and send a
+      live channel to the TV — all from the same phone remote.
     </td>
   </tr>
 </table>
