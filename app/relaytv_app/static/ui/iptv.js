@@ -45,8 +45,23 @@
     el.classList.toggle('bad', !!bad);
   }
 
+  // Keep the "On now" highlight in sync with the authoritative status — correct
+  // after reload, playback from another client, or when playback stops.
+  function syncNowPlaying(status){
+    const np = status && status.now_playing;
+    const sid = np && np.iptv_source_id ? String(np.iptv_source_id) : '';
+    const cid = np && np.iptv_channel_id ? String(np.iptv_channel_id) : '';
+    const next = (sid && cid) ? {source_id:sid, channel_id:cid} : null;
+    const prev = state.lastPlayed;
+    const same = (!next && !prev) || (next && prev && next.source_id === prev.source_id && next.channel_id === prev.channel_id);
+    if (same) return;
+    state.lastPlayed = next;
+    if (state.visible) markPlaying();
+  }
+
   window.iptvUpdateLaunch = function(status){
     state.enabled = !!(status && status.iptv_enabled);
+    syncNowPlaying(status);
     const button = $('iptvOpenBtn');
     if (button) {
       button.classList.toggle('show', state.enabled);
@@ -150,15 +165,18 @@
       if (q) main.set('q', q);
       const requests = [api(`/iptv/channels?${main.toString()}`)];
       if (reset) {
-        const fav = new URLSearchParams({added_only:'true', favorites:'true', visibility:'visible', sort:'manual', offset:'0', limit:'60'});
+        const fav = new URLSearchParams({added_only:'true', favorites:'true', visibility:'visible', sort:'manual', offset:'0', limit:'200'});
         if (q) fav.set('q', q);
         requests.push(api(`/iptv/channels?${fav.toString()}`));
       }
       const [mainRes, favRes] = await Promise.all(requests);
       if (reset) ctx.favorites = Array.isArray(favRes && favRes.items) ? favRes.items : [];
+      // Only drop favorites we actually rendered in the Favorites section; any
+      // past the fetched cap fall through to the main list instead of vanishing.
+      const favIds = new Set(ctx.favorites.map((row) => `${row.source_id}/${row.channel_id}`));
       const rawItems = Array.isArray(mainRes.items) ? mainRes.items : [];
       ctx.offset = (reset ? 0 : ctx.offset) + rawItems.length;
-      const incoming = rawItems.filter((row) => !row.favorite);
+      const incoming = rawItems.filter((row) => !favIds.has(`${row.source_id}/${row.channel_id}`));
       ctx.channels = reset ? incoming : ctx.channels.concat(incoming);
       ctx.hasMore = !!mainRes.has_more;
       renderChan();
@@ -485,6 +503,18 @@
   function goTo(tab){ if (tab === state.tab) return; state.nav.push(state.tab); selectTab(tab); }
   function goBack(){ selectTab(state.nav.pop() || 'channels'); }
 
+  // Discover's refresh pulls fresh channels from the enabled sources (matching
+  // the control's promise) before reloading the grid.
+  async function refreshDiscover(){
+    const enabled = state.sources.filter((source) => source.enabled);
+    if (enabled.length) {
+      setStatus('Refreshing sources…');
+      await Promise.all(enabled.map((source) => api(`/iptv/sources/${encodeURIComponent(source.id)}/refresh`, {method:'POST'}).catch(() => {})));
+      await loadSources();
+    }
+    await loadGrid('disc', true);
+  }
+
   async function applySetting(){
     const enabled = !!$('setIptvEnabled')?.checked;
     const msg = $('setIptvApplyResult');
@@ -525,7 +555,7 @@
     $('setIptvApplyBtn')?.addEventListener('click', applySetting);
     document.querySelectorAll('[data-iptv-goto]').forEach((button) => button.addEventListener('click', () => goTo(button.dataset.iptvGoto)));
     document.querySelectorAll('[data-iptv-back]').forEach((button) => button.addEventListener('click', goBack));
-    $('iptvDiscoverRefresh')?.addEventListener('click', () => loadGrid('disc', true));
+    $('iptvDiscoverRefresh')?.addEventListener('click', refreshDiscover);
     $('iptvDiscoverGroup')?.addEventListener('change', () => loadGrid('disc', true));
     $('iptvRemoveUnavailableBtn')?.addEventListener('click', removeUnavailable);
     $('iptvMoreBtn')?.addEventListener('click', () => loadGrid('chan', false));
