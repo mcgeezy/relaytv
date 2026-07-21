@@ -1,20 +1,146 @@
-/* RelayTV IPTV browse and source-management shell. */
+/* RelayTV IPTV browse and source-management shell (glass system). */
 body.iptvNoScroll{overflow:hidden}
-.iptvLaunch{display:none;align-items:center;gap:7px;min-height:36px;padding:7px 11px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.04em}
+
+/* Launcher chip — mirrors the Jellyfin launcher so both read as siblings. */
+.iptvLaunch{display:none;align-items:center;gap:7px;min-height:36px;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.03em}
 .iptvLaunch.show{display:inline-flex}
-.iptvShell{position:fixed;inset:0;z-index:1210;overflow:auto;padding:max(14px,env(safe-area-inset-top)) 14px max(18px,env(safe-area-inset-bottom));background:radial-gradient(900px 520px at 5% 0%,rgba(16,185,129,.20),transparent 60%),radial-gradient(850px 500px at 100% 10%,rgba(14,165,233,.18),transparent 58%),linear-gradient(180deg,var(--bg0),var(--bg1))}
-.iptvShellInner{max-width:1180px;margin:0 auto;display:grid;gap:12px}
+
+/* Shell — a glass overlay tinted with the brand sky/blue, not green. */
+.iptvShell{position:fixed;inset:0;z-index:1210;overflow:auto;padding:max(14px,env(safe-area-inset-top)) 14px max(18px,env(safe-area-inset-bottom));
+  background:
+    radial-gradient(1100px 620px at 6% -4%,rgba(56,189,248,.16),transparent 58%),
+    radial-gradient(950px 560px at 104% 8%,rgba(37,99,235,.16),transparent 60%),
+    linear-gradient(180deg,var(--bg0),var(--bg1));
+  --iptvAccent:linear-gradient(180deg,rgba(56,189,248,.95),rgba(37,99,235,.95));
+  --iptvAccentSoft:linear-gradient(180deg,rgba(56,189,248,.22),rgba(37,99,235,.20));
+}
+.iptvShellInner{max-width:1180px;margin:0 auto;display:grid;gap:14px}
+
+/* Header */
 .iptvShellHead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}
-.iptvBack{justify-self:start;min-height:38px;padding:8px 13px;border-radius:999px;font-weight:800}
-.iptvIdentity{display:flex;align-items:center;gap:10px}.iptvIdentity>div{display:grid}.iptvIdentity small{color:var(--muted2);font-size:10px;text-transform:uppercase;letter-spacing:.12em}.iptvIdentity strong{font-size:20px}.iptvMark{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:linear-gradient(145deg,#10b981,#0284c7);color:white;font-size:22px;box-shadow:0 10px 28px rgba(2,132,199,.25)}
-.iptvStatus{justify-self:end;color:var(--muted2);font-size:12px;font-weight:700}
-.iptvTabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:6px;border:1px solid var(--stroke);border-radius:14px;background:rgba(8,16,34,.58)}
-.iptvTabs button{min-height:40px;border-radius:10px;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.025em}.iptvTabs button.active{border-color:rgba(52,211,153,.9);background:linear-gradient(180deg,rgba(16,185,129,.95),rgba(2,132,199,.95));color:white;box-shadow:0 8px 20px rgba(3,105,161,.28)}
-.iptvPanel{border:1px solid var(--stroke);border-radius:18px;padding:14px;background:var(--card);box-shadow:0 18px 50px rgba(2,6,23,.18)}
-.iptvToolbar{display:grid;grid-template-columns:minmax(190px,2fr) repeat(3,minmax(125px,1fr)) auto auto;gap:8px;align-items:center;margin-bottom:14px}.iptvToolbar .input{width:100%;min-width:0}.iptvCheck{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px;color:var(--muted2)}
-.iptvChannelGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:10px}.iptvEmpty{grid-column:1/-1;padding:42px 18px;text-align:center;color:var(--muted2)}
-.iptvChannel{position:relative;display:grid;grid-template-columns:58px minmax(0,1fr);gap:11px;padding:12px;border:1px solid var(--stroke);border-radius:15px;background:var(--card2);min-height:132px}.iptvChannel.isUnavailable{opacity:.72;border-color:rgba(248,113,113,.48)}.iptvChannelLogo{width:58px;height:58px;border-radius:13px;display:grid;place-items:center;overflow:hidden;background:rgba(148,163,184,.13);font-size:23px}.iptvChannelLogo img{width:100%;height:100%;object-fit:contain}.iptvChannelBody{min-width:0}.iptvChannelTitle{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:800}.iptvChannelMeta{margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted2);font-size:11px}.iptvBadges{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.iptvBadge{padding:2px 6px;border-radius:999px;background:rgba(148,163,184,.15);font-size:9px;font-weight:800;text-transform:uppercase}.iptvBadge.bad{color:#fecaca;background:rgba(239,68,68,.16)}.iptvActions{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap;margin-top:1px}.iptvActions button{min-height:30px;padding:5px 8px;border-radius:9px;font-size:10px;font-weight:800}.iptvActions .primary{background:linear-gradient(180deg,#10b981,#0284c7);color:white}.iptvActions .isFavorite{color:#fbbf24;border-color:rgba(251,191,36,.55)}
-.iptvMore{display:block;margin:14px auto 0}.iptvSourceForm{margin-bottom:12px;padding:14px}.iptvSourceForm h2,.iptvDiscoverHead h2{margin:0 0 7px;font-size:18px}.iptvFormGrid{display:grid;grid-template-columns:1fr 2fr;gap:8px}.iptvSourceForm details{margin-top:10px}.iptvSourceForm summary{cursor:pointer;color:var(--muted2);font-size:12px}.iptvSourceForm textarea{width:100%;margin-top:8px;resize:vertical}.iptvFormActions{display:flex;align-items:center;gap:10px;margin-top:10px}.iptvFormActions span{font-size:12px;color:var(--muted2)}
-.iptvSourceList,.iptvDirectoryGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}.iptvSourceCard,.iptvDirectoryCard{padding:13px;border:1px solid var(--stroke);border-radius:14px;background:var(--card2)}.iptvSourceCard h3,.iptvDirectoryCard h3{margin:0;font-size:14px}.iptvSourceMeta,.iptvDirectoryCard p{margin:6px 0;color:var(--muted2);font-size:11px;line-height:1.45}.iptvSourceActions{display:flex;gap:6px;flex-wrap:wrap}.iptvSourceActions button,.iptvDirectoryCard button{min-height:31px;padding:5px 9px;font-size:11px}.iptvDiscoverHead{display:flex;justify-content:space-between;gap:12px;align-items:end;margin-bottom:13px}.iptvDiscoverHead p{margin:0;color:var(--muted2);font-size:12px}.iptvDiscoverHead input{width:min(360px,45vw)}
-@media(max-width:900px){.iptvToolbar{grid-template-columns:repeat(2,minmax(0,1fr))}.iptvToolbar #iptvSearch{grid-column:1/-1}}
-@media(max-width:620px){.iptvShell{padding-left:8px;padding-right:8px}.iptvShellHead{grid-template-columns:auto 1fr}.iptvIdentity{justify-self:end}.iptvStatus{grid-column:1/-1;justify-self:center}.iptvTabs{grid-template-columns:repeat(3,1fr)}.iptvTabs button{font-size:10px;padding:7px 5px}.iptvToolbar{grid-template-columns:1fr}.iptvToolbar #iptvSearch{grid-column:auto}.iptvChannelGrid{grid-template-columns:1fr}.iptvFormGrid{grid-template-columns:1fr}.iptvDiscoverHead{display:grid;align-items:stretch}.iptvDiscoverHead input{width:100%}}
+.iptvBack{justify-self:start;display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:8px 14px;border-radius:999px;font-weight:800;
+  border:1px solid var(--stroke);background:var(--card);backdrop-filter:blur(14px) saturate(130%);-webkit-backdrop-filter:blur(14px) saturate(130%)}
+.iptvBack:hover{background:var(--card2);border-color:var(--accent)}
+.iptvIdentity{display:flex;align-items:center;gap:11px}.iptvIdentity>div{display:grid;line-height:1.15}
+.iptvIdentity small{color:var(--muted2);font-size:10px;text-transform:uppercase;letter-spacing:.14em}
+.iptvIdentity strong{font-size:20px;letter-spacing:.01em}
+.iptvMark{display:grid;place-items:center;width:40px;height:40px;border-radius:13px;background:linear-gradient(150deg,#38bdf8,#2563eb);color:#fff;font-size:22px;box-shadow:0 12px 30px rgba(37,99,235,.34)}
+.iptvStatus{justify-self:end;color:var(--muted2);font-size:12px;font-weight:700;text-align:right}
+.iptvStatus.bad{color:var(--danger)}
+
+/* Tabs — glass rail, sentence case, blue active fill. */
+.iptvTabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:6px;border:1px solid var(--stroke);border-radius:15px;
+  background:var(--card2);backdrop-filter:blur(16px) saturate(130%);-webkit-backdrop-filter:blur(16px) saturate(130%)}
+.iptvTabs button{min-height:42px;border-radius:11px;font-size:13px;font-weight:800;letter-spacing:.01em;color:var(--muted);background:transparent;border:1px solid transparent}
+.iptvTabs button:hover{color:var(--text);background:var(--card)}
+.iptvTabs button.active{color:#fff;background:var(--iptvAccent);border-color:rgba(56,189,248,.85);box-shadow:0 10px 24px rgba(37,99,235,.30)}
+
+/* Panels — glass cards. */
+.iptvPanel{border:1px solid var(--stroke);border-radius:20px;padding:16px;background:var(--card);box-shadow:var(--shadow);
+  backdrop-filter:blur(20px) saturate(135%);-webkit-backdrop-filter:blur(20px) saturate(135%)}
+
+/* Channels toolbar: search on its own line, controls below, segmented view. */
+.iptvToolbar{display:grid;gap:10px;margin-bottom:16px}
+.iptvSearchRow{position:relative}
+.iptvSearchRow::before{content:"⌕";position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--muted2);font-size:16px;pointer-events:none}
+.iptvSearchRow .input{width:100%;padding-left:36px}
+.iptvControls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.iptvControls .input{min-width:0;flex:1 1 150px;max-width:220px}
+.iptvControls .iptvSpacer{flex:1 1 auto}
+.iptvSeg{display:inline-flex;padding:4px;gap:3px;border:1px solid var(--stroke);border-radius:999px;background:var(--card2)}
+.iptvSeg button{min-height:32px;padding:5px 14px;border-radius:999px;font-size:12px;font-weight:800;color:var(--muted);background:transparent;border:1px solid transparent}
+.iptvSeg button:hover{color:var(--text)}
+.iptvSeg button.active{color:#fff;background:var(--iptvAccent);box-shadow:0 6px 16px rgba(37,99,235,.28)}
+.iptvSeg button .segCount{opacity:.7;font-weight:700;margin-left:5px}
+.iptvCheck{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:12px;color:var(--muted2);font-weight:700}
+.iptvGhostBtn{min-height:36px;padding:7px 13px;border-radius:10px;font-size:12px;font-weight:800;border:1px solid var(--stroke);background:var(--card2)}
+.iptvGhostBtn:hover{border-color:var(--accent);background:var(--card)}
+
+/* Channel grid + tiles */
+.iptvChannelGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:12px}
+.iptvEmpty{grid-column:1/-1;display:grid;gap:6px;justify-items:center;padding:52px 20px;text-align:center;color:var(--muted2)}
+.iptvEmpty strong{color:var(--text);font-size:15px}
+.iptvChannel{position:relative;display:flex;align-items:center;border:1px solid var(--stroke);border-radius:16px;background:var(--card2);transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease}
+.iptvChannel:hover{transform:translateY(-2px);border-color:rgba(56,189,248,.55);box-shadow:0 14px 34px rgba(2,6,23,.28)}
+.iptvChannel.isUnavailable{opacity:.68}
+.iptvChannel.isUnavailable:hover{opacity:.85}
+.iptvChannel.isPlaying{border-color:rgba(56,189,248,.9);box-shadow:0 0 0 1px rgba(56,189,248,.55),0 16px 36px rgba(37,99,235,.30)}
+
+/* Big play target = logo + text, one button so nothing nests. */
+.iptvChannelPlay{flex:1 1 auto;min-width:0;display:grid;grid-template-columns:56px minmax(0,1fr);gap:12px;padding:13px 6px 12px 13px;border:0;border-radius:16px 0 0 16px;background:transparent;text-align:left;cursor:pointer;color:var(--text)}
+.iptvChannelPlay:hover{background:var(--iptvAccentSoft)}
+.iptvChannelPlay:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.iptvChannelLogo{position:relative;width:56px;height:56px;border-radius:13px;display:grid;place-items:center;overflow:hidden;background:rgba(148,163,184,.14);font-size:22px;color:var(--muted2)}
+.iptvChannelLogo img{width:100%;height:100%;object-fit:contain}
+.iptvChannelPlay:hover .iptvPlayGlyph{opacity:1;transform:scale(1)}
+.iptvPlayGlyph{position:absolute;inset:0;display:grid;place-items:center;background:rgba(2,6,23,.52);color:#fff;font-size:20px;opacity:0;transform:scale(.9);transition:opacity .12s ease,transform .12s ease}
+.iptvChannelBody{min-width:0;display:grid;align-content:start;gap:3px}
+.iptvChannelTitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:800}
+.iptvChannelMeta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted2);font-size:11px}
+.iptvAvail{display:inline-flex;align-items:center;gap:6px;margin-top:4px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted2)}
+.iptvDot{width:7px;height:7px;border-radius:999px;background:var(--muted2)}
+.iptvDot.ok{background:var(--good)}.iptvDot.bad{background:var(--danger)}.iptvDot.warn{background:var(--warn)}
+.iptvNowTag{display:inline-flex;align-items:center;gap:6px;margin-top:4px;padding:2px 9px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#e0f2fe;background:rgba(56,189,248,.22)}
+.iptvNowTag::before{content:"";width:6px;height:6px;border-radius:999px;background:#38bdf8;box-shadow:0 0 0 0 rgba(56,189,248,.7);animation:iptvPulse 1.8s infinite}
+@keyframes iptvPulse{0%{box-shadow:0 0 0 0 rgba(56,189,248,.6)}70%{box-shadow:0 0 0 7px rgba(56,189,248,0)}100%{box-shadow:0 0 0 0 rgba(56,189,248,0)}}
+
+/* Corner controls — in a right-hand column, siblings of the play button. */
+.iptvCornerCol{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:0 10px 0 2px}
+.iptvFav,.iptvKebab{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;border:1px solid var(--stroke);background:var(--card);font-size:15px;line-height:1}
+.iptvFav{color:var(--muted2)}
+.iptvFav:hover{color:#fbbf24;border-color:rgba(251,191,36,.55)}
+.iptvFav.isFavorite{color:#fbbf24;border-color:rgba(251,191,36,.6);background:rgba(251,191,36,.14)}
+.iptvKebab{font-weight:900}
+.iptvKebab:hover,.iptvKebab.open{border-color:var(--accent);background:var(--card2)}
+
+/* Overflow menu popover */
+.iptvMenu{position:absolute;top:46px;right:10px;z-index:5;min-width:172px;display:grid;gap:2px;padding:6px;border:1px solid var(--stroke);border-radius:13px;background:rgba(11,18,32,.97);box-shadow:var(--shadow);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%)}
+@media(prefers-color-scheme:light){.iptvMenu{background:rgba(255,255,255,.98)}}
+.iptvMenu button{display:flex;align-items:center;gap:9px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:9px;background:transparent;text-align:left;font-size:12px;font-weight:700;color:var(--text)}
+.iptvMenu button:hover{background:var(--iptvAccentSoft)}
+.iptvMenu button:disabled{opacity:.4}
+.iptvMenu button.danger:hover{background:rgba(239,68,68,.16);color:#fecaca}
+.iptvMenu .iptvMenuSep{height:1px;margin:4px 2px;background:var(--stroke)}
+.iptvMenu span[aria-hidden]{width:16px;text-align:center;opacity:.8}
+
+.iptvMore{display:block;margin:16px auto 0;min-height:38px;padding:8px 20px;border-radius:999px;border:1px solid var(--stroke);background:var(--card2);font-weight:800}
+.iptvMore:hover{border-color:var(--accent);background:var(--card)}
+
+/* Sources panel */
+.iptvSourceForm{margin-bottom:14px;padding:16px;border:1px solid var(--stroke);border-radius:16px;background:var(--card2)}
+.iptvSourceForm h2,.iptvDiscoverHead h2{margin:0 0 8px;font-size:18px}
+.iptvFormGrid{display:grid;grid-template-columns:1fr 2fr;gap:8px}
+.iptvSourceForm details{margin-top:10px}
+.iptvSourceForm summary{cursor:pointer;color:var(--muted2);font-size:12px;font-weight:700}
+.iptvSourceForm textarea{width:100%;margin-top:8px;resize:vertical}
+.iptvFormActions{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.iptvFormActions span{font-size:12px;color:var(--muted2)}
+.iptvSourcesTools{display:flex;justify-content:flex-end;margin-bottom:12px}
+.iptvSourceList,.iptvDirectoryGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:12px}
+.iptvSourceCard,.iptvDirectoryCard{padding:14px;border:1px solid var(--stroke);border-radius:15px;background:var(--card2)}
+.iptvSourceCard h3,.iptvDirectoryCard h3{margin:0 0 6px;font-size:14px}
+.iptvSourceMeta,.iptvDirectoryCard p{margin:6px 0 10px;color:var(--muted2);font-size:11px;line-height:1.5}
+.iptvSourceActions{display:flex;gap:6px;flex-wrap:wrap}
+.iptvSourceActions button,.iptvDirectoryCard button{min-height:32px;padding:6px 11px;font-size:11px;font-weight:800}
+
+/* Discover */
+.iptvDiscoverHead{display:flex;justify-content:space-between;gap:14px;align-items:end;margin-bottom:14px}
+.iptvDiscoverHead p{margin:0;color:var(--muted2);font-size:12px}
+.iptvDiscoverHead input{width:min(360px,45vw)}
+
+@media(max-width:900px){
+  .iptvControls .input{max-width:none}
+}
+@media(max-width:620px){
+  .iptvShell{padding-left:8px;padding-right:8px}
+  .iptvShellHead{grid-template-columns:auto 1fr}
+  .iptvIdentity{justify-self:end}
+  .iptvStatus{grid-column:1/-1;justify-self:center;text-align:center}
+  .iptvControls{gap:7px}
+  .iptvControls .input{flex-basis:calc(50% - 4px)}
+  .iptvSeg{width:100%;justify-content:center}
+  .iptvChannelGrid{grid-template-columns:1fr}
+  .iptvFormGrid{grid-template-columns:1fr}
+  .iptvDiscoverHead{display:grid;align-items:stretch}
+  .iptvDiscoverHead input{width:100%}
+}

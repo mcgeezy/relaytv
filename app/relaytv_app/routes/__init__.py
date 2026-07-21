@@ -3640,27 +3640,34 @@ def ui():
           <div id="iptvStatus" class="iptvStatus" role="status" aria-live="polite">Loading…</div>
         </header>
         <nav class="iptvTabs" aria-label="IPTV sections">
-          <button class="active" data-iptv-tab="channels">My Channels</button>
-          <button data-iptv-tab="favorites">Favorites</button>
-          <button data-iptv-tab="hidden">Hidden</button>
+          <button class="active" data-iptv-tab="channels">Channels</button>
           <button data-iptv-tab="sources">Sources</button>
           <button data-iptv-tab="discover">Discover</button>
         </nav>
         <section id="iptvBrowsePanel" class="iptvPanel">
           <div class="iptvToolbar">
-            <input id="iptvSearch" class="input" type="search" placeholder="Search channels or groups…" aria-label="Search IPTV channels" />
-            <select id="iptvSourceFilter" class="input" aria-label="Filter by source"><option value="">All sources</option></select>
-            <select id="iptvGroupFilter" class="input" aria-label="Filter by group"><option value="">All groups</option></select>
-            <select id="iptvSort" class="input" aria-label="Sort channels"><option value="manual">My order</option><option value="name">Name</option><option value="group">Group</option><option value="playlist">Playlist order</option></select>
-            <label class="iptvCheck"><input id="iptvUnavailable" type="checkbox" /> Include unavailable</label>
-            <button id="iptvReloadBtn" type="button">Refresh</button>
-            <button id="iptvRemoveUnavailableBtn" class="danger" type="button">Remove unavailable</button>
+            <div class="iptvSearchRow">
+              <input id="iptvSearch" class="input" type="search" placeholder="Search channels or groups…" aria-label="Search IPTV channels" />
+            </div>
+            <div class="iptvControls">
+              <div class="iptvSeg" role="group" aria-label="Channel view">
+                <button class="active" data-iptv-view="all" aria-pressed="true">All</button>
+                <button data-iptv-view="favorites" aria-pressed="false">Favorites</button>
+                <button data-iptv-view="hidden" aria-pressed="false">Hidden</button>
+              </div>
+              <select id="iptvSourceFilter" class="input" aria-label="Filter by source"><option value="">All sources</option></select>
+              <select id="iptvGroupFilter" class="input" aria-label="Filter by group"><option value="">All groups</option></select>
+              <select id="iptvSort" class="input" aria-label="Sort channels"><option value="manual">My order</option><option value="name">Name</option><option value="group">Group</option><option value="playlist">Playlist order</option></select>
+              <span class="iptvSpacer"></span>
+              <label class="iptvCheck" id="iptvUnavailableWrap"><input id="iptvUnavailable" type="checkbox" /> Include unavailable</label>
+              <button id="iptvReloadBtn" class="iptvGhostBtn" type="button">↻ Refresh</button>
+            </div>
           </div>
           <div id="iptvChannelGrid" class="iptvChannelGrid" aria-live="polite"></div>
           <button id="iptvMoreBtn" class="iptvMore hidden" type="button">Load more</button>
         </section>
         <section id="iptvSourcesPanel" class="iptvPanel hidden">
-          <div class="iptvSourceForm card">
+          <div class="iptvSourceForm">
             <h2>Add playlist</h2>
             <div class="iptvFormGrid">
               <input id="iptvSourceName" class="input" maxlength="120" placeholder="Source name" />
@@ -3669,6 +3676,7 @@ def ui():
             <details><summary>Or paste an M3U playlist</summary><textarea id="iptvSourceContent" class="input" rows="5" placeholder="#EXTM3U…"></textarea></details>
             <div class="iptvFormActions"><button id="iptvAddSourceBtn" class="good" type="button">Add and refresh</button><span id="iptvSourceMsg" aria-live="polite"></span></div>
           </div>
+          <div class="iptvSourcesTools"><button id="iptvRemoveUnavailableBtn" class="iptvGhostBtn danger" type="button">Remove unavailable channels</button></div>
           <div id="iptvSourceList" class="iptvSourceList"></div>
         </section>
         <section id="iptvDiscoverPanel" class="iptvPanel hidden">
@@ -4070,7 +4078,7 @@ def ui():
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "jellyfin.css", "app.js", "jellyfin.js"):
+    for name in ("app.css", "jellyfin.css", "iptv.css", "app.js", "jellyfin.js", "iptv.js"):
         path = _resolve_static_asset("ui", name)
         try:
             if path:

@@ -52,19 +52,23 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 3);
 
     const firstCard = page.locator('.iptvChannel').first();
-    await firstCard.locator('[data-action="favorite"]').click();
-    await page.waitForFunction(() => document.querySelector('.iptvChannel .iptvBadge')?.textContent === 'Favorite');
-    await page.locator('[data-iptv-tab="favorites"]').click();
+    await firstCard.locator('.iptvFav').click();
+    await page.waitForFunction(() => document.querySelector('.iptvChannel .iptvFav')?.getAttribute('aria-pressed') === 'true');
+    await page.locator('[data-iptv-view="favorites"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 1);
-    check((await page.locator('.iptvChannel .iptvBadge').allTextContents()).includes('Favorite'), `${scenario.name}: favorite view did not persist selection`);
+    check((await page.locator('.iptvChannel .iptvFav').first().getAttribute('aria-pressed')) === 'true', `${scenario.name}: favorite view did not persist selection`);
 
-    await page.locator('[data-iptv-tab="channels"]').click();
+    await page.locator('[data-iptv-view="all"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 3);
-    await page.locator('.iptvChannel').nth(1).locator('[data-action="hidden"]').click();
+    const hideCard = page.locator('.iptvChannel').nth(1);
+    await hideCard.locator('.iptvKebab').click();
+    await hideCard.locator('[data-action="hidden"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 2);
-    await page.locator('[data-iptv-tab="hidden"]').click();
+    await page.locator('[data-iptv-view="hidden"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 1);
-    check((await page.locator('.iptvChannel .iptvBadge').allTextContents()).includes('Hidden'), `${scenario.name}: hidden view did not persist selection`);
+    check((await page.locator('.iptvChannel .iptvChannelTitle').count()) === 1, `${scenario.name}: hidden view did not persist selection`);
+    await page.locator('[data-iptv-view="all"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 2);
 
     await page.locator('[data-iptv-tab="discover"]').click();
     await page.locator('#iptvDirectorySearch').fill('news');
