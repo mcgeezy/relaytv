@@ -105,10 +105,13 @@ body.iptvNoScroll{overflow:hidden}
 
 /* Corner controls — in a right-hand column, siblings of the play button. */
 .iptvCornerCol{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:0 10px 0 2px}
-.iptvFav,.iptvKebab{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;border:1px solid var(--stroke);background:var(--card);font-size:15px;line-height:1}
+.iptvFav,.iptvKebab,.iptvAdd{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;border:1px solid var(--stroke);background:var(--card);font-size:15px;line-height:1}
 .iptvFav{color:var(--muted2)}
 .iptvFav:hover{color:#fbbf24;border-color:rgba(251,191,36,.55)}
 .iptvFav.isFavorite{color:#fbbf24;border-color:rgba(251,191,36,.6);background:rgba(251,191,36,.14)}
+.iptvAdd{color:var(--accent);font-weight:800}
+.iptvAdd:hover{border-color:rgba(56,189,248,.6);background:var(--iptvAccentSoft)}
+.iptvAdd.isAdded{color:#fff;border-color:rgba(56,189,248,.85);background:var(--iptvAccent)}
 .iptvKebab{font-weight:900}
 .iptvKebab:hover,.iptvKebab.open{border-color:var(--accent);background:var(--card2)}
 

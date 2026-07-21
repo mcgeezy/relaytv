@@ -79,6 +79,7 @@ class IptvStore:
                         manual_rank INTEGER NOT NULL,
                         hidden INTEGER NOT NULL DEFAULT 0,
                         favorite INTEGER NOT NULL DEFAULT 0,
+                        added INTEGER NOT NULL DEFAULT 0,
                         active INTEGER NOT NULL DEFAULT 1,
                         availability TEXT NOT NULL DEFAULT 'unknown',
                         consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +103,11 @@ class IptvStore:
                         ON iptv_channels(source_id, active, hidden, favorite, availability);
                     """
                 )
+                # Backward-compatible column add: "added" (My Channels membership)
+                # arrived after the initial schema; ALTER any pre-existing table.
+                channel_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iptv_channels)").fetchall()}
+                if "added" not in channel_cols:
+                    conn.execute("ALTER TABLE iptv_channels ADD COLUMN added INTEGER NOT NULL DEFAULT 0")
                 row = conn.execute("SELECT version FROM iptv_schema LIMIT 1").fetchone()
                 if row is None:
                     conn.execute("INSERT INTO iptv_schema(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -138,7 +144,7 @@ class IptvStore:
         data.pop("user_agent", None)
         data.pop("referrer", None)
         data.pop("identity_key", None)
-        for key in ("hidden", "favorite", "active"):
+        for key in ("hidden", "favorite", "added", "active"):
             data[key] = bool(data.get(key))
         return data
 
@@ -336,6 +342,7 @@ class IptvStore:
         visibility: str = "visible",
         include_unavailable: bool = False,
         favorites_only: bool = False,
+        added_only: bool = False,
         availability: str = "",
         sort: str = "manual",
         offset: int = 0,
@@ -363,6 +370,8 @@ class IptvStore:
                 clauses.append("c.availability != 'unavailable'")
         if favorites_only:
             clauses.append("c.favorite = 1")
+        if added_only:
+            clauses.append("c.added = 1")
         if availability:
             clauses.append("c.availability = ?")
             args.append(availability)
@@ -428,6 +437,8 @@ class IptvStore:
             fields["hidden"] = 1 if bool(patch["hidden"]) else 0
         if "favorite" in patch:
             fields["favorite"] = 1 if bool(patch["favorite"]) else 0
+        if "added" in patch:
+            fields["added"] = 1 if bool(patch["added"]) else 0
         if not fields:
             return self.get_channel(source_id, channel_id, redacted=True)
         assignments = ", ".join(f"{key} = ?" for key in fields)

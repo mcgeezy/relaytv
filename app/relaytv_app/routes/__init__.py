@@ -3645,6 +3645,7 @@ def ui():
           <div id="iptvStatus" class="iptvStatus" role="status" aria-live="polite">Loading…</div>
         </header>
         <section id="iptvBrowsePanel" class="iptvPanel">
+          <div class="iptvSubHead"><span class="iptvSubTitle">My Channels</span></div>
           <div class="iptvPageHead">
             <div class="iptvSearchRow">
               <input id="iptvSearch" class="input" type="search" placeholder="Search your channels…" aria-label="Search your IPTV channels" />

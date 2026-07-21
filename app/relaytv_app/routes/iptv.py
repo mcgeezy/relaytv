@@ -31,6 +31,7 @@ class IptvChannelPatchReq(BaseModel):
     source_id: str
     hidden: bool | None = None
     favorite: bool | None = None
+    added: bool | None = None
 
 
 class IptvVisibilityReq(BaseModel):
@@ -122,6 +123,7 @@ def iptv_channels(
     visibility: str = "visible",
     include_unavailable: bool = False,
     favorites: bool = False,
+    added_only: bool = False,
     availability: str = "",
     sort: str = "manual",
     offset: int = 0,
@@ -144,6 +146,7 @@ def iptv_channels(
         visibility=visibility,
         include_unavailable=bool(include_unavailable),
         favorites_only=bool(favorites),
+        added_only=bool(added_only),
         availability=availability,
         sort=sort,
         offset=max(0, int(offset)),

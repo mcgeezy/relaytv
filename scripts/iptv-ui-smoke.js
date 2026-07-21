@@ -60,11 +60,11 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.evaluate(async () => {
       const catalog = await fetch('/iptv/channels?visibility=all&limit=500').then((response) => response.json());
       for (const channel of (catalog.items || [])) {
-        if (!channel.favorite && !channel.hidden) continue;
+        // Seed every smoke channel into My Channels, none pinned.
         await fetch(`/iptv/channels/${encodeURIComponent(channel.channel_id)}`, {
           method: 'PATCH',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({source_id:channel.source_id, favorite:false, hidden:false}),
+          body: JSON.stringify({source_id:channel.source_id, favorite:false, hidden:false, added:true}),
         });
       }
     });
@@ -99,9 +99,16 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     check(await menuCard.locator('[data-action="play_next"]').isVisible(), `${scenario.name}: overflow menu missing queue actions`);
     await page.keyboard.press('Escape');
 
-    // Discover is reached by link and browses the full catalog from your sources.
+    // Discover is reached by link; tiles add with + (add to My Channels), not favorite.
     await page.locator('[data-iptv-goto="discover"]').first().click();
     await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 3);
+    check((await page.locator('#iptvDiscoverGrid .iptvFav').count()) === 0, `${scenario.name}: discover must not expose favorite`);
+    const addBtn = page.locator('#iptvDiscoverGrid .iptvChannel').first().locator('.iptvAdd');
+    check((await addBtn.getAttribute('aria-pressed')) === 'true', `${scenario.name}: seeded channel should read as added`);
+    await addBtn.click();
+    await page.waitForFunction(() => document.querySelector('#iptvDiscoverGrid .iptvAdd')?.getAttribute('aria-pressed') === 'false');
+    await addBtn.click();
+    await page.waitForFunction(() => document.querySelector('#iptvDiscoverGrid .iptvAdd')?.getAttribute('aria-pressed') === 'true');
     await page.locator('#iptvDiscoverSearch').fill('Music');
     await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 1);
     check((await page.locator('#iptvDiscoverGrid .iptvChannelTitle').textContent()).includes('Music'), `${scenario.name}: discover search mismatch`);
