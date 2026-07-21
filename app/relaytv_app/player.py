@@ -3623,6 +3623,9 @@ def _url_looks_like_live_stream(url: str, provider: str) -> bool:
 def _item_looks_like_live_stream(item: object) -> bool:
     if not isinstance(item, dict):
         return False
+    provider = str(item.get("provider") or "").strip().lower()
+    if provider == "iptv":
+        return True
     for key in (
         "is_live",
         "live",
@@ -3641,7 +3644,7 @@ def _item_looks_like_live_stream(item: object) -> bool:
     url = _queue_item_play_url(item)
     if not url:
         return False
-    provider = str(item.get("provider") or provider_from_url(url) or "").strip().lower()
+    provider = str(provider or provider_from_url(url) or "").strip().lower()
     return _url_looks_like_live_stream(url, provider)
 
 
@@ -5123,6 +5126,8 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         "thumbnail": item.get("thumbnail"),
         "thumbnail_local": item.get("thumbnail_local"),
         "channel": item.get("channel"),
+        **({"is_live": True} if item_is_live else {}),
+        **({"live_status": item.get("live_status")} if item.get("live_status") else {}),
         **({"http_headers": http_headers} if http_headers else {}),
         **({"history_id": item.get("history_id")} if item.get("history_id") else {}),
         **({"jellyfin_item_id": item.get("jellyfin_item_id")} if item.get("jellyfin_item_id") else {}),
@@ -5246,6 +5251,8 @@ def _playback_runtime_idle_or_ended() -> bool:
 
     sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
     has_now = isinstance(getattr(state, "NOW_PLAYING", None), dict)
+    now_item = getattr(state, "NOW_PLAYING", None) if has_now else None
+    live_stream = _item_looks_like_live_stream(now_item)
     if sess == "paused":
         _clear_idle_candidate()
         return False
@@ -5257,6 +5264,14 @@ def _playback_runtime_idle_or_ended() -> bool:
             _clear_idle_candidate()
             return False
         if has_now and sess == "playing":
+            if (
+                live_stream
+                and _qt_shell_backend_enabled()
+                and _qt_shell_running()
+                and not native_qt_playback_explicitly_ended()
+            ):
+                _clear_idle_candidate()
+                return False
             now = getattr(state, "NOW_PLAYING", None)
             if not _runtime_gap_completion_plausible(now if isinstance(now, dict) else None):
                 _clear_idle_candidate()
@@ -5316,7 +5331,7 @@ def _playback_runtime_idle_or_ended() -> bool:
         margin = max(0.2, min(10.0, margin))
         near_end = pos >= max(0.0, dur - margin)
 
-    candidate = bool(eof_reached is True or not path or near_end)
+    candidate = bool(eof_reached is True or not path or (near_end and not live_stream))
     if not candidate:
         _clear_idle_candidate()
         return False

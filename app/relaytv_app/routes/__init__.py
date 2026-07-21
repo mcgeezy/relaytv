@@ -3037,6 +3037,11 @@ def _status_payload() -> dict[str, object]:
             playing = True
             paused = True
             state.set_session_state("paused")
+        elif sess == "playing" and isinstance(state.NOW_PLAYING, dict):
+            # Runtime telemetry can briefly disappear while a live stream
+            # buffers. Keep the session open and let playback policy confirm
+            # an actual end before clearing NOW_PLAYING.
+            pass
         else:
             native_active = False
             try:

@@ -2302,6 +2302,71 @@ def test_playback_runtime_idle_or_ended_holds_implausible_native_qt_end(monkeypa
     assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
 
 
+def test_playback_runtime_idle_or_ended_ignores_iptv_live_window_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {
+            'title': 'Live channel',
+            'provider': 'iptv',
+            'resume_pos': 29.5,
+            'duration_sec': 30.0,
+            'started': now_ts - 120.0,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: {
+            'core-idle': True,
+            'eof-reached': False,
+            'pause': False,
+            'path': 'https://example.com/live.m3u8',
+            'time-pos': 29.5,
+            'duration': 30.0,
+        },
+    )
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_holds_live_telemetry_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {
+            'title': 'Live channel',
+            'provider': 'iptv',
+            'resume_pos': 29.5,
+            'duration_sec': 30.0,
+            'started': now_ts - 120.0,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 5.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
 def test_is_playing_ignores_idle_qt_socket_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
@@ -2764,6 +2829,44 @@ def test_status_preserves_paused_session_during_runtime_dropout(monkeypatch: pyt
     assert payload['playing'] is True
     assert payload['paused'] is True
     assert session_sets == ['paused']
+
+
+def test_status_preserves_playing_session_during_runtime_dropout(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_sets: list[str] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_runtime_active', lambda **_: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'startup_session_restore_pending', lambda: False)
+    monkeypatch.setattr(routes.player, '_effective_ytdl_format', lambda s=None: '')
+    monkeypatch.setattr(routes.player, 'get_mpv_log_tail', lambda lines=40: [])
+    monkeypatch.setattr(routes.player, 'IPC_PATH', '/tmp/test-mpv.sock', raising=False)
+    monkeypatch.setattr(routes.os.path, 'exists', lambda p: False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'live channel', 'provider': 'iptv'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda val: session_sets.append(val))
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda props: {})
+    monkeypatch.setattr(
+        routes,
+        '_runtime_capabilities',
+        lambda playing=None: {
+            'backend_ready': None,
+            'native_qt_mpv_runtime_paused': False,
+        },
+    )
+
+    payload = routes.status()
+
+    assert payload['state'] == 'playing'
+    assert payload['playing'] is False
+    assert payload['now_playing']['title'] == 'live channel'
+    assert payload['playback_runtime_state'] == 'buffering'
+    assert payload['playback_runtime_state_reason'] == 'session_runtime_gap'
+    assert session_sets == []
 
 
 def test_status_preserves_playing_session_while_startup_restore_is_pending(monkeypatch: pytest.MonkeyPatch) -> None:
