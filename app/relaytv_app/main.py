@@ -25,7 +25,7 @@ from .config import runtime_config
 from .routes import router
 from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
-from .integrations import jellyfin_receiver
+from .integrations import iptv_service, jellyfin_receiver
 from . import discovery_mdns
 from . import postlive_relay
 from . import video_profile
@@ -60,6 +60,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         runtime_config.set_value("RELAYTV_JELLYFIN_AUDIO_LANG", str(s.get("jellyfin_audio_lang") or "").strip().lower())
         runtime_config.set_value("RELAYTV_JELLYFIN_SUB_LANG", str(s.get("jellyfin_sub_lang") or "").strip().lower())
         runtime_config.set_value("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(s.get("jellyfin_playback_mode") or "auto").strip().lower())
+        runtime_config.set_value("RELAYTV_IPTV_ENABLED", "1" if bool(s.get("iptv_enabled")) else "0")
         uploads = s.get("uploads") if isinstance(s.get("uploads"), dict) else {}
         runtime_config.set_value("RELAYTV_UPLOAD_MAX_SIZE_GB", str(uploads.get("max_size_gb") or 5.0))
         runtime_config.set_value("RELAYTV_UPLOAD_RETENTION_HOURS", str(uploads.get("retention_hours") or 24))
@@ -96,6 +97,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             ytdlp_update.start_worker()
             start_x11_overlay()
             jellyfin_receiver.start()
+            iptv_service.start_worker()
             discovery_mdns.start_async()
             if qt_shell_backend_enabled():
                 ensure_qt_shell_idle()
@@ -105,6 +107,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             yield
         finally:
             jellyfin_receiver.stop()
+            iptv_service.stop_worker()
             discovery_mdns.stop()
             stop_x11_overlay()
             stop_splash_screen()

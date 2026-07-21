@@ -969,6 +969,7 @@ def _default_settings() -> dict:
         "jellyfin_sub_lang": (os.getenv("RELAYTV_JELLYFIN_SUB_LANG") or os.getenv("RELAYTV_SUB_LANG") or "").strip(),
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
         "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
+        "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
     }
 
 def load_settings() -> None:
@@ -1044,6 +1045,7 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_sub_lang",
         "jellyfin_playback_mode",
         "jellyfin_server_type",
+        "iptv_enabled",
     }
     clean = {k: v for k, v in (patch or {}).items() if k in allowed}
     if "device_name" in clean:
@@ -1083,6 +1085,8 @@ def update_settings(patch: dict) -> dict:
         clean["uploads"] = _normalize_upload_settings(clean.get("uploads"))
     if "jellyfin_enabled" in clean:
         clean["jellyfin_enabled"] = bool(clean.get("jellyfin_enabled"))
+    if "iptv_enabled" in clean:
+        clean["iptv_enabled"] = bool(clean.get("iptv_enabled"))
     if "jellyfin_auth_enabled" in clean:
         clean["jellyfin_auth_enabled"] = bool(clean.get("jellyfin_auth_enabled"))
     if "jellyfin_server_url" in clean:

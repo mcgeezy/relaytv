@@ -7,7 +7,7 @@ Research date: 2026-07-20
 ## Milestone Status
 
 - [x] M0 — research, architecture, security model, and delivery plan
-- [ ] M1 — SQLite catalog, M3U ingestion, source discovery, and catalog APIs
+- [x] M1 — SQLite catalog, M3U ingestion, source discovery, and catalog APIs
 - [ ] M2 — favorites, visibility, manual ordering, availability, and playback
 - [ ] M3 — responsive IPTV browse/manage UI and browser smoke coverage
 - [ ] M4 — container rebuild, end-to-end verification, and operator docs

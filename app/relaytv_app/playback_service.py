@@ -90,6 +90,24 @@ def queue_item(item: dict) -> tuple[int, list[dict]]:
     return qlen, snapshot
 
 
+def queue_item_next(item: dict) -> tuple[int, list[dict]]:
+    """Insert an item at the front of the queue and warm the handoff caches."""
+    with state.QUEUE_LOCK:
+        state.QUEUE.insert(0, item)
+        qlen = len(state.QUEUE)
+        snapshot = list(state.QUEUE)
+    state.persist_queue()
+    try:
+        player.prefetch_queue_item_stream(item)
+    except Exception:
+        pass
+    try:
+        player.prime_mpv_up_next_from_queue(force=True)
+    except Exception:
+        pass
+    return qlen, snapshot
+
+
 def advance_queue(
     *,
     mode: str,

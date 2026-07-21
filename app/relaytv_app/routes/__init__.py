@@ -34,6 +34,7 @@ from .capabilities import (
 )
 from .devices import router as devices_router
 from .health import router as health_router
+from .iptv import router as iptv_router
 from .jellyfin import (
     JellyfinAudioSelectReq as JellyfinAudioSelectReq,
     JellyfinCommandReq as JellyfinCommandReq,
@@ -131,6 +132,7 @@ router.include_router(assets_router)
 router.include_router(capabilities_router)
 router.include_router(devices_router)
 router.include_router(health_router)
+router.include_router(iptv_router)
 router.include_router(jellyfin_router)
 router.include_router(playback_router)
 router.include_router(postlive_router)
