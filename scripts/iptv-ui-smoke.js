@@ -83,14 +83,14 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 3);
 
     const firstCard = page.locator('.iptvChannel').first();
+    const favName = ((await firstCard.locator('.iptvChannelTitle').textContent()) || '').trim();
     await firstCard.locator('.iptvFav').click();
-    await page.waitForFunction(() => document.querySelector('.iptvChannel .iptvFav')?.getAttribute('aria-pressed') === 'true');
-    await page.locator('[data-iptv-view="favorites"]').click();
-    await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 1);
-    check((await page.locator('.iptvChannel .iptvFav').first().getAttribute('aria-pressed')) === 'true', `${scenario.name}: favorite view did not persist selection`);
-
-    await page.locator('[data-iptv-view="all"]').click();
+    // Favoriting floats the channel into a Favorites section at the top of My channels.
+    await page.locator('[data-iptv-section="favorites"]').waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 3);
+    const topName = ((await page.locator('.iptvChannel .iptvChannelTitle').first().textContent()) || '').trim();
+    check(topName === favName, `${scenario.name}: favorite did not move to the top`);
+    check((await page.locator('.iptvChannel .iptvFav').first().getAttribute('aria-pressed')) === 'true', `${scenario.name}: favorite state not shown at top`);
 
     // The overflow menu opens above neighbouring tiles and holds queue actions.
     const menuCard = page.locator('.iptvChannel').nth(1);
@@ -99,8 +99,8 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     check(await menuCard.locator('[data-action="play_next"]').isVisible(), `${scenario.name}: overflow menu missing queue actions`);
     await page.keyboard.press('Escape');
 
-    // Discover browses the full catalog pulled from your sources.
-    await page.locator('[data-iptv-tab="discover"]').click();
+    // Discover is reached by link and browses the full catalog from your sources.
+    await page.locator('[data-iptv-goto="discover"]').first().click();
     await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 3);
     await page.locator('#iptvDiscoverSearch').fill('Music');
     await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 1);
@@ -108,13 +108,19 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.locator('#iptvDiscoverSearch').fill('');
     await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 3);
 
-    // Sources hosts the source manager and the free provider directory.
-    await page.locator('[data-iptv-tab="sources"]').click();
+    // Sources is reached by link and hosts the source manager + provider directory.
+    await page.locator('[data-iptv-goto="sources"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvSourceCard').length >= 1);
     check((await page.locator('.iptvSourceCard h3').allTextContents()).includes('RelayTV UI smoke'), `${scenario.name}: source manager missing smoke source`);
     await page.locator('#iptvDirectorySearch').fill('news');
     await page.waitForFunction(() => document.querySelectorAll('.iptvDirectoryCard').length === 1);
     check((await page.locator('.iptvDirectoryCard h3').textContent()).includes('News'), `${scenario.name}: provider search mismatch`);
+
+    // Back returns to Discover, then to My channels (link + Back navigation).
+    await page.locator('#iptvSourcesPanel [data-iptv-back]').click();
+    await page.waitForFunction(() => !document.querySelector('#iptvDiscoverPanel').classList.contains('hidden'));
+    await page.locator('#iptvDiscoverPanel [data-iptv-back]').click();
+    await page.waitForFunction(() => !document.querySelector('#iptvBrowsePanel').classList.contains('hidden'));
 
     const layout = await page.evaluate(() => ({
       bodyOverflow: document.body.scrollWidth > document.body.clientWidth,

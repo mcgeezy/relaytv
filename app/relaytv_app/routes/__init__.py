@@ -3644,27 +3644,19 @@ def ui():
           <div class="iptvIdentity"><span class="iptvMark" aria-hidden="true">▦</span><div><small>RelayTV live channels</small><strong>IPTV</strong></div></div>
           <div id="iptvStatus" class="iptvStatus" role="status" aria-live="polite">Loading…</div>
         </header>
-        <nav class="iptvTabs" aria-label="IPTV sections">
-          <button class="active" data-iptv-tab="channels">Channels</button>
-          <button data-iptv-tab="discover">Discover</button>
-          <button data-iptv-tab="sources">Sources</button>
-        </nav>
         <section id="iptvBrowsePanel" class="iptvPanel">
           <div class="iptvPageHead">
             <div class="iptvSearchRow">
               <input id="iptvSearch" class="input" type="search" placeholder="Search your channels…" aria-label="Search your IPTV channels" />
             </div>
-            <div class="iptvSeg" role="group" aria-label="Channel view">
-              <button class="active" data-iptv-view="all" aria-pressed="true">Channels</button>
-              <button data-iptv-view="favorites" aria-pressed="false">Favorite</button>
-            </div>
             <button class="iptvHeadBtn" type="button" data-iptv-goto="discover"><span aria-hidden="true">＋</span> Discover</button>
           </div>
-          <div id="iptvChannelGrid" class="iptvChannelGrid" aria-live="polite"></div>
+          <div id="iptvChannelGrid" class="iptvChannelSections" aria-live="polite"></div>
           <button id="iptvMoreBtn" class="iptvMore hidden" type="button">Load more</button>
           <div class="iptvListFoot"><button class="iptvLinkBtn" type="button" data-iptv-goto="discover">Discover more channels →</button></div>
         </section>
         <section id="iptvDiscoverPanel" class="iptvPanel hidden">
+          <div class="iptvSubHead"><button class="iptvBackLink" type="button" data-iptv-back><span aria-hidden="true">‹</span> Back</button><span class="iptvSubTitle">Discover channels</span></div>
           <div class="iptvPageHead">
             <div class="iptvSearchRow">
               <input id="iptvDiscoverSearch" class="input" type="search" placeholder="Search all channels…" aria-label="Search discoverable channels" />
@@ -3677,6 +3669,7 @@ def ui():
           <button id="iptvDiscoverMoreBtn" class="iptvMore hidden" type="button">Load more</button>
         </section>
         <section id="iptvSourcesPanel" class="iptvPanel hidden">
+          <div class="iptvSubHead"><button class="iptvBackLink" type="button" data-iptv-back><span aria-hidden="true">‹</span> Back</button><span class="iptvSubTitle">Sources</span></div>
           <details id="iptvAddCard" class="iptvAddCard">
             <summary><span class="iptvAddTitle"><span aria-hidden="true">＋</span> Add playlist</span><span class="iptvAddHint">M3U URL or pasted list</span></summary>
             <div class="iptvAddBody">

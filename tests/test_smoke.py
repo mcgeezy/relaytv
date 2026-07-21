@@ -228,7 +228,7 @@ def test_ui_smoke() -> None:
     assert "--${name}=" in jellyfin_playwright
     assert "nestedInteractive" in jellyfin_playwright
     assert "chromium.connect(wsEndpoint)" in iptv_playwright
-    assert "[data-iptv-view=\"favorites\"]" in iptv_playwright
+    assert "[data-iptv-section=\"favorites\"]" in iptv_playwright
     assert "nestedInteractive" in iptv_playwright
     assert "livePanel.position === 'LIVE'" in iptv_playwright
     assert "_applyQueueSnapshot(payload);" in js

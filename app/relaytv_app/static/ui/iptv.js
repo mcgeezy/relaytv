@@ -11,9 +11,13 @@
     lastPlayed: null,
     openMenu: null,
     directoryTimer: 0,
+    // Link-driven navigation: My channels is home; Discover/Sources are pushed
+    // onto this stack and popped by Back.
+    nav: [],
     // Two channel browsers over the same catalog: the curated "My channels"
-    // home (chan) and the full-catalog explorer (disc).
-    chan: { view: 'all', channels: [], offset: 0, hasMore: false, busy: false, searchTimer: 0 },
+    // home (chan, favorites floated into their own section) and the
+    // full-catalog explorer (disc).
+    chan: { channels: [], favorites: [], offset: 0, hasMore: false, busy: false, searchTimer: 0 },
     disc: { channels: [], offset: 0, hasMore: false, busy: false, searchTimer: 0 },
   };
   const GRID = { chan: 'iptvChannelGrid', disc: 'iptvDiscoverGrid' };
@@ -70,10 +74,10 @@
     $('iptvBackBtn')?.focus();
     try {
       await loadSources();
-      // First run (no sources) opens Sources so onboarding — add a playlist or
-      // pick a free provider — is the obvious first step.
-      const initial = state.sources.length ? (state.tab || 'channels') : 'sources';
-      await selectTab(initial);
+      // First run (no sources) opens Sources — add a playlist or pick a free
+      // provider — with Back returning to My channels.
+      if (state.sources.length) { state.nav = []; await selectTab('channels'); }
+      else { state.nav = ['channels']; await selectTab('sources'); }
     } catch (error) {
       setStatus(error.message, true);
     }
@@ -95,44 +99,72 @@
 
   // ---- Channel browsers (chan + disc) ----------------------------------
 
-  function gridQuery(which, reset){
-    const ctx = state[which];
+  function discQuery(reset){
+    const ctx = state.disc;
     const params = new URLSearchParams();
-    if (which === 'chan') {
-      const q = $('iptvSearch')?.value.trim();
-      if (q) params.set('q', q);
-      params.set('sort', 'manual');
-      if (ctx.view === 'favorites') { params.set('favorites', 'true'); params.set('visibility', 'all'); }
-      else params.set('visibility', 'visible');
-    } else {
-      const q = $('iptvDiscoverSearch')?.value.trim();
-      if (q) params.set('q', q);
-      if ($('iptvDiscoverGroup')?.value) params.set('group', $('iptvDiscoverGroup').value);
-      params.set('sort', 'name');
-      params.set('visibility', 'visible');
-    }
+    const q = $('iptvDiscoverSearch')?.value.trim();
+    if (q) params.set('q', q);
+    if ($('iptvDiscoverGroup')?.value) params.set('group', $('iptvDiscoverGroup').value);
+    params.set('sort', 'name');
+    params.set('visibility', 'visible');
     params.set('offset', String(reset ? 0 : ctx.offset));
     params.set('limit', '60');
     return params;
   }
 
   async function loadGrid(which, reset){
-    const ctx = state[which];
+    if (which === 'chan') return loadChan(reset);
+    const ctx = state.disc;
     if (ctx.busy) return;
     ctx.busy = true;
     if (reset) { ctx.offset = 0; ctx.channels = []; }
     setStatus('Loading channels…');
     try {
-      const result = await api(`/iptv/channels?${gridQuery(which, !!reset).toString()}`);
+      const result = await api(`/iptv/channels?${discQuery(!!reset).toString()}`);
       const incoming = Array.isArray(result.items) ? result.items : [];
       ctx.channels = reset ? incoming : ctx.channels.concat(incoming);
       ctx.offset = ctx.channels.length;
       ctx.hasMore = !!result.has_more;
-      if (which === 'disc') updateGroups(result.groups || []);
-      renderGrid(which);
+      updateGroups(result.groups || []);
+      renderDisc();
       setStatus(`${result.total || 0} channel${Number(result.total || 0) === 1 ? '' : 's'}`);
     } catch (error) {
-      renderEmpty(which, error.message);
+      renderEmpty('disc', error.message);
+      setStatus(error.message, true);
+    } finally {
+      ctx.busy = false;
+    }
+  }
+
+  // My channels: favorites are fetched separately so they always float to a
+  // section at the top, and the paginated main list excludes them.
+  async function loadChan(reset){
+    const ctx = state.chan;
+    if (ctx.busy) return;
+    ctx.busy = true;
+    if (reset) { ctx.offset = 0; ctx.channels = []; }
+    setStatus('Loading channels…');
+    try {
+      const q = $('iptvSearch')?.value.trim() || '';
+      const main = new URLSearchParams({visibility:'visible', sort:'manual', offset:String(reset ? 0 : ctx.offset), limit:'60'});
+      if (q) main.set('q', q);
+      const requests = [api(`/iptv/channels?${main.toString()}`)];
+      if (reset) {
+        const fav = new URLSearchParams({favorites:'true', visibility:'all', sort:'manual', offset:'0', limit:'60'});
+        if (q) fav.set('q', q);
+        requests.push(api(`/iptv/channels?${fav.toString()}`));
+      }
+      const [mainRes, favRes] = await Promise.all(requests);
+      if (reset) ctx.favorites = Array.isArray(favRes && favRes.items) ? favRes.items : [];
+      const rawItems = Array.isArray(mainRes.items) ? mainRes.items : [];
+      ctx.offset = (reset ? 0 : ctx.offset) + rawItems.length;
+      const incoming = rawItems.filter((row) => !row.favorite);
+      ctx.channels = reset ? incoming : ctx.channels.concat(incoming);
+      ctx.hasMore = !!mainRes.has_more;
+      renderChan();
+      setStatus(`${mainRes.total || 0} channel${Number(mainRes.total || 0) === 1 ? '' : 's'}`);
+    } catch (error) {
+      renderEmpty('chan', error.message);
       setStatus(error.message, true);
     } finally {
       ctx.busy = false;
@@ -151,11 +183,8 @@
     const grid = $(GRID[which]);
     if (grid) {
       let title = 'No channels';
-      let hint = message || 'No channels match these filters.';
-      if (!message) {
-        if (which === 'chan' && state.chan.view === 'favorites') { title = 'No favorites yet'; hint = 'Tap the star on a channel to keep it here.'; }
-        else if (!state.sources.length) { title = 'No channels yet'; hint = 'Add a playlist or a free provider from the Sources tab.'; }
-      }
+      let hint = message || 'No channels match your search.';
+      if (!message && !state.sources.length) { title = 'No channels yet'; hint = 'Add a playlist or pick a free provider from Sources.'; }
       grid.innerHTML = `<div class="iptvEmpty"><strong>${esc(title)}</strong><span>${esc(hint)}</span></div>`;
     }
     $(MORE[which])?.classList.add('hidden');
@@ -176,8 +205,7 @@
     return !!(state.lastPlayed && state.lastPlayed.source_id === channel.source_id && state.lastPlayed.channel_id === channel.channel_id);
   }
 
-  function channelTile(which, channel, index, total){
-    const manual = which === 'chan' && state.chan.view === 'all';
+  function channelTile(channel, index, total, manual){
     const unavailable = !channel.active || channel.availability === 'unavailable';
     const playing = isPlaying(channel);
     const logo = channel.logo_url ? `<img src="${esc(channel.logo_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '▦';
@@ -208,14 +236,34 @@
     </article>`;
   }
 
-  function renderGrid(which){
+  function renderChan(){
     closeMenu();
-    const ctx = state[which];
-    const grid = $(GRID[which]);
+    const grid = $('iptvChannelGrid');
     if (!grid) return;
-    if (!ctx.channels.length) { renderEmpty(which); return; }
-    grid.innerHTML = ctx.channels.map((channel, index) => channelTile(which, channel, index, ctx.channels.length)).join('');
-    $(MORE[which])?.classList.toggle('hidden', !ctx.hasMore);
+    const favs = state.chan.favorites;
+    const main = state.chan.channels;
+    if (!favs.length && !main.length) { renderEmpty('chan'); return; }
+    let html = '';
+    if (favs.length) {
+      html += '<div class="iptvGroupLabel" data-iptv-section="favorites"><span aria-hidden="true">★</span> Favorites</div>';
+      html += `<div class="iptvChannelGrid">${favs.map((channel, index) => channelTile(channel, index, favs.length, false)).join('')}</div>`;
+    }
+    if (main.length) {
+      if (favs.length) html += '<div class="iptvGroupLabel">All channels</div>';
+      html += `<div class="iptvChannelGrid">${main.map((channel, index) => channelTile(channel, index, main.length, true)).join('')}</div>`;
+    }
+    grid.innerHTML = html;
+    $('iptvMoreBtn')?.classList.toggle('hidden', !state.chan.hasMore);
+  }
+
+  function renderDisc(){
+    closeMenu();
+    const ctx = state.disc;
+    const grid = $('iptvDiscoverGrid');
+    if (!grid) return;
+    if (!ctx.channels.length) { renderEmpty('disc'); return; }
+    grid.innerHTML = ctx.channels.map((channel, index) => channelTile(channel, index, ctx.channels.length, false)).join('');
+    $('iptvDiscoverMoreBtn')?.classList.toggle('hidden', !ctx.hasMore);
   }
 
   function closeMenu(){
@@ -243,7 +291,8 @@
     const ctx = state[which];
     const sourceId = card?.dataset.source || '';
     const channelId = card?.dataset.channel || '';
-    const channel = ctx.channels.find((row) => row.source_id === sourceId && row.channel_id === channelId);
+    const pool = which === 'chan' ? ctx.channels.concat(ctx.favorites) : ctx.channels;
+    const channel = pool.find((row) => row.source_id === sourceId && row.channel_id === channelId);
     if (!channel) return;
     setStatus('Working…');
     try {
@@ -257,10 +306,10 @@
         const next = !channel.favorite;
         await api(`/iptv/channels/${encodeURIComponent(channelId)}`, {method:'PATCH', body:{source_id:sourceId, favorite:next}});
         channel.favorite = next;
-        // On the favorites view a removed favorite must leave; everywhere else
-        // update in place so the reader keeps their scroll spot ("returned to
-        // the added item") and the star gets a brief confirming flash.
-        if (which === 'chan' && state.chan.view === 'favorites' && !next) { await loadGrid('chan', true); }
+        // My channels restructures into its Favorites section on change; on
+        // Discover, update in place so the reader keeps their scroll spot
+        // ("returned to the added item") with a brief confirming flash.
+        if (which === 'chan') { await loadGrid('chan', true); }
         else { updateFavoriteTile(card, channel, next); }
         return;
       }
@@ -402,21 +451,17 @@
   async function selectTab(tab){
     state.tab = tab;
     closeMenu();
-    document.querySelectorAll('[data-iptv-tab]').forEach((button) => { const active = button.dataset.iptvTab === tab; button.classList.toggle('active', active); button.setAttribute('aria-current', active ? 'page' : 'false'); });
     $('iptvBrowsePanel')?.classList.toggle('hidden', tab !== 'channels');
     $('iptvDiscoverPanel')?.classList.toggle('hidden', tab !== 'discover');
     $('iptvSourcesPanel')?.classList.toggle('hidden', tab !== 'sources');
+    $('iptvShell')?.scrollTo({top:0});
     if (tab === 'channels') await loadGrid('chan', true);
     else if (tab === 'discover') await loadGrid('disc', true);
     else { await loadSources(); loadDirectory(); }
   }
 
-  function selectView(view){
-    if (state.chan.view === view) return;
-    state.chan.view = view;
-    document.querySelectorAll('[data-iptv-view]').forEach((button) => { const active = button.dataset.iptvView === view; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active ? 'true' : 'false'); });
-    loadGrid('chan', true);
-  }
+  function goTo(tab){ if (tab === state.tab) return; state.nav.push(state.tab); selectTab(tab); }
+  function goBack(){ selectTab(state.nav.pop() || 'channels'); }
 
   async function applySetting(){
     const enabled = !!$('setIptvEnabled')?.checked;
@@ -456,9 +501,8 @@
     $('iptvOpenBtn')?.addEventListener('click', openShell);
     $('iptvBackBtn')?.addEventListener('click', closeShell);
     $('setIptvApplyBtn')?.addEventListener('click', applySetting);
-    document.querySelectorAll('[data-iptv-tab]').forEach((button) => button.addEventListener('click', () => selectTab(button.dataset.iptvTab)));
-    document.querySelectorAll('[data-iptv-goto]').forEach((button) => button.addEventListener('click', () => selectTab(button.dataset.iptvGoto)));
-    document.querySelectorAll('[data-iptv-view]').forEach((button) => button.addEventListener('click', () => selectView(button.dataset.iptvView)));
+    document.querySelectorAll('[data-iptv-goto]').forEach((button) => button.addEventListener('click', () => goTo(button.dataset.iptvGoto)));
+    document.querySelectorAll('[data-iptv-back]').forEach((button) => button.addEventListener('click', goBack));
     $('iptvDiscoverRefresh')?.addEventListener('click', () => loadGrid('disc', true));
     $('iptvDiscoverGroup')?.addEventListener('change', () => loadGrid('disc', true));
     $('iptvRemoveUnavailableBtn')?.addEventListener('click', removeUnavailable);
@@ -474,7 +518,7 @@
     $('iptvSourceList')?.addEventListener('click', (event) => { const button = event.target.closest('[data-source-action]'); if (button) sourceAction(button.closest('.iptvSourceCard'), button.dataset.sourceAction); });
     $('iptvDirectoryGrid')?.addEventListener('click', (event) => { const button = event.target.closest('[data-directory-add]'); if (button) addDirectory(button.closest('.iptvDirectoryCard')); });
     document.addEventListener('click', (event) => { if (state.openMenu && !event.target.closest('.iptvMenu') && !event.target.closest('[data-action="menu"]')) closeMenu(); });
-    document.addEventListener('keydown', (event) => { if (state.visible && event.key === 'Escape') { event.preventDefault(); if (state.openMenu) closeMenu(); else closeShell(); } });
+    document.addEventListener('keydown', (event) => { if (state.visible && event.key === 'Escape') { event.preventDefault(); if (state.openMenu) closeMenu(); else if (state.nav.length) goBack(); else closeShell(); } });
     api('/settings').then((settings) => { const enabled = !!settings.iptv_enabled; if ($('setIptvEnabled')) $('setIptvEnabled').checked = enabled; window.iptvUpdateLaunch({iptv_enabled:enabled}); }).catch(() => {});
   }
 
