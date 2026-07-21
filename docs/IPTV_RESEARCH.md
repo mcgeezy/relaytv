@@ -10,8 +10,18 @@ Research date: 2026-07-20
 - [x] M1 — SQLite catalog, M3U ingestion, source discovery, and catalog APIs
 - [x] M2 — favorites, visibility, manual ordering, availability, and playback
 - [x] M3 — responsive IPTV browse/manage UI and browser smoke coverage
-- [ ] M4 — container rebuild, end-to-end verification, and operator docs
+- [x] M4 — container rebuild, end-to-end verification, and operator docs
 - [ ] Later — XMLTV now/next guide data after direct-catalog runtime soak
+
+Implementation record:
+
+- M0: `d02f079` (`docs: add IPTV research and milestone roadmap`)
+- M1: `be90fe4` (`feat: add IPTV source catalog`)
+- M2–M3: `1e07f63` (`feat: add IPTV channel browsing and playback`)
+- M4: rebuilt the Compose service, verified the live APIs with a temporary
+  three-channel catalog, and passed the IPTV Playwright smoke at 390×844 dark
+  and 1440×1000 light without viewport overflow or nested controls. The full
+  repository gate passed with 446 tests.
 
 ## Recommendation
 

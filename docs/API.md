@@ -154,6 +154,41 @@ Current `/ui/events` event types:
 
 Clients should treat `status` as the authoritative full-state refresh, use `playback` for fast-path UI updates, and treat `queue` / `jellyfin` as immediate refresh hints rather than a standalone source of truth.
 
+## IPTV catalog and playback
+
+IPTV is disabled by default. Source and directory reads remain available for
+management, while channel browse/check/play calls return `503` until IPTV is
+enabled. Catalog responses expose opaque IDs and metadata, never playlist or
+stream URLs or request headers.
+
+- `GET /integrations/iptv/status`
+- `GET /iptv/directory?q=` and `POST /iptv/directory/{preset_id}/add`
+- `GET /iptv/sources`
+- `POST /iptv/sources`
+  - body: `{"name", "location"?, "content"?, "refresh_interval_sec"?, "refresh_now"?}`
+  - supply either an HTTP/HTTPS `location` or pasted M3U `content`
+- `PATCH /iptv/sources/{source_id}` and `DELETE /iptv/sources/{source_id}`
+- `POST /iptv/sources/{source_id}/refresh`
+- `GET /iptv/channels`
+  - filters: `source_id`, `q`, `group`, `visibility`, `favorites`,
+    `availability`, `include_unavailable`, `sort`, `offset`, `limit`
+  - sorts: `manual`, `playlist`, `name`, `group`
+- `PATCH /iptv/channels/{channel_id}`
+  - body: `{"source_id", "favorite"?, "hidden"?}`
+- `POST /iptv/channels/visibility`
+  - body: `{"source_id", "group", "hidden"}`
+- `POST /iptv/channels/reorder`
+  - body: `{"source_id", "channel_id", "before_channel_id"?}` or
+    `{"source_id", "channel_id", "after_channel_id"?}`
+- `POST /iptv/channels/remove-unavailable`
+  - body: `{"source_id"?}`; an empty source selects all sources
+- `POST /iptv/channels/{channel_id}/check`
+  - body: `{"source_id"}`
+- `POST /iptv/channels/{channel_id}/action`
+  - body: `{"source_id", "command": "play_now"|"play_next"|"play_last"}`
+
+See `IPTV_OPERATIONS.md` for source, availability, and credential behavior.
+
 ## Playback and session control
 
 Primary play-family endpoints:

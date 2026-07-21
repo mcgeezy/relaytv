@@ -128,7 +128,8 @@ API directly to the public internet.
 | --- | --- |
 | [Installation](docs/INSTALL.md) | [HTTP API](docs/API.md) |
 | [Native runtime operations](docs/NATIVE_RUNTIME_OPERATIONS.md) | [Jellyfin/Emby operations](docs/JELLYFIN_OPERATIONS.md) |
-| [Architecture](docs/ARCHITECTURE.md) | [Release process](docs/RELEASE.md) |
+| [IPTV operations](docs/IPTV_OPERATIONS.md) | [Architecture](docs/ARCHITECTURE.md) |
+| [Release process](docs/RELEASE.md) | |
 
 The [documentation map](docs/README.md) links the remaining runbooks and
 machine-checked inventories.

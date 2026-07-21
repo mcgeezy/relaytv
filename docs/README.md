@@ -11,6 +11,8 @@ release branch.
   open follow-ups
 - `JELLYFIN_OPERATIONS.md`: Jellyfin/Emby runtime config, verification,
   troubleshooting
+- `IPTV_OPERATIONS.md`: M3U sources, free-provider discovery, favorites,
+  availability, credential handling, and troubleshooting
 - `POSTLIVE_REPLAY.md`: playing YouTube replays that are still processing
   (why mpv can't, how the relay and its seek upgrade do)
 - `NATIVE_RUNTIME_OPERATIONS.md`: runtime operations, readiness checks,
