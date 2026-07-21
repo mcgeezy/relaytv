@@ -545,7 +545,9 @@ def channel_action(source_id: str, channel_id: str, command: str) -> dict[str, o
                 clear_queue=False,
                 mode="iptv",
             )
-            store().mark_channel_check(source_id, channel_id, available=True)
+            # Launching mpv is not proof the stream plays; leave the recorded
+            # availability to real probes (scheduled + the explicit Check action)
+            # so a dead or geo-blocked channel keeps its warning.
             return {"ok": True, "action": action, "now_playing": now}
         if action == "play_next":
             qlen, _snapshot = playback_service.queue_item_next(item)

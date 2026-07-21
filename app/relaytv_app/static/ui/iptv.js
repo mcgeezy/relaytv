@@ -161,11 +161,13 @@
     setStatus('Loading channels…');
     try {
       const q = $('iptvSearch')?.value.trim() || '';
-      const main = new URLSearchParams({added_only:'true', visibility:'visible', sort:'manual', offset:String(reset ? 0 : ctx.offset), limit:'60'});
+      // visibility=all so added channels that go unavailable or whose source
+      // dropped them still appear in My Channels to retry or remove.
+      const main = new URLSearchParams({added_only:'true', visibility:'all', sort:'manual', offset:String(reset ? 0 : ctx.offset), limit:'60'});
       if (q) main.set('q', q);
       const requests = [api(`/iptv/channels?${main.toString()}`)];
       if (reset) {
-        const fav = new URLSearchParams({added_only:'true', favorites:'true', visibility:'visible', sort:'manual', offset:'0', limit:'200'});
+        const fav = new URLSearchParams({added_only:'true', favorites:'true', visibility:'all', sort:'manual', offset:'0', limit:'200'});
         if (q) fav.set('q', q);
         requests.push(api(`/iptv/channels?${fav.toString()}`));
       }

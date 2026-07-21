@@ -3064,6 +3064,39 @@ def test_preserve_current_marks_interrupt_queue_entry(monkeypatch: pytest.Monkey
     assert persisted[-1]['queue'] == [preserved]
 
 
+def test_preserve_current_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    secret_url = 'https://cdn.example/live/abc123?token=SECRET-CRED'
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 41.0 if prop == 'time-pos' else 0.0)
+    monkeypatch.setattr(routes.player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'url': secret_url,
+        'title': 'Al Jazeera English',
+        'provider': 'iptv',
+        'iptv_source_id': 'src-1',
+        'iptv_channel_id': 'chan-9',
+        'http_headers': {'User-Agent': 'x'},
+        '_resolved_stream': secret_url,
+    }, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+
+    preserved = routes._preserve_current_to_queue_front()
+
+    assert preserved is not None
+    entry = persisted[-1]['queue'][0]
+    # Only the opaque catalog reference is persisted — never the credential URL.
+    assert entry['url'] == 'https://iptv.invalid/src-1/chan-9'
+    assert entry['iptv_source_id'] == 'src-1'
+    assert entry['iptv_channel_id'] == 'chan-9'
+    assert '_resolved_stream' not in entry and '_resolved_source_url' not in entry
+    assert entry['resume_pos'] == 41.0
+    assert entry['_relaytv_interrupt_preserved'] is True
+    assert 'SECRET-CRED' not in json.dumps(persisted[-1])
+
+
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
     persisted: list[dict] = []
     original_resume = {

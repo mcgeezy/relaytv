@@ -249,9 +249,15 @@ def preserve_current_to_queue_front() -> dict | None:
     if not isinstance(url, str) or not url.strip():
         return None
 
+    iptv_sid = str(now.get("iptv_source_id") or "").strip()
+    iptv_cid = str(now.get("iptv_channel_id") or "").strip()
+    is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" and bool(iptv_sid) and bool(iptv_cid)
+
     preserved = {
-        "url": url.strip(),
-        "title": now.get("title") or url.strip(),
+        # IPTV keeps only the opaque catalog reference; the credential-bearing
+        # stream URL and headers are re-resolved from the catalog at replay time.
+        "url": f"https://iptv.invalid/{iptv_sid}/{iptv_cid}" if is_iptv else url.strip(),
+        "title": now.get("title") or ("IPTV channel" if is_iptv else url.strip()),
         "provider": now.get("provider"),
         "_relaytv_interrupt_preserved": True,
         "_relaytv_interrupt_preserved_at": int(time.time()),
@@ -268,21 +274,28 @@ def preserve_current_to_queue_front() -> dict | None:
         preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
     if isinstance(now.get("history_id"), str) and now.get("history_id"):
         preserved["history_id"] = now.get("history_id")
-    resolved_stream = str(now.get("_resolved_stream") or "").strip()
-    if not resolved_stream:
-        now_stream = str(now.get("stream") or "").strip()
-        if now_stream and now_stream != url.strip():
-            resolved_stream = now_stream
-    if resolved_stream:
-        preserved["_resolved_source_url"] = url.strip()
-        preserved["_resolved_stream"] = resolved_stream
-        resolved_audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip()
-        if resolved_audio:
-            preserved["_resolved_audio"] = resolved_audio
-        try:
-            preserved["_resolved_at"] = float(now.get("_resolved_at") or time.time())
-        except Exception:
-            preserved["_resolved_at"] = time.time()
+    if is_iptv:
+        # Carry the opaque references so replay re-resolves the stream + headers.
+        preserved["iptv_source_id"] = iptv_sid
+        preserved["iptv_channel_id"] = iptv_cid
+    else:
+        # Cache the resolved stream for non-IPTV so resume avoids re-resolving.
+        # (Skipped for IPTV so no credential-bearing stream is stored on disk.)
+        resolved_stream = str(now.get("_resolved_stream") or "").strip()
+        if not resolved_stream:
+            now_stream = str(now.get("stream") or "").strip()
+            if now_stream and now_stream != url.strip():
+                resolved_stream = now_stream
+        if resolved_stream:
+            preserved["_resolved_source_url"] = url.strip()
+            preserved["_resolved_stream"] = resolved_stream
+            resolved_audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip()
+            if resolved_audio:
+                preserved["_resolved_audio"] = resolved_audio
+            try:
+                preserved["_resolved_at"] = float(now.get("_resolved_at") or time.time())
+            except Exception:
+                preserved["_resolved_at"] = time.time()
     if pos_f is not None:
         preserved["resume_pos"] = pos_f
     player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
