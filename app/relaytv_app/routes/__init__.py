@@ -3646,47 +3646,57 @@ def ui():
         </header>
         <nav class="iptvTabs" aria-label="IPTV sections">
           <button class="active" data-iptv-tab="channels">Channels</button>
-          <button data-iptv-tab="sources">Sources</button>
           <button data-iptv-tab="discover">Discover</button>
+          <button data-iptv-tab="sources">Sources</button>
         </nav>
         <section id="iptvBrowsePanel" class="iptvPanel">
-          <div class="iptvToolbar">
+          <div class="iptvPageHead">
             <div class="iptvSearchRow">
-              <input id="iptvSearch" class="input" type="search" placeholder="Search channels or groups…" aria-label="Search IPTV channels" />
+              <input id="iptvSearch" class="input" type="search" placeholder="Search your channels…" aria-label="Search your IPTV channels" />
             </div>
-            <div class="iptvControls">
-              <div class="iptvSeg" role="group" aria-label="Channel view">
-                <button class="active" data-iptv-view="all" aria-pressed="true">All</button>
-                <button data-iptv-view="favorites" aria-pressed="false">Favorites</button>
-                <button data-iptv-view="hidden" aria-pressed="false">Hidden</button>
-              </div>
-              <select id="iptvSourceFilter" class="input" aria-label="Filter by source"><option value="">All sources</option></select>
-              <select id="iptvGroupFilter" class="input" aria-label="Filter by group"><option value="">All groups</option></select>
-              <select id="iptvSort" class="input" aria-label="Sort channels"><option value="manual">My order</option><option value="name">Name</option><option value="group">Group</option><option value="playlist">Playlist order</option></select>
-              <span class="iptvSpacer"></span>
-              <label class="iptvCheck" id="iptvUnavailableWrap"><input id="iptvUnavailable" type="checkbox" /> Include unavailable</label>
-              <button id="iptvReloadBtn" class="iptvGhostBtn" type="button">↻ Refresh</button>
+            <div class="iptvSeg" role="group" aria-label="Channel view">
+              <button class="active" data-iptv-view="all" aria-pressed="true">Channels</button>
+              <button data-iptv-view="favorites" aria-pressed="false">Favorite</button>
             </div>
+            <button class="iptvHeadBtn" type="button" data-iptv-goto="discover"><span aria-hidden="true">＋</span> Discover</button>
           </div>
           <div id="iptvChannelGrid" class="iptvChannelGrid" aria-live="polite"></div>
           <button id="iptvMoreBtn" class="iptvMore hidden" type="button">Load more</button>
-        </section>
-        <section id="iptvSourcesPanel" class="iptvPanel hidden">
-          <div class="iptvSourceForm">
-            <h2>Add playlist</h2>
-            <div class="iptvFormGrid">
-              <input id="iptvSourceName" class="input" maxlength="120" placeholder="Source name" />
-              <input id="iptvSourceUrl" class="input" type="url" placeholder="https://example.com/channels.m3u" />
-            </div>
-            <details><summary>Or paste an M3U playlist</summary><textarea id="iptvSourceContent" class="input" rows="5" placeholder="#EXTM3U…"></textarea></details>
-            <div class="iptvFormActions"><button id="iptvAddSourceBtn" class="good" type="button">Add and refresh</button><span id="iptvSourceMsg" aria-live="polite"></span></div>
-          </div>
-          <div class="iptvSourcesTools"><button id="iptvRemoveUnavailableBtn" class="iptvGhostBtn danger" type="button">Remove unavailable channels</button></div>
-          <div id="iptvSourceList" class="iptvSourceList"></div>
+          <div class="iptvListFoot"><button class="iptvLinkBtn" type="button" data-iptv-goto="discover">Discover more channels →</button></div>
         </section>
         <section id="iptvDiscoverPanel" class="iptvPanel hidden">
-          <div class="iptvDiscoverHead"><div><h2>Free provider directory</h2><p>Nothing is fetched until you choose Add. Availability and regional restrictions vary.</p></div><input id="iptvDirectorySearch" class="input" type="search" placeholder="Search country, language, or category…" /></div>
-          <div id="iptvDirectoryGrid" class="iptvDirectoryGrid"></div>
+          <div class="iptvPageHead">
+            <div class="iptvSearchRow">
+              <input id="iptvDiscoverSearch" class="input" type="search" placeholder="Search all channels…" aria-label="Search discoverable channels" />
+            </div>
+            <select id="iptvDiscoverGroup" class="input" aria-label="Filter by group"><option value="">All groups</option></select>
+            <button class="iptvHeadBtn" type="button" data-iptv-goto="sources">Sources</button>
+            <button id="iptvDiscoverRefresh" class="iptvGhostBtn" type="button" title="Refresh channels from your sources">↻ <span>Refresh</span></button>
+          </div>
+          <div id="iptvDiscoverGrid" class="iptvChannelGrid" aria-live="polite"></div>
+          <button id="iptvDiscoverMoreBtn" class="iptvMore hidden" type="button">Load more</button>
+        </section>
+        <section id="iptvSourcesPanel" class="iptvPanel hidden">
+          <details id="iptvAddCard" class="iptvAddCard">
+            <summary><span class="iptvAddTitle"><span aria-hidden="true">＋</span> Add playlist</span><span class="iptvAddHint">M3U URL or pasted list</span></summary>
+            <div class="iptvAddBody">
+              <div class="iptvFormGrid">
+                <input id="iptvSourceName" class="input" maxlength="120" placeholder="Source name" />
+                <input id="iptvSourceUrl" class="input" type="url" placeholder="https://example.com/channels.m3u" />
+              </div>
+              <details><summary>Or paste an M3U playlist</summary><textarea id="iptvSourceContent" class="input" rows="5" placeholder="#EXTM3U…"></textarea></details>
+              <div class="iptvFormActions"><button id="iptvAddSourceBtn" class="good" type="button">Add and refresh</button><span id="iptvSourceMsg" aria-live="polite"></span></div>
+            </div>
+          </details>
+          <div class="iptvSourcesSection">
+            <div class="iptvSectionHead"><h2>Your sources</h2><button id="iptvRemoveUnavailableBtn" class="iptvGhostBtn danger" type="button">Remove unavailable</button></div>
+            <div id="iptvSourceList" class="iptvSourceList"></div>
+          </div>
+          <div class="iptvSourcesSection">
+            <div class="iptvSectionHead"><h2>Free provider directory</h2><input id="iptvDirectorySearch" class="input" type="search" placeholder="Search country, language, or category…" aria-label="Search provider directory" /></div>
+            <p class="iptvSectionNote">Nothing is fetched until you choose Add. Availability and regional restrictions vary.</p>
+            <div id="iptvDirectoryGrid" class="iptvDirectoryGrid"></div>
+          </div>
         </section>
       </div>
     </div>

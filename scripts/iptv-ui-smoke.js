@@ -91,24 +91,30 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
 
     await page.locator('[data-iptv-view="all"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 3);
-    const hideCard = page.locator('.iptvChannel').nth(1);
-    await hideCard.locator('.iptvKebab').click();
-    await hideCard.locator('[data-action="hidden"]').click();
-    await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 2);
-    await page.locator('[data-iptv-view="hidden"]').click();
-    await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 1);
-    check((await page.locator('.iptvChannel .iptvChannelTitle').count()) === 1, `${scenario.name}: hidden view did not persist selection`);
-    await page.locator('[data-iptv-view="all"]').click();
-    await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 2);
 
+    // The overflow menu opens above neighbouring tiles and holds queue actions.
+    const menuCard = page.locator('.iptvChannel').nth(1);
+    await menuCard.locator('.iptvKebab').click();
+    await menuCard.locator('.iptvMenu:not(.hidden)').waitFor();
+    check(await menuCard.locator('[data-action="play_next"]').isVisible(), `${scenario.name}: overflow menu missing queue actions`);
+    await page.keyboard.press('Escape');
+
+    // Discover browses the full catalog pulled from your sources.
     await page.locator('[data-iptv-tab="discover"]').click();
-    await page.locator('#iptvDirectorySearch').fill('news');
-    await page.waitForFunction(() => document.querySelectorAll('.iptvDirectoryCard').length === 1);
-    check((await page.locator('.iptvDirectoryCard h3').textContent()).includes('News'), `${scenario.name}: provider search mismatch`);
+    await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 3);
+    await page.locator('#iptvDiscoverSearch').fill('Music');
+    await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 1);
+    check((await page.locator('#iptvDiscoverGrid .iptvChannelTitle').textContent()).includes('Music'), `${scenario.name}: discover search mismatch`);
+    await page.locator('#iptvDiscoverSearch').fill('');
+    await page.waitForFunction(() => document.querySelectorAll('#iptvDiscoverGrid .iptvChannel').length === 3);
 
+    // Sources hosts the source manager and the free provider directory.
     await page.locator('[data-iptv-tab="sources"]').click();
     await page.waitForFunction(() => document.querySelectorAll('.iptvSourceCard').length >= 1);
     check((await page.locator('.iptvSourceCard h3').allTextContents()).includes('RelayTV UI smoke'), `${scenario.name}: source manager missing smoke source`);
+    await page.locator('#iptvDirectorySearch').fill('news');
+    await page.waitForFunction(() => document.querySelectorAll('.iptvDirectoryCard').length === 1);
+    check((await page.locator('.iptvDirectoryCard h3').textContent()).includes('News'), `${scenario.name}: provider search mismatch`);
 
     const layout = await page.evaluate(() => ({
       bodyOverflow: document.body.scrollWidth > document.body.clientWidth,
