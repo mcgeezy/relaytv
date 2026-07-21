@@ -70,6 +70,7 @@ def test_public_media_item_uses_opaque_ids_for_iptv() -> None:
     item = {
         "provider": "iptv",
         "title": "Local News",
+        "is_live": True,
         "url": "https://stream.example/private/customer/token/live.m3u8",
         "input": "https://stream.example/private/customer/token/live.m3u8",
         "stream": "https://stream.example/private/customer/token/live.m3u8",
@@ -81,6 +82,7 @@ def test_public_media_item_uses_opaque_ids_for_iptv() -> None:
     assert public_media_item(item) == {
         "provider": "iptv",
         "title": "Local News",
+        "is_live": True,
         "iptv_source_id": "source-1",
         "iptv_channel_id": "channel-1",
     }

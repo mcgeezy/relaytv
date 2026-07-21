@@ -26,6 +26,37 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
+    const livePanel = await page.evaluate(() => {
+      const liveState = {
+        state: 'playing',
+        playing: true,
+        paused: false,
+        has_now_playing: true,
+        now_playing: {title: 'Smoke Live News', provider: 'iptv', is_live: true},
+        position: 0,
+        duration: 30,
+        queue: [],
+        queue_length: 0,
+      };
+      renderStatus(liveState);
+      renderStatus({...liveState, position: 29.8, duration: 30.1});
+      const card = document.querySelector('#nowTopCard');
+      const progress = document.querySelector('#progress');
+      const tag = document.querySelector('#nowStateTag');
+      return {
+        cardLive: card.classList.contains('isLive'),
+        position: document.querySelector('#pos').textContent,
+        duration: document.querySelector('#dur').textContent,
+        tag: tag.textContent,
+        tagVisible: !tag.classList.contains('hidden'),
+        progressDisplay: getComputedStyle(progress).display,
+        seekDisabled: progress.getAttribute('aria-disabled'),
+      };
+    });
+    check(livePanel.cardLive, `${scenario.name}: now-playing card did not enter live mode`);
+    check(livePanel.position === 'LIVE' && livePanel.duration === 'Streaming', `${scenario.name}: live time row is unstable`);
+    check(livePanel.tag === 'Live' && livePanel.tagVisible, `${scenario.name}: live state tag is missing`);
+    check(livePanel.progressDisplay === 'none' && livePanel.seekDisabled === 'true', `${scenario.name}: live seek control is still active`);
     await page.evaluate(async () => {
       const catalog = await fetch('/iptv/channels?visibility=all&limit=500').then((response) => response.json());
       for (const channel of (catalog.items || [])) {
@@ -89,7 +120,7 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     check(errors.length === 0, `${scenario.name}: browser errors: ${errors.join('; ')}`);
 
     if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/iptv-${scenario.name}.png`, fullPage: true });
-    return { name: scenario.name, initialNames, layout };
+    return { name: scenario.name, initialNames, livePanel, layout };
   } finally {
     await context.close();
   }

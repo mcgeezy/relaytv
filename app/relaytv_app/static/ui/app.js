@@ -713,6 +713,15 @@ function _isNowPlayingJellyfin(np){
   return _looksLikeJellyfinMediaUrl(String(np.url || ''));
 }
 
+function _isNowPlayingLive(np){
+  if (!np || typeof np !== 'object') return false;
+  const provider = String(np.provider || '').trim().toLowerCase();
+  const liveStatus = String(np.live_status || '').trim().toLowerCase();
+  if (provider === 'iptv') return true;
+  if (np.is_live === true || np.live === true) return true;
+  return liveStatus === 'is_live' || liveStatus === 'live';
+}
+
 function _labelNowAudioLanguage(np){
   const lang = String(
     (np && (np.jellyfin_audio_language || np.audio_language)) || ''
@@ -881,6 +890,7 @@ function _updatePreviewTime(pct){
   // Show preview time while scrubbing
   const posEl = document.getElementById('pos');
   if (!posEl || !__lastStatus) return;
+  if (_isNowPlayingLive(__lastStatus.now_playing)) return;
   const dur = __lastStatus.duration;
   if (dur == null || isNaN(dur) || dur <= 0) return;
   const sec = pct * dur;
@@ -897,6 +907,7 @@ function _pctFromClientX(clientX){
 
 async function _commitSeekFromPct(pct){
   if (!__lastStatus || !__lastStatus.playing) return;
+  if (_isNowPlayingLive(__lastStatus.now_playing)) return;
   const dur = __lastStatus.duration;
   if (dur == null || isNaN(dur) || dur <= 0) return;
   const sec = pct * dur;
@@ -913,6 +924,7 @@ function initScrubber(){
 
   bar.addEventListener('pointerdown', (e) => {
     if (!__lastStatus || !__lastStatus.playing) return;
+    if (_isNowPlayingLive(__lastStatus.now_playing)) return;
     const dur = __lastStatus.duration;
     if (dur == null || isNaN(dur) || dur <= 0) return;
     if (typeof e.preventDefault === 'function') e.preventDefault();
@@ -1075,21 +1087,35 @@ function renderStatus(st) {
   const nowCardEl = document.getElementById('nowTopCard');
   const paused = !!st.paused && hasNow;
   const activelyPlaying = !!st.playing && !st.paused && hasNow;
+  const liveNow = !!hasNow && _isNowPlayingLive(np);
   if (nowCardEl){
     nowCardEl.classList.toggle('isIdle', !hasNow);
     nowCardEl.classList.toggle('isPaused', paused);
+    nowCardEl.classList.toggle('isLive', liveNow);
   }
   const stateTag = document.getElementById('nowStateTag');
-  if (stateTag) stateTag.classList.toggle('hidden', !paused);
+  if (stateTag) {
+    stateTag.textContent = paused ? 'Paused' : 'Live';
+    stateTag.classList.toggle('hidden', !paused && !liveNow);
+    stateTag.classList.toggle('live', liveNow && !paused);
+  }
   const stateDot = document.getElementById('nowStateDot');
-  if (stateDot) stateDot.classList.toggle('playing', activelyPlaying);
+  if (stateDot) {
+    stateDot.classList.toggle('playing', activelyPlaying);
+    stateDot.classList.toggle('live', liveNow && activelyPlaying);
+  }
 
-  const posTxt = fmtTime(st.position);
-  const durTxt = fmtTime(st.duration);
+  const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);
+  const durTxt = liveNow ? (paused ? 'Paused' : 'Streaming') : fmtTime(st.duration);
 
   // Only overwrite the pos readout if not scrubbing
   if (!__scrubbing) document.getElementById('pos').textContent = posTxt;
   document.getElementById('dur').textContent = durTxt;
+  const progressEl = document.getElementById('progress');
+  if (progressEl) {
+    progressEl.title = liveNow ? 'Live stream' : 'Drag to seek (or tap)';
+    progressEl.setAttribute('aria-disabled', liveNow ? 'true' : 'false');
+  }
 
   _renderRemoteVolume(st.volume);
   const mute = !!st.mute;
@@ -1107,7 +1133,9 @@ function renderStatus(st) {
   if (qClear) qClear.classList.toggle('hidden', !(Number(st.queue_length) > 0));
 
   // progress bar fill
-  if (!__scrubbing && st.position != null && st.duration != null && st.duration > 0) {
+  if (!__scrubbing && liveNow) {
+    _setProgressFill(0);
+  } else if (!__scrubbing && st.position != null && st.duration != null && st.duration > 0) {
     _setProgressFill(st.position / st.duration);
   } else if (!__scrubbing && (!st.playing || st.duration == null || st.duration <= 0)) {
     _setProgressFill(0);

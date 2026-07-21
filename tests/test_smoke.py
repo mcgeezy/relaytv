@@ -130,6 +130,9 @@ def test_ui_smoke() -> None:
     assert 'class="nMetaRow"' in response.text
     assert 'id="nHeroArt"' in response.text
     assert 'id="nowStateDot"' in response.text
+    assert 'function _isNowPlayingLive(np)' in js
+    assert "const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);" in js
+    assert ".nowCard.isLive .progress{ display: none; }" in css
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
     assert 'role="tablist"' in response.text
@@ -227,6 +230,7 @@ def test_ui_smoke() -> None:
     assert "chromium.connect(wsEndpoint)" in iptv_playwright
     assert "[data-iptv-view=\"favorites\"]" in iptv_playwright
     assert "nestedInteractive" in iptv_playwright
+    assert "livePanel.position === 'LIVE'" in iptv_playwright
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js
