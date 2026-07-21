@@ -45,9 +45,10 @@ selected source, or in every source when no source filter is selected.
 
 An explicit **Check** performs a bounded HTTP GET. A channel transitions to
 `suspect` after a failed check and to `unavailable` after three failures. A
-later successful check or successful play restores it immediately. The
-background worker checks favorites in small sequential batches; it does not
-probe an entire imported catalog.
+later successful check restores it immediately; playing a channel does not
+change its recorded availability, because launching the player is not proof the
+stream loads. The background worker checks favorites in small sequential
+batches; it does not probe an entire imported catalog.
 
 Source refreshes run at their configured interval with per-source jitter.
 Failed sources back off to twice that interval. A missing channel becomes

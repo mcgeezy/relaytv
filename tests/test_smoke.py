@@ -3097,6 +3097,35 @@ def test_preserve_current_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPat
     assert 'SECRET-CRED' not in json.dumps(persisted[-1])
 
 
+def test_history_entry_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict] = []
+    secret_url = 'https://cdn.example/live/abc123?token=SECRET-CRED'
+
+    monkeypatch.setattr(routes.state, 'history_contains', lambda hid: False)
+    monkeypatch.setattr(routes.state, 'history_add', lambda entry: captured.append(entry))
+
+    routes.player._add_history_entry({
+        'url': secret_url,
+        'title': 'Al Jazeera English',
+        'provider': 'iptv',
+        'mode': 'iptv',
+        'iptv_source_id': 'src-1',
+        'iptv_channel_id': 'chan-9',
+        '_resolved_source_url': secret_url,
+        '_resolved_stream': secret_url,
+    })
+
+    assert len(captured) == 1
+    entry = captured[0]
+    assert entry['iptv_source_id'] == 'src-1'
+    assert entry['iptv_channel_id'] == 'chan-9'
+    assert '_resolved_stream' not in entry
+    # What actually hits history.json must carry only the opaque reference.
+    persistable = routes.state._persistable_history_item(entry)
+    assert persistable['url'] == 'https://iptv.invalid/src-1/chan-9'
+    assert 'SECRET-CRED' not in json.dumps(persistable)
+
+
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
     persisted: list[dict] = []
     original_resume = {

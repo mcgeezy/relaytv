@@ -4769,7 +4769,17 @@ def _add_history_entry(now: dict) -> None:
     for key in ("channel", "jellyfin_item_id", "jellyfin_media_source_id", "thumbnail", "thumbnail_local"):
         if now.get(key):
             entry[key] = now[key]
-    if now.get("_resolved_source_url") == now.get("url") and now.get("_resolved_stream"):
+    iptv_sid = str(now.get("iptv_source_id") or "").strip()
+    iptv_cid = str(now.get("iptv_channel_id") or "").strip()
+    is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" and bool(iptv_sid) and bool(iptv_cid)
+    if is_iptv:
+        # Carry opaque catalog references so persistence redacts the credential
+        # stream URL and history replay re-resolves the stream and headers.
+        entry["iptv_source_id"] = iptv_sid
+        entry["iptv_channel_id"] = iptv_cid
+    elif now.get("_resolved_source_url") == now.get("url") and now.get("_resolved_stream"):
+        # Cache the resolved stream for non-IPTV replay. Skipped for IPTV so no
+        # credential-bearing stream is stored in history.
         entry["_resolved_source_url"] = now.get("_resolved_source_url")
         entry["_resolved_stream"] = now.get("_resolved_stream")
         entry["_resolved_audio"] = now.get("_resolved_audio") or ""
