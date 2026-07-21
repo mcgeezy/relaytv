@@ -130,6 +130,8 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_IMAGE_REVISION` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_SOURCE` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_VERSION` | `routes/app_info.py` | - | static env |
+| `RELAYTV_IPTV_CHECK_BATCH` | `integrations/iptv_service.py` | - | static env |
+| `RELAYTV_IPTV_CHECK_INTERVAL_SEC` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_DB_PATH` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_ENABLED` | `config.py`<br>`integrations/iptv_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_IPTV_FETCH_TIMEOUT_SEC` | `integrations/iptv_service.py` | - | static env |

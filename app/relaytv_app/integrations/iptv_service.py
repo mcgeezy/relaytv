@@ -455,9 +455,12 @@ def refresh_source(source_id: str) -> dict[str, object]:
     except HTTPException:
         raise
     except Exception as exc:
-        message = str(exc or "IPTV source refresh failed")[:500]
+        if isinstance(exc, ValueError):
+            message = str(exc or "invalid IPTV playlist")[:500]
+        else:
+            message = f"playlist refresh failed ({type(exc).__name__})"
         store().mark_refresh_error(source_id, message)
-        logger.warning("iptv_refresh_failed source_id=%s error=%s", source_id, message)
+        logger.warning("iptv_refresh_failed source_id=%s error_type=%s", source_id, type(exc).__name__)
         raise HTTPException(status_code=502, detail=message) from exc
     finally:
         source_lock.release()
@@ -517,6 +520,19 @@ def _playable_item(source_id: str, channel_id: str) -> dict[str, object]:
     }
 
 
+def resolve_queue_item(item: dict[str, object]) -> dict[str, object]:
+    """Resolve a persisted IPTV queue/history reference to its current stream."""
+    source_id = str(item.get("iptv_source_id") or "").strip()
+    channel_id = str(item.get("iptv_channel_id") or "").strip()
+    if not source_id or not channel_id:
+        raise HTTPException(status_code=400, detail="invalid IPTV catalog reference")
+    resolved = _playable_item(source_id, channel_id)
+    for key in ("history_id", "resume_pos"):
+        if item.get(key) is not None:
+            resolved[key] = item[key]
+    return resolved
+
+
 def channel_action(source_id: str, channel_id: str, command: str) -> dict[str, object]:
     item = _playable_item(source_id, channel_id)
     action = str(command or "play_now").strip().lower()
@@ -541,7 +557,8 @@ def channel_action(source_id: str, channel_id: str, command: str) -> dict[str, o
     except HTTPException:
         raise
     except Exception:
-        store().mark_channel_check(source_id, channel_id, available=False)
+        # Display/runtime startup errors are not proof that a remote channel
+        # failed. Availability failures come from bounded channel checks.
         raise
 
 
@@ -568,6 +585,23 @@ def check_channel(source_id: str, channel_id: str) -> dict[str, object]:
     return updated
 
 
+def remove_unavailable(*, source_id: str = "") -> int:
+    if source_id and store().get_source(source_id) is None:
+        raise HTTPException(status_code=404, detail="IPTV source not found")
+    return store().remove_unavailable(source_id=source_id)
+
+
+def _check_due_favorites() -> None:
+    interval = env_int("RELAYTV_IPTV_CHECK_INTERVAL_SEC", 21600, minimum=300, maximum=604800)
+    batch = env_int("RELAYTV_IPTV_CHECK_BATCH", 3, minimum=1, maximum=20)
+    due = store().channels_due_for_check(before=time.time() - interval, limit=batch)
+    for channel in due:
+        try:
+            check_channel(str(channel["source_id"]), str(channel["channel_id"]))
+        except Exception:
+            pass
+
+
 def _refresh_due_sources() -> None:
     if not enabled():
         return
@@ -577,6 +611,10 @@ def _refresh_due_sources() -> None:
             continue
         last = float(source.get("last_attempt_at") or 0.0)
         interval = max(300, int(source.get("refresh_interval_sec") or 21600))
+        # Deterministic per-source jitter avoids synchronized fetch bursts;
+        # a failed source backs off for twice its normal interval.
+        jitter = 0.9 + (int(hashlib.sha256(str(source["id"]).encode()).hexdigest()[:2], 16) / 2550.0)
+        interval = int(interval * jitter * (2 if source.get("last_error") else 1))
         if last and (now - last) < interval:
             continue
         try:
@@ -594,6 +632,8 @@ def start_worker() -> None:
     def _run() -> None:
         while not _WORKER_STOP.wait(60.0):
             _refresh_due_sources()
+            if enabled():
+                _check_due_favorites()
 
     _WORKER_THREAD = threading.Thread(target=_run, name="relaytv-iptv-refresh", daemon=True)
     _WORKER_THREAD.start()

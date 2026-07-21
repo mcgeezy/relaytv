@@ -465,8 +465,20 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
         with player.MPV_LOCK:
             stream_url = stream.strip()
             audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
-            if not player._load_stream_in_existing_mpv(stream_url, audio_url=audio_url, start_pos=start_pos):
-                player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
+            http_headers = player._item_http_headers(now)
+            header_kwargs = {"http_headers": http_headers} if http_headers else {}
+            if not player._load_stream_in_existing_mpv(
+                stream_url,
+                audio_url=audio_url,
+                start_pos=start_pos,
+                **header_kwargs,
+            ):
+                player.start_mpv(
+                    stream_url,
+                    audio_url=audio_url,
+                    start_pos=start_pos,
+                    **header_kwargs,
+                )
         resumed = dict(now)
         resumed["started"] = int(time.time())
         resumed["mode"] = "resume"

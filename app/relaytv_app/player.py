@@ -1023,6 +1023,7 @@ def _start_qt_shell(
     audio_url: str | None = None,
     start_pos: float | None = None,
     *,
+    http_headers: dict[str, str] | None = None,
     ytdl_format_override: str | None = None,
     ytdl_raw_options_override: str | None = None,
 ) -> bool:
@@ -1091,6 +1092,11 @@ def _start_qt_shell(
         args += ["--sub-lang", sub_lang]
     if audio_url:
         args += ["--audio", audio_url]
+    headers = http_headers or {}
+    if headers.get("User-Agent"):
+        args += ["--user-agent", headers["User-Agent"]]
+    if headers.get("Referer"):
+        args += ["--referrer", headers["Referer"]]
     if _env_bool("RELAYTV_DEBUG"):
         debug_log(
             "player",
@@ -1245,6 +1251,7 @@ def _build_qt_external_mpv_args(
     stream_url: str,
     audio_url: str | None,
     *,
+    http_headers: dict[str, str] | None = None,
     fallback_to_x11: bool = False,
     start_pos: float | None = None,
     ytdl_format_override: str | None = None,
@@ -1257,6 +1264,7 @@ def _build_qt_external_mpv_args(
         audio_url,
         "x11",
         start_pos=start_pos,
+        http_headers=http_headers,
         ytdl_format_override=ytdl_format_override,
         ytdl_raw_options_override=ytdl_raw_options_override,
     )
@@ -1288,6 +1296,7 @@ def _start_qt_external_mpv(
     stream_url: str,
     audio_url: str | None,
     *,
+    http_headers: dict[str, str] | None = None,
     fallback_to_x11: bool = False,
     fallback_reason: str = "",
     start_pos: float | None = None,
@@ -1300,6 +1309,7 @@ def _start_qt_external_mpv(
         audio_url,
         fallback_to_x11=fallback_to_x11,
         start_pos=start_pos,
+        http_headers=http_headers,
         ytdl_format_override=ytdl_format_override,
         ytdl_raw_options_override=ytdl_raw_options_override,
     )
@@ -1318,7 +1328,7 @@ def _start_qt_external_mpv(
     launch_env = refresh_display_credentials(launch_env or os.environ)
     debug = _env_bool("MPV_DEBUG") or _env_bool("RELAYTV_DEBUG")
     if debug:
-        logger.info("starting_external_mpv args=%s", " ".join(shlex.quote(a) for a in args))
+        logger.info("starting_external_mpv args=%s", _redacted_mpv_args(args))
     return subprocess.Popen(args, env=launch_env)
 
 
@@ -1579,6 +1589,8 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--osd-playing-msg",
         "--term-playing-msg",
         "--ytdl-format",
+        "--user-agent",
+        "--referrer",
         "--start",
     )
     seen: set[str] = set()
@@ -1647,6 +1659,37 @@ def _provider_hint_for_stream(stream_url: str, fallback_now_playing: bool = True
         if now_prov:
             return now_prov
     return prov or "other"
+
+
+def _item_http_headers(item: object) -> dict[str, str]:
+    """Return the small, safe header subset supported for IPTV playback."""
+    if not isinstance(item, dict) or not isinstance(item.get("http_headers"), dict):
+        return {}
+    out: dict[str, str] = {}
+    for incoming, canonical in (("User-Agent", "User-Agent"), ("Referer", "Referer")):
+        value = str(item["http_headers"].get(incoming) or "").replace("\r", "").replace("\n", "").strip()
+        if value:
+            out[canonical] = value[:2048]
+    return out
+
+
+_ACTIVE_HTTP_HEADERS: dict[str, str] = {}
+
+
+def _redacted_mpv_args(args: list[str]) -> str:
+    """Format launch arguments without logging stream headers."""
+    sensitive = ("--user-agent=", "--referrer=", "--http-header-fields=")
+    redacted = []
+    for arg in args:
+        if arg.startswith(sensitive):
+            redacted.append(f"{arg.split('=', 1)[0]}=<redacted>")
+        elif arg.startswith(("http://", "https://")):
+            redacted.append("<media-url>")
+        elif arg.startswith("--audio-file=http"):
+            redacted.append("--audio-file=<media-url>")
+        else:
+            redacted.append(arg)
+    return " ".join(shlex.quote(arg) for arg in redacted)
 
 
 def _signed_direct_url(url: str) -> bool:
@@ -2518,6 +2561,7 @@ def _build_mpv_args(
     mode: str,
     start_pos: float | None = None,
     *,
+    http_headers: dict[str, str] | None = None,
     ytdl_format_override: str | None = None,
     ytdl_raw_options_override: str | None = None,
 ) -> list[str]:
@@ -2570,6 +2614,12 @@ def _build_mpv_args(
 
     if audio_url:
         mpv_args.append(f"--audio-file={audio_url}")
+
+    headers = http_headers or {}
+    if headers.get("User-Agent"):
+        mpv_args.append(f"--user-agent={headers['User-Agent']}")
+    if headers.get("Referer"):
+        mpv_args.append(f"--referrer={headers['Referer']}")
 
     start_value = _mpv_start_option_value(start_pos)
     if start_value:
@@ -2794,10 +2844,12 @@ def _load_stream_in_existing_mpv(
     audio_url: str | None = None,
     start_pos: float | None = None,
     *,
+    http_headers: dict[str, str] | None = None,
     ytdl_format_override: str | None = None,
     ytdl_raw_options_override: str | None = None,
 ) -> bool:
     """Try seamless in-process stream replacement on an already-running mpv."""
+    global _ACTIVE_HTTP_HEADERS
     if not _env_bool("RELAYTV_MPV_SEAMLESS_REPLACE", True):
         return False
     if (
@@ -2879,6 +2931,20 @@ def _load_stream_in_existing_mpv(
             if not isinstance(response, dict) or response.get("error") != "success":
                 return False
 
+    headers = http_headers or {}
+    if headers or _ACTIVE_HTTP_HEADERS:
+        for prop, value in (
+            ("user-agent", headers.get("User-Agent", "")),
+            ("referrer", headers.get("Referer", "")),
+        ):
+            try:
+                response = mpv_command(["set_property", prop, value])
+            except Exception:
+                return False
+            if not isinstance(response, dict) or response.get("error") != "success":
+                return False
+        _ACTIVE_HTTP_HEADERS = dict(headers)
+
     if _qt_shell_runtime_accepts_mpv_commands():
         try:
             if _normalize_start_pos(start_pos) is not None:
@@ -2914,6 +2980,7 @@ def start_mpv(
     audio_url: str | None = None,
     start_pos: float | None = None,
     *,
+    http_headers: dict[str, str] | None = None,
     ytdl_format_override: str | None = None,
     ytdl_raw_options_override: str | None = None,
 ):
@@ -2924,7 +2991,8 @@ def start_mpv(
       - RELAYTV_VIDEO_MODE=x11: force X11 mode.
       - RELAYTV_VIDEO_MODE=drm: force DRM/KMS mode.
     """
-    global MPV_PROC
+    global MPV_PROC, _ACTIVE_HTTP_HEADERS
+    _ACTIVE_HTTP_HEADERS = dict(http_headers or {})
     process_start_option_active = _normalize_start_pos(start_pos) is not None
     # Resolve can take longer than the initial transition window. Refresh it
     # here so watchdogs do not relaunch the idle shell while playback startup
@@ -2959,6 +3027,7 @@ def start_mpv(
                 fallback_to_x11=False,
                 fallback_reason="",
                 start_pos=start_pos,
+                http_headers=http_headers,
                 ytdl_format_override=ytdl_format_override,
                 ytdl_raw_options_override=ytdl_raw_options_override,
             )
@@ -2978,6 +3047,7 @@ def start_mpv(
                         fallback_to_x11=True,
                         fallback_reason="video_unhealthy",
                         start_pos=start_pos,
+                        http_headers=http_headers,
                         ytdl_format_override=ytdl_format_override,
                         ytdl_raw_options_override=ytdl_raw_options_override,
                     )
@@ -2994,6 +3064,7 @@ def start_mpv(
             stream_url,
             audio_url=audio_url,
             start_pos=start_pos,
+            http_headers=http_headers,
             ytdl_format_override=ytdl_format_override,
             ytdl_raw_options_override=ytdl_raw_options_override,
         )
@@ -3010,11 +3081,12 @@ def start_mpv(
             audio_url,
             mode_to_use,
             start_pos=start_pos,
+            http_headers=http_headers,
             ytdl_format_override=ytdl_format_override,
             ytdl_raw_options_override=ytdl_raw_options_override,
         )
         if debug:
-            logger.info("starting_mpv mode=%s args=%s", mode_to_use, " ".join(shlex.quote(a) for a in args))
+            logger.info("starting_mpv mode=%s args=%s", mode_to_use, _redacted_mpv_args(args))
         return subprocess.Popen(args, env=refresh_display_credentials(os.environ))
 
     if mode == "x11":
@@ -3599,6 +3671,8 @@ def _item_should_prefetch_stream(item: object) -> bool:
         return False
     if isinstance(item, dict):
         provider = str(item.get("provider") or "").strip().lower()
+        if _item_http_headers(item):
+            return False
     else:
         provider = ""
     if not provider:
@@ -4799,17 +4873,29 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
     _mark_playback_transition()
     if isinstance(item_or_text, dict):
-        item = item_or_text
+        item = dict(item_or_text)
     else:
         item = make_item(str(item_or_text), lightweight=False)
+
+    if str(item.get("provider") or "").strip().lower() == "iptv" and item.get("iptv_source_id"):
+        from .integrations import iptv_service
+
+        item = iptv_service.resolve_queue_item(item)
 
     raw = validate_user_url(item["url"])
     item["url"] = raw
     title = item.get("title") or raw
     provider = item.get("provider") or provider_from_url(raw)
+    http_headers = _item_http_headers(item)
     play_t0 = time.monotonic()
     debug_log("player", f"play_item start mode={mode} provider={provider} use_resolver={use_resolver}")
-    debug_log("player", f"raw_url={raw!r}")
+    if provider == "iptv":
+        debug_log(
+            "player",
+            f"iptv_catalog_ref={item.get('iptv_source_id')!r}/{item.get('iptv_channel_id')!r}",
+        )
+    else:
+        debug_log("player", f"raw_url={raw!r}")
     # CEC auto on/switch with active-source awareness.
     tv_state = state.get_tv_state() if hasattr(state, "get_tv_state") else {}
     active_src = str(tv_state.get("active_source_phys_addr") or "")
@@ -4937,7 +5023,10 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
                 )
             debug_log("player", f"resolve_streams finished in {int((time.monotonic() - t_resolve) * 1000)}ms")
 
-    debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
+    if provider == "iptv":
+        debug_log("player", "resolved_stream=<iptv-stream> audio=<redacted>")
+    else:
+        debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
 
     resume_start_pos = _normalize_start_pos(start_pos)
     ytdl_handoff_kwargs = (
@@ -4948,6 +5037,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         if ytdl_format_override is not None or ytdl_raw_options_override is not None
         else {}
     )
+    http_header_kwargs = {"http_headers": http_headers} if http_headers else {}
     _wait_for_resolved_media_availability(item)
     with MPV_LOCK:
         t_mpv = time.monotonic()
@@ -4965,6 +5055,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             stream,
             audio_url=audio,
             start_pos=resume_start_pos,
+            **http_header_kwargs,
             **ytdl_handoff_kwargs,
         )
         if (not reused_runtime) and _qt_shell_backend_enabled():
@@ -4986,6 +5077,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
                     stream,
                     audio_url=audio,
                     start_pos=resume_start_pos,
+                    **http_header_kwargs,
                     **ytdl_handoff_kwargs,
                 )
                 if reused_runtime:
@@ -4999,6 +5091,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
                 stream,
                 audio_url=audio,
                 start_pos=resume_start_pos,
+                **http_header_kwargs,
                 **ytdl_handoff_kwargs,
             )
         debug_log(
@@ -5030,11 +5123,14 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         "thumbnail": item.get("thumbnail"),
         "thumbnail_local": item.get("thumbnail_local"),
         "channel": item.get("channel"),
+        **({"http_headers": http_headers} if http_headers else {}),
         **({"history_id": item.get("history_id")} if item.get("history_id") else {}),
         **({"jellyfin_item_id": item.get("jellyfin_item_id")} if item.get("jellyfin_item_id") else {}),
         **({"jellyfin_media_source_id": item.get("jellyfin_media_source_id")} if item.get("jellyfin_media_source_id") else {}),
         **({"jellyfin_stream_mode": item.get("jellyfin_stream_mode")} if item.get("jellyfin_stream_mode") else {}),
         **({"jellyfin_stream_reason": item.get("jellyfin_stream_reason")} if item.get("jellyfin_stream_reason") else {}),
+        **({"iptv_source_id": item.get("iptv_source_id")} if item.get("iptv_source_id") else {}),
+        **({"iptv_channel_id": item.get("iptv_channel_id")} if item.get("iptv_channel_id") else {}),
     }
     # Relay URLs are single-use loopback tokens: caching one as a resolved
     # stream would replay a dead token (404) instead of re-resolving.

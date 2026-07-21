@@ -88,6 +88,64 @@ def test_iptv_channels_require_enabled_setting(client) -> None:
     assert response.json()["detail"] == "IPTV is disabled in settings"
 
 
+def test_iptv_action_response_never_exposes_stream_or_headers(client, monkeypatch) -> None:
+    created = client.post(
+        "/iptv/sources",
+        json={"name": "Local list", "content": PLAYLIST, "refresh_now": True},
+    ).json()
+    source_id = created["source"]["id"]
+    channel_id = client.get("/iptv/channels", params={"source_id": source_id}).json()["items"][0][
+        "channel_id"
+    ]
+    monkeypatch.setattr(
+        iptv_service.playback_service,
+        "play_now",
+        lambda item, **kwargs: dict(item),
+    )
+
+    response = client.post(
+        f"/iptv/channels/{channel_id}/action",
+        json={"source_id": source_id, "command": "play_now"},
+    )
+
+    assert response.status_code == 200
+    now = response.json()["now_playing"]
+    assert now["provider"] == "iptv"
+    assert now["iptv_source_id"] == source_id
+    assert "url" not in now
+    assert "http_headers" not in now
+
+
+def test_unavailable_is_hidden_by_default_and_can_be_explicitly_removed(client) -> None:
+    created = client.post(
+        "/iptv/sources",
+        json={"name": "Local list", "content": PLAYLIST, "refresh_now": True},
+    ).json()
+    source_id = created["source"]["id"]
+    channel = client.get("/iptv/channels", params={"source_id": source_id}).json()["items"][0]
+    for _ in range(3):
+        iptv_service.store().mark_channel_check(
+            source_id, str(channel["channel_id"]), available=False
+        )
+
+    assert client.get("/iptv/channels", params={"source_id": source_id}).json()["total"] == 1
+    included = client.get(
+        "/iptv/channels",
+        params={"source_id": source_id, "include_unavailable": True},
+    ).json()
+    assert included["total"] == 2
+
+    removed = client.post(
+        "/iptv/channels/remove-unavailable", json={"source_id": source_id}
+    )
+    assert removed.status_code == 200
+    assert removed.json()["removed"] == 1
+    assert client.get(
+        "/iptv/channels",
+        params={"source_id": source_id, "visibility": "all"},
+    ).json()["total"] == 1
+
+
 def test_iptv_directory_search_and_add_is_opt_in(client) -> None:
     directory = client.get("/iptv/directory", params={"q": "Free-TV"})
 

@@ -23,7 +23,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from .. import config, discovery_mdns, playback_service, player, public_media, resolver, state, upload_store, video_profile, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
-from ..integrations import jellyfin_receiver, jellyfin_service
+from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
@@ -3145,6 +3145,12 @@ def _status_payload() -> dict[str, object]:
     )
     annotated_now_playing = _annotate_upload_item(now_playing)
     annotated_queue = _annotate_upload_items(q)
+    iptv_status: dict[str, object] = {"enabled": iptv_service.enabled()}
+    if iptv_status["enabled"]:
+        try:
+            iptv_status = iptv_service.status()
+        except Exception:
+            iptv_status.update({"source_count": 0, "channel_count": 0})
     return {
         "state": sess,
         "device_name": str(settings_snapshot.get("device_name") or "RelayTV"),
@@ -3152,6 +3158,9 @@ def _status_payload() -> dict[str, object]:
         "idle_notifications_enabled": bool(settings_snapshot.get("idle_notifications_enabled", True)),
         "mdns_advertising": bool(mdns.get("active")),
         "mdns_service_type": str(mdns.get("service_type") or ""),
+        "iptv_enabled": bool(iptv_status.get("enabled")),
+        "iptv_source_count": int(iptv_status.get("source_count") or 0),
+        "iptv_channel_count": int(iptv_status.get("channel_count") or 0),
         "jellyfin_enabled": jf_enabled,
         "jellyfin_running": jf_running,
         "jellyfin_connected": jf_connected,
@@ -3323,6 +3332,7 @@ def ui():
   <title>RelayTV</title>
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3339,6 +3349,7 @@ def ui():
         <h1 id="appBrandName">RelayTV</h1>
       </div>
       <div class="hdrRight">
+        <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
         <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
         <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
@@ -3621,6 +3632,52 @@ def ui():
       </aside>
     </div>
 
+    <div id="iptvShell" class="iptvShell hidden" aria-hidden="true">
+      <div class="iptvShellInner">
+        <header class="iptvShellHead">
+          <button id="iptvBackBtn" class="iptvBack" aria-label="Back to RelayTV">← <span>Back</span></button>
+          <div class="iptvIdentity"><span class="iptvMark" aria-hidden="true">▦</span><div><small>RelayTV live channels</small><strong>IPTV</strong></div></div>
+          <div id="iptvStatus" class="iptvStatus" role="status" aria-live="polite">Loading…</div>
+        </header>
+        <nav class="iptvTabs" aria-label="IPTV sections">
+          <button class="active" data-iptv-tab="channels">My Channels</button>
+          <button data-iptv-tab="favorites">Favorites</button>
+          <button data-iptv-tab="hidden">Hidden</button>
+          <button data-iptv-tab="sources">Sources</button>
+          <button data-iptv-tab="discover">Discover</button>
+        </nav>
+        <section id="iptvBrowsePanel" class="iptvPanel">
+          <div class="iptvToolbar">
+            <input id="iptvSearch" class="input" type="search" placeholder="Search channels or groups…" aria-label="Search IPTV channels" />
+            <select id="iptvSourceFilter" class="input" aria-label="Filter by source"><option value="">All sources</option></select>
+            <select id="iptvGroupFilter" class="input" aria-label="Filter by group"><option value="">All groups</option></select>
+            <select id="iptvSort" class="input" aria-label="Sort channels"><option value="manual">My order</option><option value="name">Name</option><option value="group">Group</option><option value="playlist">Playlist order</option></select>
+            <label class="iptvCheck"><input id="iptvUnavailable" type="checkbox" /> Include unavailable</label>
+            <button id="iptvReloadBtn" type="button">Refresh</button>
+            <button id="iptvRemoveUnavailableBtn" class="danger" type="button">Remove unavailable</button>
+          </div>
+          <div id="iptvChannelGrid" class="iptvChannelGrid" aria-live="polite"></div>
+          <button id="iptvMoreBtn" class="iptvMore hidden" type="button">Load more</button>
+        </section>
+        <section id="iptvSourcesPanel" class="iptvPanel hidden">
+          <div class="iptvSourceForm card">
+            <h2>Add playlist</h2>
+            <div class="iptvFormGrid">
+              <input id="iptvSourceName" class="input" maxlength="120" placeholder="Source name" />
+              <input id="iptvSourceUrl" class="input" type="url" placeholder="https://example.com/channels.m3u" />
+            </div>
+            <details><summary>Or paste an M3U playlist</summary><textarea id="iptvSourceContent" class="input" rows="5" placeholder="#EXTM3U…"></textarea></details>
+            <div class="iptvFormActions"><button id="iptvAddSourceBtn" class="good" type="button">Add and refresh</button><span id="iptvSourceMsg" aria-live="polite"></span></div>
+          </div>
+          <div id="iptvSourceList" class="iptvSourceList"></div>
+        </section>
+        <section id="iptvDiscoverPanel" class="iptvPanel hidden">
+          <div class="iptvDiscoverHead"><div><h2>Free provider directory</h2><p>Nothing is fetched until you choose Add. Availability and regional restrictions vary.</p></div><input id="iptvDirectorySearch" class="input" type="search" placeholder="Search country, language, or category…" /></div>
+          <div id="iptvDirectoryGrid" class="iptvDirectoryGrid"></div>
+        </section>
+      </div>
+    </div>
+
     <div id="jellyfinShell" class="jfShell jfModern hidden" aria-hidden="true">
       <div class="jfShellInner">
         <header class="jfShellHead">
@@ -3674,6 +3731,7 @@ def ui():
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -3895,6 +3953,27 @@ def ui():
         <div class="fieldRow">
           <label class="fieldLbl">Retention max hours</label>
           <input id="setUploadRetentionHours" class="input" type="number" min="1" max="2160" step="1" value="24" />
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup">
+      <summary>IPTV Integration <span id="setIptvStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable IPTV</div>
+            <div class="toggleHint">Show searchable live-channel browsing, favorites, visibility controls, and source discovery.</div>
+          </div>
+          <label class="toggleSwitch" for="setIptvEnabled" title="Enable IPTV integration">
+            <input type="checkbox" id="setIptvEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="hint">Playlists and stream credentials are stored owner-only in <code>/data/iptv.sqlite3</code>, but are not encrypted at rest. Free directory providers are opt-in.</div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
+          <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
         </div>
       </div>
     </details>

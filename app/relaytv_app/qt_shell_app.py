@@ -470,6 +470,8 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--script-opts",
         "--ytdl-format",
         "--ytdl-raw-options",
+        "--user-agent",
+        "--referrer",
         "--start",
     )
     seen: set[str] = set()
@@ -503,6 +505,8 @@ def _build_mpv_args(
     ytdl_path: str | None = None,
     ytdl_format: str | None = None,
     ytdl_raw_options: str | None = None,
+    user_agent: str | None = None,
+    referrer: str | None = None,
 ) -> list[str]:
     debug = _env_bool("MPV_DEBUG") or _env_bool("RELAYTV_DEBUG")
     extra = _split_env_args("RELAYTV_QT_SHELL_MPV_ARGS")
@@ -539,6 +543,10 @@ def _build_mpv_args(
         args.append(f"--input-ipc-server={ipc_path}")
     if audio:
         args.append(f"--audio-file={audio}")
+    if user_agent:
+        args.append(f"--user-agent={user_agent}")
+    if referrer:
+        args.append(f"--referrer={referrer}")
     try:
         pos = float(start_pos) if start_pos is not None else None
     except Exception:
@@ -1054,6 +1062,8 @@ class _QtLibMpvPlayer:
         ytdl_path: str | None,
         ytdl_format: str | None,
         ytdl_raw_options: str | None,
+        user_agent: str | None,
+        referrer: str | None,
     ) -> None:
         self._bind_api()
         handle = ctypes.c_void_p(self._lib.mpv_create())
@@ -1094,6 +1104,10 @@ class _QtLibMpvPlayer:
             self._set_opt_best_effort("slang", sub_lang)
         if volume is not None:
             self._set_opt_best_effort("volume", f"{float(volume):g}")
+        if user_agent:
+            self._set_opt_best_effort("user-agent", user_agent)
+        if referrer:
+            self._set_opt_best_effort("referrer", referrer)
         if ytdl_enabled:
             self._set_opt_best_effort("ytdl", "yes")
             ypath = (ytdl_path or "").strip() or "yt-dlp"
@@ -1260,6 +1274,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ytdl-path", default="")
     ap.add_argument("--ytdl-format", default="")
     ap.add_argument("--ytdl-raw-options", default="")
+    ap.add_argument("--user-agent", default="")
+    ap.add_argument("--referrer", default="")
     ap.add_argument("--overlay-url", default=os.getenv("RELAYTV_QT_OVERLAY_URL", "http://127.0.0.1:8787/x11/overlay"))
     ap.add_argument("--window-title", default="RelayTV Qt Shell")
     args = ap.parse_args(argv)
@@ -2109,6 +2125,8 @@ def main(argv: list[str] | None = None) -> int:
                 ytdl_path=((args.ytdl_path or "").strip() or None),
                 ytdl_format=((args.ytdl_format or "").strip() or None),
                 ytdl_raw_options=((args.ytdl_raw_options or "").strip() or None),
+                user_agent=((args.user_agent or "").strip() or None),
+                referrer=((args.referrer or "").strip() or None),
             )
             if debug:
                 _eprint("qt-shell libmpv engine active")
@@ -3013,6 +3031,8 @@ def main(argv: list[str] | None = None) -> int:
                 ytdl_path=((args.ytdl_path or "").strip() or None),
                 ytdl_format=((args.ytdl_format or "").strip() or None),
                 ytdl_raw_options=((args.ytdl_raw_options or "").strip() or None),
+                user_agent=((args.user_agent or "").strip() or None),
+                referrer=((args.referrer or "").strip() or None),
             ),
             env=mpv_env,
         )

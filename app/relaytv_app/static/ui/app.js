@@ -1009,6 +1009,7 @@ function renderStatus(st) {
   if (_uiRefreshInteractionLockActive()) return;
   _jfSetLaunchVisible(_jfCanLaunchFromStatus(st));
   applyJfBranding(st.jellyfin_server_type, st.jellyfin_server_url_configured);
+  if (typeof window.iptvUpdateLaunch === 'function') window.iptvUpdateLaunch(st);
 
   // state pill
   const dot = document.getElementById('dot');
@@ -2207,6 +2208,7 @@ async function loadSettingsUi(){
   const wDays = document.getElementById('setWeatherDays');
   const uploadMaxSize = document.getElementById('setUploadMaxSize');
   const uploadRetentionHours = document.getElementById('setUploadRetentionHours');
+  const iptvEnabled = document.getElementById('setIptvEnabled');
   const jfEnabled = document.getElementById('setJfEnabled');
   const jfServerUrl = document.getElementById('setJfServerUrl');
   const jfUsername = document.getElementById('setJfUsername');
@@ -2221,6 +2223,13 @@ async function loadSettingsUi(){
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
 
   if (deviceName) deviceName.value = (cur.device_name || 'RelayTV');
+  if (iptvEnabled) iptvEnabled.checked = !!cur.iptv_enabled;
+  const iptvBadge = document.getElementById('setIptvStatus');
+  if (iptvBadge) {
+    iptvBadge.textContent = cur.iptv_enabled ? 'Enabled' : 'Disabled';
+    iptvBadge.classList.remove('up', 'down', 'warn', 'unknown');
+    iptvBadge.classList.add(cur.iptv_enabled ? 'up' : 'unknown');
+  }
   if (ytUseInvidious) ytUseInvidious.checked = !!cur.youtube_use_invidious;
   if (ytInvidiousBase) ytInvidiousBase.value = (cur.youtube_invidious_base || '');
   if (ytdlpAutoUpdate) ytdlpAutoUpdate.checked = !!cur.ytdlp_auto_update_enabled;
@@ -2681,6 +2690,7 @@ function bindSettingsUi(){
         max_size_gb: Number.isFinite(uploadMaxSize) ? Math.max(0.25, Math.min(500, Number(uploadMaxSize.toFixed(2)))) : 5,
         retention_hours: Number.isFinite(uploadRetentionHours) ? Math.max(1, Math.min(2160, Math.round(uploadRetentionHours))) : 24
       },
+      iptv_enabled: !!document.getElementById('setIptvEnabled')?.checked,
       jellyfin_enabled: jfEnabled,
       jellyfin_server_url: jfServer,
       jellyfin_username: jfUser,

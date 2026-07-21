@@ -1,6 +1,6 @@
 # IPTV Catalog Research and Implementation Plan
 
-Status: proposal
+Status: implemented (direct catalog scope)
 
 Research date: 2026-07-20
 
@@ -8,8 +8,8 @@ Research date: 2026-07-20
 
 - [x] M0 — research, architecture, security model, and delivery plan
 - [x] M1 — SQLite catalog, M3U ingestion, source discovery, and catalog APIs
-- [ ] M2 — favorites, visibility, manual ordering, availability, and playback
-- [ ] M3 — responsive IPTV browse/manage UI and browser smoke coverage
+- [x] M2 — favorites, visibility, manual ordering, availability, and playback
+- [x] M3 — responsive IPTV browse/manage UI and browser smoke coverage
 - [ ] M4 — container rebuild, end-to-end verification, and operator docs
 - [ ] Later — XMLTV now/next guide data after direct-catalog runtime soak
 

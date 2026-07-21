@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from .. import public_media
 from ..integrations import iptv_service
 
 
@@ -48,6 +49,10 @@ class IptvReorderReq(BaseModel):
 class IptvChannelActionReq(BaseModel):
     source_id: str
     command: str = "play_now"
+
+
+class IptvRemoveUnavailableReq(BaseModel):
+    source_id: str = ""
 
 
 def _require_enabled() -> None:
@@ -115,6 +120,7 @@ def iptv_channels(
     q: str = "",
     group: str = "",
     visibility: str = "visible",
+    include_unavailable: bool = False,
     favorites: bool = False,
     availability: str = "",
     sort: str = "manual",
@@ -136,6 +142,7 @@ def iptv_channels(
         query=str(q or "").strip()[:200],
         group=str(group or "").strip()[:200],
         visibility=visibility,
+        include_unavailable=bool(include_unavailable),
         favorites_only=bool(favorites),
         availability=availability,
         sort=sort,
@@ -172,6 +179,12 @@ def iptv_channel_reorder(req: IptvReorderReq):
     return {"ok": True}
 
 
+@router.post("/iptv/channels/remove-unavailable")
+def iptv_channels_remove_unavailable(req: IptvRemoveUnavailableReq):
+    removed = iptv_service.remove_unavailable(source_id=str(req.source_id or "").strip())
+    return {"ok": True, "removed": removed}
+
+
 @router.post("/iptv/channels/{channel_id}/check")
 def iptv_channel_check(channel_id: str, req: IptvChannelActionReq):
     _require_enabled()
@@ -181,4 +194,7 @@ def iptv_channel_check(channel_id: str, req: IptvChannelActionReq):
 @router.post("/iptv/channels/{channel_id}/action")
 def iptv_channel_action(channel_id: str, req: IptvChannelActionReq):
     _require_enabled()
-    return iptv_service.channel_action(req.source_id, channel_id, req.command)
+    result = iptv_service.channel_action(req.source_id, channel_id, req.command)
+    if isinstance(result.get("now_playing"), dict):
+        result["now_playing"] = public_media.public_media_item(result["now_playing"])
+    return result

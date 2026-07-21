@@ -334,6 +334,7 @@ class IptvStore:
         query: str = "",
         group: str = "",
         visibility: str = "visible",
+        include_unavailable: bool = False,
         favorites_only: bool = False,
         availability: str = "",
         sort: str = "manual",
@@ -357,7 +358,9 @@ class IptvStore:
         elif visibility == "all":
             pass
         else:
-            clauses.extend(["c.hidden = 0", "c.active = 1", "c.availability != 'unavailable'"])
+            clauses.extend(["c.hidden = 0", "c.active = 1"])
+            if not include_unavailable:
+                clauses.append("c.availability != 'unavailable'")
         if favorites_only:
             clauses.append("c.favorite = 1")
         if availability:
@@ -447,6 +450,37 @@ class IptvStore:
             cur = conn.execute(
                 "UPDATE iptv_channels SET hidden = ? WHERE source_id = ? AND group_title = ?",
                 (1 if hidden else 0, source_id, group),
+            )
+            return int(cur.rowcount)
+
+    def channels_due_for_check(self, *, before: float, limit: int) -> list[dict[str, object]]:
+        """Return internal favorite channels due for a bounded availability check."""
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM iptv_channels
+                WHERE active = 1 AND favorite = 1
+                  AND (last_checked_at IS NULL OR last_checked_at < ?)
+                ORDER BY
+                  CASE availability WHEN 'suspect' THEN 0 WHEN 'unavailable' THEN 1 ELSE 2 END,
+                  COALESCE(last_checked_at, 0), source_id, manual_rank
+                LIMIT ?
+                """,
+                (before, max(1, int(limit))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def remove_unavailable(self, *, source_id: str = "") -> int:
+        """Physically remove explicitly selected inactive/unavailable entries."""
+        clauses = ["(active = 0 OR availability = 'unavailable')"]
+        args: list[object] = []
+        if source_id:
+            clauses.append("source_id = ?")
+            args.append(source_id)
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                f"DELETE FROM iptv_channels WHERE {' AND '.join(clauses)}",  # noqa: S608
+                args,
             )
             return int(cur.rowcount)
 

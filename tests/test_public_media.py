@@ -66,6 +66,26 @@ def test_public_media_item_prefers_safe_source_and_drops_private_runtime_fields(
     assert item["_resolved_stream"] == "https://cdn.example/video?Policy=secret"
 
 
+def test_public_media_item_uses_opaque_ids_for_iptv() -> None:
+    item = {
+        "provider": "iptv",
+        "title": "Local News",
+        "url": "https://stream.example/private/customer/token/live.m3u8",
+        "input": "https://stream.example/private/customer/token/live.m3u8",
+        "stream": "https://stream.example/private/customer/token/live.m3u8",
+        "http_headers": {"Referer": "https://private.example/customer"},
+        "iptv_source_id": "source-1",
+        "iptv_channel_id": "channel-1",
+    }
+
+    assert public_media_item(item) == {
+        "provider": "iptv",
+        "title": "Local News",
+        "iptv_source_id": "source-1",
+        "iptv_channel_id": "channel-1",
+    }
+
+
 def test_status_payload_redacts_runtime_media_without_mutating_state(monkeypatch) -> None:
     item = {
         "title": "Movie",

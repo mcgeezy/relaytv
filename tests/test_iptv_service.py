@@ -5,6 +5,7 @@ import pytest
 
 from relaytv_app.config import runtime_config
 from relaytv_app.integrations import iptv_service
+from relaytv_app import player, state
 
 
 PLAYLIST = """#EXTM3U
@@ -146,3 +147,66 @@ def test_channel_action_uses_playback_service_and_marks_success(iptv_tmp, monkey
     assert calls[0]["use_resolver"] is False
     assert calls[0]["media"]["provider"] == "iptv"
     assert calls[0]["media"]["http_headers"]["User-Agent"] == "Example Agent"
+
+
+def test_iptv_queue_persistence_keeps_only_opaque_catalog_reference(iptv_tmp) -> None:
+    persisted = state._persistable_queue_item(
+        {
+            "provider": "iptv",
+            "title": "Private channel",
+            "url": "https://stream.example/customer-secret/live.m3u8?token=secret",
+            "http_headers": {"Referer": "https://private.example/customer-secret"},
+            "iptv_source_id": "source-1",
+            "iptv_channel_id": "channel-1",
+        }
+    )
+
+    assert persisted is not None
+    assert persisted["url"] == "https://iptv.invalid/source-1/channel-1"
+    assert persisted["iptv_source_id"] == "source-1"
+    assert persisted["iptv_channel_id"] == "channel-1"
+    assert "http_headers" not in persisted
+    assert "secret" not in str(persisted)
+
+
+def test_mpv_iptv_header_args_are_supported_and_redacted(iptv_tmp, monkeypatch) -> None:
+    monkeypatch.setattr(player.state, "get_settings", lambda: {"volume": 75})
+    monkeypatch.setattr(player, "_effective_audio_device", lambda settings=None: "")
+    monkeypatch.setattr(player, "_x11_mode_active", lambda selected_mode=None: False)
+    monkeypatch.setattr(player, "_x11_overlay_enabled", lambda: False)
+    monkeypatch.setattr(player, "_provider_hint_for_stream", lambda *_a, **_k: "iptv")
+    monkeypatch.setattr(player, "_should_force_ytdl_off", lambda *_a, **_k: False)
+    monkeypatch.setattr(player, "_effective_ytdl_format", lambda *_a, **_k: "")
+
+    args = player._build_mpv_args(
+        "https://stream.example/live.m3u8",
+        None,
+        "x11",
+        http_headers={"User-Agent": "Private Agent", "Referer": "https://private.example/"},
+    )
+
+    assert "--user-agent=Private Agent" in args
+    assert "--referrer=https://private.example/" in args
+    rendered = player._redacted_mpv_args(args)
+    assert "Private Agent" not in rendered
+    assert "private.example" not in rendered
+
+
+def test_scheduled_checks_are_limited_to_favorites(iptv_tmp, monkeypatch) -> None:
+    source = iptv_service.create_source(name="Test", content=PLAYLIST)
+    iptv_service.refresh_source(str(source["id"]))
+    channels = iptv_service.list_channels(source_id=str(source["id"]))["items"]
+    favorite = channels[0]
+    iptv_service.update_channel(
+        str(source["id"]), str(favorite["channel_id"]), {"favorite": True}
+    )
+    checked: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        iptv_service,
+        "check_channel",
+        lambda source_id, channel_id: checked.append((source_id, channel_id)) or {},
+    )
+
+    iptv_service._check_due_favorites()
+
+    assert checked == [(str(source["id"]), str(favorite["channel_id"]))]

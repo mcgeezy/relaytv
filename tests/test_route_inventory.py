@@ -42,6 +42,7 @@ EXPECTED_ROUTES = {
     ("GET", "/integrations/jellyfin/stopped_snapshot", "jellyfin_integration_stopped_snapshot"),
     ("GET", "/iptv/channels", "iptv_channels"),
     ("POST", "/iptv/channels/reorder", "iptv_channel_reorder"),
+    ("POST", "/iptv/channels/remove-unavailable", "iptv_channels_remove_unavailable"),
     ("POST", "/iptv/channels/visibility", "iptv_channel_visibility"),
     ("PATCH", "/iptv/channels/{channel_id}", "iptv_channel_update"),
     ("POST", "/iptv/channels/{channel_id}/action", "iptv_channel_action"),
