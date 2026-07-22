@@ -23,6 +23,8 @@ When preparing a pull request, include release-note-quality context:
 - operator/deployment impact
 - breaking changes, or `None`
 - tests run
+- whether the release warrants a highlight heading (see Release highlights
+  below); add or update the file when it does
 
 Do not manually create normal release tags.
 Do not manually edit `CHANGELOG.md` for normal feature, fix, docs, or dependency
@@ -34,6 +36,21 @@ commits are silently orphaned (squash-merge already happened) and must be
 cherry-picked into a fresh PR. Release Please re-reads merged PR bodies on
 every run, so a PR body's `BEGIN_COMMIT_OVERRIDE` block must always describe
 exactly what its squash contains.
+
+### Release highlights
+
+`.github/workflows/release-please.yml` post-processes each GitHub Release body:
+below the hero image (and above the generated notes) it prepends
+`docs/release-highlights/<version>.md` when that file exists. `<version>` is the
+release-please version without the leading `v` (for example `0.8.0`). Use this
+for a short heading that introduces a notable user-facing feature landing in
+that release; it changes the GitHub Release notes only, not `CHANGELOG.md`, and
+a release without a matching file is published unchanged.
+
+Most PRs need no highlight. When a PR introduces a feature worth a lead-in
+beyond the generated bullet list, review whether its release warrants one and
+add or update `docs/release-highlights/<next-version>.md` in the same PR. Keep
+it to a heading plus a couple of sentences; end it with a `---` rule.
 
 ## Quality Gates
 
