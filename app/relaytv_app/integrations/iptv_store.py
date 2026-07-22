@@ -205,6 +205,8 @@ class IptvStore:
             "enabled",
             "location",
             "content",
+            "etag",
+            "last_modified",
             "refresh_interval_sec",
         }
         fields = {key: value for key, value in patch.items() if key in allowed}

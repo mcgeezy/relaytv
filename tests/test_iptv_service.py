@@ -275,3 +275,23 @@ def test_refresh_keeps_identity_when_duplicate_tvg_appears(iptv_tmp, monkeypatch
     assert updated is not None
     assert updated["active"] is True
     assert updated["favorite"] is True
+
+
+def test_update_source_location_clears_conditional_validators(iptv_tmp, monkeypatch) -> None:
+    source = iptv_service.create_source(name="URL", location="https://old.example/list.m3u")
+    sid = str(source["id"])
+    monkeypatch.setattr(
+        iptv_service,
+        "_fetch_source",
+        lambda _s: (PLAYLIST, "etag-1", "Mon, 01 Jan 2026 00:00:00 GMT", False),
+    )
+    iptv_service.refresh_source(sid)
+    raw = iptv_service.store().get_source(sid)
+    assert raw["etag"] == "etag-1"
+    assert raw["last_modified"] == "Mon, 01 Jan 2026 00:00:00 GMT"
+
+    iptv_service.update_source(sid, {"location": "https://new.example/list.m3u"})
+    raw2 = iptv_service.store().get_source(sid)
+    assert raw2["etag"] == ""
+    assert raw2["last_modified"] == ""
+    assert raw2["location"] == "https://new.example/list.m3u"

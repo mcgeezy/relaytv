@@ -258,10 +258,13 @@ def update_source(source_id: str, patch: dict[str, object]) -> dict[str, object]
         cleaned["location"] = _validate_http_url(
             str(patch.get("location") or ""), field="playlist URL"
         )
-        # Point the source at the URL: clear any pasted content and flip a
-        # previously uploaded source to URL mode so refresh fetches the URL.
+        # Point the source at the URL: clear any pasted content, flip a
+        # previously uploaded source to URL mode, and drop stale conditional
+        # validators so the new URL is fully fetched instead of 304-skipped.
         cleaned["content"] = ""
         cleaned["kind"] = "url"
+        cleaned["etag"] = ""
+        cleaned["last_modified"] = ""
     if "refresh_interval_sec" in patch:
         cleaned["refresh_interval_sec"] = max(
             300, min(int(patch.get("refresh_interval_sec") or 21600), 7 * 24 * 3600)

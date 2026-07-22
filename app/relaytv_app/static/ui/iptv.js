@@ -450,11 +450,11 @@
     if (!name || (!location && !content)) { if (msg) msg.textContent = 'Name and URL or pasted M3U are required.'; return; }
     try {
       if (msg) msg.textContent = 'Adding…';
-      await api('/iptv/sources', {method:'POST', body:{name, location, content, refresh_now:true}});
+      const res = await api('/iptv/sources', {method:'POST', body:{name, location, content, refresh_now:true}});
       if ($('iptvSourceName')) $('iptvSourceName').value = '';
       if ($('iptvSourceUrl')) $('iptvSourceUrl').value = '';
       if ($('iptvSourceContent')) $('iptvSourceContent').value = '';
-      if (msg) msg.textContent = 'Source added.';
+      if (msg) msg.textContent = res && res.refresh_error ? `Source added, but refresh failed: ${res.refresh_error}` : 'Source added.';
       await loadSources();
       loadDirectory();
     } catch (error) { if (msg) msg.textContent = error.message; }

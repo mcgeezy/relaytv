@@ -157,3 +157,24 @@ def test_iptv_directory_search_and_add_is_opt_in(client) -> None:
     assert added.status_code == 200
     assert added.json()["source"]["preset_id"] == "free-tv"
     assert len(client.get("/iptv/sources").json()["items"]) == 1
+
+
+def test_source_create_keeps_source_when_initial_refresh_fails(client, monkeypatch) -> None:
+    from relaytv_app.integrations import iptv_service
+
+    def boom(_source):
+        raise ValueError("unreachable playlist")
+
+    monkeypatch.setattr(iptv_service, "_fetch_source", boom)
+    resp = client.post(
+        "/iptv/sources",
+        json={"name": "Bad", "location": "https://bad.example/list.m3u", "refresh_now": True},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["refresh_error"]
+    assert body["source"]["name"] == "Bad"
+    # The failed initial refresh must not leave a duplicate on retry.
+    assert len(client.get("/iptv/sources").json()["items"]) == 1

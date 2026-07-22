@@ -92,10 +92,16 @@ def iptv_source_create(req: IptvSourceCreateReq):
         refresh_interval_sec=req.refresh_interval_sec,
     )
     refresh = None
+    refresh_error = None
     if req.refresh_now:
-        refresh = iptv_service.refresh_source(str(source["id"]))
+        try:
+            refresh = iptv_service.refresh_source(str(source["id"]))
+        except HTTPException as exc:
+            # Keep the created source and report the failure so the client shows
+            # the retained source instead of retrying and duplicating it.
+            refresh_error = str(exc.detail)
         source = iptv_service.store().get_source(str(source["id"]), redacted=True) or source
-    return {"ok": True, "source": source, "refresh": refresh}
+    return {"ok": True, "source": source, "refresh": refresh, "refresh_error": refresh_error}
 
 
 @router.patch("/iptv/sources/{source_id}")
