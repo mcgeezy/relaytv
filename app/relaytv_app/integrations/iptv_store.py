@@ -201,6 +201,7 @@ class IptvStore:
     def update_source(self, source_id: str, patch: dict[str, object]) -> dict[str, object] | None:
         allowed = {
             "name",
+            "kind",
             "enabled",
             "location",
             "content",
@@ -469,15 +470,26 @@ class IptvStore:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM iptv_channels
-                WHERE active = 1 AND favorite = 1
-                  AND (last_checked_at IS NULL OR last_checked_at < ?)
+                SELECT c.* FROM iptv_channels c
+                JOIN iptv_sources s ON s.id = c.source_id
+                WHERE c.active = 1 AND c.favorite = 1 AND s.enabled = 1
+                  AND (c.last_checked_at IS NULL OR c.last_checked_at < ?)
                 ORDER BY
-                  CASE availability WHEN 'suspect' THEN 0 WHEN 'unavailable' THEN 1 ELSE 2 END,
-                  COALESCE(last_checked_at, 0), source_id, manual_rank
+                  CASE c.availability WHEN 'suspect' THEN 0 WHEN 'unavailable' THEN 1 ELSE 2 END,
+                  COALESCE(c.last_checked_at, 0), c.source_id, c.manual_rank
                 LIMIT ?
                 """,
                 (before, max(1, int(limit))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def channel_identities(self, source_id: str) -> list[dict[str, object]]:
+        """Existing identity rows for a source, for identity reconciliation."""
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT identity_key, tvg_name, name, group_title "
+                "FROM iptv_channels WHERE source_id = ?",
+                (source_id,),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -493,7 +505,23 @@ class IptvStore:
                 f"DELETE FROM iptv_channels WHERE {' AND '.join(clauses)}",  # noqa: S608
                 args,
             )
-            return int(cur.rowcount)
+            removed = int(cur.rowcount)
+            if removed:
+                # Keep iptv_sources.channel_count (active total) consistent so
+                # status and the Sources UI do not report a stale total.
+                if source_id:
+                    conn.execute(
+                        "UPDATE iptv_sources SET channel_count = "
+                        "(SELECT COUNT(*) FROM iptv_channels WHERE source_id = ? AND active = 1) "
+                        "WHERE id = ?",
+                        (source_id, source_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE iptv_sources SET channel_count = "
+                        "(SELECT COUNT(*) FROM iptv_channels WHERE source_id = iptv_sources.id AND active = 1)"
+                    )
+            return removed
 
     def reorder_channel(
         self,

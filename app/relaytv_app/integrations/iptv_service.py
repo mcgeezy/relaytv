@@ -258,7 +258,10 @@ def update_source(source_id: str, patch: dict[str, object]) -> dict[str, object]
         cleaned["location"] = _validate_http_url(
             str(patch.get("location") or ""), field="playlist URL"
         )
+        # Point the source at the URL: clear any pasted content and flip a
+        # previously uploaded source to URL mode so refresh fetches the URL.
         cleaned["content"] = ""
+        cleaned["kind"] = "url"
     if "refresh_interval_sec" in patch:
         cleaned["refresh_interval_sec"] = max(
             300, min(int(patch.get("refresh_interval_sec") or 21600), 7 * 24 * 3600)
@@ -365,7 +368,11 @@ def _normalize_identity(value: object) -> str:
     return " ".join(str(value or "").strip().casefold().split())
 
 
-def _assign_channel_ids(source_id: str, entries: list[dict[str, object]]) -> list[dict[str, object]]:
+def _assign_channel_ids(
+    source_id: str,
+    entries: list[dict[str, object]],
+    existing: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
     tvg_counts = Counter(_normalize_identity(entry.get("tvg_id")) for entry in entries)
     name_keys = [
         f"{_normalize_identity(entry.get('tvg_name') or entry.get('name'))}|"
@@ -373,10 +380,23 @@ def _assign_channel_ids(source_id: str, entries: list[dict[str, object]]) -> lis
         for entry in entries
     ]
     name_counts = Counter(name_keys)
+    # Which name_key currently owns each tvg: identity, so a newly-appeared
+    # duplicate tvg-id does not evict the incumbent and detach its user state.
+    incumbent_tvg: dict[str, str] = {}
+    for row in existing or []:
+        ik = str(row.get("identity_key") or "")
+        if ik.startswith("tvg:"):
+            nk = (
+                f"{_normalize_identity(row.get('tvg_name') or row.get('name'))}|"
+                f"{_normalize_identity(row.get('group_title'))}"
+            )
+            incumbent_tvg.setdefault(ik[len("tvg:"):], nk)
     out: list[dict[str, object]] = []
     for entry, name_key in zip(entries, name_keys):
         tvg = _normalize_identity(entry.get("tvg_id"))
         if tvg and tvg_counts[tvg] == 1:
+            identity_key = f"tvg:{tvg}"
+        elif tvg and tvg_counts[tvg] > 1 and incumbent_tvg.get(tvg) == name_key:
             identity_key = f"tvg:{tvg}"
         elif name_key.strip("|") and name_counts[name_key] == 1:
             identity_key = f"name:{name_key}"
@@ -447,7 +467,7 @@ def refresh_source(source_id: str) -> dict[str, object]:
             return {"ok": True, "source_id": source_id, "not_modified": True}
         base_url = str(source.get("location") or "")
         entries = parse_m3u(text, base_url=base_url)
-        channels = _assign_channel_ids(source_id, entries)
+        channels = _assign_channel_ids(source_id, entries, store().channel_identities(source_id))
         result = store().replace_catalog(
             source_id, channels, etag=etag, last_modified=last_modified
         )

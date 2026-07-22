@@ -210,3 +210,68 @@ def test_scheduled_checks_are_limited_to_favorites(iptv_tmp, monkeypatch) -> Non
     iptv_service._check_due_favorites()
 
     assert checked == [(str(source["id"]), str(favorite["channel_id"]))]
+
+
+def test_remove_unavailable_updates_source_channel_count(iptv_tmp) -> None:
+    source = iptv_service.create_source(name="Test", content=PLAYLIST)
+    sid = str(source["id"])
+    iptv_service.refresh_source(sid)
+    item = iptv_service.list_channels(source_id=sid)["items"][0]
+    for _ in range(3):
+        iptv_service.store().mark_channel_check(sid, str(item["channel_id"]), available=False)
+
+    assert iptv_service.store().get_source(sid, redacted=True)["channel_count"] == 2
+    removed = iptv_service.store().remove_unavailable(source_id=sid)
+    assert removed == 1
+    assert iptv_service.store().get_source(sid, redacted=True)["channel_count"] == 1
+
+
+def test_scheduled_checks_skip_disabled_sources(iptv_tmp) -> None:
+    source = iptv_service.create_source(name="Test", content=PLAYLIST)
+    sid = str(source["id"])
+    iptv_service.refresh_source(sid)
+    item = iptv_service.list_channels(source_id=sid)["items"][0]
+    iptv_service.update_channel(sid, str(item["channel_id"]), {"favorite": True})
+
+    due = iptv_service.store().channels_due_for_check(before=9e18, limit=10)
+    assert any(str(c["channel_id"]) == str(item["channel_id"]) for c in due)
+
+    iptv_service.store().update_source(sid, {"enabled": 0})
+    assert iptv_service.store().channels_due_for_check(before=9e18, limit=10) == []
+
+
+def test_update_source_location_switches_pasted_source_to_url(iptv_tmp) -> None:
+    source = iptv_service.create_source(name="Pasted", content=PLAYLIST)
+    sid = str(source["id"])
+    assert iptv_service.store().get_source(sid)["kind"] == "upload"
+
+    iptv_service.update_source(sid, {"location": "https://example.test/list.m3u"})
+    raw = iptv_service.store().get_source(sid)
+    assert raw["kind"] == "url"
+    assert raw["content"] == ""
+    assert raw["location"] == "https://example.test/list.m3u"
+
+
+def test_refresh_keeps_identity_when_duplicate_tvg_appears(iptv_tmp, monkeypatch) -> None:
+    source = iptv_service.create_source(name="Test", content=PLAYLIST)
+    sid = str(source["id"])
+    iptv_service.refresh_source(sid)
+    news = next(
+        c for c in iptv_service.list_channels(source_id=sid)["items"] if c["tvg_id"] == "news.example"
+    )
+    original_id = str(news["channel_id"])
+    iptv_service.update_channel(sid, original_id, {"favorite": True})
+
+    dup_playlist = PLAYLIST + (
+        '#EXTINF:-1 tvg-id="news.example" tvg-name="Example News Duplicate" '
+        'group-title="News",Example News Duplicate\n'
+        "https://catalog.example/list/streams/news-dup.m3u8\n"
+    )
+    monkeypatch.setattr(iptv_service, "_fetch_source", lambda _s: (dup_playlist, "e", "", False))
+    iptv_service.refresh_source(sid)
+
+    # A duplicate tvg-id appearing must not detach the incumbent's user state.
+    updated = iptv_service.store().get_channel(sid, original_id, redacted=True)
+    assert updated is not None
+    assert updated["active"] is True
+    assert updated["favorite"] is True
