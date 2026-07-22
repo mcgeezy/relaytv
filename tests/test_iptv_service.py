@@ -397,3 +397,24 @@ def test_refresh_resolves_relative_urls_against_final_url(iptv_tmp, monkeypatch)
     cid = str(iptv_service.list_channels(source_id=sid)["items"][0]["channel_id"])
     channel = iptv_service.store().get_channel(sid, cid)
     assert channel["stream_url"] == "https://cdn.example/final/streams/ch.m3u8"
+
+
+def test_disabled_source_hidden_from_discover_but_kept_in_my_channels(iptv_tmp) -> None:
+    source = iptv_service.create_source(name="Test", content=PLAYLIST)
+    sid = str(source["id"])
+    iptv_service.refresh_source(sid)
+    cid = str(iptv_service.list_channels(source_id=sid)["items"][0]["channel_id"])
+    iptv_service.update_channel(sid, cid, {"added": True})
+
+    assert iptv_service.list_channels(visibility="visible")["total"] == 2
+
+    iptv_service.store().update_source(sid, {"enabled": 0})
+
+    # Discover (no added_only) drops the disabled source and its groups.
+    discover = iptv_service.list_channels(visibility="visible")
+    assert discover["total"] == 0
+    assert discover["groups"] == []
+    # My Channels keeps the added channel from the now-disabled source.
+    mine = iptv_service.list_channels(added_only=True, visibility="all")
+    assert mine["total"] == 1
+    assert str(mine["items"][0]["channel_id"]) == cid

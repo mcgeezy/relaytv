@@ -380,6 +380,11 @@ class IptvStore:
             clauses.append("c.favorite = 1")
         if added_only:
             clauses.append("c.added = 1")
+        else:
+            # Discovery/browse queries exclude disabled sources; My Channels
+            # (added_only) intentionally keeps added entries from disabled or
+            # inactive sources so they can be retried or removed.
+            clauses.append("c.source_id IN (SELECT id FROM iptv_sources WHERE enabled = 1)")
         if availability:
             clauses.append("c.availability = ?")
             args.append(availability)
@@ -410,6 +415,7 @@ class IptvStore:
                 """
                 SELECT DISTINCT group_title FROM iptv_channels
                 WHERE (? = '' OR source_id = ?) AND active = 1 AND group_title != ''
+                  AND source_id IN (SELECT id FROM iptv_sources WHERE enabled = 1)
                 ORDER BY group_title COLLATE NOCASE
                 """,
                 (source_id, source_id),
