@@ -3037,10 +3037,18 @@ def _status_payload() -> dict[str, object]:
             playing = True
             paused = True
             state.set_session_state("paused")
-        elif sess == "playing" and isinstance(state.NOW_PLAYING, dict):
+        elif (
+            sess == "playing"
+            and isinstance(state.NOW_PLAYING, dict)
+            and (
+                str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "iptv"
+                or player._item_looks_like_live_stream(state.NOW_PLAYING)
+            )
+        ):
             # Runtime telemetry can briefly disappear while a live stream
-            # buffers. Keep the session open and let playback policy confirm
-            # an actual end before clearing NOW_PLAYING.
+            # buffers. Keep only live/IPTV sessions open; ordinary VOD falls
+            # through so a crashed player still demotes to idle instead of
+            # sticking in a stale playing/buffering session.
             pass
         else:
             native_active = False

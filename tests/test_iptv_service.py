@@ -76,7 +76,7 @@ def test_refresh_preserves_favorite_hidden_and_rank_across_url_rotation(iptv_tmp
     monkeypatch.setattr(
         iptv_service,
         "_fetch_source",
-        lambda _source: (rotated, "etag-2", "", False),
+        lambda _source: (rotated, "etag-2", "", False, ""),
     )
     second = iptv_service.refresh_source(str(source["id"]))
 
@@ -267,7 +267,7 @@ def test_refresh_keeps_identity_when_duplicate_tvg_appears(iptv_tmp, monkeypatch
         'group-title="News",Example News Duplicate\n'
         "https://catalog.example/list/streams/news-dup.m3u8\n"
     )
-    monkeypatch.setattr(iptv_service, "_fetch_source", lambda _s: (dup_playlist, "e", "", False))
+    monkeypatch.setattr(iptv_service, "_fetch_source", lambda _s: (dup_playlist, "e", "", False, ""))
     iptv_service.refresh_source(sid)
 
     # A duplicate tvg-id appearing must not detach the incumbent's user state.
@@ -283,7 +283,7 @@ def test_update_source_location_clears_conditional_validators(iptv_tmp, monkeypa
     monkeypatch.setattr(
         iptv_service,
         "_fetch_source",
-        lambda _s: (PLAYLIST, "etag-1", "Mon, 01 Jan 2026 00:00:00 GMT", False),
+        lambda _s: (PLAYLIST, "etag-1", "Mon, 01 Jan 2026 00:00:00 GMT", False, ""),
     )
     iptv_service.refresh_source(sid)
     raw = iptv_service.store().get_source(sid)
@@ -341,3 +341,59 @@ def test_refresh_deduplicates_identical_entries(iptv_tmp) -> None:
     assert result["active"] == 1
     assert iptv_service.store().get_source(sid, redacted=True)["channel_count"] == 1
     assert iptv_service.list_channels(source_id=sid)["total"] == 1
+
+
+def test_check_channel_does_not_probe_private_hosts(iptv_tmp, monkeypatch) -> None:
+    m3u = "#EXTM3U\n#EXTINF:-1,Loopback\nhttp://127.0.0.1:9/live.m3u8\n"
+    source = iptv_service.create_source(name="Local", content=m3u)
+    sid = str(source["id"])
+    iptv_service.refresh_source(sid)
+    cid = str(iptv_service.list_channels(source_id=sid)["items"][0]["channel_id"])
+
+    class Boom:
+        def open(self, *a, **k):
+            raise AssertionError("must not probe a private host")
+
+    monkeypatch.setattr(iptv_service, "_FETCH_OPENER", Boom())
+    result = iptv_service.check_channel(sid, cid)
+    assert result["availability"] == "suspect"  # marked unavailable without probing
+
+
+def test_refresh_keeps_identity_when_duplicate_tvg_removed(iptv_tmp, monkeypatch) -> None:
+    dup = PLAYLIST + (
+        '#EXTINF:-1 tvg-id="news.example" tvg-name="Example News Duplicate" '
+        'group-title="News",Example News Duplicate\n'
+        "https://catalog.example/list/streams/news-dup.m3u8\n"
+    )
+    source = iptv_service.create_source(name="Test", content=dup)
+    sid = str(source["id"])
+    iptv_service.refresh_source(sid)
+    orig = next(
+        c for c in iptv_service.list_channels(source_id=sid)["items"] if c["name"] == "Example News"
+    )
+    orig_id = str(orig["channel_id"])
+    iptv_service.update_channel(sid, orig_id, {"favorite": True})
+
+    # The duplicate disappears; news.example is unique again. The survivor must
+    # keep its name: identity instead of upgrading to tvg: and detaching state.
+    monkeypatch.setattr(iptv_service, "_fetch_source", lambda _s: (PLAYLIST, "e", "", False, ""))
+    iptv_service.refresh_source(sid)
+    updated = iptv_service.store().get_channel(sid, orig_id, redacted=True)
+    assert updated is not None
+    assert updated["active"] is True
+    assert updated["favorite"] is True
+
+
+def test_refresh_resolves_relative_urls_against_final_url(iptv_tmp, monkeypatch) -> None:
+    source = iptv_service.create_source(name="Redir", location="https://start.example/list.m3u")
+    sid = str(source["id"])
+    rel = "#EXTM3U\n#EXTINF:-1,Rel\nstreams/ch.m3u8\n"
+    monkeypatch.setattr(
+        iptv_service,
+        "_fetch_source",
+        lambda _s: (rel, "", "", False, "https://cdn.example/final/list.m3u"),
+    )
+    iptv_service.refresh_source(sid)
+    cid = str(iptv_service.list_channels(source_id=sid)["items"][0]["channel_id"])
+    channel = iptv_service.store().get_channel(sid, cid)
+    assert channel["stream_url"] == "https://cdn.example/final/streams/ch.m3u8"

@@ -385,9 +385,12 @@ def _assign_channel_ids(
         for entry in entries
     ]
     name_counts = Counter(name_keys)
-    # Which name_key currently owns each tvg: identity, so a newly-appeared
-    # duplicate tvg-id does not evict the incumbent and detach its user state.
+    # Reconcile against stored identities so a tvg-id duplicate appearing or
+    # disappearing across refreshes does not detach a channel's user state.
+    # incumbent_tvg: name_key that currently owns each tvg: identity.
+    # incumbent_name: name_keys that currently own a name: identity.
     incumbent_tvg: dict[str, str] = {}
+    incumbent_name: set[str] = set()
     for row in existing or []:
         ik = str(row.get("identity_key") or "")
         if ik.startswith("tvg:"):
@@ -396,11 +399,19 @@ def _assign_channel_ids(
                 f"{_normalize_identity(row.get('group_title'))}"
             )
             incumbent_tvg.setdefault(ik[len("tvg:"):], nk)
+        elif ik.startswith("name:"):
+            incumbent_name.add(ik[len("name:"):])
     out: list[dict[str, object]] = []
     for entry, name_key in zip(entries, name_keys):
         tvg = _normalize_identity(entry.get("tvg_id"))
         if tvg and tvg_counts[tvg] == 1:
-            identity_key = f"tvg:{tvg}"
+            if name_key in incumbent_name and name_counts[name_key] == 1:
+                # Unique tvg-id now, but a stored channel with the same name
+                # already holds a name: identity (its tvg duplicate was removed);
+                # keep that identity so membership/favorite/rank are not detached.
+                identity_key = f"name:{name_key}"
+            else:
+                identity_key = f"tvg:{tvg}"
         elif tvg and tvg_counts[tvg] > 1 and incumbent_tvg.get(tvg) == name_key:
             identity_key = f"tvg:{tvg}"
         elif name_key.strip("|") and name_counts[name_key] == 1:
@@ -482,7 +493,7 @@ _FETCH_OPENER = urllib.request.build_opener(_PublicOnlyRedirectHandler())
 
 def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
     if str(source.get("kind") or "") == "upload":
-        return str(source.get("content") or ""), "", "", False
+        return str(source.get("content") or ""), "", "", False, ""
     location = str(source.get("location") or "")
     _assert_fetch_target_allowed(location)
     headers = {"User-Agent": "RelayTV/1.0 IPTV catalog"}
@@ -496,7 +507,7 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
     try:
         with _FETCH_OPENER.open(request, timeout=timeout) as response:
             if int(getattr(response, "status", 200) or 200) == 304:
-                return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True
+                return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True, location
             payload = response.read(max_bytes + 1)
             if len(payload) > max_bytes:
                 raise ValueError("playlist exceeds configured size limit")
@@ -510,10 +521,11 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
                 str(response.headers.get("ETag") or ""),
                 str(response.headers.get("Last-Modified") or ""),
                 False,
+                str(response.geturl() or location),
             )
     except urllib.error.HTTPError as exc:
         if int(exc.code) == 304:
-            return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True
+            return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True, location
         raise ValueError(f"playlist fetch failed with HTTP {int(exc.code)}") from exc
     except ValueError:
         raise
@@ -533,10 +545,10 @@ def refresh_source(source_id: str) -> dict[str, object]:
         raise HTTPException(status_code=409, detail="IPTV source refresh already running")
     try:
         store().mark_refresh_attempt(source_id)
-        text, etag, last_modified, not_modified = _fetch_source(source)
+        text, etag, last_modified, not_modified, final_url = _fetch_source(source)
         if not_modified:
             return {"ok": True, "source_id": source_id, "not_modified": True}
-        base_url = str(source.get("location") or "")
+        base_url = final_url or str(source.get("location") or "")
         entries = parse_m3u(text, base_url=base_url)
         channels = _assign_channel_ids(source_id, entries, store().channel_identities(source_id))
         result = store().replace_catalog(
@@ -667,7 +679,8 @@ def check_channel(source_id: str, channel_id: str) -> dict[str, object]:
     timeout = env_int("RELAYTV_IPTV_PROBE_TIMEOUT_SEC", 8, minimum=2, maximum=30)
     available = False
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        _assert_fetch_target_allowed(url)
+        with _FETCH_OPENER.open(request, timeout=timeout) as response:
             status_code = int(getattr(response, "status", 200) or 200)
             sample = response.read(64 * 1024)
             available = 200 <= status_code < 400 and bool(sample)

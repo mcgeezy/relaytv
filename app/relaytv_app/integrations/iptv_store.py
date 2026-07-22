@@ -185,9 +185,14 @@ class IptvStore:
         return self._source_public(row)
 
     def list_sources(self) -> list[dict[str, object]]:
+        # Omit the potentially large pasted `content` column; status polling and
+        # every SSE client recompute this, and _source_public discards content.
         with self._lock, self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM iptv_sources ORDER BY name COLLATE NOCASE, created_at"
+                "SELECT id, name, kind, location, preset_id, enabled, "
+                "refresh_interval_sec, created_at, updated_at, last_attempt_at, "
+                "last_success_at, etag, last_modified, last_error, channel_count "
+                "FROM iptv_sources ORDER BY name COLLATE NOCASE, created_at"
             ).fetchall()
         return [self._source_public(row) for row in rows]
 
