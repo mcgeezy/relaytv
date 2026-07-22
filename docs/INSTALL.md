@@ -164,7 +164,7 @@ If remote access is needed, put RelayTV behind a VPN, trusted reverse proxy, or
 Home Assistant access layer that provides authentication and transport
 security.
 
-Optionally, set `RELAYTV_API_TOKEN` in `/opt/relaytv/.env` to require
+Optionally, set `RELAYTV_API_TOKEN` in the `.env` in your RelayTV directory to require
 `Authorization: Bearer <token>` on all write requests (playback control,
 queue/settings changes, uploads, Jellyfin commands). Reads — `/health`,
 `/status`, the web UI, and static assets — stay open, and the web UI prompts

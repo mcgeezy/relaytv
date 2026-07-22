@@ -92,8 +92,9 @@ RelayTV controls.
 | `RELAYTV_IPTV_CHECK_INTERVAL_SEC` | `21600` | Minimum interval between favorite checks. |
 | `RELAYTV_IPTV_CHECK_BATCH` | `3` | Favorite checks per worker pass (maximum 20). |
 
-Set environment values in `/opt/relaytv/.env`, then recreate the container for
-env-only changes. Enabling/disabling through Settings is live and persisted.
+Set environment values in the `.env` in your RelayTV directory, then recreate
+the container for env-only changes. Enabling/disabling through Settings is live
+and persisted.
 
 ## Troubleshooting
 
@@ -106,6 +107,6 @@ env-only changes. Enabling/disabling through Settings is live and persisted.
 - **A channel is missing from My Channels:** you may not have added it — add it
   from Discover with **+**. Added channels that go inactive or unavailable still
   appear, marked with a status badge, so you can retry Check or Remove them.
-- **Reset the catalog:** stop RelayTV, back up and remove
-  `/opt/relaytv/data/iptv.sqlite3`, then start RelayTV. This removes sources, My
+- **Reset the catalog:** stop RelayTV, back up and remove `data/iptv.sqlite3`
+  in your RelayTV directory, then start RelayTV. This removes sources, My
   Channels membership, favorites, and ordering.

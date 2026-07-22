@@ -17,11 +17,11 @@ layer if remote access is required.
 ### Optional API token
 
 By default every endpoint is open (trusted LAN). Setting `RELAYTV_API_TOKEN`
-in `/opt/relaytv/.env` enables bearer auth for all write requests
-(`POST`/`PUT`/`PATCH`/`DELETE`):
+in the `.env` in your RelayTV directory enables bearer auth for all write
+requests (`POST`/`PUT`/`PATCH`/`DELETE`):
 
 ```bash
-# /opt/relaytv/.env
+# .env
 RELAYTV_API_TOKEN=use-a-long-random-value
 ```
 
