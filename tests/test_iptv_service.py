@@ -295,3 +295,49 @@ def test_update_source_location_clears_conditional_validators(iptv_tmp, monkeypa
     assert raw2["etag"] == ""
     assert raw2["last_modified"] == ""
     assert raw2["location"] == "https://new.example/list.m3u"
+
+
+def test_fetch_target_ssrf_guard_blocks_private_hosts(iptv_tmp) -> None:
+    for url in (
+        "http://127.0.0.1/list.m3u",
+        "http://169.254.169.254/latest/meta-data",
+        "http://192.168.1.10/x.m3u",
+        "http://[::1]/x.m3u",
+    ):
+        with pytest.raises(ValueError):
+            iptv_service._assert_fetch_target_allowed(url)
+
+
+def test_fetch_target_ssrf_guard_allows_public(iptv_tmp, monkeypatch) -> None:
+    monkeypatch.setattr(
+        iptv_service.socket,
+        "getaddrinfo",
+        lambda host, port, **kw: [(2, 1, 6, "", ("93.184.216.34", port))],
+    )
+    iptv_service._assert_fetch_target_allowed("https://example.com/list.m3u")
+
+
+def test_fetch_target_ssrf_guard_bypassed_with_api_token(iptv_tmp, monkeypatch) -> None:
+    from relaytv_app import api_auth
+
+    monkeypatch.setattr(api_auth, "configured_api_token", lambda: "operator-secret")
+    # A configured token gates writes to the operator, who may target private hosts.
+    iptv_service._assert_fetch_target_allowed("http://127.0.0.1/list.m3u")
+
+
+def test_refresh_deduplicates_identical_entries(iptv_tmp) -> None:
+    dup = (
+        "#EXTM3U\n"
+        '#EXTINF:-1 group-title="News",Same Channel\n'
+        "https://stream.example/same.m3u8\n"
+        '#EXTINF:-1 group-title="News",Same Channel\n'
+        "https://stream.example/same.m3u8\n"
+    )
+    source = iptv_service.create_source(name="Dup", content=dup)
+    sid = str(source["id"])
+    result = iptv_service.refresh_source(sid)
+
+    # Identical entries collapse to one channel so count matches the catalog.
+    assert result["active"] == 1
+    assert iptv_service.store().get_source(sid, redacted=True)["channel_count"] == 1
+    assert iptv_service.list_channels(source_id=sid)["total"] == 1

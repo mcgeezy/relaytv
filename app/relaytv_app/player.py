@@ -4508,7 +4508,16 @@ def advance_queue_playback(
                 # every mode; re-queueing it makes auto-next retry it forever.
                 bot_check = isinstance(exc, YouTubeBotCheckError)
                 post_live_processing = isinstance(exc, YouTubePostLiveProcessingError)
-                skip_unplayable = bot_check or post_live_processing or (
+                # A queued IPTV channel whose source was deleted or refreshed to
+                # inactive resolves to a 404 that will never recover; skip it in
+                # every mode so it cannot permanently block queue advancement.
+                iptv_stale = (
+                    isinstance(exc, HTTPException)
+                    and int(getattr(exc, "status_code", 0) or 0) == 404
+                    and isinstance(next_item, dict)
+                    and str(next_item.get("provider") or "").strip().lower() == "iptv"
+                )
+                skip_unplayable = bot_check or post_live_processing or iptv_stale or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
                     and int(getattr(exc, "status_code", 0) or 0) == 400

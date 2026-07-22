@@ -5673,3 +5673,36 @@ def test_pwa_weather_asset_uses_theme_directory_when_available() -> None:
 
     assert response.status_code == 200
     assert 'image/svg+xml' in response.headers['content-type']
+
+
+def test_auto_next_skips_stale_iptv_channel_instead_of_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
+    play_calls: list[dict] = []
+    stale_iptv = {
+        'url': 'https://iptv.invalid/src/chan', 'title': 'Gone Channel',
+        'provider': 'iptv', 'iptv_source_id': 'src', 'iptv_channel_id': 'chan',
+    }
+    good_item = {'url': 'https://example.com/good.mp4', 'title': 'Good'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [stale_iptv, good_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+
+    def fake_play(item, **kwargs):
+        if item is stale_iptv:
+            raise player.HTTPException(status_code=404, detail='IPTV channel is unavailable')
+        play_calls.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    # The stale IPTV item is skipped (not re-queued) so autoplay is not blocked.
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert play_calls == [good_item]
+    assert player.state.QUEUE == []

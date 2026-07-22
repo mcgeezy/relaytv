@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
+import socket
 import threading
 import time
 import uuid
@@ -410,13 +412,79 @@ def _assign_channel_ids(
         item["identity_key"] = identity_key
         item["channel_id"] = digest
         out.append(item)
-    return out
+    # Collapse entries that resolve to the same channel_id (identical name,
+    # group, and stream URL). replace_catalog upserts them into one row, so
+    # keeping duplicates would inflate channel_count past the browsable total.
+    seen: set[str] = set()
+    deduped: list[dict[str, object]] = []
+    for item in out:
+        cid = str(item.get("channel_id") or "")
+        if cid in seen:
+            continue
+        seen.add(cid)
+        deduped.append(item)
+    return deduped
+
+
+def _fetch_target_host_is_public(host: str, port: int) -> bool:
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    checked = False
+    for info in infos:
+        checked = True
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+    return checked
+
+
+def _assert_fetch_target_allowed(url: str) -> None:
+    """SSRF guard: on a token-less (open-LAN) deployment, only allow playlist
+    hosts that resolve to public addresses. A configured ``RELAYTV_API_TOKEN``
+    gates source management to the operator, who may then target private hosts.
+    """
+    from ..api_auth import configured_api_token
+
+    if configured_api_token():
+        return
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError("playlist URL must be http(s)")
+    host = parts.hostname
+    if not host:
+        raise ValueError("playlist URL has no host")
+    port = parts.port or (443 if scheme == "https" else 80)
+    if not _fetch_target_host_is_public(host, port):
+        raise ValueError("playlist host is not a permitted public address")
+
+
+class _PublicOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validate every redirect hop so a public URL cannot bounce to a
+    private/loopback/link-local host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _assert_fetch_target_allowed(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_FETCH_OPENER = urllib.request.build_opener(_PublicOnlyRedirectHandler())
 
 
 def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
     if str(source.get("kind") or "") == "upload":
         return str(source.get("content") or ""), "", "", False
     location = str(source.get("location") or "")
+    _assert_fetch_target_allowed(location)
     headers = {"User-Agent": "RelayTV/1.0 IPTV catalog"}
     if source.get("etag"):
         headers["If-None-Match"] = str(source["etag"])
@@ -426,7 +494,7 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
     timeout = env_int("RELAYTV_IPTV_FETCH_TIMEOUT_SEC", 15, minimum=2, maximum=120)
     max_bytes = env_int("RELAYTV_IPTV_MAX_PLAYLIST_BYTES", 20 * 1024 * 1024, minimum=1024)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _FETCH_OPENER.open(request, timeout=timeout) as response:
             if int(getattr(response, "status", 200) or 200) == 304:
                 return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True
             payload = response.read(max_bytes + 1)
