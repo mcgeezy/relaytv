@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.0](https://github.com/mcgeezy/relaytv/compare/v0.7.3...v0.8.0) (2026-07-22)
+
+
+### Features
+
+* add optional IPTV live channels — browse and play live TV alongside the rest of RelayTV, off by default and enabled in Settings ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+* build a curated My Channels home from added channels, with favorites pinned to the top and kept separate from the full catalog ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+* discover channels from custom M3U playlists (URL or pasted) and a built-in free-provider directory (iptv-org and Free-TV), adding the ones you want with a single tap ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+* manage IPTV sources — add, refresh, enable, disable, and remove owner-only playlists stored locally in /data/iptv.sqlite3 ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+* play a live channel now, play next, or add it to the queue, with per-channel availability checks ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+* present IPTV in the RelayTV glass design system across My Channels, Discover, and Sources on phone and desktop ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+
+
+### Bug Fixes
+
+* keep live IPTV playback active across short buffering and telemetry gaps instead of ending the session ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+* show a stable LIVE status for live channels instead of flashing rolling HLS segment positions and durations ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+
+
+### Documentation
+
+* add IPTV operator guidance and introduce live channels in the README with a My Channels phone mockup ([4516bae](https://github.com/mcgeezy/relaytv/commit/4516baee9bae55bba94a6d53d1d85729ef5c0a74))
+
 ## [0.7.3](https://github.com/mcgeezy/relaytv/compare/v0.7.2...v0.7.3) (2026-07-20)
 
 
