@@ -541,8 +541,13 @@ def _build_mpv_args(
         args.append("--profile=fast")
     if ipc_path:
         args.append(f"--input-ipc-server={ipc_path}")
+    # File-scoped options are collected here and wrapped in a --{ ... --}
+    # group around the stream URL. Passing them as globals would make them
+    # stick on the --idle=yes process, so every later `loadfile` on the reused
+    # player would inherit the first video's external audio track / start pos.
+    file_opts: list[str] = []
     if audio:
-        args.append(f"--audio-file={audio}")
+        file_opts.append(f"--audio-file={audio}")
     if user_agent:
         args.append(f"--user-agent={user_agent}")
     if referrer:
@@ -553,7 +558,7 @@ def _build_mpv_args(
         pos = None
     if pos is not None and pos > 0.0:
         start_value = f"{pos:.3f}".rstrip("0").rstrip(".")
-        args.append(f"--start={start_value}")
+        file_opts.append(f"--start={start_value}")
     if audio_device:
         args.append(f"--audio-device={audio_device}")
     if sub_lang:
@@ -583,7 +588,10 @@ def _build_mpv_args(
     if extra:
         args.extend(extra)
     args = _first_wins_dedupe(args)
-    args.append(stream)
+    if file_opts:
+        args.extend(["--{", *file_opts, stream, "--}"])
+    else:
+        args.append(stream)
     return args
 
 

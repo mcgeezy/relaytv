@@ -2612,8 +2612,13 @@ def _build_mpv_args(
     if arm_fast_default and (arm_machine or decode_profile == "arm_safe") and not _has_opt(mpv_args + extra, "--profile"):
         mpv_args.append("--profile=fast")
 
+    # File-scoped options are collected here and wrapped in a --{ ... --}
+    # group around the stream URL. Passing them as globals would make them
+    # stick on the mpv process, so every later `loadfile` on a reused player
+    # would inherit the first video's external audio track / start pos.
+    file_opts: list[str] = []
     if audio_url:
-        mpv_args.append(f"--audio-file={audio_url}")
+        file_opts.append(f"--audio-file={audio_url}")
 
     headers = http_headers or {}
     if headers.get("User-Agent"):
@@ -2623,7 +2628,7 @@ def _build_mpv_args(
 
     start_value = _mpv_start_option_value(start_pos)
     if start_value:
-        mpv_args.append(f"--start={start_value}")
+        file_opts.append(f"--start={start_value}")
 
     # In X11 sessions, route notifications through RelayTV's overlay and
     # suppress mpv playback banners/messages that can appear on every file start.
@@ -2693,8 +2698,11 @@ def _build_mpv_args(
         mpv_args.append(f"--slang={sub_lang}")
     # Append user args, then sanitize duplicate singleton options.
     mpv_args += extra
-    mpv_args.append(stream_url)
     mpv_args = _first_wins_dedupe(mpv_args)
+    if file_opts:
+        mpv_args.extend(["--{", *file_opts, stream_url, "--}"])
+    else:
+        mpv_args.append(stream_url)
     return mpv_args
 
 

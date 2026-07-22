@@ -2960,8 +2960,58 @@ def test_mpv_start_args_include_resume_start_position(monkeypatch: pytest.Monkey
 
     args = player._build_mpv_args('https://example.com/video.mp4', None, 'x11', start_pos=42.5)
 
-    assert '--start=42.5' in args
-    assert args[-1] == 'https://example.com/video.mp4'
+    # Start position is file-scoped so a reused mpv process does not seek
+    # every later loadfile to the resume offset.
+    assert args[args.index('--{'):] == ['--{', '--start=42.5', 'https://example.com/video.mp4', '--}']
+
+
+def test_mpv_split_audio_is_file_scoped_not_process_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'get_settings', lambda: {'volume': 75})
+    monkeypatch.setattr(player, '_effective_audio_device', lambda settings=None: '')
+    monkeypatch.setattr(player, '_x11_mode_active', lambda selected_mode=None: False)
+    monkeypatch.setattr(player, '_x11_overlay_enabled', lambda: False)
+    monkeypatch.setattr(player, '_provider_hint_for_stream', lambda *_a, **_k: 'generic')
+    monkeypatch.setattr(player, '_should_force_ytdl_off', lambda *_a, **_k: False)
+    monkeypatch.setattr(player, '_effective_ytdl_format', lambda *_a, **_k: '')
+
+    args = player._build_mpv_args(
+        'https://example.com/video.mp4', 'https://example.com/audio.m4a', 'x11'
+    )
+
+    # A process-global --audio-file sticks on the idle mpv process and bleeds
+    # the first video's audio into every later seamless-replace loadfile.
+    assert args[args.index('--{'):] == [
+        '--{',
+        '--audio-file=https://example.com/audio.m4a',
+        'https://example.com/video.mp4',
+        '--}',
+    ]
+
+
+def test_qt_subprocess_mpv_args_scope_audio_and_start_to_first_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+
+    args = qt_shell_app._build_mpv_args(
+        'https://example.com/video.mp4',
+        123,
+        audio='https://example.com/audio.m4a',
+        start_pos=12.0,
+    )
+
+    # The Pi's --idle=yes subprocess is reused across queue items via
+    # `loadfile ... replace`; file-scoped options must not leak into later loads.
+    assert args[args.index('--{'):] == [
+        '--{',
+        '--audio-file=https://example.com/audio.m4a',
+        '--start=12',
+        'https://example.com/video.mp4',
+        '--}',
+    ]
+
+    plain = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+    assert plain[-1] == 'https://example.com/video.mp4'
+    assert '--{' not in plain
 
 
 def test_process_wide_resume_start_disables_mpv_up_next_priming() -> None:
