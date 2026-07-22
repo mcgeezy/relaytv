@@ -3176,6 +3176,19 @@ def test_history_entry_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch)
     assert 'SECRET-CRED' not in json.dumps(persistable)
 
 
+def test_mpv_up_next_skips_iptv_and_header_bearing_items() -> None:
+    # IPTV needs re-resolution + redaction and header-bearing items need their
+    # per-channel headers, so both must bypass mpv's direct up-next handoff.
+    assert routes.player._mpv_up_next_eligible_item({
+        'url': 'https://cdn.example/live.m3u8', 'provider': 'iptv',
+        'iptv_source_id': 's', 'iptv_channel_id': 'c',
+    }) is False
+    assert routes.player._mpv_up_next_eligible_item({
+        'url': 'https://cdn.example/vod.mp4', 'provider': 'jellyfin',
+        'http_headers': {'User-Agent': 'x'},
+    }) is False
+
+
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
     persisted: list[dict] = []
     original_resume = {

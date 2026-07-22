@@ -3895,6 +3895,14 @@ def _mpv_up_next_eligible_item(item: object) -> bool:
     # handoff consumption when extractor/auth fails before playback starts.
     if (not prefer_mpv_ytdl) or force_resolve_provider:
         return False
+    # IPTV carries opaque catalog references that must be re-resolved (and
+    # redacted in NOW_PLAYING/history/session), and any header-bearing item
+    # needs its per-channel headers installed. mpv's direct playlist handoff
+    # does neither, so route both through play_item.
+    if provider == "iptv":
+        return False
+    if isinstance(item, dict) and _item_http_headers(item):
+        return False
     if _item_should_prefetch_stream(item):
         return False
     return True
