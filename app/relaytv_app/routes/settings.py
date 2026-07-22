@@ -41,6 +41,7 @@ class SettingsReq(BaseModel):
     idle_panels: dict[str, dict] | None = None
     weather: dict | None = None
     uploads: dict | None = None
+    iptv_enabled: bool | None = None
     jellyfin_enabled: bool | None = None
     jellyfin_server_url: str | None = None
     jellyfin_username: str | None = None
@@ -74,6 +75,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["ytdlp_auto_update_enabled"] = bool(out.get("ytdlp_auto_update_enabled"))
     out["idle_dashboard_enabled"] = bool(out.get("idle_dashboard_enabled", True))
     out["idle_notifications_enabled"] = bool(out.get("idle_notifications_enabled", True))
+    out["iptv_enabled"] = bool(out.get("iptv_enabled", False))
     return out
 
 
@@ -269,6 +271,8 @@ def update_settings(req: SettingsReq):
         runtime_config.set_value("RELAYTV_IDLE_QR_SIZE", str(int(updated.get("idle_qr_size"))))
     if "jellyfin_enabled" in requested_keys and updated.get("jellyfin_enabled") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_ENABLED", "1" if bool(updated.get("jellyfin_enabled")) else "0")
+    if "iptv_enabled" in requested_keys and updated.get("iptv_enabled") is not None:
+        runtime_config.set_value("RELAYTV_IPTV_ENABLED", "1" if bool(updated.get("iptv_enabled")) else "0")
     if "jellyfin_server_url" in requested_keys and updated.get("jellyfin_server_url") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_URL", str(updated.get("jellyfin_server_url") or "").strip())
     if "jellyfin_username" in requested_keys and updated.get("jellyfin_username") is not None:
@@ -290,6 +294,8 @@ def update_settings(req: SettingsReq):
 
     live_applied: list[str] = []
     live_apply_failed: list[str] = []
+    if "iptv_enabled" in requested_keys:
+        live_applied.append("iptv_enabled")
     playing_now = bool(player.is_playing())
     if (not apply_now) and playing_now:
         try:

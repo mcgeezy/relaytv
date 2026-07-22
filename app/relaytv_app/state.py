@@ -229,18 +229,26 @@ def _persistable_queue_item(item: dict) -> dict | None:
     if not isinstance(u, str) or not u.strip():
         return None
     url = u.strip()
+    provider = (
+        item.get("provider")
+        if isinstance(item.get("provider"), str) and str(item.get("provider")).strip()
+        else provider_from_url(url)
+    )
+    iptv_source_id = str(item.get("iptv_source_id") or "").strip()
+    iptv_channel_id = str(item.get("iptv_channel_id") or "").strip()
+    persisted_url = url
+    if str(provider).strip().lower() == "iptv" and iptv_source_id and iptv_channel_id:
+        # IPTV stream URLs can contain path or query credentials. Persist only
+        # opaque catalog references; player.play_item resolves them at use time.
+        persisted_url = f"https://iptv.invalid/{iptv_source_id}/{iptv_channel_id}"
     out: dict[str, object] = {
-        "url": url,
+        "url": persisted_url,
         "title": (
             item.get("title")
             if isinstance(item.get("title"), str) and str(item.get("title")).strip()
-            else url
+            else ("IPTV channel" if str(provider).strip().lower() == "iptv" else url)
         ),
-        "provider": (
-            item.get("provider")
-            if isinstance(item.get("provider"), str) and str(item.get("provider")).strip()
-            else provider_from_url(url)
-        ),
+        "provider": provider,
     }
 
     for key in (
@@ -253,6 +261,8 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "type",
         "audio_language",
         "subtitle_language",
+        "iptv_source_id",
+        "iptv_channel_id",
     ):
         val = item.get(key)
         if isinstance(val, str) and val.strip():
@@ -437,11 +447,16 @@ def _persist_session_payload(payload: dict) -> None:
     _atomic_write_json(path, payload)
 
 def persist_session() -> None:
+    persisted_now = NOW_PLAYING
+    if isinstance(NOW_PLAYING, dict) and str(NOW_PLAYING.get("provider") or "").lower() == "iptv":
+        # Do not duplicate credential-bearing IPTV stream URLs into session
+        # JSON. The opaque catalog reference is resolved again on resume.
+        persisted_now = _persistable_history_item(NOW_PLAYING)
     payload = {
         "session_state": SESSION_STATE,
         "pause_reason": SESSION_PAUSE_REASON,
         "session_position": SESSION_POSITION,
-        "now_playing": NOW_PLAYING,
+        "now_playing": persisted_now,
         "playback_runtime": {
             "state": PLAYBACK_RUNTIME_STATE,
             "reason": PLAYBACK_RUNTIME_STATE_REASON,
@@ -969,6 +984,7 @@ def _default_settings() -> dict:
         "jellyfin_sub_lang": (os.getenv("RELAYTV_JELLYFIN_SUB_LANG") or os.getenv("RELAYTV_SUB_LANG") or "").strip(),
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
         "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
+        "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
     }
 
 def load_settings() -> None:
@@ -1044,6 +1060,7 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_sub_lang",
         "jellyfin_playback_mode",
         "jellyfin_server_type",
+        "iptv_enabled",
     }
     clean = {k: v for k, v in (patch or {}).items() if k in allowed}
     if "device_name" in clean:
@@ -1083,6 +1100,8 @@ def update_settings(patch: dict) -> dict:
         clean["uploads"] = _normalize_upload_settings(clean.get("uploads"))
     if "jellyfin_enabled" in clean:
         clean["jellyfin_enabled"] = bool(clean.get("jellyfin_enabled"))
+    if "iptv_enabled" in clean:
+        clean["iptv_enabled"] = bool(clean.get("iptv_enabled"))
     if "jellyfin_auth_enabled" in clean:
         clean["jellyfin_auth_enabled"] = bool(clean.get("jellyfin_auth_enabled"))
     if "jellyfin_server_url" in clean:

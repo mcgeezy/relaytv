@@ -23,7 +23,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from .. import config, discovery_mdns, playback_service, player, public_media, resolver, state, upload_store, video_profile, x11_overlay
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
-from ..integrations import jellyfin_receiver, jellyfin_service
+from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
@@ -34,6 +34,7 @@ from .capabilities import (
 )
 from .devices import router as devices_router
 from .health import router as health_router
+from .iptv import router as iptv_router
 from .jellyfin import (
     JellyfinAudioSelectReq as JellyfinAudioSelectReq,
     JellyfinCommandReq as JellyfinCommandReq,
@@ -131,6 +132,7 @@ router.include_router(assets_router)
 router.include_router(capabilities_router)
 router.include_router(devices_router)
 router.include_router(health_router)
+router.include_router(iptv_router)
 router.include_router(jellyfin_router)
 router.include_router(playback_router)
 router.include_router(postlive_router)
@@ -3035,6 +3037,19 @@ def _status_payload() -> dict[str, object]:
             playing = True
             paused = True
             state.set_session_state("paused")
+        elif (
+            sess == "playing"
+            and isinstance(state.NOW_PLAYING, dict)
+            and (
+                str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "iptv"
+                or player._item_looks_like_live_stream(state.NOW_PLAYING)
+            )
+        ):
+            # Runtime telemetry can briefly disappear while a live stream
+            # buffers. Keep only live/IPTV sessions open; ordinary VOD falls
+            # through so a crashed player still demotes to idle instead of
+            # sticking in a stale playing/buffering session.
+            pass
         else:
             native_active = False
             try:
@@ -3143,6 +3158,12 @@ def _status_payload() -> dict[str, object]:
     )
     annotated_now_playing = _annotate_upload_item(now_playing)
     annotated_queue = _annotate_upload_items(q)
+    iptv_status: dict[str, object] = {"enabled": iptv_service.enabled()}
+    if iptv_status["enabled"]:
+        try:
+            iptv_status = iptv_service.status()
+        except Exception:
+            iptv_status.update({"source_count": 0, "channel_count": 0})
     return {
         "state": sess,
         "device_name": str(settings_snapshot.get("device_name") or "RelayTV"),
@@ -3150,6 +3171,9 @@ def _status_payload() -> dict[str, object]:
         "idle_notifications_enabled": bool(settings_snapshot.get("idle_notifications_enabled", True)),
         "mdns_advertising": bool(mdns.get("active")),
         "mdns_service_type": str(mdns.get("service_type") or ""),
+        "iptv_enabled": bool(iptv_status.get("enabled")),
+        "iptv_source_count": int(iptv_status.get("source_count") or 0),
+        "iptv_channel_count": int(iptv_status.get("channel_count") or 0),
         "jellyfin_enabled": jf_enabled,
         "jellyfin_running": jf_running,
         "jellyfin_connected": jf_connected,
@@ -3321,6 +3345,7 @@ def ui():
   <title>RelayTV</title>
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3337,6 +3362,7 @@ def ui():
         <h1 id="appBrandName">RelayTV</h1>
       </div>
       <div class="hdrRight">
+        <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
         <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
         <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
@@ -3619,6 +3645,64 @@ def ui():
       </aside>
     </div>
 
+    <div id="iptvShell" class="iptvShell hidden" aria-hidden="true">
+      <div class="iptvShellInner">
+        <header class="iptvShellHead">
+          <button id="iptvBackBtn" class="iptvBack" aria-label="Back to RelayTV">← <span>Back</span></button>
+          <div class="iptvIdentity"><span class="iptvMark" aria-hidden="true">▦</span><div><small>RelayTV live channels</small><strong>IPTV</strong></div></div>
+          <div id="iptvStatus" class="iptvStatus" role="status" aria-live="polite">Loading…</div>
+        </header>
+        <section id="iptvBrowsePanel" class="iptvPanel">
+          <div class="iptvSubHead"><span class="iptvSubTitle">My Channels</span></div>
+          <div class="iptvPageHead">
+            <div class="iptvSearchRow">
+              <input id="iptvSearch" class="input" type="search" placeholder="Search your channels…" aria-label="Search your IPTV channels" />
+            </div>
+            <button class="iptvHeadBtn" type="button" data-iptv-goto="discover"><span aria-hidden="true">＋</span> Discover</button>
+          </div>
+          <div id="iptvChannelGrid" class="iptvChannelSections" aria-live="polite"></div>
+          <button id="iptvMoreBtn" class="iptvMore hidden" type="button">Load more</button>
+          <div class="iptvListFoot"><button class="iptvLinkBtn" type="button" data-iptv-goto="discover">Discover more channels →</button></div>
+        </section>
+        <section id="iptvDiscoverPanel" class="iptvPanel hidden">
+          <div class="iptvSubHead"><button class="iptvBackLink" type="button" data-iptv-back><span aria-hidden="true">‹</span> Back</button><span class="iptvSubTitle">Discover channels</span></div>
+          <div class="iptvPageHead">
+            <div class="iptvSearchRow">
+              <input id="iptvDiscoverSearch" class="input" type="search" placeholder="Search all channels…" aria-label="Search discoverable channels" />
+            </div>
+            <select id="iptvDiscoverGroup" class="input" aria-label="Filter by group"><option value="">All groups</option></select>
+            <button class="iptvHeadBtn" type="button" data-iptv-goto="sources">Sources</button>
+            <button id="iptvDiscoverRefresh" class="iptvGhostBtn" type="button" title="Refresh channels from your sources">↻ <span>Refresh</span></button>
+          </div>
+          <div id="iptvDiscoverGrid" class="iptvChannelGrid" aria-live="polite"></div>
+          <button id="iptvDiscoverMoreBtn" class="iptvMore hidden" type="button">Load more</button>
+        </section>
+        <section id="iptvSourcesPanel" class="iptvPanel hidden">
+          <div class="iptvSubHead"><button class="iptvBackLink" type="button" data-iptv-back><span aria-hidden="true">‹</span> Back</button><span class="iptvSubTitle">Sources</span></div>
+          <details id="iptvAddCard" class="iptvAddCard">
+            <summary><span class="iptvAddTitle"><span aria-hidden="true">＋</span> Add playlist</span><span class="iptvAddHint">M3U URL or pasted list</span></summary>
+            <div class="iptvAddBody">
+              <div class="iptvFormGrid">
+                <input id="iptvSourceName" class="input" maxlength="120" placeholder="Source name" />
+                <input id="iptvSourceUrl" class="input" type="url" placeholder="https://example.com/channels.m3u" />
+              </div>
+              <details><summary>Or paste an M3U playlist</summary><textarea id="iptvSourceContent" class="input" rows="5" placeholder="#EXTM3U…"></textarea></details>
+              <div class="iptvFormActions"><button id="iptvAddSourceBtn" class="good" type="button">Add and refresh</button><span id="iptvSourceMsg" aria-live="polite"></span></div>
+            </div>
+          </details>
+          <div class="iptvSourcesSection">
+            <div class="iptvSectionHead"><h2>Your sources</h2><button id="iptvRemoveUnavailableBtn" class="iptvGhostBtn danger" type="button">Remove unavailable</button></div>
+            <div id="iptvSourceList" class="iptvSourceList"></div>
+          </div>
+          <div class="iptvSourcesSection">
+            <div class="iptvSectionHead"><h2>Free provider directory</h2><input id="iptvDirectorySearch" class="input" type="search" placeholder="Search country, language, or category…" aria-label="Search provider directory" /></div>
+            <p class="iptvSectionNote">Nothing is fetched until you choose Add. Availability and regional restrictions vary.</p>
+            <div id="iptvDirectoryGrid" class="iptvDirectoryGrid"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
     <div id="jellyfinShell" class="jfShell jfModern hidden" aria-hidden="true">
       <div class="jfShellInner">
         <header class="jfShellHead">
@@ -3672,6 +3756,7 @@ def ui():
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -3898,6 +3983,27 @@ def ui():
     </details>
 
     <details class="settingsGroup">
+      <summary>IPTV Integration <span id="setIptvStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable IPTV</div>
+            <div class="toggleHint">Show searchable live-channel browsing, favorites, visibility controls, and source discovery.</div>
+          </div>
+          <label class="toggleSwitch" for="setIptvEnabled" title="Enable IPTV integration">
+            <input type="checkbox" id="setIptvEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="hint">Playlists and stream credentials are stored owner-only in <code>/data/iptv.sqlite3</code>, but are not encrypted at rest. Free directory providers are opt-in.</div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
+          <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup">
       <summary><span class="jfBrand">Jellyfin / Emby</span> Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
         <div class="toggleRow">
@@ -3989,7 +4095,7 @@ def ui():
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "jellyfin.css", "app.js", "jellyfin.js"):
+    for name in ("app.css", "jellyfin.css", "iptv.css", "app.js", "jellyfin.js", "iptv.js"):
         path = _resolve_static_asset("ui", name)
         try:
             if path:

@@ -975,6 +975,10 @@
       box-shadow: 0 0 8px rgba(96,180,255,.80);
       animation: nDotPulse 2.2s ease-in-out infinite;
     }
+    .nStateDot.live{
+      background: #ff5f6d;
+      box-shadow: 0 0 8px rgba(255,95,109,.82);
+    }
     @keyframes nDotPulse{
       0%, 100%{ box-shadow: 0 0 4px rgba(96,180,255,.55); opacity: .75; }
       50%{ box-shadow: 0 0 12px rgba(96,180,255,.95); opacity: 1; }
@@ -989,6 +993,11 @@
       color: rgba(255,205,130,.92);
       border: 1px solid rgba(255,190,110,.40);
       background: rgba(90,60,18,.35);
+    }
+    .nStateTag.live{
+      color: #ffdce0;
+      border-color: rgba(255,95,109,.55);
+      background: rgba(118,24,38,.42);
     }
     .nSkipBtn,
     .nGhostBtn{
@@ -1110,6 +1119,22 @@
     .nowCard.isIdle .progress,
     .nowCard.isIdle .nTimeRow{ display: none; }
     .nowCard.isIdle .nIdleMsg{ display: block; }
+    .nowCard.isLive .progress{ display: none; }
+    .nowCard.isLive .nTimeRow{ margin-top: 14px; }
+    .nowCard.isLive .nTimeRow #pos{
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #ff9aa4;
+    }
+    .nowCard.isLive .nTimeRow #pos::before{
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #ff5f6d;
+      box-shadow: 0 0 8px rgba(255,95,109,.75);
+    }
     .nowCard .progress{
       margin-top: 14px;
       height: 8px;

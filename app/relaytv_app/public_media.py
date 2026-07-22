@@ -84,10 +84,15 @@ def public_media_item(item: object) -> object:
         return item
 
     source_url = item.get("_resolved_source_url") or item.get("resolved_source_url")
+    provider = str(item.get("provider") or "").strip().lower()
     result: dict[str, object] = {}
     for key, value in item.items():
         normalized = str(key or "").strip().lower()
         if key.startswith("_") or normalized in _PRIVATE_ITEM_KEYS:
+            continue
+        if provider == "iptv" and normalized in {"input", "url"}:
+            # IPTV stream and playlist URLs may carry credentials anywhere in
+            # the path. Opaque catalog IDs are sufficient for public clients.
             continue
         if normalized in _URL_FIELDS and isinstance(value, str):
             safe_url = sanitize_public_url(value)
@@ -96,7 +101,7 @@ def public_media_item(item: object) -> object:
             continue
         result[key] = value
 
-    if source_url:
+    if source_url and provider != "iptv":
         safe_source = sanitize_public_url(source_url)
         if safe_source:
             result["url"] = safe_source

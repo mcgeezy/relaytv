@@ -50,7 +50,10 @@ def test_ui_smoke() -> None:
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
+    iptv_css_response = client.get('/static/ui/iptv.css')
+    iptv_js_response = client.get('/static/ui/iptv.js')
     jellyfin_playwright = (ROOT_DIR / 'scripts' / 'jellyfin-ui-smoke.js').read_text(encoding='utf-8')
+    iptv_playwright = (ROOT_DIR / 'scripts' / 'iptv-ui-smoke.js').read_text(encoding='utf-8')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
@@ -58,6 +61,8 @@ def test_ui_smoke() -> None:
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
+    assert re.search(r'<script src="/static/ui/iptv\.js\?v=\d+" defer></script>', response.text)
     assert response.headers.get('cache-control') == 'no-cache'
     assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
     assert '<style>' not in response.text
@@ -65,6 +70,8 @@ def test_ui_smoke() -> None:
     assert 'text/css' in css_response.headers['content-type']
     css = css_response.text
     assert jellyfin_css_response.status_code == 200
+    assert iptv_css_response.status_code == 200
+    assert iptv_js_response.status_code == 200
     assert 'text/css' in jellyfin_css_response.headers['content-type']
     jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200
@@ -123,6 +130,9 @@ def test_ui_smoke() -> None:
     assert 'class="nMetaRow"' in response.text
     assert 'id="nHeroArt"' in response.text
     assert 'id="nowStateDot"' in response.text
+    assert 'function _isNowPlayingLive(np)' in js
+    assert "const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);" in js
+    assert ".nowCard.isLive .progress{ display: none; }" in css
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
     assert 'role="tablist"' in response.text
@@ -217,6 +227,10 @@ def test_ui_smoke() -> None:
     assert "chromium.connect(wsEndpoint)" in jellyfin_playwright
     assert "--${name}=" in jellyfin_playwright
     assert "nestedInteractive" in jellyfin_playwright
+    assert "chromium.connect(wsEndpoint)" in iptv_playwright
+    assert "[data-iptv-section=\"favorites\"]" in iptv_playwright
+    assert "nestedInteractive" in iptv_playwright
+    assert "livePanel.position === 'LIVE'" in iptv_playwright
     assert "_applyQueueSnapshot(payload);" in js
     assert "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});" in js
     assert "play.disabled = !available;" in js
@@ -2292,6 +2306,71 @@ def test_playback_runtime_idle_or_ended_holds_implausible_native_qt_end(monkeypa
     assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
 
 
+def test_playback_runtime_idle_or_ended_ignores_iptv_live_window_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {
+            'title': 'Live channel',
+            'provider': 'iptv',
+            'resume_pos': 29.5,
+            'duration_sec': 30.0,
+            'started': now_ts - 120.0,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(
+        player,
+        'mpv_get_many',
+        lambda props: {
+            'core-idle': True,
+            'eof-reached': False,
+            'pause': False,
+            'path': 'https://example.com/live.m3u8',
+            'time-pos': 29.5,
+            'duration': 30.0,
+        },
+    )
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 2.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
+def test_playback_runtime_idle_or_ended_holds_live_telemetry_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    now_ts = player.time.time()
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {
+            'title': 'Live channel',
+            'provider': 'iptv',
+            'resume_pos': 29.5,
+            'duration_sec': 30.0,
+            'started': now_ts - 120.0,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(player, '_is_playing', lambda: False)
+    monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(player, 'native_qt_playback_explicitly_ended', lambda: False)
+    monkeypatch.setattr(player, '_PLAYBACK_IDLE_CANDIDATE_SINCE', now_ts - 5.0, raising=False)
+
+    assert player._playback_runtime_idle_or_ended() is False
+    assert player._PLAYBACK_IDLE_CANDIDATE_SINCE == 0.0
+
+
 def test_is_playing_ignores_idle_qt_socket_with_stale_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(player, '_qt_shell_backend_enabled', lambda: True)
     monkeypatch.setattr(player, '_qt_runtime_uses_external_mpv', lambda: False)
@@ -2756,6 +2835,44 @@ def test_status_preserves_paused_session_during_runtime_dropout(monkeypatch: pyt
     assert session_sets == ['paused']
 
 
+def test_status_preserves_playing_session_during_runtime_dropout(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_sets: list[str] = []
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_backend_enabled', lambda: True)
+    monkeypatch.setattr(routes.player, '_qt_runtime_active', lambda **_: False)
+    monkeypatch.setattr(routes.player, '_qt_shell_running', lambda: True)
+    monkeypatch.setattr(routes.player, 'playback_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'auto_next_transitioning', lambda: False)
+    monkeypatch.setattr(routes.player, 'startup_session_restore_pending', lambda: False)
+    monkeypatch.setattr(routes.player, '_effective_ytdl_format', lambda s=None: '')
+    monkeypatch.setattr(routes.player, 'get_mpv_log_tail', lambda lines=40: [])
+    monkeypatch.setattr(routes.player, 'IPC_PATH', '/tmp/test-mpv.sock', raising=False)
+    monkeypatch.setattr(routes.os.path, 'exists', lambda p: False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'live channel', 'provider': 'iptv'}, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'set_session_state', lambda val: session_sets.append(val))
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda props: {})
+    monkeypatch.setattr(
+        routes,
+        '_runtime_capabilities',
+        lambda playing=None: {
+            'backend_ready': None,
+            'native_qt_mpv_runtime_paused': False,
+        },
+    )
+
+    payload = routes.status()
+
+    assert payload['state'] == 'playing'
+    assert payload['playing'] is False
+    assert payload['now_playing']['title'] == 'live channel'
+    assert payload['playback_runtime_state'] == 'buffering'
+    assert payload['playback_runtime_state_reason'] == 'session_runtime_gap'
+    assert session_sets == []
+
+
 def test_status_preserves_playing_session_while_startup_restore_is_pending(monkeypatch: pytest.MonkeyPatch) -> None:
     session_sets: list[str] = []
 
@@ -2843,8 +2960,88 @@ def test_mpv_start_args_include_resume_start_position(monkeypatch: pytest.Monkey
 
     args = player._build_mpv_args('https://example.com/video.mp4', None, 'x11', start_pos=42.5)
 
-    assert '--start=42.5' in args
-    assert args[-1] == 'https://example.com/video.mp4'
+    # Start position is file-scoped so a reused mpv process does not seek
+    # every later loadfile to the resume offset.
+    assert args[args.index('--{'):] == ['--{', '--start=42.5', 'https://example.com/video.mp4', '--}']
+
+
+def test_mpv_split_audio_is_file_scoped_not_process_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'get_settings', lambda: {'volume': 75})
+    monkeypatch.setattr(player, '_effective_audio_device', lambda settings=None: '')
+    monkeypatch.setattr(player, '_x11_mode_active', lambda selected_mode=None: False)
+    monkeypatch.setattr(player, '_x11_overlay_enabled', lambda: False)
+    monkeypatch.setattr(player, '_provider_hint_for_stream', lambda *_a, **_k: 'generic')
+    monkeypatch.setattr(player, '_should_force_ytdl_off', lambda *_a, **_k: False)
+    monkeypatch.setattr(player, '_effective_ytdl_format', lambda *_a, **_k: '')
+
+    args = player._build_mpv_args(
+        'https://example.com/video.mp4', 'https://example.com/audio.m4a', 'x11'
+    )
+
+    # A process-global --audio-file sticks on the idle mpv process and bleeds
+    # the first video's audio into every later seamless-replace loadfile.
+    assert args[args.index('--{'):] == [
+        '--{',
+        '--audio-file=https://example.com/audio.m4a',
+        'https://example.com/video.mp4',
+        '--}',
+    ]
+
+
+def test_qt_external_mpv_args_keep_grouped_file_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'get_settings', lambda: {'volume': 75})
+    monkeypatch.setattr(player, '_effective_audio_device', lambda settings=None: '')
+    monkeypatch.setattr(player, '_x11_mode_active', lambda selected_mode=None: False)
+    monkeypatch.setattr(player, '_x11_overlay_enabled', lambda: False)
+    monkeypatch.setattr(player, '_provider_hint_for_stream', lambda *_a, **_k: 'generic')
+    monkeypatch.setattr(player, '_should_force_ytdl_off', lambda *_a, **_k: False)
+    monkeypatch.setattr(player, '_effective_ytdl_format', lambda *_a, **_k: '')
+
+    args = player._build_qt_external_mpv_args(
+        'https://example.com/video.mp4', 'https://example.com/audio.m4a', start_pos=42.5
+    )
+
+    # The grouped per-file spec must stay intact and the media URL must appear
+    # exactly once (not duplicated by an unclosed --{ group).
+    assert args[-1] == '--}'
+    assert args.count('https://example.com/video.mp4') == 1
+    assert args[args.index('--{'):] == [
+        '--{',
+        '--audio-file=https://example.com/audio.m4a',
+        '--start=42.5',
+        'https://example.com/video.mp4',
+        '--}',
+    ]
+
+    plain = player._build_qt_external_mpv_args('https://example.com/video.mp4', None)
+    assert '--{' not in plain
+    assert plain[-1] == 'https://example.com/video.mp4'
+
+
+def test_qt_subprocess_mpv_args_scope_audio_and_start_to_first_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
+    monkeypatch.delenv('MPV_ARGS', raising=False)
+
+    args = qt_shell_app._build_mpv_args(
+        'https://example.com/video.mp4',
+        123,
+        audio='https://example.com/audio.m4a',
+        start_pos=12.0,
+    )
+
+    # The Pi's --idle=yes subprocess is reused across queue items via
+    # `loadfile ... replace`; file-scoped options must not leak into later loads.
+    assert args[args.index('--{'):] == [
+        '--{',
+        '--audio-file=https://example.com/audio.m4a',
+        '--start=12',
+        'https://example.com/video.mp4',
+        '--}',
+    ]
+
+    plain = qt_shell_app._build_mpv_args('https://example.com/video.mp4', 123)
+    assert plain[-1] == 'https://example.com/video.mp4'
+    assert '--{' not in plain
 
 
 def test_process_wide_resume_start_disables_mpv_up_next_priming() -> None:
@@ -2945,6 +3142,81 @@ def test_preserve_current_marks_interrupt_queue_entry(monkeypatch: pytest.Monkey
     assert preserved['resume_pos'] == 37.0
     assert routes.state.QUEUE == [preserved]
     assert persisted[-1]['queue'] == [preserved]
+
+
+def test_preserve_current_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    persisted: list[dict] = []
+    secret_url = 'https://cdn.example/live/abc123?token=SECRET-CRED'
+
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 41.0 if prop == 'time-pos' else 0.0)
+    monkeypatch.setattr(routes.player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'url': secret_url,
+        'title': 'Al Jazeera English',
+        'provider': 'iptv',
+        'iptv_source_id': 'src-1',
+        'iptv_channel_id': 'chan-9',
+        'http_headers': {'User-Agent': 'x'},
+        '_resolved_stream': secret_url,
+    }, raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+
+    preserved = routes._preserve_current_to_queue_front()
+
+    assert preserved is not None
+    entry = persisted[-1]['queue'][0]
+    # Only the opaque catalog reference is persisted — never the credential URL.
+    assert entry['url'] == 'https://iptv.invalid/src-1/chan-9'
+    assert entry['iptv_source_id'] == 'src-1'
+    assert entry['iptv_channel_id'] == 'chan-9'
+    assert '_resolved_stream' not in entry and '_resolved_source_url' not in entry
+    assert entry['resume_pos'] == 41.0
+    assert entry['_relaytv_interrupt_preserved'] is True
+    assert 'SECRET-CRED' not in json.dumps(persisted[-1])
+
+
+def test_history_entry_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict] = []
+    secret_url = 'https://cdn.example/live/abc123?token=SECRET-CRED'
+
+    monkeypatch.setattr(routes.state, 'history_contains', lambda hid: False)
+    monkeypatch.setattr(routes.state, 'history_add', lambda entry: captured.append(entry))
+
+    routes.player._add_history_entry({
+        'url': secret_url,
+        'title': 'Al Jazeera English',
+        'provider': 'iptv',
+        'mode': 'iptv',
+        'iptv_source_id': 'src-1',
+        'iptv_channel_id': 'chan-9',
+        '_resolved_source_url': secret_url,
+        '_resolved_stream': secret_url,
+    })
+
+    assert len(captured) == 1
+    entry = captured[0]
+    assert entry['iptv_source_id'] == 'src-1'
+    assert entry['iptv_channel_id'] == 'chan-9'
+    assert '_resolved_stream' not in entry
+    # What actually hits history.json must carry only the opaque reference.
+    persistable = routes.state._persistable_history_item(entry)
+    assert persistable['url'] == 'https://iptv.invalid/src-1/chan-9'
+    assert 'SECRET-CRED' not in json.dumps(persistable)
+
+
+def test_mpv_up_next_skips_iptv_and_header_bearing_items() -> None:
+    # IPTV needs re-resolution + redaction and header-bearing items need their
+    # per-channel headers, so both must bypass mpv's direct up-next handoff.
+    assert routes.player._mpv_up_next_eligible_item({
+        'url': 'https://cdn.example/live.m3u8', 'provider': 'iptv',
+        'iptv_source_id': 's', 'iptv_channel_id': 'c',
+    }) is False
+    assert routes.player._mpv_up_next_eligible_item({
+        'url': 'https://cdn.example/vod.mp4', 'provider': 'jellyfin',
+        'http_headers': {'User-Agent': 'x'},
+    }) is False
 
 
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5401,3 +5673,36 @@ def test_pwa_weather_asset_uses_theme_directory_when_available() -> None:
 
     assert response.status_code == 200
     assert 'image/svg+xml' in response.headers['content-type']
+
+
+def test_auto_next_skips_stale_iptv_channel_instead_of_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
+    play_calls: list[dict] = []
+    stale_iptv = {
+        'url': 'https://iptv.invalid/src/chan', 'title': 'Gone Channel',
+        'provider': 'iptv', 'iptv_source_id': 'src', 'iptv_channel_id': 'chan',
+    }
+    good_item = {'url': 'https://example.com/good.mp4', 'title': 'Good'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [stale_iptv, good_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+
+    def fake_play(item, **kwargs):
+        if item is stale_iptv:
+            raise player.HTTPException(status_code=404, detail='IPTV channel is unavailable')
+        play_calls.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    # The stale IPTV item is skipped (not re-queued) so autoplay is not blocked.
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert play_calls == [good_item]
+    assert player.state.QUEUE == []

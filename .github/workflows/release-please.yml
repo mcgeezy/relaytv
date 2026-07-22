@@ -76,10 +76,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Add hero image to release notes
+      - name: Add hero image and release highlight to release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELAYTV_RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELAYTV_RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
         run: |
           set -eu
           release_notes_dir="$(mktemp -d)"
@@ -88,6 +89,8 @@ jobs:
           updated_notes="$release_notes_dir/updated.md"
           marker='<!-- relaytv-release-overview -->'
           hero_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RELAYTV_RELEASE_TAG}/docs/images/readme/hero.png"
+          # Optional per-release highlight prepended above the generated notes.
+          highlight="docs/release-highlights/${RELAYTV_RELEASE_VERSION}.md"
 
           gh release view "$RELAYTV_RELEASE_TAG" --json body --jq '.body' > "$existing_notes"
           if grep -Fq "$marker" "$existing_notes"; then
@@ -97,6 +100,10 @@ jobs:
           {
             printf '%s\n\n' "$marker"
             printf '[![RelayTV on phone and TV](%s)](https://github.com/%s#readme)\n\n' "$hero_url" "$GITHUB_REPOSITORY"
+            if [ -f "$highlight" ]; then
+              cat "$highlight"
+              printf '\n\n'
+            fi
             cat "$existing_notes"
           } > "$updated_notes"
 
