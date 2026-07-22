@@ -170,11 +170,14 @@ stream URLs or request headers.
 - `PATCH /iptv/sources/{source_id}` and `DELETE /iptv/sources/{source_id}`
 - `POST /iptv/sources/{source_id}/refresh`
 - `GET /iptv/channels`
-  - filters: `source_id`, `q`, `group`, `visibility`, `favorites`,
+  - filters: `source_id`, `q`, `group`, `visibility`, `favorites`, `added_only`,
     `availability`, `include_unavailable`, `sort`, `offset`, `limit`
+  - `added_only` returns only channels added to My Channels; `favorites` returns
+    only pinned favorites
   - sorts: `manual`, `playlist`, `name`, `group`
 - `PATCH /iptv/channels/{channel_id}`
-  - body: `{"source_id", "favorite"?, "hidden"?}`
+  - body: `{"source_id", "favorite"?, "added"?, "hidden"?}`
+  - `added` toggles My Channels membership; `favorite` pins within My Channels
 - `POST /iptv/channels/visibility`
   - body: `{"source_id", "group", "hidden"}`
 - `POST /iptv/channels/reorder`

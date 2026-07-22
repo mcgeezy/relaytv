@@ -9,15 +9,22 @@ until it is enabled and an operator adds a source.
 Open **Settings → IPTV Integration**, enable IPTV, and select **Apply IPTV**.
 The IPTV launcher then appears in the RelayTV header.
 
-Inside IPTV:
+Inside IPTV, navigation is link-driven with a Back control — there is no tab
+bar:
 
-- **My Channels** searches and filters the normal visible catalog.
-- **Favorites** shows selected channels across every source, including an
-  unavailable favorite so it can be retried or removed.
-- **Hidden** shows channels excluded from the normal catalog.
-- **Sources** accepts an HTTP/HTTPS M3U URL or pasted M3U content.
-- **Discover** searches the reviewed free-provider directory. Adding a preset
-  is opt-in; merely opening or searching Discover does not fetch a playlist.
+- **My Channels** is the home: the channels you have added, with favorites
+  pinned to the top. The star pins a channel and is only available here. My
+  Channels keeps showing added channels that become unavailable so you can
+  retry or remove them.
+- **Discover** browses the full catalog pulled from your enabled sources.
+  Each channel has **+** (add to My Channels), Play, and an overflow menu
+  (play next, add to queue, check availability); Refresh pulls fresh channels
+  from your sources. Reached from the Discover link on My Channels.
+- **Sources** adds a playlist (HTTP/HTTPS M3U URL or pasted M3U content), lists
+  your sources with refresh/enable/remove plus a Remove-unavailable action, and
+  folds in the reviewed free-provider directory below. Adding a preset is
+  opt-in; merely opening or searching it does not fetch a playlist. Reached
+  from the Sources link on Discover.
 
 The bundled directory contains selected iptv-org country, language, and
 category playlists plus Free-TV/IPTV. These projects index publicly available
@@ -31,15 +38,18 @@ Each source refresh is transactional. A failed download or invalid playlist
 leaves the last successful catalog available. HTTP sources use ETag and
 Last-Modified conditional requests when the provider supports them.
 
-Favorites, hidden state, and manual order live in RelayTV's SQLite catalog and
-survive source refreshes and container restarts. Stable identity prefers a
-unique `tvg-id`, then channel name/group, then the stream URL as a last resort.
-Changing a provider's IDs and names can therefore produce a new channel.
+My Channels membership, favorites, and manual order live in RelayTV's SQLite
+catalog and survive source refreshes and container restarts. Stable identity
+prefers a unique `tvg-id`, then channel name/group, then the stream URL as a
+last resort; an existing channel keeps its identity when a duplicate `tvg-id`
+later appears, so its membership and favorite are not detached. Changing a
+provider's IDs and names can still produce a new channel.
 
-My Channels excludes hidden, inactive, and unavailable entries by default.
-**Include unavailable** exposes unavailable active entries. **Remove
-unavailable** permanently removes unavailable or source-removed records in the
-selected source, or in every source when no source filter is selected.
+My Channels lists only the channels you have added, favorites first, and keeps
+showing added channels that go unavailable or whose source dropped them so you
+can retry or remove them. **Remove unavailable** (on the Sources page)
+permanently removes unavailable or source-removed records in the selected
+source, or in every source when no source filter is selected.
 
 ## Availability
 
@@ -51,8 +61,9 @@ stream loads. The background worker checks favorites in small sequential
 batches; it does not probe an entire imported catalog.
 
 Source refreshes run at their configured interval with per-source jitter.
-Failed sources back off to twice that interval. A missing channel becomes
-inactive immediately but remains in Favorites until the operator removes it.
+Failed sources back off to twice that interval. Disabling a source stops both
+its refreshes and its background availability checks. A missing channel becomes
+inactive immediately but remains in My Channels until the operator removes it.
 
 ## Playback and Credentials
 
@@ -92,8 +103,9 @@ env-only changes. Enabling/disabling through Settings is live and persisted.
 - **A public channel will not play:** it may be offline, geo-blocked, require a
   provider-specific header, or disallow your network. Use Check, then try the
   provider's official player.
-- **A favorite disappeared from My Channels:** open Favorites. Inactive and
-  unavailable favorites remain there with a badge.
+- **A channel is missing from My Channels:** you may not have added it — add it
+  from Discover with **+**. Added channels that go inactive or unavailable still
+  appear, marked with a status badge, so you can retry Check or Remove them.
 - **Reset the catalog:** stop RelayTV, back up and remove
-  `/opt/relaytv/data/iptv.sqlite3`, then start RelayTV. This removes sources,
-  favorites, hidden state, and ordering.
+  `/opt/relaytv/data/iptv.sqlite3`, then start RelayTV. This removes sources, My
+  Channels membership, favorites, and ordering.
