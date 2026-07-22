@@ -2988,6 +2988,36 @@ def test_mpv_split_audio_is_file_scoped_not_process_global(monkeypatch: pytest.M
     ]
 
 
+def test_qt_external_mpv_args_keep_grouped_file_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(player.state, 'get_settings', lambda: {'volume': 75})
+    monkeypatch.setattr(player, '_effective_audio_device', lambda settings=None: '')
+    monkeypatch.setattr(player, '_x11_mode_active', lambda selected_mode=None: False)
+    monkeypatch.setattr(player, '_x11_overlay_enabled', lambda: False)
+    monkeypatch.setattr(player, '_provider_hint_for_stream', lambda *_a, **_k: 'generic')
+    monkeypatch.setattr(player, '_should_force_ytdl_off', lambda *_a, **_k: False)
+    monkeypatch.setattr(player, '_effective_ytdl_format', lambda *_a, **_k: '')
+
+    args = player._build_qt_external_mpv_args(
+        'https://example.com/video.mp4', 'https://example.com/audio.m4a', start_pos=42.5
+    )
+
+    # The grouped per-file spec must stay intact and the media URL must appear
+    # exactly once (not duplicated by an unclosed --{ group).
+    assert args[-1] == '--}'
+    assert args.count('https://example.com/video.mp4') == 1
+    assert args[args.index('--{'):] == [
+        '--{',
+        '--audio-file=https://example.com/audio.m4a',
+        '--start=42.5',
+        'https://example.com/video.mp4',
+        '--}',
+    ]
+
+    plain = player._build_qt_external_mpv_args('https://example.com/video.mp4', None)
+    assert '--{' not in plain
+    assert plain[-1] == 'https://example.com/video.mp4'
+
+
 def test_qt_subprocess_mpv_args_scope_audio_and_start_to_first_file(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('RELAYTV_QT_SHELL_MPV_ARGS', raising=False)
     monkeypatch.delenv('MPV_ARGS', raising=False)

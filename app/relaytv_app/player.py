@@ -1268,10 +1268,21 @@ def _build_qt_external_mpv_args(
         ytdl_format_override=ytdl_format_override,
         ytdl_raw_options_override=ytdl_raw_options_override,
     )
-    base = _strip_mpv_renderer_args(args[:-1])
+    # _build_mpv_args ends with the media as either a bare stream URL or a
+    # grouped per-file spec (["--{", *file_opts, stream_url, "--}"]); keep the
+    # whole spec intact instead of assuming the last token is the URL.
+    if args and args[-1] == "--}":
+        open_idx = len(args) - 1
+        while open_idx >= 0 and args[open_idx] != "--{":
+            open_idx -= 1
+        if open_idx < 0:
+            open_idx = len(args) - 1
+        prefix, file_spec = args[:open_idx], args[open_idx:]
+    else:
+        prefix, file_spec = args[:-1], args[-1:]
+    base = _strip_mpv_renderer_args(prefix)
     extra = _qt_external_mpv_mode_args(fallback_to_x11=fallback_to_x11)
-    out = base + extra + [stream_url]
-    return _first_wins_dedupe(out)
+    return _first_wins_dedupe(base + extra + file_spec)
 
 
 def _strip_mpv_renderer_args(args: list[str]) -> list[str]:
