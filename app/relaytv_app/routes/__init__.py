@@ -69,6 +69,20 @@ from .jellyfin import (
     jellyfin_tv_series_seasons as jellyfin_tv_series_seasons,
     router as jellyfin_router,
 )
+from .peers import (
+    PeerCreateReq as PeerCreateReq,
+    PeerPatchReq as PeerPatchReq,
+    PeerSendReq as PeerSendReq,
+    peers_add as peers_add,
+    peers_identity as peers_identity,
+    peers_list as peers_list,
+    peers_probe as peers_probe,
+    peers_probe_saved as peers_probe_saved,
+    peers_remove as peers_remove,
+    peers_send as peers_send,
+    peers_update as peers_update,
+    router as peers_router,
+)
 from .playback import (
     MuteReq as MuteReq,
     PlayAtReq as PlayAtReq,
@@ -134,6 +148,7 @@ router.include_router(devices_router)
 router.include_router(health_router)
 router.include_router(iptv_router)
 router.include_router(jellyfin_router)
+router.include_router(peers_router)
 router.include_router(playback_router)
 router.include_router(postlive_router)
 router.include_router(queue_router)
@@ -3346,6 +3361,7 @@ def ui():
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/peers.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3463,6 +3479,54 @@ def ui():
           </div>
         </div>
         <div id="histList" class="histList"></div>
+      </div>
+    </div>
+
+    <div id="peersBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true" aria-labelledby="peersTitle">
+      <div class="modal peersModal">
+        <div class="modalTop">
+          <div class="pmHeadText">
+            <div id="peersTitle" class="modalTitle">Send queue to</div>
+            <div id="peersSubtitle" class="pmSub">Nothing queued</div>
+          </div>
+          <div class="modalBtns">
+            <button id="peersCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
+          </div>
+        </div>
+
+        <div id="peersStatus" class="pmStatus" role="status" aria-live="polite"></div>
+
+        <div id="peersList" class="pmList"></div>
+
+        <div id="peersNearbyWrap" class="pmGroup hidden">
+          <div class="pmGroupHead">Found nearby</div>
+          <div id="peersNearby" class="pmList"></div>
+        </div>
+
+        <section class="pmAdd">
+          <button id="peersAddToggle" class="pmAddToggle" aria-expanded="false" aria-controls="peersAddForm">
+            <span aria-hidden="true">＋</span><span>Add device manually</span>
+          </button>
+          <div id="peersAddForm" class="pmAddForm hidden">
+            <label class="pmField">
+              <span class="pmFieldLabel">Address</span>
+              <input id="peerUrlInput" class="pmInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.42:8787" />
+            </label>
+            <label class="pmField">
+              <span class="pmFieldLabel">Name <small>optional</small></span>
+              <input id="peerNameInput" class="pmInput" type="text" autocomplete="off" placeholder="Bedroom TV" />
+            </label>
+            <label class="pmField">
+              <span class="pmFieldLabel">API token <small>only if that device requires one</small></span>
+              <input id="peerTokenInput" class="pmInput" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty for most setups" />
+            </label>
+            <div class="pmAddActions">
+              <button id="peerTestBtn" class="pmGhostBtn" type="button">Test connection</button>
+              <button id="peerSaveBtn" class="good" type="button">Add device</button>
+            </div>
+            <div id="peerAddHelper" class="pmHelper" role="status" aria-live="polite"></div>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -3636,6 +3700,10 @@ def ui():
         <div class="qHead">
           <span class="qHeadTitle">Queue</span>
           <span id="queueCount" class="qCount">0</span>
+          <button id="queueSendBtn" class="qSendBtn hidden" title="Send queue to another device" aria-label="Send queue to another device">
+            <svg class="qSendGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 7.6V6.5a1.9 1.9 0 0 1 1.9-1.9h13a1.9 1.9 0 0 1 1.9 1.9v11a1.9 1.9 0 0 1-1.9 1.9h-5.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M3.6 19.4h1.1m-1.1-4a4 4 0 0 1 4 4m-4-8a8 8 0 0 1 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Send</span>
+          </button>
           <button id="queueClearBtn" class="qClearBtn hidden" title="Clear queue" onclick="post('/clear')">Clear</button>
         </div>
         <ol id="queue" class="queueList"></ol>
@@ -3757,6 +3825,7 @@ def ui():
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/peers.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->
@@ -4095,7 +4164,7 @@ def ui():
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "jellyfin.css", "iptv.css", "app.js", "jellyfin.js", "iptv.js"):
+    for name in ("app.css", "jellyfin.css", "iptv.css", "peers.css", "app.js", "jellyfin.js", "iptv.js", "peers.js"):
         path = _resolve_static_asset("ui", name)
         try:
             if path:

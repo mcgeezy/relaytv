@@ -463,6 +463,11 @@ def item_from_url(url: str) -> dict:
 def annotate_item(item: object) -> object:
     if not isinstance(item, dict):
         return item
+    if item.get("peer_hosted"):
+        # Media hosted by another RelayTV device: the URL is upload-shaped but
+        # the file lives on that device, so resolving it against this device's
+        # upload store would wrongly report it as expired.
+        return item
     url = str(item.get("url") or "").strip()
     upload_id = str(item.get("upload_id") or "").strip()
     if not upload_id and not is_upload_url(url):

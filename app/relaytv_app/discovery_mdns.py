@@ -4,17 +4,14 @@ from __future__ import annotations
 import os
 import socket
 import threading
-from . import config
+from . import config, device_identity
 from .config import env_bool as _env_bool
-from .config import runtime_config
 
 try:
     from zeroconf import ServiceInfo, Zeroconf
 except Exception:  # pragma: no cover - dependency may be optional in some envs
     ServiceInfo = None
     Zeroconf = None
-
-from . import state
 
 _LOCK = threading.Lock()
 _ZEROCONF = None
@@ -41,34 +38,13 @@ def _service_port() -> int:
 
 
 def _detect_ipv4() -> str:
-    host_override = (os.getenv("RELAYTV_MDNS_HOST") or "").strip()
-    if host_override:
-        return host_override
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    except Exception:
-        return "127.0.0.1"
-    try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        try:
-            s.close()
-        except Exception:
-            pass
-    return ip
+    return device_identity.local_ipv4()
 
 
 def _device_name() -> str:
-    try:
-        settings = state.get_settings() if hasattr(state, "get_settings") else {}
-    except Exception:
-        settings = {}
-    name = str((settings or {}).get("device_name") or "").strip()
-    if not name:
-        name = runtime_config.snapshot().text("RELAYTV_DEVICE_NAME") or "RelayTV"
+    # mDNS instance names are limited to 63 bytes, tighter than the 80-char
+    # display name identity allows.
+    name = device_identity.device_name()
     if len(name) > 63:
         name = name[:63].strip() or "RelayTV"
     return name
@@ -83,10 +59,20 @@ def _instance_name() -> str:
 
 
 def _props() -> dict[bytes, bytes]:
+    """TXT records advertised with the service.
+
+    ``id`` and ``name`` let a browsing peer filter itself out of its own
+    results and de-duplicate a manually added device against the same box found
+    over mDNS. Peers on older builds simply omit them and fall back to
+    host:port identity, so adding records stays backward compatible.
+    """
     return {
         b"path": b"/ui",
         b"service": b"relaytv",
         b"version": b"1",
+        b"id": device_identity.device_id().encode("utf-8", "ignore"),
+        b"name": _device_name().encode("utf-8", "ignore"),
+        b"app": device_identity.app_version().encode("utf-8", "ignore"),
     }
 
 

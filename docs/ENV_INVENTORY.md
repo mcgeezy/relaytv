@@ -101,7 +101,8 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_CURSOR_MODE` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEBUG` | `debug.py`<br>`player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEFAULT_VOLUME` | `state.py` | - | static env |
-| `RELAYTV_DEVICE_NAME` | `config.py`<br>`discovery_mdns.py`<br>`integrations/jellyfin_receiver.py`<br>`qt_shell_app.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus, child process input |
+| `RELAYTV_DEVICE_ID` | `device_identity.py` | - | static env |
+| `RELAYTV_DEVICE_NAME` | `config.py`<br>`device_identity.py`<br>`integrations/jellyfin_receiver.py`<br>`qt_shell_app.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus, child process input |
 | `RELAYTV_DISABLE_WORKERS` | `main.py` | - | static env |
 | `RELAYTV_DISPLAY_CAP_HEIGHT` | `video_profile.py`<br>`ytdlp_format_policy.py` | - | static env |
 | `RELAYTV_DRM_CONNECTOR` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
@@ -129,7 +130,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_IMAGE_CREATED` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_REVISION` | `routes/app_info.py` | - | static env |
 | `RELAYTV_IMAGE_SOURCE` | `routes/app_info.py` | - | static env |
-| `RELAYTV_IMAGE_VERSION` | `routes/app_info.py` | - | static env |
+| `RELAYTV_IMAGE_VERSION` | `device_identity.py`<br>`routes/app_info.py` | - | static env |
 | `RELAYTV_IPTV_CHECK_BATCH` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_CHECK_INTERVAL_SEC` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_DB_PATH` | `integrations/iptv_service.py` | - | static env |
@@ -184,7 +185,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_LOGO_PATH` | `routes/__init__.py`<br>`routes/assets.py` | - | static env |
 | `RELAYTV_LOG_LEVEL` | `debug.py` | - | static env |
 | `RELAYTV_MDNS_ENABLED` | `discovery_mdns.py` | - | static env |
-| `RELAYTV_MDNS_HOST` | `discovery_mdns.py` | - | static env |
+| `RELAYTV_MDNS_HOST` | `device_identity.py` | - | static env |
 | `RELAYTV_MDNS_INSTANCE_SUFFIX` | `discovery_mdns.py` | - | static env |
 | `RELAYTV_MDNS_SERVER` | `discovery_mdns.py` | - | static env |
 | `RELAYTV_MDNS_SERVICE_TYPE` | `discovery_mdns.py` | - | static env |
@@ -210,6 +211,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_OVERLAY_OSD_DEBUG` | `player.py`<br>`routes/__init__.py` | - | static env |
 | `RELAYTV_OVERLAY_TOAST_IMAGES` | `routes/__init__.py` | - | static env |
 | `RELAYTV_OVERLAY_URL` | `overlay_app.py` | - | child process input |
+| `RELAYTV_PEERS_FILE` | `peers.py` | - | static env |
 | `RELAYTV_PLAYBACK_END_MARGIN_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_IDLE_CONFIRM_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_NOTIFY_DISPLAY_SEC` | `routes/__init__.py` | - | static env |

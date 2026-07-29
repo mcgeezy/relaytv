@@ -4,9 +4,13 @@ Planning artifact for the multi-device feature: send queue items, the whole
 queue, or live playback from one RelayTV device to another, with manually
 added peers and optional local-network auto-discovery.
 
-Status: proposed, not implemented. Per `docs/README.md` (Rule), plans stay
-out of the public docs tree — this file is branch/PR-scoped and should be
-folded into PR bodies rather than merged to `main` as a permanent doc.
+**Status: Phase 1 shipped** (see [Milestones](#8-milestones)). Each phase folds
+its user-facing surface into the existing docs as it lands — `API.md` for the
+endpoint contract, `ARCHITECTURE.md` for module ownership — and this file
+tracks milestone completion and any deviation from the original design. Per
+`docs/README.md` (Rule), the plan itself stays out of the permanent public doc
+set: retire it once Phase 4 has moved the operator-facing material into a
+runbook.
 
 ---
 
@@ -208,30 +212,86 @@ buttons:
 A "Devices" section: discovery toggle, saved peer list (rename, re-token,
 remove), and this device's own name and discoverability toggle.
 
-## 8. Phasing
+## 8. Milestones
 
-| Phase | Scope | Suggested PR title |
+| Phase | Scope | Status |
 | --- | --- | --- |
-| 1 | `device_id`, peer registry, manual add, `/queue/import`, header sheet, copy whole queue | `feat: send the queue to another RelayTV device` |
-| 2 | mDNS browse, online probes, adopt-from-nearby | `feat: discover RelayTV devices on the local network` |
-| 3 | Per-item send, Move and Handoff modes, receiver overlay toast | `feat: hand off playback between RelayTV devices` |
-| 4 | `docs/API.md` peer surface, Home Assistant and companion-app notes | `docs: document the RelayTV device sync API` |
+| 1 | `device_id`, peer registry, manual add, `/queue/import`, queue-header sheet, copy whole queue | **done** |
+| 2 | mDNS browse, adopt-from-nearby | not started |
+| 3 | Per-item send, Move and Handoff modes | not started |
+| 4 | Operator runbook, Home Assistant and companion-app notes | not started |
 
-## 9. Guardrails to update
+Phase 1 also pulled in work originally scheduled later: per-peer online probes
+(planned for Phase 2) landed with the sheet, because a device list without
+status is not usable, and the peer API surface went into `docs/API.md`
+immediately rather than waiting for Phase 4.
+
+### Phase 1 as shipped
+
+- `device_identity.py` — `device_id` persisted to `/data/device_id` (mode
+  0600), pinnable with `RELAYTV_DEVICE_ID`; owns the display name, LAN address,
+  and identity payload. `discovery_mdns` now delegates its name/address lookups
+  here and advertises `id`, `name`, and `app` TXT records for Phase 2.
+- `peers.py` — JSON registry at `/data/peers.json` (mode 0600), address
+  normalization, identity probes, and queue wire serialization.
+- `routes/peers.py` — `GET /peers/identity`, `GET|POST /peers`,
+  `PATCH|DELETE /peers/{id}`, `POST /peers/probe`,
+  `POST /peers/{id}/probe`, `POST /peers/{id}/send`.
+- `routes/queue.py` — `POST /queue/import` with per-item results, replace mode,
+  the loop guard, and the receiver toast.
+- `static/ui/peers.{js,css}` — Send pill in the queue header plus the sheet:
+  device rows with live status, tap to send, manual add with Test connection,
+  remove.
+- `tests/test_peers.py` — 14 cases: registry CRUD, token redaction on disk and
+  over the API, self/duplicate rejection, wire serialization, import
+  rebuilding, and send summaries.
+- `scripts/peers-ui-smoke.js` — browser smoke needing two devices:
+
+  ```sh
+  node scripts/peers-ui-smoke.js --base=http://<sender> --peer=http://<receiver>
+  ```
+
+### Deviations from the original design
+
+- **Probe endpoint.** The plan used `GET /health` for reachability, but that
+  payload is intentionally `{"ok": true}` with no identity. Added
+  `GET /peers/identity` instead: anonymous, read-only, and enough to refuse
+  this device's own address and de-duplicate a peer found twice.
+- **Peer-hosted uploads.** Upload URLs are shaped `/media/uploads/<id>/<file>`
+  regardless of which device hosts them, so the receiver resolved a peer's file
+  against its own upload store and rejected it as expired. Found while sending
+  between two live servers. The sender now declares `provider: "upload"`, the
+  receiver builds a plain remote-media item marked `peer_hosted`, and
+  `upload_store.annotate_item` leaves those items alone.
+- **IPTV items.** `public_media_item` withholds IPTV URLs entirely, so those
+  items have nothing portable to send. Rather than dropping them silently they
+  are reported in the send response's `rejected` list.
+- **Title hints.** Queue-time item building defers metadata lookups and falls
+  back to a URL-derived placeholder, so a peer's real title would have lost to
+  a stub. Text hints from the sender now outrank a lightweight local title;
+  artwork and duration still only fill gaps, since preferring a peer's
+  thumbnail would tie our artwork to that device staying reachable.
+- **Modes.** `append` and `replace` are both implemented server-side and
+  documented; the sheet exposes only the copy/append tap. Move and Handoff stay
+  in Phase 3 as planned.
+
+## 9. Guardrails
 
 Per `AGENTS.md` quality gates:
 
-- `tests/test_route_inventory.py` — add `/peers*`, `/queue/import`,
-  `/queue/handoff` (hand-maintained, no companion doc)
-- `tests/test_env_inventory.py --write` — any new `RELAYTV_PEERS_*` or
-  `RELAYTV_MDNS_BROWSE_*` variables
-- `tests/test_transition_inventory.py` — handoff must write transition state
+- `tests/test_route_inventory.py` — `/peers*` and `/queue/import` are pinned
+  (done); add `/queue/handoff` in Phase 3
+- `tests/test_env_inventory.py --write` — regenerated for `RELAYTV_DEVICE_ID`
+  and `RELAYTV_PEERS_FILE` (done); rerun for any `RELAYTV_MDNS_BROWSE_*`
+- `tests/test_transition_inventory.py` — regenerated for the queue writer in
+  `routes/queue.py` (done); in Phase 3, handoff must write transition state
   only through `playback_service`
-- New `tests/test_peers.py` — registry behavior plus the token-redaction
-  contract
-- A narrowly scoped `docs/DEVICE_SYNC_OPERATIONS.md` operator doc alongside
-  the IPTV and Jellyfin runbooks (this plan file is not that doc)
+- `tests/test_peers.py` — registry behavior plus the token-redaction contract
+  (done)
+- Phase 4: a narrowly scoped `docs/DEVICE_SYNC_OPERATIONS.md` operator doc
+  alongside the IPTV and Jellyfin runbooks (this plan file is not that doc)
 - `docs/release-highlights/<next-version>.md` — handoff warrants a highlight
+  when Phase 3 lands
 
 ## 10. Risks
 

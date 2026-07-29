@@ -387,6 +387,76 @@ History endpoints:
     URLs are display-safe copies with credentials stripped
 - `POST /history/clear`
 
+## Peer devices and queue transfer
+
+Send the queue (or one queue item) to another RelayTV device on the same
+network. Peers are added by address and verified before they are saved;
+nothing is discovered or added automatically.
+
+Identity:
+
+- `GET /peers/identity`
+  - returns `{"device_id", "device_name", "base_url", "version"}`
+  - anonymous and read-only by design: a device must be able to confirm what
+    it is talking to before any token is exchanged
+  - `device_id` is generated once into `/data/device_id`; set `RELAYTV_DEVICE_ID`
+    only to pin an identity across cloned images
+
+Registry:
+
+- `GET /peers`
+  - returns `{"device", "peers", "discovered"}`
+  - `discovered` is reserved for mDNS browsing and is currently always empty
+- `POST /peers`
+  - body: `{"base_url", "name"?, "token"?, "verify"?}`
+  - probes `GET /peers/identity` on the address first and refuses this device's
+    own id, an already-registered device (`409`), a URL with embedded
+    credentials, and any scheme other than http/https
+  - `token` is the peer's `RELAYTV_API_TOKEN`, needed only when that device
+    requires one. It is stored in the mode-0600 peer file, never in
+    `settings.json`, and never returned by any endpoint: peer payloads carry
+    `has_token` instead
+- `PATCH /peers/{peer_id}`
+  - body: `{"name"?, "base_url"?, "token"?}`; an empty `token` clears it
+- `DELETE /peers/{peer_id}`
+- `POST /peers/probe`
+  - body: `{"base_url", "token"?}`
+  - tests an address without saving it; returns
+    `{"online", "error", "device_id", "device_name", "version", "is_self"}`
+- `POST /peers/{peer_id}/probe`
+  - probes a saved peer and folds the result into its record
+    (`last_seen_at`, `last_ok_at`, `last_error`)
+
+Send:
+
+- `POST /peers/{peer_id}/send`
+  - body: `{"mode": "append"|"replace", "index"?}`
+  - omit `index` to send the whole queue; the sending device keeps its own
+    queue either way
+  - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
+  - IPTV items are reported in `rejected`, not sent: their stream URLs may
+    carry credentials anywhere in the path, so no portable URL exists
+
+Receive:
+
+- `POST /queue/import`
+  - body: `{"items": [{"url", "title"?, "thumbnail"?, "channel"?, "duration"?,
+    "provider"?}], "mode": "append"|"replace", "from": {"device_id", "name",
+    "base_url"}?}`
+  - a write endpoint, so it is covered by `RELAYTV_API_TOKEN` when set
+  - items are references, not recipes: the receiving device re-resolves each
+    URL with its own provider configuration, cookies, and quality policy, and
+    only the listed display hints are carried over. Resolved stream URLs and
+    provider tokens are sender-scoped and never travel
+  - per-item outcomes come back in `results` as
+    `{"url", "title", "accepted", "reason"}`, so a partial import reports
+    honestly instead of failing the whole request
+  - imported items record `peer_origin` (`{"device_id", "name"}`) and are never
+    auto-forwarded to another peer
+  - `provider: "upload"` marks media the sending device hosts itself; the
+    receiver streams it over HTTP from that device and marks the item
+    `peer_hosted` so local upload resolution stays out of the way
+
 ## Notifications and overlay delivery
 
 Notification entrypoints:

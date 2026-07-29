@@ -554,7 +554,7 @@ function _isHiddenEl(el){
 
 function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
-  const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop'];
+  const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
     if (!_isHiddenEl(el)) return true;
@@ -593,6 +593,12 @@ function _uiCloseTopLayerFromNav(){
   const aboutBd = document.getElementById('aboutBackdrop');
   if (!_isHiddenEl(aboutBd)) {
     closeAbout({fromNav:true});
+    return true;
+  }
+  const peersBd = document.getElementById('peersBackdrop');
+  if (!_isHiddenEl(peersBd)) {
+    if (window.relaytvPeers) window.relaytvPeers.close({fromNav:true});
+    else peersBd.classList.add('hidden');
     return true;
   }
   const histBd = document.getElementById('histBackdrop');
@@ -1131,6 +1137,9 @@ function renderStatus(st) {
   if (qCount) qCount.textContent = String(st.queue_length || 0);
   const qClear = document.getElementById('queueClearBtn');
   if (qClear) qClear.classList.toggle('hidden', !(Number(st.queue_length) > 0));
+  // Sending needs something to send; peers.js owns the sheet behind this button.
+  const qSend = document.getElementById('queueSendBtn');
+  if (qSend) qSend.classList.toggle('hidden', !(Number(st.queue_length) > 0));
 
   // progress bar fill
   if (!__scrubbing && liveNow) {
