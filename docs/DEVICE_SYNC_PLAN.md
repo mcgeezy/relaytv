@@ -4,13 +4,16 @@ Planning artifact for the multi-device feature: send queue items, the whole
 queue, or live playback from one RelayTV device to another, with manually
 added peers and optional local-network auto-discovery.
 
-**Status: Phases 1–3 shipped** (see [Milestones](#8-milestones)). Each phase folds
-its user-facing surface into the existing docs as it lands — `API.md` for the
-endpoint contract, `ARCHITECTURE.md` for module ownership — and this file
-tracks milestone completion and any deviation from the original design. Per
-`docs/README.md` (Rule), the plan itself stays out of the permanent public doc
-set: retire it once Phase 4 has moved the operator-facing material into a
-runbook.
+**Status: complete — all four phases shipped** (see
+[Milestones](#8-milestones)). The feature now lives in the permanent docs:
+`DEVICE_SYNC_OPERATIONS.md` is the operator runbook, `API.md` carries the
+endpoint contract, and `ARCHITECTURE.md` records module ownership.
+
+This file is the roadmap record: milestone completion plus every deviation from
+the original design and why. `docs/README.md` (Rule) keeps plans out of the
+permanent public doc set, so it can be deleted before merge now that the
+operator-facing material has a runbook — the history stays in git and in the
+phase PRs. It is kept here for review of the finished work.
 
 ---
 
@@ -219,11 +222,15 @@ remove), and this device's own name and discoverability toggle.
 | 1 | `device_id`, peer registry, manual add, `/queue/import`, queue-header sheet, copy whole queue | **done** |
 | 2 | mDNS browse, adopt-from-nearby | **done** |
 | 3 | Per-item send, Move and Handoff modes | **done** |
-| 4 | Operator runbook, Home Assistant and companion-app notes | not started |
+| 4 | Operator runbook, Home Assistant and companion-app notes | **done** |
 
-Phases 1–3 complete the functional feature. Phase 4 is documentation and
-companion-surface work: a `docs/DEVICE_SYNC_OPERATIONS.md` runbook, the Home
-Assistant and Android companion notes, and a release highlight for handoff.
+Phase 4 added `docs/DEVICE_SYNC_OPERATIONS.md` (setup, discovery requirements,
+token handling, what travels, ordering guarantees, verification commands,
+troubleshooting), indexed it in `docs/README.md`, noted the automation surface
+for Home Assistant and companion apps, and added the release highlight in
+`docs/release-highlights/0.9.0.md`. The companion repos (`relaytv-ha`,
+`relaytv-android`) are separate and unchanged; the endpoints they would call are
+documented in `API.md`.
 
 Phase 1 also pulled in work originally scheduled later: per-peer online probes
 (planned for Phase 2) landed with the sheet, because a device list without
