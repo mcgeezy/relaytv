@@ -310,6 +310,46 @@ def preserve_current_to_queue_front() -> dict | None:
     return preserved
 
 
+def handoff_snapshot() -> dict[str, Any] | None:
+    """Capture what is playing, for handing playback to another device.
+
+    Read-only: it does not touch playback state. Returns ``None`` when there is
+    nothing to hand off. IPTV sessions are excluded deliberately — their stream
+    URLs are re-resolved from a local catalog the other device does not have.
+    """
+    if not player.is_playing():
+        return None
+    now = state.NOW_PLAYING
+    if not isinstance(now, dict):
+        return None
+    url = now.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    if str(now.get("provider") or "").strip().lower() == "iptv":
+        return None
+
+    pos = None
+    dur = None
+    with player.MPV_LOCK:
+        try:
+            pos = player.mpv_get("time-pos")
+        except Exception:
+            pos = None
+        try:
+            dur = player.mpv_get("duration")
+        except Exception:
+            dur = None
+    try:
+        position = float(pos) if pos is not None else None
+    except Exception:
+        position = None
+    try:
+        duration = float(dur) if dur is not None else None
+    except Exception:
+        duration = None
+    return {"item": dict(now), "position": position, "duration": duration}
+
+
 def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:
     """Remove a preserved queue-front item after a failed play-now.
 

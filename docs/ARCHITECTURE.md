@@ -23,7 +23,9 @@ milestone logs live in git history.
   mutating `os.environ`.
 - `app/relaytv_app/playback_service.py`: playback transition commands
   (play-now, queue, close, advance, resume, natural end, stop) — the
-  only writer of playback session state outside `state.py`.
+  only writer of playback session state outside `state.py`. Also owns the
+  read-only handoff snapshot (what is playing, and where) that device transfer
+  sends to a peer.
 - `app/relaytv_app/player.py`: playback process/runtime adapter (mpv
   lifecycle, Qt shell, CEC, track/property control).
 - `app/relaytv_app/postlive_relay.py`: local relay for still-processing

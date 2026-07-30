@@ -483,6 +483,188 @@ def test_send_queue_posts_wire_items_and_summarizes_result(client, peers_file, s
         state.QUEUE.clear()
 
 
+def test_move_clears_local_queue_only_after_confirmed_receipt(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+
+    def _fail(*args, **kwargs):
+        raise peers.PeerError("device is unreachable", status_code=502)
+
+    monkeypatch.setattr(peers, "_request", _fail)
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.append({"url": "https://example.com/a", "title": "First"})
+        state.QUEUE.append({"url": "https://example.com/b", "title": "Second"})
+
+    failed = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+    assert failed.status_code == 502
+    # A move that never landed must not lose the queue.
+    with state.QUEUE_LOCK:
+        assert len(state.QUEUE) == 2
+
+    monkeypatch.setattr(
+        peers,
+        "_request",
+        lambda *a, **k: {"accepted": 2, "queue_length": 2, "results": []},
+    )
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+    assert moved.status_code == 200
+    body = moved.json()
+    assert body["moved"] is True
+    assert body["local_queue_length"] == 0
+    with state.QUEUE_LOCK:
+        assert list(state.QUEUE) == []
+
+
+def test_move_of_one_item_removes_just_that_item(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(
+        peers,
+        "_request",
+        lambda *a, **k: {"accepted": 1, "queue_length": 1, "results": []},
+    )
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.append({"url": "https://example.com/a", "title": "First"})
+        state.QUEUE.append({"url": "https://example.com/b", "title": "Second"})
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move", "index": 0})
+    assert moved.status_code == 200
+    assert moved.json()["local_queue_length"] == 1
+    with state.QUEUE_LOCK:
+        titles = [item.get("title") for item in state.QUEUE]
+        state.QUEUE.clear()
+    assert titles == ["Second"]
+
+
+def test_handoff_requires_playback_and_stops_locally_after_success(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+
+    from relaytv_app import playback_service
+    from relaytv_app.routes import peers as peers_routes
+
+    monkeypatch.setattr(playback_service, "handoff_snapshot", lambda: None)
+    idle = client.post(f"/peers/{peer['id']}/handoff", json={})
+    assert idle.status_code == 409
+    assert "nothing is playing" in idle.json()["detail"]
+
+    sent: dict[str, object] = {}
+    monkeypatch.setattr(
+        playback_service,
+        "handoff_snapshot",
+        lambda: {
+            "item": {"url": "https://example.com/movie", "title": "Movie", "_resolved_stream": "https://cdn/secret"},
+            "position": 812.5,
+            "duration": 3600.0,
+        },
+    )
+
+    def _request(base_url, path, *, token="", payload=None, timeout=0.0):
+        sent.update({"path": path, "payload": payload})
+        return {"status": "handed_off", "playing": True, "accepted": 1, "queue_length": 1, "results": []}
+
+    monkeypatch.setattr(peers, "_request", _request)
+    closed: list[bool] = []
+    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: 0)
+    monkeypatch.setattr("relaytv_app.routes.playback.close", lambda: closed.append(True))
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.append({"url": "https://example.com/next", "title": "Next up"})
+
+    response = client.post(f"/peers/{peer['id']}/handoff", json={})
+    assert response.status_code == 200
+    body = response.json()
+
+    assert sent["path"] == "/queue/handoff"
+    assert sent["payload"]["resume_pos"] == 812.5
+    assert sent["payload"]["now_playing"]["title"] == "Movie"
+    # The resolved stream is sender-scoped and must not travel.
+    assert "secret" not in json.dumps(sent["payload"])
+    assert [entry["title"] for entry in sent["payload"]["items"]] == ["Next up"]
+
+    assert body["status"] == "handed_off"
+    assert body["playing"] is True
+    assert body["local_stopped"] is True
+    assert closed == [True]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
+def test_handoff_failure_leaves_local_playback_alone(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    from relaytv_app import playback_service
+    from relaytv_app.routes import peers as peers_routes
+
+    monkeypatch.setattr(
+        playback_service,
+        "handoff_snapshot",
+        lambda: {"item": {"url": "https://example.com/movie", "title": "Movie"}, "position": 10.0, "duration": 60.0},
+    )
+
+    def _fail(*args, **kwargs):
+        raise peers.PeerError("device is unreachable", status_code=502)
+
+    monkeypatch.setattr(peers, "_request", _fail)
+    closed: list[bool] = []
+    monkeypatch.setattr("relaytv_app.routes.playback.close", lambda: closed.append(True))
+    cleared: list[bool] = []
+    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: cleared.append(True) or 0)
+
+    response = client.post(f"/peers/{peer['id']}/handoff", json={})
+    assert response.status_code == 502
+    # Nothing local changed: the user keeps watching what they were watching.
+    assert closed == []
+    assert cleared == []
+
+
+def test_queue_handoff_receiver_plays_with_resume_position(client, monkeypatch) -> None:
+    played: dict[str, object] = {}
+    monkeypatch.setattr(
+        "relaytv_app.routes.queue._play_now_from_history",
+        lambda payload: played.update(payload) or {"status": "playing"},
+    )
+    toasts: list[str] = []
+    monkeypatch.setattr(
+        "relaytv_app.routes.queue._push_overlay_toast",
+        lambda **kwargs: toasts.append(str(kwargs.get("text") or "")),
+    )
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+    response = client.post(
+        "/queue/handoff",
+        json={
+            "now_playing": {"url": "https://example.com/movie", "title": "Movie"},
+            "resume_pos": 812.5,
+            "items": [{"url": "https://example.com/next", "title": "Next up"}],
+            "from": {"device_id": "peerdevice", "name": "Living Room"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "handed_off"
+    assert body["playing"] is True
+    assert body["accepted"] == 1
+
+    assert played["resume_pos"] == 812.5
+    assert played["reason"] == "peer_handoff"
+    # The receiver's own session is preserved rather than discarded.
+    assert played["preserve_current"] is True
+    assert played["preserve_to"] == "queue_front"
+    assert toasts == ["Continuing from Living Room"]
+
+    with state.QUEUE_LOCK:
+        titles = [item.get("title") for item in state.QUEUE]
+        state.QUEUE.clear()
+    assert titles == ["Next up"]
+
+
 def test_send_single_index_and_unreachable_peer(client, peers_file, stub_identity, monkeypatch) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     captured: dict[str, object] = {}

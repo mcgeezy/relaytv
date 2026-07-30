@@ -191,6 +191,60 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
       `${scenario.name}: receiver did not record the sending device`,
     );
 
+    // Mode selector: Copy and Move are always offered; Handoff appears only
+    // when this device is actually playing something.
+    // Playback state comes from the server: app.js keeps its snapshot in a
+    // script-scoped binding, which is not reachable as a window property.
+    const playbackState = await fetch(`${baseUrl}/playback/state`).then((r) => r.json());
+    const modes = await page.evaluate(() => {
+      const visible = [];
+      document.querySelectorAll('.pmMode').forEach((button) => {
+        if (!button.classList.contains('hidden')) visible.push(button.dataset.peerMode);
+      });
+      return { visible };
+    });
+    modes.playing = !!(playbackState.playing || playbackState.paused);
+    check(modes.visible.includes('copy') && modes.visible.includes('move'), `${scenario.name}: mode selector is incomplete`);
+    check(
+      modes.visible.includes('handoff') === modes.playing,
+      `${scenario.name}: handoff offered=${modes.visible.includes('handoff')} while playing=${modes.playing}`,
+    );
+
+    // Move hands over ownership: the sender's queue is empty afterwards.
+    await seedSenderQueue(page);
+    await page.locator('[data-peer-mode="move"]').click();
+    await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Move queue to');
+    await page.locator('#peersList .pmDevice').first().click();
+    await page.waitForFunction(() => /^Moved \d+ item/.test(document.querySelector('#peersStatus')?.textContent || ''));
+    const afterMove = await queueLength(baseUrl);
+    check(afterMove === 0, `${scenario.name}: move left ${afterMove} items on the sender`);
+    await page.locator('[data-peer-mode="copy"]').click();
+
+    // Per-item send: the tile's ⋯ opens the sheet scoped to that one item.
+    await page.keyboard.press('Escape');
+    await page.locator('#peersBackdrop').waitFor({ state: 'hidden' });
+    await seedSenderQueue(page);
+    await page.waitForFunction(() => document.querySelectorAll('#queue .qTile').length >= 1);
+    const itemTitle = ((await page.locator('#queue .qTitleText').first().textContent()) || '').trim();
+    await page.locator('#queue .qSendItemBtn').first().click();
+    await page.locator('#peersBackdrop:not(.hidden)').waitFor();
+    await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Send item to');
+    check(
+      ((await page.locator('#peersSubtitle').textContent()) || '').trim() === itemTitle,
+      `${scenario.name}: item scope did not name the item`,
+    );
+    check(
+      await page.locator('[data-peer-mode="handoff"]').isHidden(),
+      `${scenario.name}: handoff must not be offered for a single item`,
+    );
+    const beforeItem = await queueLength(peerUrl);
+    await page.locator('#peersList .pmDevice').first().click();
+    await page.waitForFunction(() => /^Sent 1 item/.test(document.querySelector('#peersStatus')?.textContent || ''));
+    check(
+      (await queueLength(peerUrl)) >= beforeItem + 1,
+      `${scenario.name}: receiver did not gain the single item`,
+    );
+
     // Escape closes the sheet, and removal clears the row.
     await page.keyboard.press('Escape');
     await page.locator('#peersBackdrop').waitFor({ state: 'hidden' });

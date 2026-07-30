@@ -31,6 +31,37 @@
   color: rgba(198,216,246,.72);
 }
 
+.pmModes{
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(140,190,255,.22);
+  background: rgba(12,22,46,.55);
+}
+.pmMode{
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: rgba(203,222,252,.72);
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.pmMode:hover{ color: #eaf3ff; background: rgba(34,60,120,.45); transform: none; }
+.pmMode.on{
+  color: #eaf3ff;
+  border-color: rgba(96,170,255,.45);
+  background: linear-gradient(180deg, rgba(43,108,231,.75), rgba(22,56,142,.85));
+  box-shadow: inset 0 1px 0 rgba(200,228,255,.22);
+}
+
 .pmStatus{
   font-size: 12px;
   min-height: 0;
@@ -276,6 +307,38 @@
 .qSendBtn:active{ background: rgba(24,44,92,.70); transform: translateY(1px); }
 .qSendGlyph{ width: 15px; height: 15px; }
 
+/* Per-item send: same footprint as the queue tile's remove control, in the
+   neutral glass tone so removal stays the only red affordance. */
+.qSendItemBtn{
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 0;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  border: 1px solid rgba(140,190,255,.34);
+  background: rgba(20,26,40,.60);
+  color: rgba(210,228,255,.82);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.qSendItemBtn:hover{
+  color: #eaf3ff;
+  border-color: rgba(150,210,255,.60);
+  background: rgba(34,60,120,.70);
+  transform: none;
+}
+
 @media (max-width: 560px){
   .peersModal{ width: 100%; }
   .pmAddActions button{ flex: 1 1 auto; }
@@ -294,6 +357,20 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 0 0 2px rgba(56,140,248,.14);
   }
   .pmSub, .pmStatus, .pmMeta, .pmHelper{ color: rgba(23,52,120,.72); }
+  .qSendItemBtn{
+    color: rgba(23,52,120,.85);
+    border-color: rgba(37,99,235,.30);
+    background: rgba(219,232,255,.70);
+  }
+  .qSendItemBtn:hover{ color: #0c1f4d; border-color: rgba(37,99,235,.50); background: rgba(199,220,255,.90); }
+  .pmModes{ border-color: rgba(37,99,235,.20); background: rgba(219,232,255,.45); }
+  .pmMode{ color: rgba(23,52,120,.78); }
+  .pmMode:hover{ color: #0c1f4d; background: rgba(199,220,255,.70); }
+  .pmMode.on{
+    color: #fff;
+    border-color: rgba(37,99,235,.45);
+    background: linear-gradient(180deg, rgba(59,130,246,.95), rgba(37,99,235,.98));
+  }
   .pmNote{ color: rgba(23,52,120,.62); }
   .pmGroupHead{ color: rgba(23,52,120,.62); }
   .pmRow{

@@ -17,6 +17,10 @@
     loading: false,
     sending: '',
     adopting: '',
+    mode: 'copy',
+    index: null,
+    itemTitle: '',
+    canHandoff: false,
     lastFocus: null,
   };
 
@@ -72,8 +76,59 @@
   function syncSubtitle(){
     const el = $('peersSubtitle');
     if (!el) return;
+    if (state.index !== null){
+      el.textContent = state.itemTitle || 'One queue item';
+      return;
+    }
     const n = queueLength();
     el.textContent = n === 0 ? 'Nothing queued' : (n === 1 ? '1 item in the queue' : `${n} items in the queue`);
+  }
+
+  function syncTitle(){
+    const el = $('peersTitle');
+    if (!el) return;
+    if (state.mode === 'handoff') el.textContent = 'Continue on';
+    else if (state.index !== null) el.textContent = state.mode === 'move' ? 'Move item to' : 'Send item to';
+    else el.textContent = state.mode === 'move' ? 'Move queue to' : 'Send queue to';
+  }
+
+  function syncModes(){
+    // Handoff only makes sense for the whole session, and only when something
+    // is actually playing here. The sheet can stay open across playback
+    // stopping, so this is re-evaluated on every render and on status pushes
+    // rather than being frozen at open time.
+    state.canHandoff = playbackActive();
+    const handoffAllowed = state.index === null && state.canHandoff;
+    if (state.mode === 'handoff' && !handoffAllowed){
+      state.mode = 'copy';
+      setStatus('Playback stopped here, so Handoff is no longer available.');
+    }
+    document.querySelectorAll('.pmMode').forEach((button) => {
+      const mode = button.dataset.peerMode || 'copy';
+      if (mode === 'handoff') button.classList.toggle('hidden', !handoffAllowed);
+      const on = mode === state.mode;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    syncTitle();
+  }
+
+  function setMode(mode){
+    const next = String(mode || 'copy');
+    if (next === 'handoff' && !(state.index === null && playbackActive())) return;
+    state.mode = next;
+    setStatus('');
+    render();
+  }
+
+  function nothingToSend(){
+    if (state.mode === 'handoff') return !state.canHandoff;
+    return state.index === null && queueLength() === 0;
+  }
+
+  function actionVerb(){
+    if (state.mode === 'handoff') return 'Continue on';
+    return state.mode === 'move' ? 'Move to' : 'Send to';
   }
 
   function hostLabel(baseUrl){
@@ -97,8 +152,8 @@
     const pick = document.createElement('button');
     pick.type = 'button';
     pick.className = 'pmDevice';
-    pick.disabled = state.sending === peer.id || queueLength() === 0 || peer.online === false;
-    pick.title = peer.online === false ? 'Device is offline' : `Send the queue to ${peer.name}`;
+    pick.disabled = state.sending === peer.id || nothingToSend() || peer.online === false;
+    pick.title = peer.online === false ? 'Device is offline' : `${actionVerb()} ${peer.name}`;
 
     const dot = document.createElement('span');
     dot.className = 'pmDot';
@@ -200,16 +255,18 @@
     const note = $('peersNearbyNote');
     if (wrap && nearby){
       nearby.innerHTML = '';
-      // The group stays visible whenever discovery is running so the absence of
-      // candidates reads as "nothing found yet" rather than a missing feature.
+      // Show the group when there is something new to adopt, or — for someone
+      // with no devices yet — to make clear that discovery exists. Once devices
+      // are saved and nothing new is around, an empty group is just noise.
       const discovery = state.discovery || {};
-      const show = candidates.length > 0 || discovery.enabled === true;
+      const show = candidates.length > 0 || (state.peers.length === 0 && discovery.enabled === true);
       wrap.classList.toggle('hidden', !show);
       candidates.forEach((candidate) => nearby.appendChild(nearbyRow(candidate)));
       if (note) note.textContent = discoveryNote(candidates.length);
     }
 
     syncSubtitle();
+    syncModes();
   }
 
   async function probeAll(){
@@ -254,26 +311,44 @@
     const sent = Number(result.sent || 0);
     const rejected = Array.isArray(result.rejected) ? result.rejected : [];
     const noun = accepted === 1 ? 'item' : 'items';
-    if (!rejected.length) return {msg: `Sent ${accepted} ${noun} to ${name}`, kind: 'ok'};
+    if (result.status === 'handed_off'){
+      const tail = accepted > 0 ? ` with ${accepted} more ${accepted === 1 ? 'item' : 'items'}` : '';
+      return {msg: `Now playing on ${name}${tail}`, kind: 'ok'};
+    }
+    const verb = result.moved ? 'Moved' : 'Sent';
+    if (!rejected.length) return {msg: `${verb} ${accepted} ${noun} to ${name}`, kind: 'ok'};
     const reason = rejected[0] && rejected[0].reason ? ` (${rejected[0].reason})` : '';
-    return {msg: `Sent ${accepted} of ${sent} to ${name} — ${rejected.length} skipped${reason}`, kind: ''};
+    return {msg: `${verb} ${accepted} of ${sent} to ${name} — ${rejected.length} skipped${reason}`, kind: ''};
   }
 
   async function sendToPeer(peer){
     if (state.sending) return;
-    if (queueLength() === 0){
-      setStatus('The queue is empty.', 'err');
+    if (nothingToSend()){
+      setStatus(state.mode === 'handoff' ? 'Nothing is playing to hand off.' : 'The queue is empty.', 'err');
       return;
     }
     state.sending = peer.id;
-    setStatus(`Sending to ${peer.name}…`);
+    setStatus(state.mode === 'handoff' ? `Handing off to ${peer.name}…` : `Sending to ${peer.name}…`);
     render();
     try {
-      const result = await postJson(`/peers/${encodeURIComponent(peer.id)}/send`, {mode: 'append'});
+      const path = state.mode === 'handoff'
+        ? `/peers/${encodeURIComponent(peer.id)}/handoff`
+        : `/peers/${encodeURIComponent(peer.id)}/send`;
+      const body = state.mode === 'handoff'
+        ? {}
+        : {mode: state.mode === 'move' ? 'move' : 'append', index: state.index};
+      const result = await postJson(path, body);
       const summary = sendSummary(result);
       peer.online = true;
       peer.last_error = '';
       setStatus(summary.msg, summary.kind);
+      // Move and handoff change this device's own queue; let the shared remote
+      // catch up instead of leaving a stale list behind the sheet.
+      if (result.moved || result.status === 'handed_off'){
+        state.index = null;
+        state.itemTitle = '';
+        if (typeof window.refresh === 'function') window.refresh().catch(() => null);
+      }
     } catch (e) {
       peer.online = false;
       peer.last_error = e.message || 'send failed';
@@ -404,14 +479,20 @@
     return !!bd && !bd.classList.contains('hidden');
   }
 
-  function open(){
+  function open(opts){
     const bd = $('peersBackdrop');
     if (!bd || isOpen()) return;
+    const scope = opts && typeof opts === 'object' ? opts : {};
+    state.index = Number.isInteger(scope.index) ? scope.index : null;
+    state.itemTitle = String(scope.title || '');
+    state.mode = 'copy';
+    state.canHandoff = playbackActive();
     state.lastFocus = document.activeElement;
     bd.classList.remove('hidden');
     setStatus('');
     setAddHelper('');
     toggleAddForm(false);
+    syncModes();
     // Reuse the shared history-layer helper so Android back closes the sheet.
     if (typeof _uiPushLayer === 'function') _uiPushLayer();
     load().catch(() => null);
@@ -434,8 +515,20 @@
     }
   }
 
+  function playbackActive(){
+    try {
+      if (typeof __lastStatus !== 'undefined' && __lastStatus){
+        return !!(__lastStatus.playing || __lastStatus.paused);
+      }
+    } catch (_e) {}
+    return false;
+  }
+
   function bind(){
-    $('queueSendBtn')?.addEventListener('click', open);
+    $('queueSendBtn')?.addEventListener('click', () => open());
+    document.querySelectorAll('.pmMode').forEach((button) => {
+      button.addEventListener('click', () => setMode(button.dataset.peerMode || 'copy'));
+    });
     $('peersCloseBtn')?.addEventListener('click', () => close());
     $('peersAddToggle')?.addEventListener('click', () => toggleAddForm());
     $('peerTestBtn')?.addEventListener('click', testAddress);
@@ -457,7 +550,12 @@
     });
   }
 
-  window.relaytvPeers = {open, close, isOpen, refresh: load};
+  function syncPlayback(){
+    if (!isOpen()) return;
+    syncModes();
+  }
+
+  window.relaytvPeers = {open, close, isOpen, refresh: load, syncPlayback};
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();

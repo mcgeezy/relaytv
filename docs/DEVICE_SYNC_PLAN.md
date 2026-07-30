@@ -4,7 +4,7 @@ Planning artifact for the multi-device feature: send queue items, the whole
 queue, or live playback from one RelayTV device to another, with manually
 added peers and optional local-network auto-discovery.
 
-**Status: Phases 1–2 shipped** (see [Milestones](#8-milestones)). Each phase folds
+**Status: Phases 1–3 shipped** (see [Milestones](#8-milestones)). Each phase folds
 its user-facing surface into the existing docs as it lands — `API.md` for the
 endpoint contract, `ARCHITECTURE.md` for module ownership — and this file
 tracks milestone completion and any deviation from the original design. Per
@@ -218,8 +218,12 @@ remove), and this device's own name and discoverability toggle.
 | --- | --- | --- |
 | 1 | `device_id`, peer registry, manual add, `/queue/import`, queue-header sheet, copy whole queue | **done** |
 | 2 | mDNS browse, adopt-from-nearby | **done** |
-| 3 | Per-item send, Move and Handoff modes | not started |
+| 3 | Per-item send, Move and Handoff modes | **done** |
 | 4 | Operator runbook, Home Assistant and companion-app notes | not started |
+
+Phases 1–3 complete the functional feature. Phase 4 is documentation and
+companion-surface work: a `docs/DEVICE_SYNC_OPERATIONS.md` runbook, the Home
+Assistant and Android companion notes, and a release highlight for handoff.
 
 Phase 1 also pulled in work originally scheduled later: per-peer online probes
 (planned for Phase 2) landed with the sheet, because a device list without
@@ -273,6 +277,30 @@ immediately rather than waiting for Phase 4.
   can actually see each other, and asserts the discovery state is explained to
   the user when they cannot.
 
+### Phase 3 as shipped
+
+- `playback_service.handoff_snapshot()` — read-only capture of what is playing
+  plus its position. IPTV sessions are excluded: their stream URLs are
+  re-resolved from a local catalog the other device does not have.
+- `POST /peers/{id}/handoff` — sends the snapshot and queue, then stops local
+  playback and clears the local queue. Ordering is the whole point: the local
+  stop happens only after the peer confirms it took over.
+- `POST /queue/handoff` — the receiving side. Takes over playback first and
+  imports the queue second, so a device that cannot start playing leaves the
+  sender holding both its playback and its items. What was playing on the
+  receiver is preserved to the front of its queue rather than discarded.
+- `mode: "move"` on `POST /peers/{id}/send` — two-phase: import on the peer,
+  then drop locally. The local drop delegates to the existing queue routes
+  rather than writing `state.QUEUE`, keeping the writer set pinned by
+  `tests/test_transition_inventory.py` unchanged.
+- UI — a Copy/Move/Handoff selector at the top of the sheet, and a `⋯` on each
+  queue tile that opens the sheet scoped to that single item. Handoff is offered
+  only for the whole session and only while something is playing; the sheet
+  re-evaluates that on every status push, so playback stopping while the sheet
+  is open withdraws the option instead of leaving a button that 409s.
+- Nine more cases in `tests/test_peers.py` and smoke coverage for the mode
+  selector, Move emptying the sender, and per-item send.
+
 ### Deviations from the original design
 
 - **Probe endpoint.** The plan used `GET /health` for reachability, but that
@@ -293,9 +321,8 @@ immediately rather than waiting for Phase 4.
   a stub. Text hints from the sender now outrank a lightweight local title;
   artwork and duration still only fill gaps, since preferring a peer's
   thumbnail would tie our artwork to that device staying reachable.
-- **Modes.** `append` and `replace` are both implemented server-side and
-  documented; the sheet exposes only the copy/append tap. Move and Handoff stay
-  in Phase 3 as planned.
+- **Modes.** Phase 1 shipped `append`/`replace` server-side with a copy-only
+  sheet; Phase 3 added `move` and handoff behind the mode selector.
 - **Discovery freshness.** The plan assumed a TTL'd cache fed by zeroconf
   callbacks. In practice a device that keeps advertising does not necessarily
   produce another callback before the TTL expires, so peers dropped off the list
@@ -306,6 +333,17 @@ immediately rather than waiting for Phase 4.
 - **Bridged-network detection.** Rather than trying to detect the network mode,
   the UI reports what it knows: `discovery.active` is false when browsing is not
   running, and the sheet says host networking is required for mDNS.
+- **Handoff ordering on the receiver.** The plan had the receiver import the
+  queue and then start playing. Driving it against a device that could not start
+  playback showed why that is wrong: the queue landed and then playback failed,
+  leaving the items duplicated on a device that was not taking over. Playback is
+  now taken over first, and the import only happens once it succeeds.
+- **Handoff availability is live, not sampled.** Evaluating "is something
+  playing" once at sheet-open time left Handoff on offer after playback ended.
+  It is re-evaluated on every status push, and app.js notifies the sheet.
+- **One toast per handoff.** The receiver's queue import shares a code path with
+  `/queue/import`, which raises an on-TV toast. A handoff raised two
+  notifications for one action, so the import core took an `announce` flag.
 
 ## 9. Guardrails
 

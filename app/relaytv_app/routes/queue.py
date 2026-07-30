@@ -51,6 +51,15 @@ class QueueImportReq(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class QueueHandoffReq(BaseModel):
+    now_playing: QueueImportItem
+    resume_pos: float | None = None
+    items: list[QueueImportItem] = []
+    from_device: QueueImportSender | None = Field(default=None, alias="from")
+
+    model_config = {"populate_by_name": True}
+
+
 class QueueRemoveReq(BaseModel):
     index: int
 
@@ -201,23 +210,18 @@ def _push_peer_import_toast(sender_name: str, count: int) -> None:
         pass
 
 
-@router.post("/queue/import")
-def queue_import(req: QueueImportReq):
-    """Receive queue items from another RelayTV device.
+def _apply_peer_import(
+    entries: list[QueueImportItem],
+    *,
+    mode: str,
+    sender: QueueImportSender | None,
+    announce: bool = True,
+) -> dict:
+    """Import peer items into the queue.
 
-    Per-item results are reported instead of failing the whole request: a peer
-    can hold items this device cannot play (an unconfigured provider, a URL
-    scheme we reject), and the sender needs to say so honestly rather than
-    claim everything landed.
+    ``announce`` is off for a handoff: that flow raises its own on-TV toast, and
+    two notifications for one user action is noise.
     """
-    entries = list(req.items or [])
-    if not entries:
-        raise HTTPException(status_code=400, detail="no items to import")
-    mode = str(req.mode or "append").strip().lower()
-    if mode not in ("append", "replace"):
-        raise HTTPException(status_code=400, detail="mode must be append or replace")
-
-    sender = req.from_device
     results: list[dict] = []
     accepted_items: list[dict] = []
     for entry in entries:
@@ -259,7 +263,7 @@ def queue_import(req: QueueImportReq):
         except Exception:
             pass
 
-    if accepted_items:
+    if accepted_items and announce:
         _push_peer_import_toast(str((sender.name if sender else "") or ""), len(accepted_items))
     _ui_event_push_queue(
         "replace" if mode == "replace" else "add",
@@ -283,6 +287,88 @@ def queue_import(req: QueueImportReq):
         "queue_length": qlen,
         "queue": _annotate_upload_items(queue_snapshot),
         "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
+
+
+@router.post("/queue/import")
+def queue_import(req: QueueImportReq):
+    """Receive queue items from another RelayTV device.
+
+    Per-item results are reported instead of failing the whole request: a peer
+    can hold items this device cannot play (an unconfigured provider, a URL
+    scheme we reject), and the sender needs to say so honestly rather than
+    claim everything landed.
+    """
+    entries = list(req.items or [])
+    if not entries:
+        raise HTTPException(status_code=400, detail="no items to import")
+    mode = str(req.mode or "append").strip().lower()
+    if mode not in ("append", "replace"):
+        raise HTTPException(status_code=400, detail="mode must be append or replace")
+    return _apply_peer_import(entries, mode=mode, sender=req.from_device)
+
+
+@router.post("/queue/handoff")
+def queue_handoff(req: QueueHandoffReq):
+    """Continue another device's playback here, taking its queue with it.
+
+    The sending device stops only after this returns, so a handoff that fails
+    mid-flight leaves the user watching what they were already watching. What
+    was playing here is preserved to the front of the queue rather than
+    discarded, so a handoff never destroys the receiver's own session.
+    """
+    sender = req.from_device
+    try:
+        item = _peer_import_item(req.now_playing, sender)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("queue_handoff_item_failed error=%s", exc)
+        raise HTTPException(status_code=400, detail="item could not be built") from exc
+
+    # Take over playback before importing the queue. If this device cannot
+    # start playing, the error propagates and the sender keeps both playback and
+    # its queue — importing first would leave the items stranded here as well.
+    played = _play_now_from_history(
+        {
+            "url": str(item.get("url") or ""),
+            "preserve_current": True,
+            "preserve_to": "queue_front",
+            "resume_current": True,
+            "reason": "peer_handoff",
+            "title": str(item.get("title") or "").strip() or None,
+            "thumbnail": str(item.get("thumbnail") or "").strip() or None,
+            "resume_pos": req.resume_pos,
+        }
+    )
+    playing = bool(isinstance(played, dict) and played.get("status") not in ("error", "failed"))
+
+    imported = None
+    if req.items:
+        imported = _apply_peer_import(list(req.items), mode="append", sender=sender, announce=False)
+    if playing:
+        label = str((sender.name if sender else "") or "").strip() or "Another RelayTV device"
+        try:
+            _push_overlay_toast(text=f"Continuing from {label}", level="info", icon="share")
+        except Exception:
+            pass
+    with state.QUEUE_LOCK:
+        queue_snapshot = list(state.QUEUE)
+    logger.info(
+        "queue_handoff from=%s resume_pos=%s items=%d playing=%s",
+        (sender.device_id if sender else "") or "unknown",
+        "none" if req.resume_pos is None else f"{float(req.resume_pos):.1f}",
+        len(list(req.items or [])),
+        playing,
+    )
+    return {
+        "status": "handed_off",
+        "playing": playing,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+        "accepted": int((imported or {}).get("accepted") or 0),
+        "results": list((imported or {}).get("results") or []),
+        "queue_length": len(queue_snapshot),
+        "queue": _annotate_upload_items(queue_snapshot),
     }
 
 

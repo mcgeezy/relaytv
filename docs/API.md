@@ -440,12 +440,24 @@ Registry:
 Send:
 
 - `POST /peers/{peer_id}/send`
-  - body: `{"mode": "append"|"replace", "index"?}`
-  - omit `index` to send the whole queue; the sending device keeps its own
-    queue either way
+  - body: `{"mode": "append"|"replace"|"move", "index"?}`
+  - omit `index` to send the whole queue, or pass one to send a single item
+  - `append` and `replace` are copies: the sending device keeps its queue.
+    `move` gives up ownership — it imports as `append` on the peer and then
+    drops the sent item (or the whole queue) locally, but only after the peer
+    confirms the import, so a transfer that fails in transit loses nothing.
+    A `move` response adds `{"moved": true, "local_queue_length"}`
   - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
   - IPTV items are reported in `rejected`, not sent: their stream URLs may
     carry credentials anywhere in the path, so no portable URL exists
+- `POST /peers/{peer_id}/handoff`
+  - no body; hands the current playback to the peer and stops here
+  - `409` when nothing is playing. IPTV sessions cannot be handed off: their
+    stream URLs are re-resolved from a local catalog the peer does not have
+  - ordering is deliberate — playback stops locally only after the peer reports
+    it took over, so a failed handoff leaves this device playing
+  - returns `{"playing", "resume_pos", "sent", "accepted", "rejected",
+    "queue_length", "local_stopped", "local_queue_length", "peer"}`
 
 Receive:
 
@@ -466,6 +478,17 @@ Receive:
   - `provider: "upload"` marks media the sending device hosts itself; the
     receiver streams it over HTTP from that device and marks the item
     `peer_hosted` so local upload resolution stays out of the way
+- `POST /queue/handoff`
+  - body: `{"now_playing": {…item…}, "resume_pos"?, "items": [{…item…}], "from"?}`
+  - items use the same shape and rebuilding rules as `/queue/import`
+  - this device starts playing `now_playing` at `resume_pos`, then imports the
+    rest of the queue. Playback is taken over first on purpose: if it cannot
+    start, the error propagates and the queue is not imported, so the sending
+    device keeps both its playback and its items
+  - whatever was playing here is preserved to the front of the queue rather
+    than discarded, so a handoff never destroys the receiver's own session
+  - returns `{"playing", "now_playing", "accepted", "results", "queue_length",
+    "queue"}`
 
 ## Notifications and overlay delivery
 

@@ -1140,6 +1140,9 @@ function renderStatus(st) {
   // Sending needs something to send; peers.js owns the sheet behind this button.
   const qSend = document.getElementById('queueSendBtn');
   if (qSend) qSend.classList.toggle('hidden', !(Number(st.queue_length) > 0));
+  // Handoff is only offered while something is playing, so an open sheet has to
+  // hear about playback starting or stopping.
+  if (window.relaytvPeers && window.relaytvPeers.syncPlayback) window.relaytvPeers.syncPlayback();
 
   // progress bar fill
   if (!__scrubbing && liveNow) {
@@ -1232,9 +1235,22 @@ function renderStatus(st) {
     del.title = 'Remove from queue';
     del.onclick = () => qRemove(idx);
 
+    // Send just this item. One indirection into the device sheet keeps the tile
+    // clean; a device picker per tile would not scale.
+    const send = document.createElement('button');
+    send.className = 'qSendItemBtn';
+    send.type = 'button';
+    send.title = 'Send this item to another device';
+    send.setAttribute('aria-label', 'Send this item to another device');
+    send.textContent = '⋯';
+    send.onclick = () => {
+      if (window.relaytvPeers) window.relaytvPeers.open({index: idx, title: item.title || item.url || ''});
+    };
+
     li.appendChild(thumb);
     li.appendChild(body);
     li.appendChild(handle);
+    li.appendChild(send);
     li.appendChild(del);
     ol.appendChild(li);
   });

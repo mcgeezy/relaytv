@@ -485,6 +485,23 @@ def sender_payload() -> dict[str, str]:
     }
 
 
+def _post_to_peer(peer_id: str, record: dict, path: str, payload: dict) -> dict:
+    """POST to a peer, recording the outcome on its registry entry."""
+    try:
+        response = _request(
+            str(record.get("base_url") or ""),
+            path,
+            token=str(record.get("token") or ""),
+            payload=payload,
+            timeout=SEND_TIMEOUT_SEC,
+        )
+    except PeerError as exc:
+        _record_contact(peer_id, ok=False, error=exc.message)
+        raise
+    _record_contact(peer_id, ok=True)
+    return response
+
+
 def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> dict:
     """Send queue items to a peer and normalize its import response."""
     record = require_record(peer_id)
@@ -498,18 +515,7 @@ def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> di
         raise PeerError("mode must be append or replace")
 
     payload = {"items": entries, "mode": normalized_mode, "from": sender_payload()}
-    try:
-        response = _request(
-            str(record.get("base_url") or ""),
-            "/queue/import",
-            token=str(record.get("token") or ""),
-            payload=payload,
-            timeout=SEND_TIMEOUT_SEC,
-        )
-    except PeerError as exc:
-        _record_contact(peer_id, ok=False, error=exc.message)
-        raise
-    _record_contact(peer_id, ok=True)
+    response = _post_to_peer(peer_id, record, "/queue/import", payload)
 
     results = response.get("results") if isinstance(response.get("results"), list) else []
     accepted = int(response.get("accepted") or 0)
@@ -535,6 +541,62 @@ def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> di
         "mode": normalized_mode,
         "sent": len(entries),
         "accepted": accepted,
+        "rejected": rejected,
+        "queue_length": int(response.get("queue_length") or 0),
+    }
+
+
+def handoff_playback(peer_id: str, *, snapshot: dict, items: list[object]) -> dict:
+    """Ask a peer to continue the current playback, then report what it did.
+
+    The caller stops local playback only after this returns successfully: a
+    handoff that failed in transit must leave the user watching what they were
+    already watching.
+    """
+    record = require_record(peer_id)
+    now_playing = wire_item(snapshot.get("item"))
+    if now_playing is None:
+        raise PeerError("what is playing cannot be sent to another device")
+    entries, skipped = wire_items(items)
+
+    position = snapshot.get("position")
+    try:
+        resume_pos = float(position) if position is not None else None
+    except Exception:
+        resume_pos = None
+
+    payload = {
+        "now_playing": now_playing,
+        "resume_pos": resume_pos,
+        "items": entries,
+        "from": sender_payload(),
+    }
+    response = _post_to_peer(peer_id, record, "/queue/handoff", payload)
+
+    results = response.get("results") if isinstance(response.get("results"), list) else []
+    rejected = list(skipped) + [
+        {
+            "title": str(entry.get("title") or entry.get("url") or ""),
+            "reason": str(entry.get("reason") or "rejected"),
+        }
+        for entry in results
+        if isinstance(entry, dict) and not entry.get("accepted")
+    ]
+    playing = bool(response.get("playing"))
+    logger.info(
+        "peer_handoff peer=%s resume_pos=%s queue_sent=%d playing=%s",
+        peer_id,
+        "none" if resume_pos is None else f"{resume_pos:.1f}",
+        len(entries),
+        playing,
+    )
+    return {
+        "status": "handed_off",
+        "peer": public_peer(require_record(peer_id)),
+        "playing": playing,
+        "resume_pos": resume_pos,
+        "sent": len(entries),
+        "accepted": int(response.get("accepted") or 0),
         "rejected": rejected,
         "queue_length": int(response.get("queue_length") or 0),
     }

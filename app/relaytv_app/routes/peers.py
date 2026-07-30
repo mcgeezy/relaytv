@@ -5,10 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import device_identity, discovery_mdns, peers, state
+from .. import device_identity, discovery_mdns, peers, playback_service, state
+from ..debug import get_logger
 
 
 router = APIRouter()
+logger = get_logger("routes.peers")
 
 
 class PeerCreateReq(BaseModel):
@@ -109,9 +111,46 @@ def peers_probe_saved(peer_id: str) -> dict[str, object]:
         raise _peer_error(exc) from exc
 
 
+def _clear_local_queue() -> int:
+    """Drop the local queue after a confirmed transfer.
+
+    Delegates to the queue routes rather than touching ``state.QUEUE`` here:
+    queue writers are pinned by tests/test_transition_inventory.py, and those
+    functions already persist, re-prime mpv's up-next, and emit the UI event.
+    """
+    from .queue import clear as clear_queue
+
+    clear_queue()
+    with state.QUEUE_LOCK:
+        return len(state.QUEUE)
+
+
+def _remove_local_queue_index(index: int) -> int:
+    from .queue import QueueRemoveReq, queue_remove
+
+    try:
+        result = queue_remove(QueueRemoveReq(index=int(index)))
+    except HTTPException:
+        # The item moved or vanished between send and cleanup; the transfer
+        # already succeeded, so report the current length instead of failing.
+        with state.QUEUE_LOCK:
+            return len(state.QUEUE)
+    return int(result.get("queue_length") or 0)
+
+
 @router.post("/peers/{peer_id}/send")
 def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
-    """Send the queue (or one queue item) to a peer device."""
+    """Send the queue (or one queue item) to a peer device.
+
+    ``move`` gives up local ownership, so it is deliberately two-phase: the
+    local queue is only touched after the peer confirms the import. A transfer
+    that fails in transit must not lose the queue.
+    """
+    mode = str(req.mode or "append").strip().lower()
+    move = mode == "move"
+    if move:
+        mode = "append"
+
     with state.QUEUE_LOCK:
         queue = list(state.QUEUE)
     if req.index is None:
@@ -122,6 +161,45 @@ def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
             raise HTTPException(status_code=400, detail="index out of range")
         items = [queue[index]]
     try:
-        return peers.send_queue(peer_id, items=items, mode=req.mode)
+        result = peers.send_queue(peer_id, items=items, mode=mode)
     except peers.PeerError as exc:
         raise _peer_error(exc) from exc
+
+    if move:
+        if req.index is None:
+            result["local_queue_length"] = _clear_local_queue()
+        else:
+            result["local_queue_length"] = _remove_local_queue_index(int(req.index))
+        result["moved"] = True
+    return result
+
+
+@router.post("/peers/{peer_id}/handoff")
+def peers_handoff(peer_id: str) -> dict[str, object]:
+    """Continue what is playing here on a peer device, then stop here.
+
+    Ordering matters: playback stops locally only once the peer reports it has
+    taken over, so a failed handoff leaves this device playing.
+    """
+    snapshot = playback_service.handoff_snapshot()
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail="nothing is playing to hand off")
+
+    with state.QUEUE_LOCK:
+        queue = list(state.QUEUE)
+    try:
+        result = peers.handoff_playback(peer_id, snapshot=snapshot, items=queue)
+    except peers.PeerError as exc:
+        raise _peer_error(exc) from exc
+
+    from .playback import close as close_playback
+
+    stopped = False
+    try:
+        close_playback()
+        stopped = True
+    except Exception as exc:  # pragma: no cover - close is best effort
+        logger.warning("peer_handoff_local_stop_failed error=%s", exc)
+    result["local_stopped"] = stopped
+    result["local_queue_length"] = _clear_local_queue()
+    return result
