@@ -90,6 +90,34 @@ def queue_item(item: dict) -> tuple[int, list[dict]]:
     return qlen, snapshot
 
 
+def queue_items(items: list[dict]) -> tuple[int, list[dict]]:
+    """Append several items at once, persisting and warming caches one time.
+
+    Bulk transfers (a peer sending its queue) would otherwise rewrite
+    ``queue.json`` and re-prime mpv's up-next per item, which is slow enough on
+    a Pi to time out the sender while the import actually succeeds.
+    """
+    if not items:
+        with state.QUEUE_LOCK:
+            return len(state.QUEUE), list(state.QUEUE)
+    with state.QUEUE_LOCK:
+        state.QUEUE.extend(items)
+        qlen = len(state.QUEUE)
+        snapshot = list(state.QUEUE)
+    state.persist_queue()
+    # Only the head can become the next handoff, so prefetching the rest here
+    # buys nothing; the queue worker warms them as they approach the front.
+    try:
+        player.prefetch_queue_item_stream(snapshot[0] if snapshot else items[0])
+    except Exception:
+        pass
+    try:
+        player.prime_mpv_up_next_from_queue(force=True)
+    except Exception:
+        pass
+    return qlen, snapshot
+
+
 def queue_item_next(item: dict) -> tuple[int, list[dict]]:
     """Insert an item at the front of the queue and warm the handoff caches."""
     with state.QUEUE_LOCK:

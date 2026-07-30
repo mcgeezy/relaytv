@@ -38,7 +38,10 @@ PEERS_FILE = "peers.json"
 SCHEMA_VERSION = 1
 
 PROBE_TIMEOUT_SEC = 3.0
-SEND_TIMEOUT_SEC = 10.0
+# Generous: a receiver that is slow to accept an import must not be reported as
+# a failure, because the import may well have landed. Live testing hit exactly
+# that at 10s (sender gave up at 10.0s, receiver committed at 11.0s).
+SEND_TIMEOUT_SEC = 30.0
 
 _LOCK = threading.RLock()
 

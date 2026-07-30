@@ -169,6 +169,29 @@ def _peer_hosted_media_item(url: str, entry: QueueImportItem) -> dict:
     return item
 
 
+def _peer_display_item(url: str, entry: QueueImportItem) -> dict:
+    """Build a queue item from the sender's metadata, without re-fetching it.
+
+    Queue-time item building normally reaches out for a title and artwork. The
+    sending device already did that work and shipped the result, so repeating it
+    per item is pure latency — enough of it on a Pi (~2.5s each) to time out the
+    sender while the import lands anyway. The *stream* is still resolved locally
+    at play time, so nothing about the trust boundary changes.
+    """
+    item: dict[str, object] = {
+        "url": url,
+        "provider": str(entry.provider or "").strip().lower() or resolver.provider_from_url(url),
+        "title": entry.title,
+    }
+    if entry.channel:
+        item["channel"] = entry.channel
+    if entry.thumbnail:
+        item["thumbnail"] = entry.thumbnail
+    if entry.duration:
+        item["duration"] = entry.duration
+    return item
+
+
 def _peer_import_item(entry: QueueImportItem, sender: QueueImportSender | None) -> dict:
     """Rebuild a playable item from a peer's display-safe payload.
 
@@ -178,8 +201,13 @@ def _peer_import_item(entry: QueueImportItem, sender: QueueImportSender | None) 
     peer's expiring stream URLs and provider tokens out of our queue.
     """
     url = resolver.validate_user_url(entry.url or "")
-    if str(entry.provider or "").strip().lower() == "upload":
+    provider = str(entry.provider or "").strip().lower()
+    if provider == "upload":
         item = _peer_hosted_media_item(url, entry)
+    elif entry.title and provider != "jellyfin":
+        # Jellyfin is the exception: its item build resolves server-specific ids
+        # and stream parameters from *this* device's configuration.
+        item = _peer_display_item(url, entry)
     else:
         item = _smart_item_from_url(url, lightweight=True)
     if not isinstance(item, dict):
@@ -250,9 +278,9 @@ def _apply_peer_import(
 
     qlen = 0
     queue_snapshot: list[object] = []
-    for item in accepted_items:
-        qlen, queue_snapshot = playback_service.queue_item(item)
-    if not accepted_items:
+    if accepted_items:
+        qlen, queue_snapshot = playback_service.queue_items(accepted_items)
+    else:
         with state.QUEUE_LOCK:
             queue_snapshot = list(state.QUEUE)
             qlen = len(queue_snapshot)
