@@ -151,6 +151,22 @@ curl -s -X POST http://<host>:8787/peers/<peer_id>/send \
   -H 'Content-Type: application/json' -d '{"mode":"append"}'
 ```
 
+`scripts/fleet.py` reports several devices at once — what each is playing, its
+queue, saved peers, and whether discovery is running. It is read-only:
+
+```bash
+scripts/fleet.py report living=http://<host-a>:8787 bedroom=http://<host-b>:8787
+
+# Or set the fleet once and omit the arguments
+export RELAYTV_FLEET="living=http://<host-a>:8787,bedroom=http://<host-b>:8787"
+scripts/fleet.py
+
+# Poll during a soak; output is flushed per cycle so it tails cleanly
+scripts/fleet.py watch --interval=60 | tee soak.log
+```
+
+It exits non-zero when a device could not be reached, so it can gate a script.
+
 A browser smoke covering the whole sheet needs two devices:
 
 ```bash
