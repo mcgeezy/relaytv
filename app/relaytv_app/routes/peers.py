@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import device_identity, peers, state
+from .. import device_identity, discovery_mdns, peers, state
 
 
 router = APIRouter()
@@ -48,9 +48,8 @@ def peers_list() -> dict[str, object]:
     return {
         "device": device_identity.identity_payload(),
         "peers": peers.list_peers(),
-        # Populated once mDNS browsing lands; the shape is stable now so the
-        # UI can render "found nearby" without a second round of changes.
-        "discovered": [],
+        "discovered": peers.discovered_candidates(),
+        "discovery": discovery_mdns.browse_status(),
     }
 
 

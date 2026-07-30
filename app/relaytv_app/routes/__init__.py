@@ -3501,6 +3501,7 @@ def ui():
         <div id="peersNearbyWrap" class="pmGroup hidden">
           <div class="pmGroupHead">Found nearby</div>
           <div id="peersNearby" class="pmList"></div>
+          <div id="peersNearbyNote" class="pmNote"></div>
         </div>
 
         <section class="pmAdd">

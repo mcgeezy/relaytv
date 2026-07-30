@@ -393,6 +393,9 @@ Send the queue (or one queue item) to another RelayTV device on the same
 network. Peers are added by address and verified before they are saved;
 nothing is discovered or added automatically.
 
+Devices found over mDNS are also reflected in `GET /discovery/status`, whose
+`mdns.browse` block carries the same discovery state as advertising status.
+
 Identity:
 
 - `GET /peers/identity`
@@ -405,8 +408,15 @@ Identity:
 Registry:
 
 - `GET /peers`
-  - returns `{"device", "peers", "discovered"}`
-  - `discovered` is reserved for mDNS browsing and is currently always empty
+  - returns `{"device", "peers", "discovered", "discovery"}`
+  - `discovered` lists devices seen over mDNS that are not saved yet, each
+    `{"device_id", "device_name", "base_url", "version", "source", "last_seen_at"}`.
+    Candidates are suggestions only — adding one is always an explicit action,
+    and saved devices are filtered out by id or address
+  - `discovery` reports `{"enabled", "active", "ttl_sec", "found", "last_error"}`
+    so a client can tell "nothing found yet" apart from "discovery is not
+    running". Browsing needs multicast and therefore host networking; on a
+    bridged container `active` stays false
 - `POST /peers`
   - body: `{"base_url", "name"?, "token"?, "verify"?}`
   - probes `GET /peers/identity` on the address first and refuses this device's

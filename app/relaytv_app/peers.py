@@ -29,7 +29,7 @@ import urllib.request
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
-from . import device_identity, public_media, state, upload_store
+from . import device_identity, discovery_mdns, public_media, state, upload_store
 from .config import env_str
 from .debug import get_logger
 
@@ -172,6 +172,37 @@ def list_peers() -> list[dict]:
     """Public (token-redacted) peer list, newest registration last."""
     records = sorted(list_records(), key=lambda r: float(r.get("added_at") or 0.0))
     return [public_peer(record) for record in records]
+
+
+def discovered_candidates() -> list[dict]:
+    """Devices seen on the network that are not saved yet.
+
+    Discovery only ever suggests. Adopting a candidate is an explicit action,
+    both because a device list that grows on its own reads as broken and
+    because saving a peer may involve entering that device's API token.
+    """
+    saved = list_records()
+    saved_ids = {str(r.get("device_id") or "") for r in saved if r.get("device_id")}
+    saved_urls = {str(r.get("base_url") or "") for r in saved if r.get("base_url")}
+    out: list[dict] = []
+    for record in discovery_mdns.discovered():
+        device_id = str(record.get("device_id") or "")
+        base_url = str(record.get("base_url") or "")
+        if device_id and device_id in saved_ids:
+            continue
+        if base_url and base_url in saved_urls:
+            continue
+        out.append(
+            {
+                "device_id": device_id,
+                "device_name": str(record.get("device_name") or "RelayTV"),
+                "base_url": base_url,
+                "version": str(record.get("version") or ""),
+                "source": "mdns",
+                "last_seen_at": float(record.get("last_seen_at") or 0.0),
+            }
+        )
+    return out
 
 
 def get_record(peer_id: str) -> dict | None:

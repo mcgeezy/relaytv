@@ -12,9 +12,11 @@
   const state = {
     peers: [],
     discovered: [],
+    discovery: null,
     device: null,
     loading: false,
     sending: '',
+    adopting: '',
     lastFocus: null,
   };
 
@@ -149,7 +151,10 @@
     const add = document.createElement('button');
     add.type = 'button';
     add.className = 'pmRowBtn';
-    add.textContent = 'Add';
+    const adopting = state.adopting === candidate.base_url;
+    add.textContent = adopting ? 'Adding…' : 'Add';
+    add.disabled = adopting;
+    add.title = `Save ${candidate.device_name || 'this device'}`;
     add.addEventListener('click', () => adoptCandidate(candidate));
 
     row.appendChild(text);
@@ -157,15 +162,34 @@
     return row;
   }
 
+  function discoveryNote(found){
+    const discovery = state.discovery || {};
+    if (discovery.enabled === false) return 'Discovery is turned off on this device.';
+    if (discovery.active === false){
+      // A bridged container never receives multicast, which is the common
+      // cause; say what to change instead of showing an empty list.
+      const reason = discovery.last_error ? ` (${discovery.last_error})` : '';
+      return `Discovery is unavailable on this network${reason}. Host networking is required for mDNS.`;
+    }
+    if (found > 0) return '';
+    return 'No devices found yet. Add one by address below.';
+  }
+
   function render(){
+    const candidates = state.discovered.filter((c) => !state.peers.some((p) => p.device_id && p.device_id === c.device_id));
+
     const list = $('peersList');
     if (list){
       list.innerHTML = '';
       if (!state.peers.length){
-        const empty = document.createElement('div');
-        empty.className = 'pmEmpty';
-        empty.textContent = state.loading ? 'Loading devices…' : 'No other devices yet.';
-        list.appendChild(empty);
+        // Stay quiet when a nearby device is already offering something to do:
+        // "No other devices yet" directly above a found device contradicts it.
+        if (state.loading || candidates.length === 0){
+          const empty = document.createElement('div');
+          empty.className = 'pmEmpty';
+          empty.textContent = state.loading ? 'Loading devices…' : 'No other devices yet.';
+          list.appendChild(empty);
+        }
       } else {
         state.peers.forEach((peer) => list.appendChild(deviceRow(peer)));
       }
@@ -173,11 +197,16 @@
 
     const wrap = $('peersNearbyWrap');
     const nearby = $('peersNearby');
+    const note = $('peersNearbyNote');
     if (wrap && nearby){
       nearby.innerHTML = '';
-      const candidates = state.discovered.filter((c) => !state.peers.some((p) => p.device_id && p.device_id === c.device_id));
-      wrap.classList.toggle('hidden', candidates.length === 0);
+      // The group stays visible whenever discovery is running so the absence of
+      // candidates reads as "nothing found yet" rather than a missing feature.
+      const discovery = state.discovery || {};
+      const show = candidates.length > 0 || discovery.enabled === true;
+      wrap.classList.toggle('hidden', !show);
       candidates.forEach((candidate) => nearby.appendChild(nearbyRow(candidate)));
+      if (note) note.textContent = discoveryNote(candidates.length);
     }
 
     syncSubtitle();
@@ -208,6 +237,7 @@
       state.device = payload.device || null;
       state.peers = Array.isArray(payload.peers) ? payload.peers : [];
       state.discovered = Array.isArray(payload.discovered) ? payload.discovered : [];
+      state.discovery = payload.discovery || null;
       setStatus('');
     } catch (e) {
       setStatus(e.message || 'Could not load devices', 'err');
@@ -328,12 +358,31 @@
   }
 
   async function adoptCandidate(candidate){
-    setStatus(`Adding ${candidate.device_name || 'device'}…`);
+    if (state.adopting) return;
+    state.adopting = candidate.base_url;
+    setStatus('');
+    render();
     try {
       await postJson('/peers', {base_url: candidate.base_url, name: candidate.device_name || ''});
+      state.adopting = '';
       await load();
+      setStatus(`Added ${candidate.device_name || 'device'}`, 'ok');
     } catch (e) {
-      setStatus(e.message || 'Could not add that device.', 'err');
+      state.adopting = '';
+      // A device that requires a token cannot be adopted with one tap; send the
+      // operator to the form with the address already filled in.
+      const message = e.message || 'Could not add that device.';
+      if (message.includes('token')){
+        toggleAddForm(true);
+        const url = $('peerUrlInput');
+        const name = $('peerNameInput');
+        if (url) url.value = candidate.base_url;
+        if (name && !name.value.trim()) name.value = candidate.device_name || '';
+        setAddHelper('That device requires an API token. Enter it and add again.', 'err');
+      } else {
+        setStatus(message, 'err');
+      }
+      render();
     }
   }
 

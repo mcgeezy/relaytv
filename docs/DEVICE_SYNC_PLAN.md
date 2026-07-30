@@ -4,7 +4,7 @@ Planning artifact for the multi-device feature: send queue items, the whole
 queue, or live playback from one RelayTV device to another, with manually
 added peers and optional local-network auto-discovery.
 
-**Status: Phase 1 shipped** (see [Milestones](#8-milestones)). Each phase folds
+**Status: Phases 1–2 shipped** (see [Milestones](#8-milestones)). Each phase folds
 its user-facing surface into the existing docs as it lands — `API.md` for the
 endpoint contract, `ARCHITECTURE.md` for module ownership — and this file
 tracks milestone completion and any deviation from the original design. Per
@@ -217,7 +217,7 @@ remove), and this device's own name and discoverability toggle.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | `device_id`, peer registry, manual add, `/queue/import`, queue-header sheet, copy whole queue | **done** |
-| 2 | mDNS browse, adopt-from-nearby | not started |
+| 2 | mDNS browse, adopt-from-nearby | **done** |
 | 3 | Per-item send, Move and Handoff modes | not started |
 | 4 | Operator runbook, Home Assistant and companion-app notes | not started |
 
@@ -251,6 +251,28 @@ immediately rather than waiting for Phase 4.
   node scripts/peers-ui-smoke.js --base=http://<sender> --peer=http://<receiver>
   ```
 
+### Phase 2 as shipped
+
+- `discovery_mdns.py` — `ServiceBrowser` on the RelayTV service type. Callbacks
+  only enqueue names; a worker thread resolves them, and re-resolves known
+  services every `RELAYTV_MDNS_BROWSE_REFRESH_SEC` (default 60s). Entries also
+  age out after `RELAYTV_MDNS_BROWSE_TTL_SEC` (default 300s) so a device that
+  vanishes without announcing goodbye still disappears.
+  `RELAYTV_MDNS_BROWSE_ENABLED` opts out without disabling advertising.
+- `peers.discovered_candidates()` — visible devices minus anything already
+  saved (matched by device id or address). Candidates are never auto-added.
+- `GET /peers` — now carries `discovered` and a `discovery` state block;
+  `GET /discovery/status` reports the same state under `mdns.browse`.
+- `static/ui/peers.js` — a "Found nearby" group with one-tap Add. The group
+  stays visible while discovery is running so an empty list reads as "nothing
+  found yet", and the note distinguishes discovery being off, unavailable on
+  this network (bridged containers get no multicast), or simply quiet. Adopting
+  a device that requires a token falls through to the manual form with the
+  address prefilled, since one tap cannot supply a token.
+- `scripts/peers-ui-smoke.js` — covers adopt-from-nearby when the run's devices
+  can actually see each other, and asserts the discovery state is explained to
+  the user when they cannot.
+
 ### Deviations from the original design
 
 - **Probe endpoint.** The plan used `GET /health` for reachability, but that
@@ -274,6 +296,16 @@ immediately rather than waiting for Phase 4.
 - **Modes.** `append` and `replace` are both implemented server-side and
   documented; the sheet exposes only the copy/append tap. Move and Handoff stay
   in Phase 3 as planned.
+- **Discovery freshness.** The plan assumed a TTL'd cache fed by zeroconf
+  callbacks. In practice a device that keeps advertising does not necessarily
+  produce another callback before the TTL expires, so peers dropped off the list
+  while sitting right there — caught by watching two live servers across a
+  shortened TTL. Known services are now re-resolved on an interval, which also
+  removes devices that disappeared without a goodbye packet (verified: a killed
+  device leaves the list within about three seconds).
+- **Bridged-network detection.** Rather than trying to detect the network mode,
+  the UI reports what it knows: `discovery.active` is false when browsing is not
+  running, and the sheet says host networking is required for mDNS.
 
 ## 9. Guardrails
 
@@ -296,8 +328,10 @@ Per `AGENTS.md` quality gates:
 ## 10. Risks
 
 - **mDNS and Docker networking**: fine on `network_mode: host` (the default),
-  broken on bridge. Detect and surface "discovery unavailable in this network
-  mode" rather than rendering an empty list that looks like a bug.
+  broken on bridge. Handled in Phase 2 — the sheet distinguishes "no devices
+  found yet" from "discovery is unavailable on this network" and names host
+  networking as the requirement, instead of rendering an empty list that looks
+  like a bug.
 - **Uploads across devices**: the receiver streams from the sender's HTTP
   server, so playback dies if the sender sleeps. Badge those items in the
   send sheet as "streams from this device".

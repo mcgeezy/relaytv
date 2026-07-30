@@ -28,12 +28,24 @@ async function browserFor(wsEndpoint) {
   return chromium.connect(wsEndpoint);
 }
 
-async function resetState(page, baseUrl, peerUrl) {
-  await page.evaluate(async ({ peerUrl }) => {
+async function queueLength(url) {
+  const payload = await fetch(`${url}/queue`).then((r) => r.json());
+  return Number(payload.queue_length || 0);
+}
+
+async function forgetSavedPeers(page) {
+  await page.evaluate(async () => {
     const listing = await fetch('/peers').then((r) => r.json());
     for (const peer of (listing.peers || [])) {
       await fetch(`/peers/${encodeURIComponent(peer.id)}`, { method: 'DELETE' });
     }
+  });
+}
+
+async function seedSenderQueue(page) {
+  // Put two known items in the queue. The device may be playing while this
+  // runs, so nothing downstream assumes an exact count.
+  await page.evaluate(async () => {
     await fetch('/clear', { method: 'POST' });
     for (const url of ['https://example.com/smoke-one', 'https://example.com/smoke-two']) {
       await fetch('/enqueue', {
@@ -42,8 +54,7 @@ async function resetState(page, baseUrl, peerUrl) {
         body: JSON.stringify({ url }),
       });
     }
-    return peerUrl;
-  }, { peerUrl });
+  });
 }
 
 async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
@@ -70,23 +81,53 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
   });
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
-    // Both sides start clean so the assertion counts belong to this run.
-    await fetch(`${peerUrl}/clear`, { method: 'POST' });
-    await resetState(page, baseUrl, peerUrl);
+    await forgetSavedPeers(page);
+    await seedSenderQueue(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
 
     // The Send pill only appears once there is something to send.
     await page.locator('#queueSendBtn:not(.hidden)').waitFor({ timeout: 15000 });
     await page.locator('#queueSendBtn').click();
     await page.locator('#peersBackdrop:not(.hidden)').waitFor();
+    // Shape, not an exact count: a live device may be draining its queue while
+    // the smoke runs, so the subtitle is compared against the copy contract.
+    const subtitle = (await page.locator('#peersSubtitle').textContent()) || '';
     check(
-      (await page.locator('#peersSubtitle').textContent()).includes('2 items'),
-      `${scenario.name}: sheet did not report the queue size`,
+      /^(Nothing queued|1 item in the queue|\d+ items in the queue)$/.test(subtitle.trim()),
+      `${scenario.name}: sheet did not report the queue size ("${subtitle}")`,
     );
-    // Wait for the settled list: the row is a loading placeholder first.
-    await page.waitForFunction(
-      () => (document.querySelector('.pmEmpty')?.textContent || '').includes('No other devices yet'),
-    );
+
+    // Wait for the settled list. With no saved devices the sheet shows either
+    // the empty row or, when discovery found something, the nearby group only.
+    await page.waitForFunction(() => {
+      const saved = document.querySelectorAll('#peersList .pmRow').length;
+      const empty = (document.querySelector('.pmEmpty')?.textContent || '').includes('No other devices yet');
+      const nearby = document.querySelectorAll('#peersNearby .pmRow').length;
+      return saved === 0 && (empty || nearby > 0);
+    });
+
+    // Discovery: when the peer is announcing itself over mDNS it shows up under
+    // "Found nearby" and one tap adopts it. Skipped when the run's devices are
+    // not on a network where multicast reaches them.
+    const discovery = await page.evaluate(() => fetch('/peers').then((r) => r.json()).then((d) => d.discovery || {}));
+    let adopted = false;
+    if (discovery.active && discovery.found > 0) {
+      await page.locator('#peersNearbyWrap:not(.hidden)').waitFor();
+      await page.waitForFunction(() => document.querySelectorAll('#peersNearby .pmRow').length > 0);
+      await page.locator('#peersNearby .pmRowBtn').first().click();
+      await page.waitForFunction(() => document.querySelectorAll('#peersList .pmRow').length === 1);
+      // Adopting removes the candidate from the nearby list (same device id).
+      await page.waitForFunction(() => document.querySelectorAll('#peersNearby .pmRow').length === 0);
+      adopted = true;
+      page.once('dialog', (dialog) => dialog.accept());
+      await page.locator('#peersList .pmRowBtn.danger').first().click();
+      await page.waitForFunction(() => document.querySelectorAll('#peersList .pmRow').length === 0);
+    } else {
+      check(
+        (await page.locator('#peersNearbyNote').textContent()).length > 0,
+        `${scenario.name}: discovery state was not explained to the user`,
+      );
+    }
 
     // Test connection names the device before it is saved.
     await page.locator('#peersAddToggle').click();
@@ -104,9 +145,9 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
 
     await page.locator('#peerUrlInput').fill(peerUrl);
     await page.locator('#peerSaveBtn').click();
-    await page.waitForFunction(() => document.querySelectorAll('.pmRow').length === 1);
+    await page.waitForFunction(() => document.querySelectorAll('#peersList .pmRow').length === 1);
     await page.waitForFunction(() => !!document.querySelector('.pmDot.isOnline'));
-    const peerName = ((await page.locator('.pmName').first().textContent()) || '').trim();
+    const peerName = ((await page.locator('#peersList .pmName').first().textContent()) || '').trim();
 
     const layout = await page.evaluate(() => ({
       bodyOverflow: document.body.scrollWidth > document.body.clientWidth,
@@ -122,8 +163,17 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/peers-${scenario.name}.png`, fullPage: true });
 
     // Tapping the device sends the queue; the receiver ends up holding it.
-    await page.locator('.pmDevice').first().click();
-    await page.waitForFunction(() => (document.querySelector('#peersStatus')?.textContent || '').startsWith('Sent 2 items'));
+    // Re-seed first: a device that is playing consumes its own queue, and this
+    // assertion is about the transfer, not about autoplay timing.
+    await seedSenderQueue(page);
+    // Both devices may be playing, so compare a delta rather than a total.
+    const receiverBefore = await queueLength(peerUrl);
+    await page.locator('#peersList .pmDevice').first().click();
+    await page.waitForFunction(() => /^Sent \d+ item/.test(document.querySelector('#peersStatus')?.textContent || ''));
+    const sentText = (await page.locator('#peersStatus').textContent()) || '';
+    const sentCount = Number((sentText.match(/^Sent (\d+) item/) || [])[1] || 0);
+    check(sentCount > 0, `${scenario.name}: send reported no items ("${sentText}")`);
+
     // Read the receiver from node, not the page: a cross-origin fetch from
     // /ui would be blocked by CORS and tell us nothing about the feature.
     const receiverQueue = await fetch(`${peerUrl}/queue`).then((r) => r.json());
@@ -131,9 +181,13 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
       title: item.title,
       origin: (item.peer_origin || {}).name,
     }));
-    check(received.length === 2, `${scenario.name}: receiver holds ${received.length} items, expected 2`);
     check(
-      received.every((item) => item.origin && item.origin.length > 0),
+      received.length >= receiverBefore + sentCount,
+      `${scenario.name}: receiver holds ${received.length}, expected at least ${receiverBefore + sentCount}`,
+    );
+    const arrived = received.slice(-sentCount);
+    check(
+      arrived.every((item) => item.origin && item.origin.length > 0),
       `${scenario.name}: receiver did not record the sending device`,
     );
 
@@ -143,11 +197,11 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     await page.locator('#queueSendBtn').click();
     await page.locator('#peersBackdrop:not(.hidden)').waitFor();
     page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('.pmRowBtn.danger').first().click();
-    await page.waitForFunction(() => document.querySelectorAll('.pmRow').length === 0);
+    await page.locator('#peersList .pmRowBtn.danger').first().click();
+    await page.waitForFunction(() => document.querySelectorAll('#peersList .pmRow').length === 0);
 
     check(errors.length === 0, `${scenario.name}: browser errors: ${errors.join('; ')}`);
-    return { name: scenario.name, peerName, received, layout };
+    return { name: scenario.name, peerName, sentCount, layout, discovery, adopted };
   } finally {
     await context.close();
   }

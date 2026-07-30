@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from relaytv_app import device_identity, peers, state
+from relaytv_app import device_identity, discovery_mdns, peers, state
 from relaytv_app.config import runtime_config
 from relaytv_app.main import create_app
 
@@ -134,6 +135,191 @@ def test_wire_items_strip_resolved_streams_and_report_iptv_skips(peers_file, mon
     assert "secret.m3u8" not in payload
     assert "Authorization" not in payload
     assert [entry["reason"] for entry in skipped] == ["iptv_channels_stay_on_this_device"]
+
+
+class _FakeServiceInfo:
+    """Minimal stand-in for zeroconf.ServiceInfo."""
+
+    def __init__(self, addresses, port, properties):
+        self._addresses = list(addresses)
+        self.port = port
+        self.properties = dict(properties)
+
+    def parsed_addresses(self):
+        return list(self._addresses)
+
+
+def _service_props(device_id: str, name: str = "Bedroom TV", app: str = "0.9.0") -> dict:
+    return {b"id": device_id.encode(), b"name": name.encode(), b"app": app.encode(), b"service": b"relaytv"}
+
+
+def test_discovered_record_prefers_ipv4_and_reads_txt(peers_file) -> None:
+    record = discovery_mdns.discovered_record_from_service(
+        "Bedroom TV._relaytv._tcp.local.",
+        _FakeServiceInfo(["fe80::1", "192.168.1.42"], 8787, _service_props("peerdevice")),
+    )
+
+    assert record["base_url"] == "http://192.168.1.42:8787"
+    assert record["device_id"] == "peerdevice"
+    assert record["device_name"] == "Bedroom TV"
+    assert record["version"] == "0.9.0"
+
+
+def test_discovered_record_skips_self_and_unusable_services(peers_file) -> None:
+    own = discovery_mdns.discovered_record_from_service(
+        "Living Room._relaytv._tcp.local.",
+        _FakeServiceInfo(["192.168.1.5"], 8787, _service_props("selfdevice", name="Living Room")),
+    )
+    assert own is None
+
+    assert discovery_mdns.discovered_record_from_service("x._relaytv._tcp.local.", None) is None
+    no_port = discovery_mdns.discovered_record_from_service(
+        "x._relaytv._tcp.local.",
+        _FakeServiceInfo(["192.168.1.9"], 0, _service_props("otherdevice")),
+    )
+    assert no_port is None
+    no_address = discovery_mdns.discovered_record_from_service(
+        "x._relaytv._tcp.local.",
+        _FakeServiceInfo([], 8787, _service_props("otherdevice")),
+    )
+    assert no_address is None
+
+
+def test_discovered_record_falls_back_to_instance_name(peers_file) -> None:
+    record = discovery_mdns.discovered_record_from_service(
+        "Old Build._relaytv._tcp.local.",
+        _FakeServiceInfo(["192.168.1.7"], 8787, {b"service": b"relaytv"}),
+    )
+    # A peer on a build without the id/name TXT records still shows up.
+    assert record["device_name"] == "Old Build"
+    assert record["device_id"] == ""
+    assert record["base_url"] == "http://192.168.1.7:8787"
+
+
+def test_discovered_entries_expire(peers_file, monkeypatch) -> None:
+    discovery_mdns.reset_browse_for_tests()
+    monkeypatch.setenv("RELAYTV_MDNS_BROWSE_TTL_SEC", "60")
+    fresh = {
+        "service_name": "fresh._relaytv._tcp.local.",
+        "device_id": "freshdevice",
+        "device_name": "Fresh",
+        "base_url": "http://192.168.1.8:8787",
+        "last_seen_at": time.time(),
+    }
+    stale = {
+        "service_name": "stale._relaytv._tcp.local.",
+        "device_id": "staledevice",
+        "device_name": "Stale",
+        "base_url": "http://192.168.1.9:8787",
+        "last_seen_at": time.time() - 600,
+    }
+    discovery_mdns._remember_service(fresh)
+    discovery_mdns._remember_service(stale)
+
+    assert [r["device_id"] for r in discovery_mdns.discovered()] == ["freshdevice"]
+    discovery_mdns.reset_browse_for_tests()
+
+
+class _FakeZeroconf:
+    """Resolves service names from a fixed map, like a warm zeroconf cache."""
+
+    def __init__(self, services):
+        self.services = dict(services)
+        self.lookups: list[str] = []
+
+    def get_service_info(self, type_, name, timeout=0):
+        self.lookups.append(name)
+        return self.services.get(name)
+
+
+def test_refresh_keeps_live_services_and_drops_vanished(peers_file) -> None:
+    """A device that stays advertised must not age out of the list.
+
+    zeroconf only calls back on state changes, so a peer that keeps advertising
+    without another callback would expire on TTL alone. The refresh sweep
+    re-resolves known services, and drops the ones that no longer answer.
+    """
+    discovery_mdns.reset_browse_for_tests()
+    name = "Bedroom TV._relaytv._tcp.local."
+    stale_seen = time.time() - 600
+    discovery_mdns._remember_service(
+        {
+            "service_name": name,
+            "device_id": "peerdevice",
+            "device_name": "Bedroom TV",
+            "base_url": "http://192.168.1.42:8787",
+            "last_seen_at": stale_seen,
+        }
+    )
+    live = _FakeZeroconf({name: _FakeServiceInfo(["192.168.1.42"], 8787, _service_props("peerdevice"))})
+
+    discovery_mdns._refresh_known_services(live, "_relaytv._tcp.local.")
+
+    assert live.lookups == [name]
+    found = discovery_mdns.discovered()
+    assert [r["device_id"] for r in found] == ["peerdevice"]
+    assert found[0]["last_seen_at"] > stale_seen
+
+    # The same sweep removes a device that stopped answering.
+    discovery_mdns._refresh_known_services(_FakeZeroconf({}), "_relaytv._tcp.local.")
+    assert discovery_mdns.discovered() == []
+    discovery_mdns.reset_browse_for_tests()
+
+
+def test_discovery_candidates_hide_saved_devices(peers_file, stub_identity) -> None:
+    discovery_mdns.reset_browse_for_tests()
+    saved = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    discovery_mdns._remember_service(
+        {
+            "service_name": "saved._relaytv._tcp.local.",
+            "device_id": saved["device_id"],
+            "device_name": "Bedroom TV",
+            "base_url": "http://192.168.1.42:8787",
+            "last_seen_at": time.time(),
+        }
+    )
+    discovery_mdns._remember_service(
+        {
+            "service_name": "new._relaytv._tcp.local.",
+            "device_id": "kitchendevice",
+            "device_name": "Kitchen Pi",
+            "base_url": "http://192.168.1.43:8787",
+            "last_seen_at": time.time(),
+        }
+    )
+
+    candidates = peers.discovered_candidates()
+    assert [c["device_name"] for c in candidates] == ["Kitchen Pi"]
+    assert candidates[0]["source"] == "mdns"
+    discovery_mdns.reset_browse_for_tests()
+
+
+def test_peers_endpoint_reports_discovery_state(client) -> None:
+    discovery_mdns.reset_browse_for_tests()
+    discovery_mdns._remember_service(
+        {
+            "service_name": "nearby._relaytv._tcp.local.",
+            "device_id": "kitchendevice",
+            "device_name": "Kitchen Pi",
+            "base_url": "http://192.168.1.43:8787",
+            "last_seen_at": time.time(),
+        }
+    )
+
+    payload = client.get("/peers").json()
+    assert [c["device_name"] for c in payload["discovered"]] == ["Kitchen Pi"]
+    assert payload["discovery"]["enabled"] is True
+    # Browsing is not started in tests, so the UI can explain the difference
+    # between "nothing found" and "discovery is not running".
+    assert payload["discovery"]["active"] is False
+    discovery_mdns.reset_browse_for_tests()
+
+
+def test_browse_disabled_reports_state_without_starting(peers_file, monkeypatch) -> None:
+    monkeypatch.setenv("RELAYTV_MDNS_BROWSE_ENABLED", "0")
+    status = discovery_mdns.start_browse()
+    assert status["enabled"] is False
+    assert status["active"] is False
 
 
 def test_identity_endpoint_advertises_stable_id(client) -> None:

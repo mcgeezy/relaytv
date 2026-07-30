@@ -184,6 +184,9 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_LOGO_IMAGE` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_LOGO_PATH` | `routes/__init__.py`<br>`routes/assets.py` | - | static env |
 | `RELAYTV_LOG_LEVEL` | `debug.py` | - | static env |
+| `RELAYTV_MDNS_BROWSE_ENABLED` | `discovery_mdns.py` | - | static env |
+| `RELAYTV_MDNS_BROWSE_REFRESH_SEC` | `discovery_mdns.py` | - | static env |
+| `RELAYTV_MDNS_BROWSE_TTL_SEC` | `discovery_mdns.py` | - | static env |
 | `RELAYTV_MDNS_ENABLED` | `discovery_mdns.py` | - | static env |
 | `RELAYTV_MDNS_HOST` | `device_identity.py` | - | static env |
 | `RELAYTV_MDNS_INSTANCE_SUFFIX` | `discovery_mdns.py` | - | static env |

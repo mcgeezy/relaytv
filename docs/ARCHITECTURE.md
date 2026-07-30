@@ -34,6 +34,10 @@ milestone logs live in git history.
   `device_id` (persisted outside `settings.json` so it survives a settings
   reset), display name, LAN address, and the identity payload advertised to
   peers and over mDNS.
+- `app/relaytv_app/discovery_mdns.py`: mDNS advertising and browsing for
+  RelayTV devices. Browser callbacks only enqueue names; a worker thread
+  resolves them and re-resolves known services on an interval, because
+  state-change callbacks alone do not keep entries fresh.
 - `app/relaytv_app/peers.py`: peer device product behavior — registry
   persistence, address validation, reachability probes, and the wire form of a
   transferred queue item. Peers exchange display-safe items and the receiver

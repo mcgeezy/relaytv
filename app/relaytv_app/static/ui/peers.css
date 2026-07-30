@@ -52,6 +52,13 @@
   color: rgba(190,212,248,.60);
 }
 
+.pmNote{
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgba(198,216,246,.58);
+}
+.pmNote:empty{ display:none; }
+
 .pmRow{
   display: flex;
   align-items: center;
@@ -287,6 +294,7 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 0 0 2px rgba(56,140,248,.14);
   }
   .pmSub, .pmStatus, .pmMeta, .pmHelper{ color: rgba(23,52,120,.72); }
+  .pmNote{ color: rgba(23,52,120,.62); }
   .pmGroupHead{ color: rgba(23,52,120,.62); }
   .pmRow{
     color: #0c1f4d;
