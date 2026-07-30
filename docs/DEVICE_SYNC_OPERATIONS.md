@@ -179,6 +179,13 @@ one that is still advertising should never age out.
 other device is down, or a firewall is in the way. The saved device keeps the
 last error, which the sheet shows under its name.
 
+**A send is slow, or reports a failure.** Accepting an import is fast, but a
+handoff also has to start playback on the receiving device, which takes several
+seconds (~6–12s observed on a Pi over YouTube). The sender waits up to 30s. If
+it does give up, the import may still have landed on the receiver — check the
+receiving device's queue before retrying, and use `POST /queue/dedupe` there if
+a retry duplicated items.
+
 **An uploaded item plays on the sender but not the receiver.** The receiver
 streams that file from the sender. It fails if the sending device is asleep,
 off, or on a different network than when the transfer happened.

@@ -348,6 +348,18 @@ immediately rather than waiting for Phase 4.
 - **Handoff availability is live, not sampled.** Evaluating "is something
   playing" once at sheet-open time left Handoff on offer after playback ended.
   It is re-evaluated on every status push, and app.js notifies the sheet.
+- **Import latency vs. the send timeout.** Found only on real devices: sending
+  four queue items from the NUC to a Pi returned a failure at the sender's 10s
+  timeout while the receiver committed the import at 11.0s. The receiver was
+  re-fetching a title and artwork per item (~2.5s each) even though the sender
+  had already resolved them and shipped them as hints. Imports now build items
+  from those hints (Jellyfin excepted — its ids come from the receiver's own
+  configuration), append in bulk through a new
+  `playback_service.queue_items()`, and the send timeout moved to 30s. The same
+  four items then transferred in 3.8s. This mattered most for handoff, which
+  legitimately takes 6–12s because the receiver starts playback: under the old
+  timeout the sender would have reported failure and kept playing while the
+  receiver was already playing the same thing.
 - **One toast per handoff.** The receiver's queue import shares a code path with
   `/queue/import`, which raises an on-TV toast. A handoff raised two
   notifications for one action, so the import core took an `announce` flag.
