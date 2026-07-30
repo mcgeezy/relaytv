@@ -567,9 +567,12 @@ def test_handoff_requires_playback_and_stops_locally_after_success(
         return {"status": "handed_off", "playing": True, "accepted": 1, "queue_length": 1, "results": []}
 
     monkeypatch.setattr(peers, "_request", _request)
-    closed: list[bool] = []
-    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: 0)
-    monkeypatch.setattr("relaytv_app.routes.playback.close", lambda: closed.append(True))
+    calls: list[str] = []
+    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: calls.append("clear_queue") or 0)
+    monkeypatch.setattr(
+        "relaytv_app.routes.playback.clear_now_playing",
+        lambda: calls.append("clear_now_playing") or {"status": "cleared"},
+    )
 
     with state.QUEUE_LOCK:
         state.QUEUE.clear()
@@ -589,7 +592,12 @@ def test_handoff_requires_playback_and_stops_locally_after_success(
     assert body["status"] == "handed_off"
     assert body["playing"] is True
     assert body["local_stopped"] is True
-    assert closed == [True]
+    # The session moved to the peer, so this device clears now-playing rather
+    # than closing it: a preserved session would show the item it gave away and
+    # offer to resume it while the peer is playing it. The queue is dropped
+    # first, or clearing would advance into the next queued item instead of
+    # going idle.
+    assert calls == ["clear_queue", "clear_now_playing"]
 
     with state.QUEUE_LOCK:
         state.QUEUE.clear()
@@ -610,15 +618,18 @@ def test_handoff_failure_leaves_local_playback_alone(client, peers_file, stub_id
         raise peers.PeerError("device is unreachable", status_code=502)
 
     monkeypatch.setattr(peers, "_request", _fail)
-    closed: list[bool] = []
-    monkeypatch.setattr("relaytv_app.routes.playback.close", lambda: closed.append(True))
+    stopped: list[bool] = []
+    monkeypatch.setattr(
+        "relaytv_app.routes.playback.clear_now_playing",
+        lambda: stopped.append(True) or {"status": "cleared"},
+    )
     cleared: list[bool] = []
     monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: cleared.append(True) or 0)
 
     response = client.post(f"/peers/{peer['id']}/handoff", json={})
     assert response.status_code == 502
     # Nothing local changed: the user keeps watching what they were watching.
-    assert closed == []
+    assert stopped == []
     assert cleared == []
 
 

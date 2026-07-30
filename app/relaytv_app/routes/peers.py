@@ -192,14 +192,24 @@ def peers_handoff(peer_id: str) -> dict[str, object]:
     except peers.PeerError as exc:
         raise _peer_error(exc) from exc
 
-    from .playback import close as close_playback
+    # The queue goes first: clearing now-playing with items still queued would
+    # advance into the next one instead of going idle.
+    result["local_queue_length"] = _clear_local_queue()
+
+    from .playback import clear_now_playing
 
     stopped = False
     try:
-        close_playback()
+        # Not /close: that keeps a resumable session, which after a handoff
+        # would leave this device showing the item it just gave away and
+        # offering to resume it — playing the same thing in two rooms. The
+        # session moved, so it is cleared here.
+        clear_now_playing()
+        # A handoff leaves this device available rather than deliberately
+        # parked, so the long auto-next hold that clearing applies is dropped.
+        playback_service.clear_auto_next_suppression()
         stopped = True
-    except Exception as exc:  # pragma: no cover - close is best effort
+    except Exception as exc:  # pragma: no cover - local teardown is best effort
         logger.warning("peer_handoff_local_stop_failed error=%s", exc)
     result["local_stopped"] = stopped
-    result["local_queue_length"] = _clear_local_queue()
     return result

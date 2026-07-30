@@ -129,6 +129,9 @@ Every destructive step waits for confirmation from the other device:
   either.
 - A handoff preserves whatever the receiving device was playing to the front of
   its queue, so it is never destroyed.
+- The device that handed off returns to its idle screen with nothing to resume.
+  It does not keep the item it gave away, because resuming it would play the
+  same thing in two rooms.
 
 ## Verifying a pair of devices
 

@@ -360,6 +360,14 @@ immediately rather than waiting for Phase 4.
   legitimately takes 6–12s because the receiver starts playback: under the old
   timeout the sender would have reported failure and kept playing while the
   receiver was already playing the same thing.
+- **A handoff clears the session; it does not close it.** Reusing `/close` for
+  the local teardown looked right and was wrong: close deliberately keeps a
+  resumable session, so after handing off, the sending device sat on its idle
+  screen showing the thumbnail of the item it had just given away, offering to
+  resume something the other room was already playing. Spotted on the live pair.
+  Handoff now drops the queue and then clears now-playing (in that order, or
+  clearing advances into the next queued item), and releases the long auto-next
+  hold that clearing applies, since the device is available rather than parked.
 - **One toast per handoff.** The receiver's queue import shares a code path with
   `/queue/import`, which raises an on-TV toast. A handoff raised two
   notifications for one action, so the import core took an `announce` flag.

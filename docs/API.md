@@ -456,6 +456,9 @@ Send:
     stream URLs are re-resolved from a local catalog the peer does not have
   - ordering is deliberate — playback stops locally only after the peer reports
     it took over, so a failed handoff leaves this device playing
+  - on success the local session is cleared, not closed: the session moved to
+    the peer, so this device returns to idle with nothing to resume rather than
+    showing the item it gave away
   - returns `{"playing", "resume_pos", "sent", "accepted", "rejected",
     "queue_length", "local_stopped", "local_queue_length", "peer"}`
 
