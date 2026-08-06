@@ -406,11 +406,16 @@ def start() -> None:
 
 
 def stop() -> None:
-    _stop_worker()
-    _stop_control_socket()
-    with _LOCK:
-        _STATUS["running"] = False
-        _STATUS["connected"] = False
+    # Shutting down is a configuration transaction like any other. _stop_worker
+    # gives the heartbeat one second to notice; a heartbeat parked in a network
+    # call outlives that, and it only has to reach ensure_running() once while
+    # ``running`` is still true to leave behind a socket that nothing retires.
+    # ``running`` therefore goes false before the suspension lifts.
+    with _control_socket_suspended():
+        _stop_worker()
+        with _LOCK:
+            _STATUS["running"] = False
+            _STATUS["connected"] = False
 
 
 def mark_command(name: str) -> None:
@@ -718,10 +723,19 @@ def _connect_locked(*, server_url: str, api_key: str | None, device_name: str | 
 
 
 def disconnect() -> dict[str, object]:
+    # The whole teardown is one transaction. A heartbeat still inside a network
+    # call survives _stop_worker's one-second join, and if it reaches
+    # ensure_running() before ``running`` goes false it opens a replacement
+    # socket — one that stays connected forever, because the heartbeat that
+    # would have retired it is already stopped.
+    with _control_socket_suspended():
+        return _disconnect_locked()
+
+
+def _disconnect_locked() -> dict[str, object]:
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     _stop_worker()
-    _stop_control_socket()
     with _LOCK:
         _STATUS["running"] = False
         _STATUS["connected"] = False

@@ -790,3 +790,43 @@ def test_the_live_session_still_reports_its_own_failures(monkeypatch) -> None:
         assert jellyfin_ws.status()["reconnects"] >= 1
     finally:
         jellyfin_ws._CURRENT = None
+
+
+def test_disconnect_cannot_leave_a_socket_behind(monkeypatch) -> None:
+    """Teardown must be a transaction, not a sequence.
+
+    _stop_worker gives the heartbeat one second to notice; a heartbeat parked
+    in a network call outlives that. It only has to reach ensure_running() once
+    while ``running`` is still true to leave a socket connected forever —
+    nothing retires it, because the heartbeat that would is already stopped.
+    """
+    started: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: True)
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", object())
+    monkeypatch.setattr(jellyfin_ws, "_start", lambda ident: started.append(ident))
+
+    for key, value in (
+        ("enabled", True), ("running", True),
+        ("server_url", "http://jf.lan:8096"), ("device_id", "relaytv-abc"),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "command_sink_registered", lambda: True)
+    # The real join waits a second for a parked heartbeat and then gives up.
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: time.sleep(1.0))
+
+    jellyfin_ws._CURRENT = _parked_session(("http://jf.lan:8096", "relaytv-abc", "fp"))
+
+    def _late_heartbeat():
+        time.sleep(0.2)  # blocks on the lifecycle lock the teardown is holding
+        jellyfin_receiver._ensure_control_socket()
+
+    hb = threading.Thread(target=_late_heartbeat, daemon=True)
+    hb.start()
+    try:
+        jellyfin_receiver.disconnect()
+        hb.join(timeout=10)
+        assert jellyfin_receiver._STATUS["running"] is False
+        assert started == [], "a late heartbeat opened a socket nothing will retire"
+    finally:
+        jellyfin_ws._CURRENT = None
