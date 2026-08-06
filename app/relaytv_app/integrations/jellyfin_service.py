@@ -2244,7 +2244,15 @@ def progress_snapshot() -> dict | None:
     if not item_id:
         return None
     is_playing = bool(player.is_playing())
-    props = player.mpv_get_many(["pause", "time-pos", "duration", "mute", "volume"]) if is_playing else {}
+    if not is_playing:
+        # RelayTV keeps the last item in NOW_PLAYING so its own UI can resume
+        # it, but the Jellyfin session is over: the stopped report already
+        # carried the final position. Posting progress anyway re-creates the
+        # session's NowPlayingItem seconds after Stop cleared it, leaving a
+        # stale "paused" entry on every remote until something else plays.
+        # Pausing does not reach here — a paused mpv still reports playing.
+        return None
+    props = player.mpv_get_many(["pause", "time-pos", "duration", "mute", "volume"])
 
     pos = props.get("time-pos") if isinstance(props, dict) else None
     dur = props.get("duration") if isinstance(props, dict) else None
@@ -2273,7 +2281,7 @@ def progress_snapshot() -> dict | None:
     pos_ticks = max(0, int(pos_f * 10_000_000))
     payload = {
         "ItemId": item_id,
-        "IsPaused": bool(props.get("pause")) if is_playing and isinstance(props, dict) else (not is_playing),
+        "IsPaused": bool(props.get("pause")) if isinstance(props, dict) else False,
         # Without CanSeek the remote renders a read-only progress bar: the
         # scrubber cannot be dragged and Jellyfin will not send Seek at all.
         "CanSeek": True,

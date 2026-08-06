@@ -870,3 +870,32 @@ def test_skip_commands_seek_by_jellyfin_default_amounts(monkeypatch) -> None:
     jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "FastForward"}), controls=controls, ui=_noop_ui())
 
     assert deltas == [-10.0, 30.0]
+
+
+def test_progress_stops_when_playback_stops(monkeypatch) -> None:
+    """A stopped session must not keep reporting progress.
+
+    NOW_PLAYING is deliberately retained after a stop so RelayTV's own UI can
+    resume it. Reporting that to Jellyfin re-created the session's
+    NowPlayingItem seconds after Stop cleared it, so every remote showed a
+    stale paused entry indefinitely.
+    """
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
+    monkeypatch.setattr(player, "is_playing", lambda: False)
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {})
+
+    assert jellyfin_service.progress_snapshot() is None
+
+
+def test_progress_still_reports_a_paused_item(monkeypatch) -> None:
+    """Pause is not stop: a paused mpv still reports playing, and the remote
+    needs the position to keep its scrubber honest."""
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {"pause": True, "time-pos": 42.0, "duration": 100.0})
+
+    payload = jellyfin_service.progress_snapshot()
+
+    assert payload is not None
+    assert payload["IsPaused"] is True
+    assert payload["PositionTicks"] == 420_000_000
