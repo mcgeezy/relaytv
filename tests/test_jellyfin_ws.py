@@ -490,18 +490,167 @@ def test_identity_fingerprints_the_token() -> None:
     assert "super-secret-token" not in "".join(identity)
 
 
-def test_device_id_is_derived_the_same_way_everywhere(monkeypatch) -> None:
-    """Jellyfin keys sessions and history on DeviceId.
-
-    Startup appended the hostname and the rename paths did not, so renaming a
-    device and then restarting made one TV show up as two cast targets.
-    """
+def test_every_path_derives_the_same_device_id(monkeypatch) -> None:
+    """Startup, connect(), and rename must agree, or one TV becomes two."""
     monkeypatch.delenv("RELAYTV_JELLYFIN_DEVICE_ID", raising=False)
-    expected = jellyfin_receiver.derive_device_id("Living Room")
-    assert expected.startswith("relaytv-living-room-")
+    expected = jellyfin_receiver.derive_device_id()
 
     jellyfin_receiver.set_device_identity("Living Room")
     assert jellyfin_receiver._STATUS["device_id"] == expected
+    assert jellyfin_receiver._read_config()["device_id"] == expected
+
+
+# --- review round two ------------------------------------------------------
+
+
+def test_device_id_survives_a_rename(monkeypatch) -> None:
+    """Jellyfin keys history on DeviceId, so a rename must not mint a new one.
+
+    Deriving it from device_name meant renaming "Living Room" to "Den" created
+    a second Jellyfin session and left the first as a duplicate cast target.
+    """
+    monkeypatch.delenv("RELAYTV_JELLYFIN_DEVICE_ID", raising=False)
+
+    jellyfin_receiver.set_device_identity("Living Room")
+    first = jellyfin_receiver._STATUS["device_id"]
+    jellyfin_receiver.set_device_identity("Den")
+    second = jellyfin_receiver._STATUS["device_id"]
+
+    assert first == second, "renaming the device changed its Jellyfin identity"
+    assert jellyfin_receiver._STATUS["device_name"] == "Den", "the display name must still change"
 
     monkeypatch.setenv("RELAYTV_JELLYFIN_DEVICE_ID", "pinned-id")
-    assert jellyfin_receiver.derive_device_id("Anything") == "pinned-id"
+    assert jellyfin_receiver.derive_device_id() == "pinned-id"
+
+
+def test_device_id_follows_the_persisted_install_identity(monkeypatch) -> None:
+    from relaytv_app import device_identity
+
+    monkeypatch.delenv("RELAYTV_JELLYFIN_DEVICE_ID", raising=False)
+    monkeypatch.setattr(device_identity, "device_id", lambda: "stable123")
+    assert jellyfin_receiver.derive_device_id() == "relaytv-stable123"
+
+
+def test_a_late_handshake_cannot_hijack_the_live_session(monkeypatch) -> None:
+    """The dial can outlast the session that started it.
+
+    session.ws is None for the whole handshake, so stop() cannot reach the
+    connection and gives up on the join. If the socket then landed anyway it
+    would publish "connected" and re-assert registration for a generation that
+    no longer owns either.
+    """
+    invalidated: list[str] = []
+    closed = threading.Event()
+
+    class _Conn:
+        def recv(self, timeout=None):
+            raise AssertionError("a retired session must never read")
+
+        def close(self):
+            closed.set()
+
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", lambda url, **kw: _Conn())
+    monkeypatch.setattr(
+        jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
+    )
+    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": invalidated.append(reason))
+
+    retired = jellyfin_ws._Session(("u", "d", "f"))
+    live = jellyfin_ws._Session(("u", "d", "f"))
+    jellyfin_ws._CURRENT = live  # someone else is the live generation now
+    jellyfin_ws._STATE["connected"] = False
+    try:
+        jellyfin_ws._connect_once(retired)
+
+        assert closed.is_set(), "the orphaned socket was left open"
+        assert invalidated == [], "a retired session re-asserted registration"
+        assert jellyfin_ws._STATE["connected"] is False, "a retired session published its status"
+    finally:
+        jellyfin_ws._CURRENT = None
+
+
+def test_the_live_session_still_publishes_and_reasserts(monkeypatch) -> None:
+    """The guard must not break the normal path."""
+    invalidated: list[str] = []
+
+    class _Conn:
+        def recv(self, timeout=None):
+            raise TimeoutError
+
+        def send(self, message):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", lambda url, **kw: _Conn())
+    monkeypatch.setattr(
+        jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
+    )
+    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": invalidated.append(reason))
+
+    session = _session(deadline_sec=0.5)
+    jellyfin_ws._CURRENT = session
+    try:
+        jellyfin_ws._connect_once(session)
+        assert invalidated == ["socket_connected"]
+        assert jellyfin_ws._STATE["last_connect_ts"] is not None
+    finally:
+        jellyfin_ws._CURRENT = None
+
+
+def test_connect_bounds_the_closing_handshake(monkeypatch) -> None:
+    """websockets defaults to a 10s close; stop() runs on settings-save paths."""
+    seen: dict[str, object] = {}
+
+    class _Conn:
+        def recv(self, timeout=None):
+            raise TimeoutError
+
+        def send(self, message):
+            pass
+
+        def close(self):
+            pass
+
+    def _fake_connect(url, **kwargs):
+        seen.update(kwargs)
+        return _Conn()
+
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", _fake_connect)
+    monkeypatch.setattr(
+        jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
+    )
+    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": None)
+
+    session = _session(deadline_sec=0.0)
+    jellyfin_ws._CURRENT = session
+    try:
+        jellyfin_ws._connect_once(session)
+    finally:
+        jellyfin_ws._CURRENT = None
+
+    assert seen["close_timeout"] == jellyfin_ws._CLOSE_TIMEOUT_SEC
+    assert seen["close_timeout"] < 10
+
+
+def test_stop_does_not_wait_on_the_closing_handshake() -> None:
+    """A server that has gone away must not stall a settings save."""
+
+    class _SlowConn:
+        def close(self):
+            time.sleep(5.0)
+
+    session = jellyfin_ws._Session(("u", "d", "f"))
+    session.ws = _SlowConn()
+    jellyfin_ws._CURRENT = session
+
+    t0 = time.monotonic()
+    jellyfin_ws.stop()
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 1.0, f"stop() blocked {elapsed:.1f}s on the close handshake"
+    assert session.stop.is_set()

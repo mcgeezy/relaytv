@@ -13,6 +13,7 @@ from urllib import request as _urlrequest
 from urllib import error as _urlerror
 from urllib import parse as _urlparse
 import platform
+from .. import device_identity
 from ..thumb_cache import attach_local_thumbnail
 
 _LOCK = threading.Lock()
@@ -245,20 +246,30 @@ def _mark_catalog_error(msg: str) -> None:
         _STATUS["catalog_last_error"] = text or None
 
 
-def derive_device_id(device_name: str) -> str:
-    """The Jellyfin DeviceId for a given display name.
+def derive_device_id() -> str:
+    """The Jellyfin DeviceId for this install.
 
-    Every path that sets the name must agree on this. Startup used to append
-    the hostname and the rename paths did not, so renaming a device at runtime
-    and then restarting produced two DeviceIds for one TV — and Jellyfin keys
-    sessions, capabilities, and playback history on DeviceId, so the cast list
-    grew a duplicate.
+    Jellyfin keys sessions, capabilities, and playback history on DeviceId, so
+    it has to outlive a rename. ``device_name`` is a display string an operator
+    changes at will, which is exactly why RelayTV already persists a stable id
+    (``device_identity``) — deriving from the name instead minted a fresh
+    Jellyfin session on every rename and left the old one behind as a duplicate
+    cast target.
+
+    ``RELAYTV_JELLYFIN_DEVICE_ID`` still pins it for cloned images and tests.
     """
     override = (os.getenv("RELAYTV_JELLYFIN_DEVICE_ID") or "").strip()
     if override:
         return override
-    slug = str(device_name or "RelayTV").strip().lower().replace(" ", "-") or "relaytv"
-    return f"relaytv-{slug}-{platform.node() or 'host'}".strip()
+    try:
+        stable = device_identity.device_id()
+    except Exception:
+        stable = ""
+    if stable:
+        return f"relaytv-{stable}"
+    # Persistence is best effort in device_identity too; fall back to something
+    # deterministic per host rather than inventing a new id on every call.
+    return f"relaytv-{platform.node() or 'host'}".strip()
 
 
 def _read_config() -> dict[str, object]:
@@ -288,7 +299,7 @@ def _read_config() -> dict[str, object]:
         "enabled": runtime_config.snapshot().flag("RELAYTV_JELLYFIN_ENABLED", False),
         "server_url": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_URL") or "").strip(),
         "device_name": device_name,
-        "device_id": derive_device_id(device_name),
+        "device_id": derive_device_id(),
         "client_name": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name).strip() or device_name,
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
@@ -620,6 +631,11 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
     """Configure and enable Jellyfin receiver runtime."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
+    # Before anything else: the live socket belongs to the outgoing server, and
+    # a command arriving on it after the config swap would execute against the
+    # new server's state. Server-type detection alone can take three seconds,
+    # which is more than long enough for that to happen.
+    _stop_control_socket()
     with _LOCK:
         _STATUS["enabled"] = True
         _STATUS["running"] = True
@@ -627,7 +643,7 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
         if device_name is not None:
             _STATUS["device_name"] = str(device_name or "").strip() or "RelayTV"
             _STATUS["client_name"] = str(_STATUS["device_name"])
-            _STATUS["device_id"] = derive_device_id(str(_STATUS["device_name"]))
+            _STATUS["device_id"] = derive_device_id()
         if heartbeat_sec is not None:
             _STATUS["heartbeat_sec"] = max(2, int(heartbeat_sec))
         if api_key is not None:
@@ -682,10 +698,6 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
             pass
     with _LOCK:
         out = dict(_STATUS)
-    # The old socket is bound to the old server and token. Drop it here rather
-    # than waiting for the heartbeat, so the previous server cannot land one
-    # more playback command on this device after the switch.
-    _stop_control_socket()
     _start_worker()
     if _env_bool("RELAYTV_JELLYFIN_AUTO_REGISTER", False):
         try:
@@ -732,7 +744,7 @@ def set_device_identity(name: str) -> dict[str, object]:
     with _LOCK:
         _STATUS["device_name"] = clean
         _STATUS["client_name"] = clean
-        _STATUS["device_id"] = derive_device_id(clean)
+        _STATUS["device_id"] = derive_device_id()
         # Identity changed, drop session token and force fresh auth/register.
         global _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
         _ACCESS_TOKEN = ""

@@ -60,6 +60,9 @@ _DEFAULT_KEEPALIVE_SEC = 60.0
 # replays minutes later.
 _COMMAND_QUEUE_MAX = 32
 
+# Closing handshake budget, well under the library's 10s default.
+_CLOSE_TIMEOUT_SEC = 2.0
+
 _LOCK = threading.Lock()
 
 
@@ -271,6 +274,39 @@ def _read_loop(ws, session: _Session) -> None:
             next_keepalive = time.monotonic() + keepalive
 
 
+def _claim(session: _Session, ws) -> bool:
+    """Attach a freshly dialled socket, if this generation is still the live one.
+
+    ``_STATE`` is shared across generations, so only the current one may write
+    to it — otherwise a late handshake reports "connected" for a session that
+    has already been replaced.
+    """
+    with _LOCK:
+        if _CURRENT is not session:
+            return False
+        session.ws = ws
+        _STATE["connected"] = True
+        _STATE["last_connect_ts"] = int(time.time())
+        _STATE["last_error"] = None
+        return True
+
+
+def _release(session: _Session) -> None:
+    with _LOCK:
+        session.ws = None
+        if _CURRENT is session:
+            _STATE["connected"] = False
+
+
+def _close_quietly(ws) -> None:
+    if ws is None:
+        return
+    try:
+        ws.close()
+    except Exception:
+        pass
+
+
 def _connect_once(session: _Session) -> None:
     st = jellyfin_receiver.status()
     url = socket_url(
@@ -282,6 +318,10 @@ def _connect_once(session: _Session) -> None:
         raise RuntimeError("jellyfin socket not configured")
     kwargs: dict[str, object] = {
         "open_timeout": _env_float("RELAYTV_JELLYFIN_WS_CONNECT_TIMEOUT_SEC", 8.0),
+        # The library default is 10s of closing handshake. stop() runs on the
+        # thread saving settings or shutting the app down, so a server that has
+        # already gone away must not hold either of those for ten seconds.
+        "close_timeout": _CLOSE_TIMEOUT_SEC,
         "max_size": 2**20,
     }
     if _PROXY_KWARG_SUPPORTED:
@@ -289,12 +329,15 @@ def _connect_once(session: _Session) -> None:
         # media-server connection through an unrelated proxy.
         kwargs["proxy"] = None
     ws = _ws_connect(url, **kwargs)
-    session.ws = ws
+    # The handshake can take seconds, during which session.ws is None and a
+    # stop() cannot reach this connection. If the session was retired while we
+    # were dialling, drop the socket here: letting it proceed would publish
+    # status and re-assert registration on behalf of a generation that no
+    # longer owns them, corrupting whichever generation replaced it.
+    if session.stop.is_set() or not _claim(session, ws):
+        _close_quietly(ws)
+        return
     try:
-        with _LOCK:
-            _STATE["connected"] = True
-            _STATE["last_connect_ts"] = int(time.time())
-            _STATE["last_error"] = None
         logger.info("jellyfin_ws_connected device_id=%s", st.get("device_id"))
         # A new socket means a new session on the server. Capabilities live in
         # its session state and do not survive a restart, so re-assert them
@@ -303,13 +346,8 @@ def _connect_once(session: _Session) -> None:
         jellyfin_receiver.invalidate_registration("socket_connected")
         _read_loop(ws, session)
     finally:
-        session.ws = None
-        with _LOCK:
-            _STATE["connected"] = False
-        try:
-            ws.close()
-        except Exception:
-            pass
+        _release(session)
+        _close_quietly(ws)
 
 
 def _socket_worker(session: _Session) -> None:
@@ -413,14 +451,15 @@ def stop() -> None:
         return
     session.stop.set()
     # Closing the live connection is what makes this prompt: a reader parked in
-    # recv() would otherwise sit there for the rest of its timeout, and joining
-    # past that would stall every caller of stop().
+    # recv() would otherwise sit there for the rest of its timeout. The close
+    # itself is a handshake with a server that may already be gone, so it runs
+    # off to the side — stop() is called from settings saves and shutdown, and
+    # its cost must stay the bounded joins below, nothing more.
     ws = session.ws
     if ws is not None:
-        try:
-            ws.close()
-        except Exception:
-            pass
+        threading.Thread(
+            target=_close_quietly, args=(ws,), daemon=True, name="relaytv-jellyfin-ws-close"
+        ).start()
     for t in (session.reader, session.worker):
         if t is not None and t.is_alive():
             t.join(timeout=2.0)

@@ -67,6 +67,22 @@ run through the same command ingress as `POST /integrations/jellyfin/command`.
 Commands execute on their own worker so a play that takes ten seconds to start
 mpv cannot starve the keepalive and drop the session.
 
+### Device identity
+
+Jellyfin keys sessions, capabilities, and playback history on `DeviceId`, so
+RelayTV derives it from the persisted install id in `/data/device_id` (see
+`ARCHITECTURE.md`) rather than from `device_name`. Renaming a device therefore
+changes only the label in the cast list; it keeps the same Jellyfin session and
+its history. `RELAYTV_JELLYFIN_DEVICE_ID` still pins the value for cloned
+images.
+
+**One-time migration.** Before this change the id was derived from the display
+name, so upgrading gives each device a new `DeviceId` once. The old entry stays
+in Jellyfin's **Dashboard → Devices** with whatever history it accumulated and
+can be deleted there; the device re-registers under the new id within a
+heartbeat and casting is unaffected. Installs that had been renamed may have
+accumulated several stale entries, all safe to remove.
+
 ### Advertised commands
 
 `PlayState` (the whole playstate family: pause, unpause, play/pause toggle,
