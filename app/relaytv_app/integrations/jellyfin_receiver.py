@@ -245,6 +245,22 @@ def _mark_catalog_error(msg: str) -> None:
         _STATUS["catalog_last_error"] = text or None
 
 
+def derive_device_id(device_name: str) -> str:
+    """The Jellyfin DeviceId for a given display name.
+
+    Every path that sets the name must agree on this. Startup used to append
+    the hostname and the rename paths did not, so renaming a device at runtime
+    and then restarting produced two DeviceIds for one TV — and Jellyfin keys
+    sessions, capabilities, and playback history on DeviceId, so the cast list
+    grew a duplicate.
+    """
+    override = (os.getenv("RELAYTV_JELLYFIN_DEVICE_ID") or "").strip()
+    if override:
+        return override
+    slug = str(device_name or "RelayTV").strip().lower().replace(" ", "-") or "relaytv"
+    return f"relaytv-{slug}-{platform.node() or 'host'}".strip()
+
+
 def _read_config() -> dict[str, object]:
     configured_name = ""
     configured_server_type = ""
@@ -272,7 +288,7 @@ def _read_config() -> dict[str, object]:
         "enabled": runtime_config.snapshot().flag("RELAYTV_JELLYFIN_ENABLED", False),
         "server_url": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_URL") or "").strip(),
         "device_name": device_name,
-        "device_id": (os.getenv("RELAYTV_JELLYFIN_DEVICE_ID") or f"relaytv-{device_name.lower().replace(' ', '-')}-{platform.node() or 'host'}").strip(),
+        "device_id": derive_device_id(device_name),
         "client_name": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name).strip() or device_name,
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
@@ -611,7 +627,7 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
         if device_name is not None:
             _STATUS["device_name"] = str(device_name or "").strip() or "RelayTV"
             _STATUS["client_name"] = str(_STATUS["device_name"])
-            _STATUS["device_id"] = f"relaytv-{_STATUS['device_name'].lower().replace(' ', '-')}"
+            _STATUS["device_id"] = derive_device_id(str(_STATUS["device_name"]))
         if heartbeat_sec is not None:
             _STATUS["heartbeat_sec"] = max(2, int(heartbeat_sec))
         if api_key is not None:
@@ -716,7 +732,7 @@ def set_device_identity(name: str) -> dict[str, object]:
     with _LOCK:
         _STATUS["device_name"] = clean
         _STATUS["client_name"] = clean
-        _STATUS["device_id"] = f"relaytv-{clean.lower().replace(' ', '-')}"
+        _STATUS["device_id"] = derive_device_id(clean)
         # Identity changed, drop session token and force fresh auth/register.
         global _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
         _ACCESS_TOKEN = ""

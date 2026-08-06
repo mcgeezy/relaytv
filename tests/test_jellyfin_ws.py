@@ -488,3 +488,20 @@ def test_identity_fingerprints_the_token() -> None:
 
     assert identity is not None
     assert "super-secret-token" not in "".join(identity)
+
+
+def test_device_id_is_derived_the_same_way_everywhere(monkeypatch) -> None:
+    """Jellyfin keys sessions and history on DeviceId.
+
+    Startup appended the hostname and the rename paths did not, so renaming a
+    device and then restarting made one TV show up as two cast targets.
+    """
+    monkeypatch.delenv("RELAYTV_JELLYFIN_DEVICE_ID", raising=False)
+    expected = jellyfin_receiver.derive_device_id("Living Room")
+    assert expected.startswith("relaytv-living-room-")
+
+    jellyfin_receiver.set_device_identity("Living Room")
+    assert jellyfin_receiver._STATUS["device_id"] == expected
+
+    monkeypatch.setenv("RELAYTV_JELLYFIN_DEVICE_ID", "pinned-id")
+    assert jellyfin_receiver.derive_device_id("Anything") == "pinned-id"
