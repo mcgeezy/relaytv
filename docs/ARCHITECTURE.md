@@ -13,23 +13,39 @@ milestone logs live in git history.
   aggregate package (`routes/__init__.py`) still owns shared route
   helpers and cross-domain glue.
 - `app/relaytv_app/static/ui/`: browser UI assets loaded by `/ui`.
-  `app.js`/`app.css` own the shared remote, while
-  `jellyfin.js`/`jellyfin.css` own the Jellyfin/Emby browse shell. The browse
-  controller consumes public route payloads and does not own catalog or
-  playback product behavior.
+  `app.js`/`app.css` own the shared remote, `jellyfin.js`/`jellyfin.css` own
+  the Jellyfin/Emby browse shell, and `peers.js`/`peers.css` own the
+  send-to-device sheet. These controllers consume public route payloads and do
+  not own catalog or playback product behavior.
 - `app/relaytv_app/config.py`: runtime config service — typed env
   parsing, the settings bus, and the explicit subprocess env-mirroring
   boundary. Runtime code reads configuration through it instead of
   mutating `os.environ`.
 - `app/relaytv_app/playback_service.py`: playback transition commands
   (play-now, queue, close, advance, resume, natural end, stop) — the
-  only writer of playback session state outside `state.py`.
+  only writer of playback session state outside `state.py`. Also owns the
+  read-only handoff snapshot (what is playing, and where) that device transfer
+  sends to a peer.
 - `app/relaytv_app/player.py`: playback process/runtime adapter (mpv
   lifecycle, Qt shell, CEC, track/property control).
 - `app/relaytv_app/postlive_relay.py`: local relay for still-processing
   YouTube replays (see `POSTLIVE_REPLAY.md`).
 - `app/relaytv_app/state.py`: persisted queue, history, session, and
   settings data — owns the globals, their setters, and persistence.
+- `app/relaytv_app/device_identity.py`: this install's stable identity —
+  `device_id` (persisted outside `settings.json` so it survives a settings
+  reset), display name, LAN address, and the identity payload advertised to
+  peers and over mDNS.
+- `app/relaytv_app/discovery_mdns.py`: mDNS advertising and browsing for
+  RelayTV devices. Browser callbacks only enqueue names; a worker thread
+  resolves them and re-resolves known services on an interval, because
+  state-change callbacks alone do not keep entries fresh.
+- `app/relaytv_app/peers.py`: peer device product behavior — registry
+  persistence, address validation, reachability probes, and the wire form of a
+  transferred queue item. Peers exchange display-safe items and the receiver
+  rebuilds playable items from the URL, so resolved streams and provider
+  tokens never cross devices. A peer's API token is stored only in the
+  mode-0600 peer file, never returned by an endpoint, and never logged.
 - `app/relaytv_app/resolver.py`: URL validation, provider
   classification, and stream resolution.
 - `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin/Emby
@@ -75,8 +91,9 @@ UI — stay open. See `app/relaytv_app/api_auth.py` and
 
 Carried from the review, in rough value order:
 
-1. Extend the checked-in browser smoke beyond the Jellyfin shell to settings,
-   general queue actions, and the remaining `/ui` surfaces.
+1. Extend the checked-in browser smoke beyond the Jellyfin, IPTV, and
+   send-to-device shells to settings, general queue actions, and the remaining
+   `/ui` surfaces.
 2. Versioned models for queue/history/session/settings — migrations
    remain implicit.
 3. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle

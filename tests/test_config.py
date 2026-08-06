@@ -192,11 +192,13 @@ def test_ytdlp_format_policy_quality_cap_from_snapshot(
 def test_discovery_device_name_reads_settings_bus_from_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from relaytv_app import discovery_mdns
+    from relaytv_app import device_identity, discovery_mdns
 
-    monkeypatch.setattr(discovery_mdns.state, "get_settings", lambda: {})
+    monkeypatch.setattr(device_identity.state, "get_settings", lambda: {})
     _set_bus_var(monkeypatch, "RELAYTV_DEVICE_NAME", "Snapshot TV")
 
+    # device_identity owns the name; mDNS advertising delegates to it.
+    assert device_identity.device_name() == "Snapshot TV"
     assert discovery_mdns._device_name() == "Snapshot TV"
 
 

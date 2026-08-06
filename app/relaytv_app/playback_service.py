@@ -90,6 +90,34 @@ def queue_item(item: dict) -> tuple[int, list[dict]]:
     return qlen, snapshot
 
 
+def queue_items(items: list[dict]) -> tuple[int, list[dict]]:
+    """Append several items at once, persisting and warming caches one time.
+
+    Bulk transfers (a peer sending its queue) would otherwise rewrite
+    ``queue.json`` and re-prime mpv's up-next per item, which is slow enough on
+    a Pi to time out the sender while the import actually succeeds.
+    """
+    if not items:
+        with state.QUEUE_LOCK:
+            return len(state.QUEUE), list(state.QUEUE)
+    with state.QUEUE_LOCK:
+        state.QUEUE.extend(items)
+        qlen = len(state.QUEUE)
+        snapshot = list(state.QUEUE)
+    state.persist_queue()
+    # Only the head can become the next handoff, so prefetching the rest here
+    # buys nothing; the queue worker warms them as they approach the front.
+    try:
+        player.prefetch_queue_item_stream(snapshot[0] if snapshot else items[0])
+    except Exception:
+        pass
+    try:
+        player.prime_mpv_up_next_from_queue(force=True)
+    except Exception:
+        pass
+    return qlen, snapshot
+
+
 def queue_item_next(item: dict) -> tuple[int, list[dict]]:
     """Insert an item at the front of the queue and warm the handoff caches."""
     with state.QUEUE_LOCK:
@@ -308,6 +336,46 @@ def preserve_current_to_queue_front() -> dict | None:
     except Exception:
         logger.warning("queue_persist_failed route=play_now_preserve")
     return preserved
+
+
+def handoff_snapshot() -> dict[str, Any] | None:
+    """Capture what is playing, for handing playback to another device.
+
+    Read-only: it does not touch playback state. Returns ``None`` when there is
+    nothing to hand off. IPTV sessions are excluded deliberately — their stream
+    URLs are re-resolved from a local catalog the other device does not have.
+    """
+    if not player.is_playing():
+        return None
+    now = state.NOW_PLAYING
+    if not isinstance(now, dict):
+        return None
+    url = now.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    if str(now.get("provider") or "").strip().lower() == "iptv":
+        return None
+
+    pos = None
+    dur = None
+    with player.MPV_LOCK:
+        try:
+            pos = player.mpv_get("time-pos")
+        except Exception:
+            pos = None
+        try:
+            dur = player.mpv_get("duration")
+        except Exception:
+            dur = None
+    try:
+        position = float(pos) if pos is not None else None
+    except Exception:
+        position = None
+    try:
+        duration = float(dur) if dur is not None else None
+    except Exception:
+        duration = None
+    return {"item": dict(now), "position": position, "duration": duration}
 
 
 def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:

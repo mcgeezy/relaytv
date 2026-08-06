@@ -336,6 +336,8 @@ def ui_static_asset(asset_name: str):
         "jellyfin.js",
         "iptv.css",
         "iptv.js",
+        "peers.css",
+        "peers.js",
     }:
         return Response(status_code=400)
     path = _resolve_static_asset("ui", safe_name)

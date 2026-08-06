@@ -2,18 +2,62 @@
 import time
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .. import player, playback_service, public_media, state, upload_store
+from .. import player, playback_service, public_media, resolver, state, upload_store
 from ..debug import get_logger
 
 
 router = APIRouter()
 logger = get_logger("routes.queue")
 
+# Hints a peer may send alongside the URL. Everything else about the item is
+# rebuilt locally, so a peer can never inject resolved streams or headers.
+#
+# Text hints outrank a lightweight local title: queue-time item building defers
+# metadata lookups and falls back to a URL-derived placeholder, while the
+# sender already has the real title. Artwork and duration only fill gaps —
+# preferring a peer's thumbnail would make our artwork depend on that device
+# staying reachable.
+PEER_TEXT_HINTS = ("title", "channel")
+PEER_FILL_HINTS = ("thumbnail", "duration")
+
 
 class EnqueueReq(BaseModel):
     url: str
+
+
+class QueueImportItem(BaseModel):
+    url: str
+    title: str = ""
+    thumbnail: str = ""
+    channel: str = ""
+    duration: float | None = None
+    provider: str = ""
+
+
+class QueueImportSender(BaseModel):
+    device_id: str = ""
+    name: str = ""
+    base_url: str = ""
+
+
+class QueueImportReq(BaseModel):
+    items: list[QueueImportItem] = []
+    mode: str = "append"
+    # ``from`` is a Python keyword, so the wire name arrives through an alias.
+    from_device: QueueImportSender | None = Field(default=None, alias="from")
+
+    model_config = {"populate_by_name": True}
+
+
+class QueueHandoffReq(BaseModel):
+    now_playing: QueueImportItem
+    resume_pos: float | None = None
+    items: list[QueueImportItem] = []
+    from_device: QueueImportSender | None = Field(default=None, alias="from")
+
+    model_config = {"populate_by_name": True}
 
 
 class QueueRemoveReq(BaseModel):
@@ -89,6 +133,270 @@ def enqueue(req: EnqueueReq):
         "item": _annotate_upload_item(item),
         "queue_length": qlen,
         "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
+
+
+def _push_overlay_toast(**kwargs) -> None:
+    from . import _push_overlay_toast as push_toast
+
+    push_toast(**kwargs)
+
+
+def _peer_hosted_media_item(url: str, entry: QueueImportItem) -> dict:
+    """Build an item for media the sending device hosts itself.
+
+    A peer's upload URL is upload-shaped (``/media/uploads/...``), so the normal
+    item build would resolve it against *this* device's upload store and report
+    it as expired. The file lives on the peer, so treat it as ordinary remote
+    media streamed over HTTP from that device instead. The sender declares the
+    provider, which is why no host matching is needed here.
+    """
+    item: dict[str, object] = {
+        "url": url,
+        # "other" is what provider_from_url returns for any plain remote media
+        # URL, which is exactly what this is once the upload shape is ignored.
+        "provider": "other",
+        "title": entry.title or url,
+        # Keeps upload annotation off this item on every later read.
+        "peer_hosted": True,
+    }
+    if entry.channel:
+        item["channel"] = entry.channel
+    if entry.thumbnail:
+        item["thumbnail"] = entry.thumbnail
+    if entry.duration:
+        item["duration"] = entry.duration
+    return item
+
+
+def _peer_display_item(url: str, entry: QueueImportItem) -> dict:
+    """Build a queue item from the sender's metadata, without re-fetching it.
+
+    Queue-time item building normally reaches out for a title and artwork. The
+    sending device already did that work and shipped the result, so repeating it
+    per item is pure latency — enough of it on a Pi (~2.5s each) to time out the
+    sender while the import lands anyway. The *stream* is still resolved locally
+    at play time, so nothing about the trust boundary changes.
+    """
+    item: dict[str, object] = {
+        "url": url,
+        "provider": str(entry.provider or "").strip().lower() or resolver.provider_from_url(url),
+        "title": entry.title,
+    }
+    if entry.channel:
+        item["channel"] = entry.channel
+    if entry.thumbnail:
+        item["thumbnail"] = entry.thumbnail
+    if entry.duration:
+        item["duration"] = entry.duration
+    return item
+
+
+def _peer_import_item(entry: QueueImportItem, sender: QueueImportSender | None) -> dict:
+    """Rebuild a playable item from a peer's display-safe payload.
+
+    The sender's item is a reference, not a recipe: only the URL and a few
+    display hints cross the wire, and this device re-resolves the URL with its
+    own provider configuration, cookies, and quality policy. That keeps a
+    peer's expiring stream URLs and provider tokens out of our queue.
+    """
+    url = resolver.validate_user_url(entry.url or "")
+    provider = str(entry.provider or "").strip().lower()
+    if provider == "upload":
+        item = _peer_hosted_media_item(url, entry)
+    elif entry.title and provider != "jellyfin":
+        # Jellyfin is the exception: its item build resolves server-specific ids
+        # and stream parameters from *this* device's configuration.
+        item = _peer_display_item(url, entry)
+    else:
+        item = _smart_item_from_url(url, lightweight=True)
+    if not isinstance(item, dict):
+        raise ValueError("item could not be built")
+    placeholder_metadata = bool(item.get("_metadata_lightweight"))
+    for key in PEER_TEXT_HINTS:
+        hint = getattr(entry, key, None)
+        if hint and (placeholder_metadata or not item.get(key)):
+            item[key] = hint
+    for key in PEER_FILL_HINTS:
+        hint = getattr(entry, key, None)
+        if hint and not item.get(key):
+            item[key] = hint
+    if sender is not None and (sender.device_id or sender.name):
+        item["peer_origin"] = {
+            "device_id": str(sender.device_id or ""),
+            "name": str(sender.name or ""),
+        }
+    return item
+
+
+def _push_peer_import_toast(sender_name: str, count: int) -> None:
+    label = str(sender_name or "").strip() or "Another RelayTV device"
+    noun = "item" if count == 1 else "items"
+    try:
+        _push_overlay_toast(text=f"{label} sent {count} {noun}", level="info", icon="share")
+    except Exception:
+        pass
+
+
+def _apply_peer_import(
+    entries: list[QueueImportItem],
+    *,
+    mode: str,
+    sender: QueueImportSender | None,
+    announce: bool = True,
+) -> dict:
+    """Import peer items into the queue.
+
+    ``announce`` is off for a handoff: that flow raises its own on-TV toast, and
+    two notifications for one user action is noise.
+    """
+    results: list[dict] = []
+    accepted_items: list[dict] = []
+    for entry in entries:
+        try:
+            accepted_items.append(_peer_import_item(entry, sender))
+            results.append({"url": entry.url, "title": entry.title, "accepted": True, "reason": ""})
+        except HTTPException as exc:
+            results.append(
+                {
+                    "url": entry.url,
+                    "title": entry.title,
+                    "accepted": False,
+                    "reason": str(exc.detail or "rejected"),
+                }
+            )
+        except Exception as exc:
+            logger.warning("queue_import_item_failed error=%s", exc)
+            results.append(
+                {"url": entry.url, "title": entry.title, "accepted": False, "reason": "item could not be built"}
+            )
+
+    if mode == "replace":
+        with state.QUEUE_LOCK:
+            state.QUEUE.clear()
+        state.persist_queue()
+
+    qlen = 0
+    queue_snapshot: list[object] = []
+    if accepted_items:
+        qlen, queue_snapshot = playback_service.queue_items(accepted_items)
+    else:
+        with state.QUEUE_LOCK:
+            queue_snapshot = list(state.QUEUE)
+            qlen = len(queue_snapshot)
+        # queue_item() normally re-primes mpv's up-next; a replace that landed
+        # nothing still changed the queue, so prime it here.
+        try:
+            player.prime_mpv_up_next_from_queue(force=True)
+        except Exception:
+            pass
+
+    if accepted_items and announce:
+        _push_peer_import_toast(str((sender.name if sender else "") or ""), len(accepted_items))
+    _ui_event_push_queue(
+        "replace" if mode == "replace" else "add",
+        queue=queue_snapshot,
+        queue_length=qlen,
+        source="queue_import",
+    )
+    logger.info(
+        "queue_import from=%s mode=%s received=%d accepted=%d",
+        (sender.device_id if sender else "") or "unknown",
+        mode,
+        len(entries),
+        len(accepted_items),
+    )
+    return {
+        "status": "imported",
+        "mode": mode,
+        "received": len(entries),
+        "accepted": len(accepted_items),
+        "results": results,
+        "queue_length": qlen,
+        "queue": _annotate_upload_items(queue_snapshot),
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+    }
+
+
+@router.post("/queue/import")
+def queue_import(req: QueueImportReq):
+    """Receive queue items from another RelayTV device.
+
+    Per-item results are reported instead of failing the whole request: a peer
+    can hold items this device cannot play (an unconfigured provider, a URL
+    scheme we reject), and the sender needs to say so honestly rather than
+    claim everything landed.
+    """
+    entries = list(req.items or [])
+    if not entries:
+        raise HTTPException(status_code=400, detail="no items to import")
+    mode = str(req.mode or "append").strip().lower()
+    if mode not in ("append", "replace"):
+        raise HTTPException(status_code=400, detail="mode must be append or replace")
+    return _apply_peer_import(entries, mode=mode, sender=req.from_device)
+
+
+@router.post("/queue/handoff")
+def queue_handoff(req: QueueHandoffReq):
+    """Continue another device's playback here, taking its queue with it.
+
+    The sending device stops only after this returns, so a handoff that fails
+    mid-flight leaves the user watching what they were already watching. What
+    was playing here is preserved to the front of the queue rather than
+    discarded, so a handoff never destroys the receiver's own session.
+    """
+    sender = req.from_device
+    try:
+        item = _peer_import_item(req.now_playing, sender)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("queue_handoff_item_failed error=%s", exc)
+        raise HTTPException(status_code=400, detail="item could not be built") from exc
+
+    # Take over playback before importing the queue. If this device cannot
+    # start playing, the error propagates and the sender keeps both playback and
+    # its queue — importing first would leave the items stranded here as well.
+    played = _play_now_from_history(
+        {
+            "url": str(item.get("url") or ""),
+            "preserve_current": True,
+            "preserve_to": "queue_front",
+            "resume_current": True,
+            "reason": "peer_handoff",
+            "title": str(item.get("title") or "").strip() or None,
+            "thumbnail": str(item.get("thumbnail") or "").strip() or None,
+            "resume_pos": req.resume_pos,
+        }
+    )
+    playing = bool(isinstance(played, dict) and played.get("status") not in ("error", "failed"))
+
+    imported = None
+    if req.items:
+        imported = _apply_peer_import(list(req.items), mode="append", sender=sender, announce=False)
+    if playing:
+        label = str((sender.name if sender else "") or "").strip() or "Another RelayTV device"
+        try:
+            _push_overlay_toast(text=f"Continuing from {label}", level="info", icon="share")
+        except Exception:
+            pass
+    with state.QUEUE_LOCK:
+        queue_snapshot = list(state.QUEUE)
+    logger.info(
+        "queue_handoff from=%s resume_pos=%s items=%d playing=%s",
+        (sender.device_id if sender else "") or "unknown",
+        "none" if req.resume_pos is None else f"{float(req.resume_pos):.1f}",
+        len(list(req.items or [])),
+        playing,
+    )
+    return {
+        "status": "handed_off",
+        "playing": playing,
+        "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+        "accepted": int((imported or {}).get("accepted") or 0),
+        "results": list((imported or {}).get("results") or []),
+        "queue_length": len(queue_snapshot),
+        "queue": _annotate_upload_items(queue_snapshot),
     }
 
 

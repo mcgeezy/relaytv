@@ -13,6 +13,9 @@ release branch.
   troubleshooting
 - `IPTV_OPERATIONS.md`: M3U sources, free-provider discovery, favorites,
   availability, credential handling, and troubleshooting
+- `DEVICE_SYNC_OPERATIONS.md`: sending a queue or the running playback to
+  another RelayTV device — adding devices, mDNS discovery requirements, peer
+  token handling, what can travel between devices, and troubleshooting
 - `POSTLIVE_REPLAY.md`: playing YouTube replays that are still processing
   (why mpv can't, how the relay and its seek upgrade do)
 - `NATIVE_RUNTIME_OPERATIONS.md`: runtime operations, readiness checks,

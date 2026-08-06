@@ -387,6 +387,134 @@ History endpoints:
     URLs are display-safe copies with credentials stripped
 - `POST /history/clear`
 
+## Peer devices and queue transfer
+
+Send what is playing, the queue, or any subset of both to another RelayTV
+device on the same network. Peers are added by address and verified before they
+are saved; nothing is discovered or added automatically.
+
+Two gestures sit on top of these endpoints, differing only in what happens on
+the sending device: **Send** gives the session away and stops here, **Copy**
+leaves this device untouched. The payload is identical either way.
+
+Devices found over mDNS are also reflected in `GET /discovery/status`, whose
+`mdns.browse` block carries the same discovery state as advertising status.
+
+Identity:
+
+- `GET /peers/identity`
+  - returns `{"device_id", "device_name", "base_url", "version"}`
+  - anonymous and read-only by design: a device must be able to confirm what
+    it is talking to before any token is exchanged
+  - `device_id` is generated once into `/data/device_id`; set `RELAYTV_DEVICE_ID`
+    only to pin an identity across cloned images
+
+Registry:
+
+- `GET /peers`
+  - returns `{"device", "peers", "discovered", "discovery"}`
+  - `discovered` lists devices seen over mDNS that are not saved yet, each
+    `{"device_id", "device_name", "base_url", "version", "source", "last_seen_at"}`.
+    Candidates are suggestions only — adding one is always an explicit action,
+    and saved devices are filtered out by id or address
+  - `discovery` reports `{"enabled", "active", "ttl_sec", "found", "last_error"}`
+    so a client can tell "nothing found yet" apart from "discovery is not
+    running". Browsing needs multicast and therefore host networking; on a
+    bridged container `active` stays false
+- `POST /peers`
+  - body: `{"base_url", "name"?, "token"?, "verify"?}`
+  - probes `GET /peers/identity` on the address first and refuses this device's
+    own id, an already-registered device (`409`), a URL with embedded
+    credentials, and any scheme other than http/https
+  - `token` is the peer's `RELAYTV_API_TOKEN`, needed only when that device
+    requires one. It is stored in the mode-0600 peer file, never in
+    `settings.json`, and never returned by any endpoint: peer payloads carry
+    `has_token` instead
+- `PATCH /peers/{peer_id}`
+  - body: `{"name"?, "base_url"?, "token"?}`; an empty `token` clears it
+- `DELETE /peers/{peer_id}`
+- `POST /peers/probe`
+  - body: `{"base_url", "token"?}`
+  - tests an address without saving it; returns
+    `{"online", "error", "device_id", "device_name", "version", "is_self"}`
+- `POST /peers/{peer_id}/probe`
+  - probes a saved peer and folds the result into its record
+    (`last_seen_at`, `last_ok_at`, `last_error`)
+
+Send:
+
+- `POST /peers/{peer_id}/send`
+  - body: `{"mode": "append"|"replace"|"move", "index"?, "indexes"?}`
+  - omit both selectors to send the whole queue. `indexes` sends just those
+    queue positions, in queue order; `index` is the older single-item form and
+    still works. An explicit empty `indexes` is a `400`, not a no-op, and any
+    out-of-range position is a `400` before anything is sent
+  - `append` and `replace` are copies: the sending device keeps its queue.
+    `move` gives up ownership — it imports as `append` on the peer and then
+    drops the sent items locally, but only after the peer confirms the import,
+    so a transfer that fails in transit loses nothing. Unselected items stay.
+    A `move` response adds `{"moved": true, "local_queue_length"}`
+  - `move` drops only what the peer **accepted**, matched against the queue as
+    it stands when the response arrives, never by the positions captured before
+    the request. Items the peer rejected, items that could not travel (IPTV),
+    and items that shifted position while the send was in flight are all left
+    alone — a send can take tens of seconds, and reusing a stale index would
+    delete whatever had moved into that slot. If a peer reports no per-item
+    results and its `accepted` count does not cover everything sent, nothing is
+    dropped locally
+  - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
+  - IPTV items are reported in `rejected`, not sent: their stream URLs may
+    carry credentials anywhere in the path, so no portable URL exists
+- `POST /peers/{peer_id}/handoff`
+  - body: `{"indexes"?, "keep_local"?}`; an empty body (or none) hands over the
+    current playback plus the whole queue and stops here
+  - `indexes` restricts which queue items travel with the session; the rest stay
+    here and this device advances into them instead of going idle
+  - `keep_local` sends exactly the same payload but skips every local teardown,
+    so both devices play the same thing from the same position. This is the UI's
+    **Copy**; it defaults to `false` so an unasked-for handoff still moves the
+    session rather than duplicating it
+  - `409` when nothing is playing. IPTV sessions cannot be handed off: their
+    stream URLs are re-resolved from a local catalog the peer does not have
+  - ordering is deliberate — playback stops locally only after the peer reports
+    it took over, so a failed handoff leaves this device playing
+  - without `keep_local` the local session is cleared, not closed: the session
+    moved to the peer, so this device returns to idle with nothing to resume
+    rather than showing the item it gave away
+  - returns `{"playing", "resume_pos", "sent", "accepted", "rejected",
+    "queue_length", "local_stopped", "local_queue_length", "kept_local", "peer"}`
+
+Receive:
+
+- `POST /queue/import`
+  - body: `{"items": [{"url", "title"?, "thumbnail"?, "channel"?, "duration"?,
+    "provider"?}], "mode": "append"|"replace", "from": {"device_id", "name",
+    "base_url"}?}`
+  - a write endpoint, so it is covered by `RELAYTV_API_TOKEN` when set
+  - items are references, not recipes: the receiving device re-resolves each
+    URL with its own provider configuration, cookies, and quality policy, and
+    only the listed display hints are carried over. Resolved stream URLs and
+    provider tokens are sender-scoped and never travel
+  - per-item outcomes come back in `results` as
+    `{"url", "title", "accepted", "reason"}`, so a partial import reports
+    honestly instead of failing the whole request
+  - imported items record `peer_origin` (`{"device_id", "name"}`) and are never
+    auto-forwarded to another peer
+  - `provider: "upload"` marks media the sending device hosts itself; the
+    receiver streams it over HTTP from that device and marks the item
+    `peer_hosted` so local upload resolution stays out of the way
+- `POST /queue/handoff`
+  - body: `{"now_playing": {…item…}, "resume_pos"?, "items": [{…item…}], "from"?}`
+  - items use the same shape and rebuilding rules as `/queue/import`
+  - this device starts playing `now_playing` at `resume_pos`, then imports the
+    rest of the queue. Playback is taken over first on purpose: if it cannot
+    start, the error propagates and the queue is not imported, so the sending
+    device keeps both its playback and its items
+  - whatever was playing here is preserved to the front of the queue rather
+    than discarded, so a handoff never destroys the receiver's own session
+  - returns `{"playing", "now_playing", "accepted", "results", "queue_length",
+    "queue"}`
+
 ## Notifications and overlay delivery
 
 Notification entrypoints:

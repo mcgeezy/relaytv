@@ -44,3 +44,11 @@ markers = [
 line-length = 100
 
 target-version = "py312"
+
+# Pin the rule set explicitly. It was previously inherited from whichever ruff
+# version CI resolved, so ruff 0.16.0 widening its defaults turned a green tree
+# into 1397 findings without a line of code changing. These four are the set the
+# tree has always been linted against; adopting more is a deliberate decision,
+# not a side effect of a linter release.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

@@ -554,7 +554,7 @@ function _isHiddenEl(el){
 
 function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
-  const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop'];
+  const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
     if (!_isHiddenEl(el)) return true;
@@ -593,6 +593,12 @@ function _uiCloseTopLayerFromNav(){
   const aboutBd = document.getElementById('aboutBackdrop');
   if (!_isHiddenEl(aboutBd)) {
     closeAbout({fromNav:true});
+    return true;
+  }
+  const peersBd = document.getElementById('peersBackdrop');
+  if (!_isHiddenEl(peersBd)) {
+    if (window.relaytvPeers) window.relaytvPeers.close({fromNav:true});
+    else peersBd.classList.add('hidden');
     return true;
   }
   const histBd = document.getElementById('histBackdrop');
@@ -1131,6 +1137,14 @@ function renderStatus(st) {
   if (qCount) qCount.textContent = String(st.queue_length || 0);
   const qClear = document.getElementById('queueClearBtn');
   if (qClear) qClear.classList.toggle('hidden', !(Number(st.queue_length) > 0));
+  // Sending needs something to send, which includes a lone playing item with an
+  // empty queue; peers.js owns the sheet behind this button.
+  const qSend = document.getElementById('queueSendBtn');
+  const canSend = Number(st.queue_length) > 0 || !!st.playing || !!st.paused;
+  if (qSend) qSend.classList.toggle('hidden', !canSend);
+  // The sheet lists what is playing alongside the queue, so an open sheet has to
+  // hear about playback and queue changes.
+  if (window.relaytvPeers && window.relaytvPeers.syncPlayback) window.relaytvPeers.syncPlayback();
 
   // progress bar fill
   if (!__scrubbing && liveNow) {
@@ -1223,9 +1237,22 @@ function renderStatus(st) {
     del.title = 'Remove from queue';
     del.onclick = () => qRemove(idx);
 
+    // Send just this item. One indirection into the device sheet keeps the tile
+    // clean; a device picker per tile would not scale.
+    const send = document.createElement('button');
+    send.className = 'qSendItemBtn';
+    send.type = 'button';
+    send.title = 'Send this item to another device';
+    send.setAttribute('aria-label', 'Send this item to another device');
+    send.textContent = '⋯';
+    send.onclick = () => {
+      if (window.relaytvPeers) window.relaytvPeers.open({index: idx, title: item.title || item.url || ''});
+    };
+
     li.appendChild(thumb);
     li.appendChild(body);
     li.appendChild(handle);
+    li.appendChild(send);
     li.appendChild(del);
     ol.appendChild(li);
   });

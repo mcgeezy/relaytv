@@ -99,6 +99,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             jellyfin_receiver.start()
             iptv_service.start_worker()
             discovery_mdns.start_async()
+            discovery_mdns.start_browse_async()
             if qt_shell_backend_enabled():
                 ensure_qt_shell_idle()
             else:
