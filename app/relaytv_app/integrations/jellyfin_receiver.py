@@ -20,6 +20,12 @@ from ..thumb_cache import attach_local_thumbnail
 _LOCK = threading.Lock()
 _THREAD_LOCK = threading.Lock()
 
+# Serializes whole configuration transactions (connect / disconnect / rename /
+# stop) against each other. _LOCK only guards individual _STATUS writes, which
+# is not enough: a transaction spans several of them plus a network probe, and
+# two overlapping ones interleave into a state neither caller asked for.
+_TRANSACTION = threading.RLock()
+
 _STATUS: dict[str, object] = {
     "enabled": False,
     "running": False,
@@ -2865,20 +2871,30 @@ def _stop_control_socket() -> None:
 
 @contextlib.contextmanager
 def _control_socket_suspended():
-    """Keep the socket down for a whole configuration change.
+    """Run one configuration change to completion, with the socket held down.
 
-    Stopping it and then rewriting settings is not enough: the heartbeat runs
-    every few seconds, and one that fires in between opens a socket to the
-    server being replaced — which then keeps taking commands until a later
-    heartbeat notices the drift.
+    Two locks, because they answer different questions.
+
+    ``_TRANSACTION`` makes the change atomic against other changes. The connect
+    endpoints are sync defs, so FastAPI runs concurrent requests on real
+    threads: two overlapping server switches would each install their own URL
+    and token and then race their detection probes, and the slower one landing
+    last leaves the new server's address beside the old server's identity.
+
+    The socket suspension makes it atomic against the heartbeat, which would
+    otherwise reopen the socket to the server being replaced. It deliberately
+    does not hold the socket lifecycle lock across the body — the heartbeat
+    should sail through and find the suspension flag, not block on a lock for
+    the length of a network probe.
     """
-    try:
-        from . import jellyfin_ws
-    except Exception:
-        yield
-        return
-    with jellyfin_ws.suspended():
-        yield
+    with _TRANSACTION:
+        try:
+            from . import jellyfin_ws
+        except Exception:
+            yield
+            return
+        with jellyfin_ws.suspended():
+            yield
 
 
 def _control_socket_status() -> dict[str, object]:

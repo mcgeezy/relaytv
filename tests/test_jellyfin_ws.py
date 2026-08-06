@@ -830,3 +830,45 @@ def test_disconnect_cannot_leave_a_socket_behind(monkeypatch) -> None:
         assert started == [], "a late heartbeat opened a socket nothing will retire"
     finally:
         jellyfin_ws._CURRENT = None
+
+
+def test_concurrent_server_switches_do_not_interleave(monkeypatch) -> None:
+    """The connect endpoints are sync defs, so FastAPI runs them on real threads.
+
+    Two overlapping switches each installed their own URL and token and then
+    raced their detection probes; the slower one landing last left the new
+    server's address beside the old server's identity.
+    """
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_start_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "authenticate_once", lambda: {"ok": False})
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
+
+    def _detect(server_url, timeout_sec=3.0):
+        if "a.local" in server_url:
+            time.sleep(1.0)  # the distant or struggling server
+            return {"ok": True, "server_type": "jellyfin", "product_name": "Server A"}
+        return {"ok": True, "server_type": "emby", "product_name": "Server B"}
+
+    monkeypatch.setattr(jellyfin_receiver, "detect_server_type", _detect)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_persist_server_type",
+        lambda st, pn="": jellyfin_receiver._STATUS.update({"server_type": st, "server_product_name": pn}),
+    )
+
+    threads = [
+        threading.Thread(target=jellyfin_receiver.connect, kwargs={"server_url": "http://a.local:8096"}, daemon=True),
+        threading.Thread(target=jellyfin_receiver.connect, kwargs={"server_url": "http://b.local:8096"}, daemon=True),
+    ]
+    threads[0].start()
+    time.sleep(0.2)  # B arrives while A is still probing
+    threads[1].start()
+    for t in threads:
+        t.join(timeout=20)
+
+    url = str(jellyfin_receiver._STATUS["server_url"])
+    product = str(jellyfin_receiver._STATUS["server_product_name"])
+    expected = "Server B" if "b.local" in url else "Server A"
+    assert product == expected, f"torn state: {url} reported as {product}"
