@@ -249,6 +249,11 @@ def _connect_once() -> None:
             _STATE["last_connect_ts"] = int(time.time())
             _STATE["last_error"] = None
         logger.info("jellyfin_ws_connected device_id=%s", st.get("device_id"))
+        # A new socket means a new session on the server. Capabilities live in
+        # its session state and do not survive a restart, so re-assert them
+        # rather than trusting a registration that succeeded against the
+        # server instance that just went away.
+        jellyfin_receiver.invalidate_registration("socket_connected")
         try:
             _read_loop(ws)
         finally:

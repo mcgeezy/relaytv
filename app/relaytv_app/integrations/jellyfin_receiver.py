@@ -40,6 +40,7 @@ _STATUS: dict[str, object] = {
     "last_register_ts": None,
     "last_register_ok": None,
     "last_register_error": None,
+    "last_register_reason": None,
     "last_progress_ts": None,
     "last_progress_ok": None,
     "last_progress_error": None,
@@ -2694,6 +2695,27 @@ def _verify_registration(device_id: str, *, timeout: float) -> bool | None:
     if not session:
         return None
     return bool(session.get("SupportsMediaControl"))
+
+
+def invalidate_registration(reason: str = "") -> None:
+    """Force the next heartbeat to re-post and re-verify capabilities.
+
+    Capabilities live in the server's in-memory session state, so a Jellyfin
+    restart drops them while this device's view still says registered. The
+    control socket reconnecting is the signal that the session is new: without
+    this, ``_ensure_registration`` short-circuits on the stale success and the
+    device reports itself castable forever while the server offers nothing.
+    """
+    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS
+    with _LOCK:
+        _STATUS["connected"] = False
+        _STATUS["last_register_ok"] = None
+        _STATUS["media_control_verified"] = None
+        _REGISTER_RETRY_FAILURES = 0
+        _NEXT_REGISTER_RETRY_TS = 0.0
+        _STATUS["register_retry_failures"] = 0
+        _STATUS["next_register_retry_ts"] = None
+        _STATUS["last_register_reason"] = str(reason or "") or None
 
 
 def _register_retry_enabled() -> bool:

@@ -274,3 +274,46 @@ def test_socket_does_not_dial_before_a_sink_exists() -> None:
     """No point holding a socket we cannot act on."""
     jellyfin_receiver.register_command_sink(None)
     assert jellyfin_ws._ready() is False
+
+
+# --- session re-assertion after a server restart ---------------------------
+
+
+def test_invalidating_registration_forces_a_fresh_verify() -> None:
+    """A Jellyfin restart drops capabilities from its session state.
+
+    Registration short-circuits on its own last success, so without this the
+    device keeps reporting itself castable while the server offers nothing.
+    """
+    jellyfin_receiver._STATUS["connected"] = True
+    jellyfin_receiver._STATUS["last_register_ok"] = True
+    jellyfin_receiver._STATUS["media_control_verified"] = True
+
+    jellyfin_receiver.invalidate_registration("socket_connected")
+
+    assert jellyfin_receiver._STATUS["connected"] is False
+    assert jellyfin_receiver._STATUS["last_register_ok"] is None
+    assert jellyfin_receiver._STATUS["media_control_verified"] is None
+    assert jellyfin_receiver._STATUS["last_register_reason"] == "socket_connected"
+    # Backoff must not delay the re-register.
+    assert jellyfin_receiver._NEXT_REGISTER_RETRY_TS == 0.0
+    assert jellyfin_receiver.status()["cast_target_ready"] is False
+
+
+def test_ensure_registration_reregisters_after_invalidation(monkeypatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "authenticated", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "connected", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_register_ok", True)
+    monkeypatch.setattr(jellyfin_receiver, "register_receiver_once", lambda: calls.append(1) or {"ok": True})
+
+    # Healthy: nothing to do.
+    jellyfin_receiver._ensure_registration()
+    assert calls == []
+
+    jellyfin_receiver.invalidate_registration("socket_connected")
+    jellyfin_receiver._ensure_registration()
+    assert calls == [1]
