@@ -160,9 +160,14 @@
   }
 
   function syncTitle(){
+    const label = state.mode === 'copy' ? 'Copy to' : 'Send to';
     const el = $('peersTitle');
-    if (!el) return;
-    el.textContent = state.mode === 'copy' ? 'Copy to' : 'Send to';
+    if (el) el.textContent = label;
+    // The device list and the item list are both lists in this sheet, so each
+    // one says what it is. This head also restates the mode next to the rows
+    // that act on it, which is where the tap happens.
+    const head = $('peersListHead');
+    if (head) head.textContent = `${label}:`;
   }
 
   function modeNote(){
@@ -422,6 +427,11 @@
         state.peers.forEach((peer) => list.appendChild(deviceRow(peer)));
       }
     }
+
+    // Nothing to head when there are no saved devices: the empty row or the
+    // nearby group already says what the space is for.
+    const listHead = $('peersListHead');
+    if (listHead) listHead.classList.toggle('hidden', !state.peers.length);
 
     const wrap = $('peersNearbyWrap');
     const nearby = $('peersNearby');

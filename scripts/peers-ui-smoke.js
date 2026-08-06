@@ -229,6 +229,14 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     );
     await page.locator('[data-peer-mode="send"]').click();
     await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Send to');
+    // The device list heads itself with the mode, next to the rows it acts on.
+    check(
+      (await page.locator('#peersListHead').textContent()) === 'Send to:',
+      `${scenario.name}: device list head did not follow the mode`,
+    );
+    await page.locator('[data-peer-mode="copy"]').click();
+    await page.waitForFunction(() => document.querySelector('#peersListHead')?.textContent === 'Copy to:');
+    await page.locator('[data-peer-mode="send"]').click();
 
     // The picker lists the session and the queue, all selected, and a live
     // channel is offered as unselectable rather than failing after the send.

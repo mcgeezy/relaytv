@@ -3501,6 +3501,7 @@ def ui():
 
         <div id="peersStatus" class="pmStatus" role="status" aria-live="polite"></div>
 
+        <div id="peersListHead" class="pmGroupHead hidden">Send to:</div>
         <div id="peersList" class="pmList"></div>
 
         <div id="peersNearbyWrap" class="pmGroup hidden">
