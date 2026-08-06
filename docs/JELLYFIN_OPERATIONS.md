@@ -58,6 +58,10 @@ Three things must all be true before the server will offer the device:
 
 The socket answers the server's `ForceKeepAlive` on its stated interval, and
 reconnects with exponential backoff (3s doubling to 60s) if the server restarts.
+Capabilities live in the server's in-memory session state and do not survive its
+restart, so a fresh socket invalidates registration and the next heartbeat
+re-posts and re-verifies. Both devices recover in under 20s with no RelayTV
+restart; `last_register_reason` reads `socket_connected` when this is why.
 Inbound `Play`, `Playstate`, and `GeneralCommand` messages are normalized and
 run through the same command ingress as `POST /integrations/jellyfin/command`.
 Commands execute on their own worker so a play that takes ten seconds to start
@@ -299,6 +303,7 @@ Episode adjacency resilience:
 - `next_register_retry_ts`
 - `last_register_backoff_sec`
 - `media_control_verified` (session readback; `null` until attempted)
+- `last_register_reason` (why registration was last invalidated)
 - `last_playing_ts`, `last_playing_ok`, `last_playing_error`
 - `cast_target_ready`
 - `ws_enabled`, `ws_available`, `ws_connected`
