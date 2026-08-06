@@ -13,6 +13,10 @@ const { chromium } = require('playwright');
 // or without cached artwork. Unrelated to the send-to-device sheet.
 const IGNORED_ERROR_PATHS = ['/jellyfin/', '/integrations/', '/thumbs/', '/idle/weather'];
 
+// Seeded on the sender and tracked by URL on the receiver, which is the only
+// handle that survives the receiver playing an item out.
+const SEED_URLS = ['https://example.com/smoke-one', 'https://example.com/smoke-two'];
+
 function option(name, fallback) {
   const prefix = `--${name}=`;
   const value = process.argv.find((item) => item.startsWith(prefix));
@@ -45,16 +49,16 @@ async function forgetSavedPeers(page) {
 async function seedSenderQueue(page) {
   // Put two known items in the queue. The device may be playing while this
   // runs, so nothing downstream assumes an exact count.
-  await page.evaluate(async () => {
+  await page.evaluate(async (urls) => {
     await fetch('/clear', { method: 'POST' });
-    for (const url of ['https://example.com/smoke-one', 'https://example.com/smoke-two']) {
+    for (const url of urls) {
       await fetch('/enqueue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
     }
-  });
+  }, SEED_URLS);
 }
 
 async function dropNowPlaying(page) {
@@ -187,8 +191,6 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     // not something a smoke run should do unasked.
     await page.locator('[data-peer-mode="copy"]').click();
     await dropNowPlaying(page);
-    // Both devices may be playing, so compare a delta rather than a total.
-    const receiverBefore = await queueLength(peerUrl);
     await page.locator('#peersList .pmDevice').first().click();
     await page.waitForFunction(() => /^Copied \d+ item/.test(document.querySelector('#peersStatus')?.textContent || ''));
     const sentText = (await page.locator('#peersStatus').textContent()) || '';
@@ -202,18 +204,28 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
 
     // Read the receiver from node, not the page: a cross-origin fetch from
     // /ui would be blocked by CORS and tell us nothing about the feature.
+    //
+    // Assert on arrival by URL rather than on a queue-length delta. An idle
+    // receiver starts playing what it is sent, and these seed URLs are not
+    // playable, so it can burn through both before this runs — a real device
+    // consuming its queue is not a transfer failure.
     const receiverQueue = await fetch(`${peerUrl}/queue`).then((r) => r.json());
-    const received = (receiverQueue.queue || []).map((item) => ({
-      title: item.title,
-      origin: (item.peer_origin || {}).name,
-    }));
+    const receiverHistory = await fetch(`${peerUrl}/history`).then((r) => r.json()).catch(() => ({}));
+    const holds = [
+      ...(receiverQueue.queue || []),
+      receiverQueue.now_playing || {},
+      ...(receiverHistory.history || receiverHistory.items || []),
+    ];
+    const landed = SEED_URLS.filter((url) => holds.some((item) => (item || {}).url === url));
     check(
-      received.length >= receiverBefore + sentCount,
-      `${scenario.name}: receiver holds ${received.length}, expected at least ${receiverBefore + sentCount}`,
+      landed.length >= sentCount,
+      `${scenario.name}: receiver accounts for ${landed.length} of ${sentCount} sent items`,
     );
-    const arrived = received.slice(-sentCount);
+    // Provenance is checked on whatever is still queued; playing it out drops
+    // the marker, which is expected.
+    const queuedFromPeer = (receiverQueue.queue || []).filter((item) => SEED_URLS.includes(item.url));
     check(
-      arrived.every((item) => item.origin && item.origin.length > 0),
+      queuedFromPeer.every((item) => (item.peer_origin || {}).name),
       `${scenario.name}: receiver did not record the sending device`,
     );
 
