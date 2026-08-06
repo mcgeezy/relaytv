@@ -654,3 +654,139 @@ def test_stop_does_not_wait_on_the_closing_handshake() -> None:
 
     assert elapsed < 1.0, f"stop() blocked {elapsed:.1f}s on the close handshake"
     assert session.stop.is_set()
+
+
+# --- review round three ----------------------------------------------------
+
+
+def _parked_session(bound=("http://old.lan:8096", "relaytv-abc", "fp-old")):
+    """A session whose threads outlive stop()'s join budget."""
+    s = jellyfin_ws._Session(bound)
+    s.reader = threading.Thread(target=lambda: time.sleep(10), daemon=True)
+    s.worker = threading.Thread(target=lambda: time.sleep(10), daemon=True)
+    s.reader.start()
+    s.worker.start()
+    return s
+
+
+def test_stop_and_start_are_serialized(monkeypatch) -> None:
+    """stop() leaves _CURRENT None for seconds while it joins.
+
+    The heartbeat used to walk into that gap, start a replacement, and have its
+    shared state reset by the stop() still in flight.
+    """
+    old = ("http://old.lan:8096", "relaytv-abc", "fp-old")
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: True)
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", object())
+    monkeypatch.setattr(jellyfin_ws, "_identity", lambda: old)
+
+    victim = _parked_session(old)
+    jellyfin_ws._CURRENT = victim
+    order: list[str] = []
+
+    def _heartbeat():
+        time.sleep(0.3)
+        jellyfin_ws.ensure_running()
+        order.append("ensure_running")
+
+    t = threading.Thread(target=_heartbeat, daemon=True)
+    t.start()
+    try:
+        jellyfin_ws.stop()
+        order.append("stop")
+        t.join(timeout=10)
+    finally:
+        jellyfin_ws._CURRENT = None
+
+    assert order == ["stop", "ensure_running"], f"interleaved: {order}"
+
+
+def test_no_socket_opens_while_configuration_is_changing(monkeypatch) -> None:
+    """Stopping then rewriting settings is not enough on its own.
+
+    A heartbeat firing between the two opened a socket to the server being
+    replaced, which then kept taking commands until a later heartbeat noticed.
+    """
+    old = ("http://old.lan:8096", "relaytv-abc", "fp-old")
+    started: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: True)
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", object())
+    monkeypatch.setattr(jellyfin_ws, "_identity", lambda: old)
+    monkeypatch.setattr(jellyfin_ws, "_start", lambda ident: started.append(ident))
+
+    jellyfin_ws._CURRENT = _parked_session(old)
+    try:
+        with jellyfin_ws.suspended():
+            for _ in range(5):
+                jellyfin_ws.ensure_running()
+            assert started == [], "a socket was opened mid-transaction"
+        # Normal service resumes once the transaction closes.
+        jellyfin_ws.ensure_running()
+        assert started == [old]
+    finally:
+        jellyfin_ws._CURRENT = None
+
+
+def test_suspension_is_released_even_if_the_body_raises() -> None:
+    """A failed settings save must not wedge the socket down forever."""
+    with pytest.raises(RuntimeError):
+        with jellyfin_ws.suspended():
+            raise RuntimeError("settings write failed")
+    assert jellyfin_ws._SUSPENDED == 0
+
+
+def test_a_retired_dial_failure_does_not_report_on_the_live_session(monkeypatch) -> None:
+    """The success path was guarded; the failure path was not.
+
+    A handshake that fails after its generation was retired would pin the
+    replacement's ws_last_error to an address nobody is talking to.
+    """
+    live = jellyfin_ws._Session(("http://new.lan:8096", "relaytv-abc", "fp-new"))
+    jellyfin_ws._CURRENT = live
+    with jellyfin_ws._LOCK:
+        jellyfin_ws._STATE["last_error"] = None
+        jellyfin_ws._STATE["reconnects"] = 0
+
+    retired = jellyfin_ws._Session(("http://old.lan:8096", "relaytv-abc", "fp-old"))
+
+    def _dial(session):
+        # stop() lands while this handshake is in flight, as it does when
+        # settings are saved mid-dial.
+        session.stop.set()
+        raise RuntimeError("old server refused the handshake at http://old.lan:8096")
+
+    monkeypatch.setattr(jellyfin_ws, "_connect_once", _dial)
+    monkeypatch.setattr(jellyfin_ws, "_ready", lambda: True)
+    try:
+        jellyfin_ws._socket_worker(retired)
+        assert jellyfin_ws.status()["last_error"] is None
+        assert jellyfin_ws.status()["reconnects"] == 0
+    finally:
+        jellyfin_ws._CURRENT = None
+
+
+def test_the_live_session_still_reports_its_own_failures(monkeypatch) -> None:
+    """The guard must not silence the generation that actually owns the state."""
+    live = jellyfin_ws._Session(("http://jf.lan:8096", "relaytv-abc", "fp"))
+    jellyfin_ws._CURRENT = live
+    with jellyfin_ws._LOCK:
+        jellyfin_ws._STATE["last_error"] = None
+        jellyfin_ws._STATE["reconnects"] = 0
+
+    calls = {"n": 0}
+
+    def _dial(session):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            session.stop.set()
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(jellyfin_ws, "_connect_once", _dial)
+    monkeypatch.setattr(jellyfin_ws, "_ready", lambda: True)
+    monkeypatch.setattr(jellyfin_ws, "backoff_sec", lambda failures: 0.01)
+    try:
+        jellyfin_ws._socket_worker(live)
+        assert "connection refused" in str(jellyfin_ws.status()["last_error"])
+        assert jellyfin_ws.status()["reconnects"] >= 1
+    finally:
+        jellyfin_ws._CURRENT = None

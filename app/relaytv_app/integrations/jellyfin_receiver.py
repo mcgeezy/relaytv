@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from ..config import env_bool as _env_bool
@@ -631,11 +632,20 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
     """Configure and enable Jellyfin receiver runtime."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
-    # Before anything else: the live socket belongs to the outgoing server, and
-    # a command arriving on it after the config swap would execute against the
-    # new server's state. Server-type detection alone can take three seconds,
-    # which is more than long enough for that to happen.
-    _stop_control_socket()
+    # The whole swap runs with the socket suspended: it belongs to the outgoing
+    # server, a command arriving on it after the config change would execute
+    # against the new server's state, and server-type detection alone can take
+    # three seconds. Suspending rather than merely stopping also keeps the
+    # heartbeat from reopening it to the old server mid-transaction.
+    with _control_socket_suspended():
+        return _connect_locked(
+            server_url=server_url, api_key=api_key, device_name=device_name, heartbeat_sec=heartbeat_sec
+        )
+
+
+def _connect_locked(*, server_url: str, api_key: str | None, device_name: str | None, heartbeat_sec: int | None) -> dict[str, object]:
+    global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
         _STATUS["enabled"] = True
         _STATUS["running"] = True
@@ -738,6 +748,13 @@ def disconnect() -> dict[str, object]:
 
 def set_device_identity(name: str) -> dict[str, object]:
     """Update runtime device/client display name for Jellyfin presence."""
+    # Same transaction discipline as connect(): the token is dropped here, so
+    # the socket must not be reopened against the old one mid-change.
+    with _control_socket_suspended():
+        return _set_device_identity_locked(name)
+
+
+def _set_device_identity_locked(name: str) -> dict[str, object]:
     clean = str(name or "").strip() or "RelayTV"
     if len(clean) > 80:
         clean = clean[:80].strip() or "RelayTV"
@@ -759,9 +776,6 @@ def set_device_identity(name: str) -> dict[str, object]:
         _STATUS["media_control_verified"] = None
     _catalog_cache_clear()
     _clear_register_retry_state()
-    # The socket was opened under the old device id; it has to be re-dialled
-    # under the new one or the rename never reaches the cast list.
-    _stop_control_socket()
     return status()
 
 
@@ -2833,6 +2847,24 @@ def _stop_control_socket() -> None:
         jellyfin_ws.stop()
     except Exception:
         pass
+
+
+@contextlib.contextmanager
+def _control_socket_suspended():
+    """Keep the socket down for a whole configuration change.
+
+    Stopping it and then rewriting settings is not enough: the heartbeat runs
+    every few seconds, and one that fires in between opens a socket to the
+    server being replaced — which then keeps taking commands until a later
+    heartbeat notices the drift.
+    """
+    try:
+        from . import jellyfin_ws
+    except Exception:
+        yield
+        return
+    with jellyfin_ws.suspended():
+        yield
 
 
 def _control_socket_status() -> dict[str, object]:

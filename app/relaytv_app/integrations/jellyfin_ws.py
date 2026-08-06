@@ -13,6 +13,7 @@ package registers. No playback logic lives here.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -87,6 +88,19 @@ class _Session:
 
 
 _CURRENT: _Session | None = None
+
+# Serializes start and stop against each other. ``stop()`` spends seconds
+# joining, and for that whole time _CURRENT is None — without this the
+# heartbeat's ensure_running() walks straight into the gap and starts a
+# replacement that the in-flight stop() then resets.
+_LIFECYCLE = threading.RLock()
+
+# Non-zero while a caller is rewriting the configuration the socket dials with.
+# Serializing alone is not enough there: a start that merely waits for stop()
+# still connects to the outgoing server, because the new settings are not
+# installed yet.
+_SUSPENDED = 0
+
 _STATE: dict[str, object] = {
     "connected": False,
     "last_connect_ts": None,
@@ -109,12 +123,16 @@ def _reset_state() -> None:
         _STATE["commands_dropped"] = 0
 
 
-def _mark_error(msg: object) -> None:
+def _mark_error(msg: object, *, session: "_Session | None" = None) -> None:
     # Everything routes through the receiver's sanitizer: the socket URL carries
     # the Jellyfin access token as ``api_key``, and a failed handshake reports
     # the URL it tried.
     text = jellyfin_receiver._sanitize_error_text(msg)
     with _LOCK:
+        # ``_STATE`` is shared across generations; a retired one must not
+        # report on it. Callers with no session in hand are explicit callers.
+        if session is not None and (_CURRENT is not session or session.stop.is_set()):
+            return
         _STATE["last_error"] = text or None
 
 
@@ -241,7 +259,7 @@ def _command_worker(session: _Session) -> None:
         try:
             jellyfin_receiver.dispatch_command(action, payload)
         except Exception as e:
-            _mark_error(e)
+            _mark_error(e, session=session)
             logger.warning("jellyfin_ws_command_failed action=%s err=%s", action or "playstate", jellyfin_receiver._sanitize_error_text(e))
 
 
@@ -361,10 +379,20 @@ def _socket_worker(session: _Session) -> None:
             failures = 0
         except Exception as e:
             failures += 1
-            _mark_error(e)
+            # A dial that fails after this generation was retired is reporting
+            # on a server nobody is talking to any more; letting it write here
+            # would pin someone else's ws_last_error to a dead address.
             with _LOCK:
-                _STATE["reconnects"] = int(_STATE.get("reconnects") or 0) + 1
-            logger.warning("jellyfin_ws_disconnected failures=%d err=%s", failures, jellyfin_receiver._sanitize_error_text(e))
+                owned = _CURRENT is session and not session.stop.is_set()
+                if owned:
+                    _STATE["reconnects"] = int(_STATE.get("reconnects") or 0) + 1
+                    _STATE["last_error"] = jellyfin_receiver._sanitize_error_text(e) or None
+            logger.warning(
+                "jellyfin_ws_disconnected failures=%d owned=%s err=%s",
+                failures,
+                owned,
+                jellyfin_receiver._sanitize_error_text(e),
+            )
         if session.stop.is_set():
             break
         try:
@@ -409,19 +437,48 @@ def ensure_running() -> None:
     """
     if not enabled() or _ws_connect is None:
         return
-    identity = _identity()
-    if identity is None:
-        return
-    with _LOCK:
-        session = _CURRENT
-        alive = session is not None and session.reader is not None and session.reader.is_alive()
-        if alive and session.bound == identity:
+    # Held for the whole decision *and* the act. Checking under one lock and
+    # starting under another is how the heartbeat used to slip a socket into
+    # the middle of a stop().
+    with _LIFECYCLE:
+        if _SUSPENDED:
             return
-        stale = alive
-    if stale:
-        logger.info("jellyfin_ws_restart reason=identity_changed")
-        stop()
-    _start(identity)
+        identity = _identity()
+        if identity is None:
+            return
+        with _LOCK:
+            session = _CURRENT
+            alive = session is not None and session.reader is not None and session.reader.is_alive()
+            if alive and session.bound == identity:
+                return
+            stale = alive
+        if stale:
+            logger.info("jellyfin_ws_restart reason=identity_changed")
+            stop()
+        _start(identity)
+
+
+@contextlib.contextmanager
+def suspended():
+    """Hold the socket down for the length of a configuration change.
+
+    Stopping and then rewriting settings is not enough on its own: the
+    heartbeat runs every few seconds, and one that fires between the two starts
+    a socket to the server being replaced. Callers that change what the socket
+    dials with must wrap the whole transaction.
+    """
+    global _SUSPENDED
+    with _LIFECYCLE:
+        _SUSPENDED += 1
+        try:
+            stop()
+        except Exception:
+            logger.warning("jellyfin_ws_suspend_stop_failed")
+    try:
+        yield
+    finally:
+        with _LIFECYCLE:
+            _SUSPENDED = max(0, _SUSPENDED - 1)
 
 
 def _start(identity: tuple[str, str, str]) -> None:
@@ -443,12 +500,18 @@ def _start(identity: tuple[str, str, str]) -> None:
 
 def stop() -> None:
     global _CURRENT
-    with _LOCK:
-        session = _CURRENT
-        _CURRENT = None
-    if session is None:
-        _reset_state()
-        return
+    with _LIFECYCLE:
+        with _LOCK:
+            session = _CURRENT
+            _CURRENT = None
+        if session is None:
+            _reset_state()
+            return
+        _stop_session(session)
+
+
+def _stop_session(session: _Session) -> None:
+    """Retire one generation. Call with ``_LIFECYCLE`` held."""
     session.stop.set()
     # Closing the live connection is what makes this prompt: a reader parked in
     # recv() would otherwise sit there for the rest of its timeout. The close
