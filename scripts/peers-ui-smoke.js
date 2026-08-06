@@ -57,6 +57,22 @@ async function seedSenderQueue(page) {
   });
 }
 
+async function dropNowPlaying(page) {
+  // Take the session out of the selection so a transfer is a plain queue send.
+  // A smoke run must not seize a live device's screen, and the assertions that
+  // follow are about the queue either way.
+  await page.evaluate(() => {
+    document.querySelectorAll('#peersPick .pmPickRow.on').forEach((row) => {
+      const meta = row.querySelector('.pmMeta')?.textContent || '';
+      if (meta.startsWith('Now playing')) row.click();
+    });
+  });
+  await page.waitForFunction(() => {
+    const rows = Array.from(document.querySelectorAll('#peersPick .pmPickRow.on'));
+    return rows.every((row) => !(row.querySelector('.pmMeta')?.textContent || '').startsWith('Now playing'));
+  });
+}
+
 async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
   const context = await browser.newContext({ viewport: scenario.viewport, colorScheme: scenario.colorScheme });
   const page = await context.newPage();
@@ -93,8 +109,8 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     // the smoke runs, so the subtitle is compared against the copy contract.
     const subtitle = (await page.locator('#peersSubtitle').textContent()) || '';
     check(
-      /^(Nothing queued|1 item in the queue|\d+ items in the queue)$/.test(subtitle.trim()),
-      `${scenario.name}: sheet did not report the queue size ("${subtitle}")`,
+      /^(Nothing playing or queued|Nothing selected|Now playing|Now playing \+ \d+ items?|\d+ items?)$/.test(subtitle.trim()),
+      `${scenario.name}: sheet did not report the selection ("${subtitle}")`,
     );
 
     // Wait for the settled list. With no saved devices the sheet shows either
@@ -166,13 +182,23 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     // Re-seed first: a device that is playing consumes its own queue, and this
     // assertion is about the transfer, not about autoplay timing.
     await seedSenderQueue(page);
+    // Leave the session out so the transfer is a plain queue send whether or not
+    // this device happens to be playing. Taking over a live device's screen is
+    // not something a smoke run should do unasked.
+    await page.locator('[data-peer-mode="copy"]').click();
+    await dropNowPlaying(page);
     // Both devices may be playing, so compare a delta rather than a total.
     const receiverBefore = await queueLength(peerUrl);
     await page.locator('#peersList .pmDevice').first().click();
-    await page.waitForFunction(() => /^Sent \d+ item/.test(document.querySelector('#peersStatus')?.textContent || ''));
+    await page.waitForFunction(() => /^Copied \d+ item/.test(document.querySelector('#peersStatus')?.textContent || ''));
     const sentText = (await page.locator('#peersStatus').textContent()) || '';
-    const sentCount = Number((sentText.match(/^Sent (\d+) item/) || [])[1] || 0);
+    const sentCount = Number((sentText.match(/^Copied (\d+) item/) || [])[1] || 0);
     check(sentCount > 0, `${scenario.name}: send reported no items ("${sentText}")`);
+    // Copy is defined by leaving this device alone.
+    check(
+      (await queueLength(baseUrl)) > 0,
+      `${scenario.name}: copy emptied the sender's queue`,
+    );
 
     // Read the receiver from node, not the page: a cross-origin fetch from
     // /ui would be blocked by CORS and tell us nothing about the feature.
@@ -191,36 +217,74 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
       `${scenario.name}: receiver did not record the sending device`,
     );
 
-    // Mode selector: Copy and Move are always offered; Handoff appears only
-    // when this device is actually playing something.
-    // Playback state comes from the server: app.js keeps its snapshot in a
-    // script-scoped binding, which is not reachable as a window property.
-    const playbackState = await fetch(`${baseUrl}/playback/state`).then((r) => r.json());
-    const modes = await page.evaluate(() => {
-      const visible = [];
-      document.querySelectorAll('.pmMode').forEach((button) => {
-        if (!button.classList.contains('hidden')) visible.push(button.dataset.peerMode);
-      });
-      return { visible };
-    });
-    modes.playing = !!(playbackState.playing || playbackState.paused);
-    check(modes.visible.includes('copy') && modes.visible.includes('move'), `${scenario.name}: mode selector is incomplete`);
+    // Mode selector: both modes are always offered, and the title follows.
+    const modes = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.pmMode'))
+        .filter((button) => !button.classList.contains('hidden'))
+        .map((button) => button.dataset.peerMode),
+    );
     check(
-      modes.visible.includes('handoff') === modes.playing,
-      `${scenario.name}: handoff offered=${modes.visible.includes('handoff')} while playing=${modes.playing}`,
+      modes.length === 2 && modes.includes('send') && modes.includes('copy'),
+      `${scenario.name}: mode selector is incomplete (${modes.join(',')})`,
+    );
+    await page.locator('[data-peer-mode="send"]').click();
+    await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Send to');
+
+    // The picker lists the session and the queue, all selected, and a live
+    // channel is offered as unselectable rather than failing after the send.
+    await seedSenderQueue(page);
+    const picker = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('#peersPick .pmPickRow'));
+      return {
+        total: rows.length,
+        selected: rows.filter((row) => row.classList.contains('on')).length,
+        blocked: rows.filter((row) => row.classList.contains('blocked')).length,
+      };
+    });
+    check(picker.total > 0, `${scenario.name}: picker listed nothing to send`);
+    check(
+      picker.selected === picker.total - picker.blocked,
+      `${scenario.name}: picker did not start fully selected (${picker.selected}/${picker.total})`,
     );
 
-    // Move hands over ownership: the sender's queue is empty afterwards.
-    await seedSenderQueue(page);
-    await page.locator('[data-peer-mode="move"]').click();
-    await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Move queue to');
+    // Toggling an item takes it out of the send, and the header says so.
+    const beforeToggle = ((await page.locator('#peersSubtitle').textContent()) || '').trim();
+    await page.locator('#peersPick .pmPickRow:not(.blocked)').first().click();
+    await page.waitForFunction(
+      (prev) => (document.querySelector('#peersSubtitle')?.textContent || '').trim() !== prev,
+      beforeToggle,
+    );
+    const afterToggle = await page.evaluate(() =>
+      document.querySelectorAll('#peersPick .pmPickRow.on').length,
+    );
+    check(
+      afterToggle === picker.selected - 1,
+      `${scenario.name}: toggling left ${afterToggle} selected, expected ${picker.selected - 1}`,
+    );
+    // None then All returns the picker to its opening state.
+    await page.locator('#peersPickNone').click();
+    await page.waitForFunction(
+      () => (document.querySelector('#peersSubtitle')?.textContent || '').trim() === 'Nothing selected',
+    );
+    check(
+      await page.locator('#peersList .pmDevice').first().isDisabled(),
+      `${scenario.name}: devices stayed tappable with nothing selected`,
+    );
+    await page.locator('#peersPickAll').click();
+    await page.waitForFunction(
+      (want) => document.querySelectorAll('#peersPick .pmPickRow.on').length === want,
+      picker.selected,
+    );
+
+    // Send hands over ownership: the sender's queue is empty afterwards. The
+    // session is left out so this stays a queue transfer.
+    await dropNowPlaying(page);
     await page.locator('#peersList .pmDevice').first().click();
     await page.waitForFunction(() => /^Moved \d+ item/.test(document.querySelector('#peersStatus')?.textContent || ''));
     const afterMove = await queueLength(baseUrl);
-    check(afterMove === 0, `${scenario.name}: move left ${afterMove} items on the sender`);
-    await page.locator('[data-peer-mode="copy"]').click();
+    check(afterMove === 0, `${scenario.name}: send left ${afterMove} items on the sender`);
 
-    // Per-item send: the tile's ⋯ opens the sheet scoped to that one item.
+    // Per-item send: the tile's ⋯ opens the sheet with only that item selected.
     await page.keyboard.press('Escape');
     await page.locator('#peersBackdrop').waitFor({ state: 'hidden' });
     await seedSenderQueue(page);
@@ -228,18 +292,19 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
     const itemTitle = ((await page.locator('#queue .qTitleText').first().textContent()) || '').trim();
     await page.locator('#queue .qSendItemBtn').first().click();
     await page.locator('#peersBackdrop:not(.hidden)').waitFor();
-    await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Send item to');
-    check(
-      ((await page.locator('#peersSubtitle').textContent()) || '').trim() === itemTitle,
-      `${scenario.name}: item scope did not name the item`,
+    await page.waitForFunction(
+      () => (document.querySelector('#peersSubtitle')?.textContent || '').trim() === '1 item',
     );
-    check(
-      await page.locator('[data-peer-mode="handoff"]').isHidden(),
-      `${scenario.name}: handoff must not be offered for a single item`,
-    );
+    const scoped = await page.evaluate(() => {
+      const on = document.querySelectorAll('#peersPick .pmPickRow.on');
+      return { count: on.length, title: (on[0]?.querySelector('.pmName')?.textContent || '').trim() };
+    });
+    check(scoped.count === 1, `${scenario.name}: item scope selected ${scoped.count} rows`);
+    check(scoped.title === itemTitle, `${scenario.name}: item scope selected the wrong item ("${scoped.title}")`);
     const beforeItem = await queueLength(peerUrl);
+    await page.locator('[data-peer-mode="copy"]').click();
     await page.locator('#peersList .pmDevice').first().click();
-    await page.waitForFunction(() => /^Sent 1 item/.test(document.querySelector('#peersStatus')?.textContent || ''));
+    await page.waitForFunction(() => /^Copied 1 item/.test(document.querySelector('#peersStatus')?.textContent || ''));
     check(
       (await queueLength(peerUrl)) >= beforeItem + 1,
       `${scenario.name}: receiver did not gain the single item`,

@@ -277,6 +277,108 @@
 .pmHelper.err{ color: #ff9aa8; }
 .pmHelper.ok{ color: #9df6b7; }
 
+/* What-to-send picker. Sits below the device list, so the header subtitle
+   carries the selection to the point where a device is tapped. */
+.pmPickWrap{
+  border-top: 1px solid rgba(140,190,255,.16);
+  padding-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+.pmPickHead{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pmPickBulk{ margin-left: auto; display: flex; gap: 4px; }
+.pmLinkBtn{
+  min-height: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(198,216,246,.66);
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.pmLinkBtn:hover{
+  color: #eaf3ff;
+  border-color: rgba(140,190,255,.34);
+  background: rgba(34,60,120,.45);
+  transform: none;
+}
+
+.pmPick{
+  display: grid;
+  gap: 6px;
+  max-height: 232px;
+  overflow-y: auto;
+}
+.pmPickRow{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 0;
+  padding: 7px 10px;
+  border-radius: 12px;
+  text-align: left;
+  font: inherit;
+  color: #eaf3ff;
+  border: 1px solid rgba(120,180,255,.18);
+  background: rgba(16,26,50,.55);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  cursor: pointer;
+}
+.pmPickRow:hover{ border-color: rgba(150,210,255,.42); background: rgba(28,48,96,.62); transform: none; }
+.pmPickRow:not(.on):not(.blocked) .pmName{ color: rgba(210,228,255,.55); }
+.pmPickRow.blocked{ cursor: default; opacity: .55; }
+.pmPickRow.blocked:hover{ border-color: rgba(120,180,255,.18); background: rgba(16,26,50,.55); }
+
+.pmCheck{
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  color: transparent;
+  border: 1px solid rgba(160,185,220,.45);
+  background: transparent;
+}
+.pmPickRow.on .pmCheck{
+  color: #06210f;
+  border-color: #4ade80;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74,222,128,.16);
+}
+.pmPickRow.blocked .pmCheck{
+  color: rgba(226,214,220,.70);
+  border-color: rgba(180,150,160,.40);
+  background: transparent;
+}
+
+.pmPickThumb{
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(10,16,32,.75);
+}
+.pmPickThumb img{ width: 100%; height: 100%; object-fit: cover; display: block; }
+
 /* Queue-header send button shares the Clear pill's shape and weight. */
 .qSendBtn{
   margin-left: auto;
@@ -400,6 +502,21 @@
     border-color: rgba(37,99,235,.50);
     background: rgba(199,220,255,.80);
   }
+  .pmPickWrap{ border-top-color: rgba(37,99,235,.16); }
+  .pmLinkBtn{ color: rgba(23,52,120,.70); }
+  .pmLinkBtn:hover{ color: #0c1f4d; border-color: rgba(37,99,235,.30); background: rgba(199,220,255,.70); }
+  .pmPickRow{
+    color: #0c1f4d;
+    border-color: rgba(37,99,235,.18);
+    background: rgba(255,255,255,.72);
+  }
+  .pmPickRow:hover{ border-color: rgba(37,99,235,.42); background: rgba(233,241,255,.95); }
+  .pmPickRow:not(.on):not(.blocked) .pmName{ color: rgba(23,52,120,.58); }
+  .pmPickRow.blocked:hover{ border-color: rgba(37,99,235,.18); background: rgba(255,255,255,.72); }
+  .pmCheck{ border-color: rgba(37,99,235,.35); }
+  .pmPickRow.on .pmCheck{ color: #052e16; border-color: #22c55e; background: #4ade80; }
+  .pmPickRow.blocked .pmCheck{ color: rgba(71,85,105,.80); border-color: rgba(100,116,139,.35); }
+  .pmPickThumb{ background: rgba(219,232,255,.75); }
   .pmRowBtn.danger{ color: rgba(71,85,105,.78); border-color: rgba(100,116,139,.30); }
   .pmRowBtn.danger:hover{ color: #7f1d1d; background: rgba(254,205,211,.75); }
   .pmStatus.err, .pmHelper.err, .pmMeta.err{ color: #b91c1c; }

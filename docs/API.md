@@ -389,9 +389,13 @@ History endpoints:
 
 ## Peer devices and queue transfer
 
-Send the queue (or one queue item) to another RelayTV device on the same
-network. Peers are added by address and verified before they are saved;
-nothing is discovered or added automatically.
+Send what is playing, the queue, or any subset of both to another RelayTV
+device on the same network. Peers are added by address and verified before they
+are saved; nothing is discovered or added automatically.
+
+Two gestures sit on top of these endpoints, differing only in what happens on
+the sending device: **Send** gives the session away and stops here, **Copy**
+leaves this device untouched. The payload is identical either way.
 
 Devices found over mDNS are also reflected in `GET /discovery/status`, whose
 `mdns.browse` block carries the same discovery state as advertising status.
@@ -440,27 +444,37 @@ Registry:
 Send:
 
 - `POST /peers/{peer_id}/send`
-  - body: `{"mode": "append"|"replace"|"move", "index"?}`
-  - omit `index` to send the whole queue, or pass one to send a single item
+  - body: `{"mode": "append"|"replace"|"move", "index"?, "indexes"?}`
+  - omit both selectors to send the whole queue. `indexes` sends just those
+    queue positions, in queue order; `index` is the older single-item form and
+    still works. An explicit empty `indexes` is a `400`, not a no-op, and any
+    out-of-range position is a `400` before anything is sent
   - `append` and `replace` are copies: the sending device keeps its queue.
     `move` gives up ownership — it imports as `append` on the peer and then
-    drops the sent item (or the whole queue) locally, but only after the peer
-    confirms the import, so a transfer that fails in transit loses nothing.
+    drops the sent items locally, but only after the peer confirms the import,
+    so a transfer that fails in transit loses nothing. Unselected items stay.
     A `move` response adds `{"moved": true, "local_queue_length"}`
   - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
   - IPTV items are reported in `rejected`, not sent: their stream URLs may
     carry credentials anywhere in the path, so no portable URL exists
 - `POST /peers/{peer_id}/handoff`
-  - no body; hands the current playback to the peer and stops here
+  - body: `{"indexes"?, "keep_local"?}`; an empty body (or none) hands over the
+    current playback plus the whole queue and stops here
+  - `indexes` restricts which queue items travel with the session; the rest stay
+    here and this device advances into them instead of going idle
+  - `keep_local` sends exactly the same payload but skips every local teardown,
+    so both devices play the same thing from the same position. This is the UI's
+    **Copy**; it defaults to `false` so an unasked-for handoff still moves the
+    session rather than duplicating it
   - `409` when nothing is playing. IPTV sessions cannot be handed off: their
     stream URLs are re-resolved from a local catalog the peer does not have
   - ordering is deliberate — playback stops locally only after the peer reports
     it took over, so a failed handoff leaves this device playing
-  - on success the local session is cleared, not closed: the session moved to
-    the peer, so this device returns to idle with nothing to resume rather than
-    showing the item it gave away
+  - without `keep_local` the local session is cleared, not closed: the session
+    moved to the peer, so this device returns to idle with nothing to resume
+    rather than showing the item it gave away
   - returns `{"playing", "resume_pos", "sent", "accepted", "rejected",
-    "queue_length", "local_stopped", "local_queue_length", "peer"}`
+    "queue_length", "local_stopped", "local_queue_length", "kept_local", "peer"}`
 
 Receive:
 

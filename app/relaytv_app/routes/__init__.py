@@ -3495,9 +3495,8 @@ def ui():
         </div>
 
         <div id="peersModes" class="pmModes" role="radiogroup" aria-label="How to send">
-          <button type="button" class="pmMode on" data-peer-mode="copy" role="radio" aria-checked="true" title="Send a copy and keep the queue here">Copy</button>
-          <button type="button" class="pmMode" data-peer-mode="move" role="radio" aria-checked="false" title="Send and remove from this device">Move</button>
-          <button type="button" class="pmMode hidden" data-peer-mode="handoff" role="radio" aria-checked="false" title="Continue playing on the other device">Handoff</button>
+          <button type="button" class="pmMode on" data-peer-mode="send" role="radio" aria-checked="true" title="Play on the other device and stop here">Send</button>
+          <button type="button" class="pmMode" data-peer-mode="copy" role="radio" aria-checked="false" title="Play on the other device and keep playing here too">Copy</button>
         </div>
 
         <div id="peersStatus" class="pmStatus" role="status" aria-live="polite"></div>
@@ -3533,6 +3532,18 @@ def ui():
             </div>
             <div id="peerAddHelper" class="pmHelper" role="status" aria-live="polite"></div>
           </div>
+        </section>
+
+        <section id="peersPickWrap" class="pmPickWrap hidden">
+          <div class="pmPickHead">
+            <span class="pmGroupHead">What to send</span>
+            <span id="peersPickBulk" class="pmPickBulk hidden">
+              <button id="peersPickAll" class="pmLinkBtn" type="button">All</button>
+              <button id="peersPickNone" class="pmLinkBtn" type="button">None</button>
+            </span>
+          </div>
+          <div id="peersPick" class="pmPick" role="group" aria-label="Items to send"></div>
+          <div id="peersPickNote" class="pmNote"></div>
         </section>
       </div>
     </div>

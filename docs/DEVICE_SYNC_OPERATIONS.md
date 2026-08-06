@@ -9,19 +9,25 @@ API reference: the "Peer devices and queue transfer" section of `API.md`.
 ## What it does
 
 Each RelayTV device can hold a small list of other RelayTV devices. From the
-Web UI's queue header, **Send** opens a device sheet with three modes:
+Web UI's queue header, **Send** opens a device sheet with two modes. Both send
+the same thing; they differ only in what happens on *this* device:
 
 | Mode | Effect |
 | --- | --- |
-| **Copy** | The other device gains the items. This device keeps its queue. |
-| **Move** | The other device gains the items and this device gives them up. |
-| **Handoff** | The other device continues what is playing here, at the same position, and playback stops here. |
+| **Send** | The other device plays what is playing here, at the same position, and takes the selected queue items. This device stops and gives those items up. Default. |
+| **Copy** | Identical, except nothing here changes: both devices end up playing. |
 
-A `⋯` on each queue tile opens the same sheet scoped to that single item, so
-one thing can be sent without sending the whole queue.
+Under the device list, **What to send** lists what is playing plus every queue
+item, all selected. Tap a row's circle to leave it out. Live TV channels are
+listed but cannot be selected — their stream URLs can carry credentials, so they
+never leave the device.
 
-Handoff is offered only when this device is actually playing something, and only
-for the whole session (not for a single queued item).
+Leaving the now-playing row out turns either mode into a plain queue transfer:
+**Send** moves the selected items off this device, **Copy** duplicates them.
+That is also what happens when nothing is playing here.
+
+A `⋯` on each queue tile opens the same sheet with only that item selected, so
+one thing can be sent without deselecting everything else by hand.
 
 Nothing is sent automatically. Every transfer is an explicit action, and the
 receiving device never forwards what it was sent.
@@ -109,29 +115,32 @@ they never cross.
 
 IPTV is excluded on purpose: those stream URLs can carry credentials anywhere in
 the path, and they are re-resolved from a catalog the other device does not
-have. The same applies to handing off a live channel — Handoff refuses an IPTV
-session.
+have. The same applies to a live channel that is playing — it cannot be sent,
+and the sheet shows the row greyed out rather than failing after the fact.
 
 Per-item outcomes come back with the response, so a partial transfer is
 reported rather than silently trimmed. The UI shows
-`Sent 10 of 12 … 2 skipped (reason)`.
+`Copied 10 of 12 … 2 skipped (reason)`.
 
 ## Ordering guarantees
 
 Every destructive step waits for confirmation from the other device:
 
-- **Move** clears the local item or queue only after the peer confirms the
-  import. A transfer that fails in transit loses nothing.
-- **Handoff** stops local playback only after the peer reports it took over. A
-  handoff that fails leaves you watching what you were already watching.
+- **Send** drops the local items only after the peer confirms the import, and
+  stops local playback only after the peer reports it took over. A transfer that
+  fails in transit loses nothing and leaves you watching what you were watching.
+- **Copy** changes nothing locally at all, so there is nothing to undo.
 - On the receiving side, a handoff takes over playback *before* importing the
   queue. A device that cannot start playing does not end up holding the items
   either.
 - A handoff preserves whatever the receiving device was playing to the front of
   its queue, so it is never destroyed.
-- The device that handed off returns to its idle screen with nothing to resume.
+- After a **Send** the device returns to its idle screen with nothing to resume.
   It does not keep the item it gave away, because resuming it would play the
-  same thing in two rooms.
+  same thing in two rooms unasked — which is what **Copy** is for when you do
+  want it.
+- A **Send** of part of the queue leaves the unselected items here, and this
+  device advances into them rather than going idle.
 
 ## Verifying a pair of devices
 
@@ -149,6 +158,14 @@ curl -s -X POST http://<host>:8787/peers \
 
 curl -s -X POST http://<host>:8787/peers/<peer_id>/send \
   -H 'Content-Type: application/json' -d '{"mode":"append"}'
+
+# Just queue positions 0 and 2, giving them up locally
+curl -s -X POST http://<host>:8787/peers/<peer_id>/send \
+  -H 'Content-Type: application/json' -d '{"mode":"move","indexes":[0,2]}'
+
+# Copy: the peer plays what this device is playing, and this device carries on
+curl -s -X POST http://<host>:8787/peers/<peer_id>/handoff \
+  -H 'Content-Type: application/json' -d '{"keep_local":true}'
 ```
 
 `scripts/fleet.py` reports several devices at once — what each is playing, its

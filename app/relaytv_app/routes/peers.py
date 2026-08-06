@@ -28,7 +28,17 @@ class PeerPatchReq(BaseModel):
 
 class PeerSendReq(BaseModel):
     mode: str = "append"
+    # ``index`` predates per-item selection and is kept for companion apps.
     index: int | None = None
+    indexes: list[int] | None = None
+
+
+class PeerHandoffReq(BaseModel):
+    indexes: list[int] | None = None
+    # A handoff that keeps the local session is the "Copy" gesture: the peer
+    # starts playing, this device carries on. Defaulting to False keeps the
+    # original meaning of the endpoint for callers that send no body.
+    keep_local: bool = False
 
 
 def _peer_error(exc: peers.PeerError) -> HTTPException:
@@ -125,17 +135,44 @@ def _clear_local_queue() -> int:
         return len(state.QUEUE)
 
 
-def _remove_local_queue_index(index: int) -> int:
+def _remove_local_queue_indexes(indexes: list[int] | None) -> int:
+    """Drop the transferred items, leaving anything the sender kept back.
+
+    ``None`` means the whole queue travelled. Removal runs high index first so
+    each pop leaves the lower ones where they were.
+    """
+    if indexes is None:
+        return _clear_local_queue()
+
     from .queue import QueueRemoveReq, queue_remove
 
-    try:
-        result = queue_remove(QueueRemoveReq(index=int(index)))
-    except HTTPException:
-        # The item moved or vanished between send and cleanup; the transfer
-        # already succeeded, so report the current length instead of failing.
-        with state.QUEUE_LOCK:
-            return len(state.QUEUE)
-    return int(result.get("queue_length") or 0)
+    for index in sorted({int(i) for i in indexes}, reverse=True):
+        try:
+            queue_remove(QueueRemoveReq(index=index))
+        except HTTPException:
+            # The item moved or vanished between send and cleanup; the transfer
+            # already succeeded, so keep going instead of failing the request.
+            continue
+    with state.QUEUE_LOCK:
+        return len(state.QUEUE)
+
+
+def _selected_indexes(queue_length: int, *, index: int | None, indexes: list[int] | None) -> list[int] | None:
+    """Resolve a selection to sorted queue indexes, or None for the whole queue.
+
+    An explicit empty list is a real answer ("send nothing from the queue"),
+    which is why it is distinguished from the absent selection that means all.
+    """
+    if indexes is None and index is None:
+        return None
+    chosen = list(indexes) if indexes is not None else [int(index or 0)]
+    resolved: list[int] = []
+    for value in chosen:
+        position = int(value)
+        if position < 0 or position >= queue_length:
+            raise HTTPException(status_code=400, detail="index out of range")
+        resolved.append(position)
+    return sorted(set(resolved))
 
 
 @router.post("/peers/{peer_id}/send")
@@ -153,48 +190,58 @@ def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
 
     with state.QUEUE_LOCK:
         queue = list(state.QUEUE)
-    if req.index is None:
-        items: list[object] = queue
-    else:
-        index = int(req.index)
-        if index < 0 or index >= len(queue):
-            raise HTTPException(status_code=400, detail="index out of range")
-        items = [queue[index]]
+    selection = _selected_indexes(len(queue), index=req.index, indexes=req.indexes)
+    items: list[object] = queue if selection is None else [queue[i] for i in selection]
+    if not items:
+        raise HTTPException(status_code=400, detail="nothing selected to send")
     try:
         result = peers.send_queue(peer_id, items=items, mode=mode)
     except peers.PeerError as exc:
         raise _peer_error(exc) from exc
 
     if move:
-        if req.index is None:
-            result["local_queue_length"] = _clear_local_queue()
-        else:
-            result["local_queue_length"] = _remove_local_queue_index(int(req.index))
+        result["local_queue_length"] = _remove_local_queue_indexes(selection)
         result["moved"] = True
     return result
 
 
 @router.post("/peers/{peer_id}/handoff")
-def peers_handoff(peer_id: str) -> dict[str, object]:
+def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, object]:
     """Continue what is playing here on a peer device, then stop here.
 
     Ordering matters: playback stops locally only once the peer reports it has
     taken over, so a failed handoff leaves this device playing.
+
+    With ``keep_local`` the teardown is skipped entirely and both devices play
+    the same thing. That is a deliberate user gesture ("Copy"), not the default:
+    an unasked-for second room playing along would be a surprise, so the plain
+    handoff still moves the session rather than duplicating it.
     """
+    request = req or PeerHandoffReq()
     snapshot = playback_service.handoff_snapshot()
     if snapshot is None:
         raise HTTPException(status_code=409, detail="nothing is playing to hand off")
 
     with state.QUEUE_LOCK:
         queue = list(state.QUEUE)
+    selection = _selected_indexes(len(queue), index=None, indexes=request.indexes)
+    items: list[object] = queue if selection is None else [queue[i] for i in selection]
     try:
-        result = peers.handoff_playback(peer_id, snapshot=snapshot, items=queue)
+        result = peers.handoff_playback(peer_id, snapshot=snapshot, items=items)
     except peers.PeerError as exc:
         raise _peer_error(exc) from exc
 
+    result["kept_local"] = bool(request.keep_local)
+    if request.keep_local:
+        with state.QUEUE_LOCK:
+            result["local_queue_length"] = len(state.QUEUE)
+        result["local_stopped"] = False
+        return result
+
     # The queue goes first: clearing now-playing with items still queued would
-    # advance into the next one instead of going idle.
-    result["local_queue_length"] = _clear_local_queue()
+    # advance into the next one instead of going idle. With a partial selection
+    # that is exactly right — this device continues into whatever it kept.
+    result["local_queue_length"] = _remove_local_queue_indexes(selection)
 
     from .playback import clear_now_playing
 

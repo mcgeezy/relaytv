@@ -1137,11 +1137,13 @@ function renderStatus(st) {
   if (qCount) qCount.textContent = String(st.queue_length || 0);
   const qClear = document.getElementById('queueClearBtn');
   if (qClear) qClear.classList.toggle('hidden', !(Number(st.queue_length) > 0));
-  // Sending needs something to send; peers.js owns the sheet behind this button.
+  // Sending needs something to send, which includes a lone playing item with an
+  // empty queue; peers.js owns the sheet behind this button.
   const qSend = document.getElementById('queueSendBtn');
-  if (qSend) qSend.classList.toggle('hidden', !(Number(st.queue_length) > 0));
-  // Handoff is only offered while something is playing, so an open sheet has to
-  // hear about playback starting or stopping.
+  const canSend = Number(st.queue_length) > 0 || !!st.playing || !!st.paused;
+  if (qSend) qSend.classList.toggle('hidden', !canSend);
+  // The sheet lists what is playing alongside the queue, so an open sheet has to
+  // hear about playback and queue changes.
   if (window.relaytvPeers && window.relaytvPeers.syncPlayback) window.relaytvPeers.syncPlayback();
 
   // progress bar fill

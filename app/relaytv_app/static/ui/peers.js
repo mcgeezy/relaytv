@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Send-to-device sheet: pick a peer RelayTV device and send the queue to it.
+// Send-to-device sheet: pick a peer RelayTV device and send it what is playing
+// here plus the queue.
 //
-// Tapping a device sends (copy semantics: this device keeps its queue). Peers
-// stay listed while offline with the reason shown, because a device that
-// disappears from the list reads as data loss rather than an outage.
+// The two modes differ only in what happens *here*: Send gives the session away
+// and this device stops, Copy leaves this device exactly as it was. The payload
+// is identical, so the choice is about this room, not the other one.
+//
+// Tapping a device sends immediately, so the header always reports the current
+// selection — the item list itself sits below the fold. Peers stay listed while
+// offline with the reason shown, because a device that disappears from the list
+// reads as data loss rather than an outage.
 (function(){
   'use strict';
 
@@ -17,10 +23,13 @@
     loading: false,
     sending: '',
     adopting: '',
-    mode: 'copy',
-    index: null,
-    itemTitle: '',
-    canHandoff: false,
+    mode: 'send',
+    items: [],
+    // Only exclusions are tracked: everything is selected by default, so an
+    // item that arrives while the sheet is open joins the send rather than
+    // being silently left out.
+    deselected: new Set(),
+    pickSignature: '',
     lastFocus: null,
   };
 
@@ -59,54 +68,118 @@
     el.textContent = String(msg || '');
   }
 
-  function queueLength(){
+  function lastStatus(){
     // app.js keeps the last status payload in a script-scoped binding shared
-    // across the UI's classic scripts; fall back to the rendered badge.
+    // across the UI's classic scripts.
     try {
-      if (typeof __lastStatus !== 'undefined' && __lastStatus){
-        const n = Number(__lastStatus.queue_length || 0);
-        if (Number.isFinite(n)) return n;
-      }
+      if (typeof __lastStatus !== 'undefined' && __lastStatus) return __lastStatus;
     } catch (_e) {}
-    const el = $('queueCount');
-    const n = Number((el && el.textContent) || 0);
-    return Number.isFinite(n) ? n : 0;
+    return {};
+  }
+
+  function itemRow(item, kind, index){
+    const source = (item && typeof item === 'object') ? item : {};
+    const url = String(source.url || '');
+    const provider = String(source.provider || '').trim().toLowerCase();
+    // Mirror the server's rule (see peers.wire_items): a live channel's stream
+    // URL can carry credentials anywhere in its path, so it never travels.
+    // Saying so up front beats reporting it as a skip after the send.
+    const sendable = !!url && provider !== 'iptv';
+    return {
+      kind,
+      index,
+      url,
+      provider,
+      title: String(source.title || source.name || url || 'Untitled'),
+      channel: String(source.channel || ''),
+      thumbnail: String(source.thumbnail || source.thumbnail_local || ''),
+      sendable,
+      reason: sendable ? '' : (provider === 'iptv' ? 'Live TV stays here' : 'No shareable link'),
+    };
+  }
+
+  function buildItems(){
+    const st = lastStatus();
+    const rows = [];
+    const np = st.now_playing;
+    // Only offer the session when there really is one: the server refuses a
+    // handoff otherwise, and a resumable-but-stopped item is not playing.
+    if (playbackActive() && np && np.url) rows.push(itemRow(np, 'now', null));
+    (Array.isArray(st.queue) ? st.queue : []).forEach((item, idx) => rows.push(itemRow(item, 'queue', idx)));
+
+    // Key by URL rather than position: auto-next advancing while the sheet is
+    // open shifts every index, and a selection must not slide onto a different
+    // item. The ordinal disambiguates the same URL queued twice.
+    const seen = Object.create(null);
+    rows.forEach((row) => {
+      const base = `${row.kind}:${row.url}`;
+      const n = (seen[base] = (seen[base] || 0) + 1);
+      row.key = n === 1 ? base : `${base}#${n}`;
+    });
+
+    // Drop exclusions whose item is gone, so a returning URL starts selected.
+    const keys = new Set(rows.map((row) => row.key));
+    Array.from(state.deselected).forEach((key) => {
+      if (!keys.has(key)) state.deselected.delete(key);
+    });
+    state.items = rows;
+  }
+
+  function isSelected(row){
+    return !!row && row.sendable && !state.deselected.has(row.key);
+  }
+
+  function selectedNow(){
+    return state.items.find((row) => row.kind === 'now' && isSelected(row)) || null;
+  }
+
+  function selectedQueueIndexes(){
+    return state.items.filter((row) => row.kind === 'queue' && isSelected(row)).map((row) => row.index);
+  }
+
+  function queueRowCount(){
+    return state.items.filter((row) => row.kind === 'queue').length;
+  }
+
+  function selectionCoversQueue(){
+    return selectedQueueIndexes().length === queueRowCount();
   }
 
   function syncSubtitle(){
     const el = $('peersSubtitle');
     if (!el) return;
-    if (state.index !== null){
-      el.textContent = state.itemTitle || 'One queue item';
+    if (!state.items.length){
+      el.textContent = 'Nothing playing or queued';
       return;
     }
-    const n = queueLength();
-    el.textContent = n === 0 ? 'Nothing queued' : (n === 1 ? '1 item in the queue' : `${n} items in the queue`);
+    const parts = [];
+    if (selectedNow()) parts.push('Now playing');
+    const n = selectedQueueIndexes().length;
+    if (n) parts.push(`${n} ${n === 1 ? 'item' : 'items'}`);
+    el.textContent = parts.length ? parts.join(' + ') : 'Nothing selected';
   }
 
   function syncTitle(){
     const el = $('peersTitle');
     if (!el) return;
-    if (state.mode === 'handoff') el.textContent = 'Continue on';
-    else if (state.index !== null) el.textContent = state.mode === 'move' ? 'Move item to' : 'Send item to';
-    else el.textContent = state.mode === 'move' ? 'Move queue to' : 'Send queue to';
+    el.textContent = state.mode === 'copy' ? 'Copy to' : 'Send to';
+  }
+
+  function modeNote(){
+    const now = !!selectedNow();
+    if (state.mode === 'copy'){
+      return now
+        ? 'Both devices play. Nothing here changes.'
+        : 'The other device gets a copy. Nothing here changes.';
+    }
+    return now
+      ? 'Playback continues there and stops here.'
+      : 'The selected items move off this device.';
   }
 
   function syncModes(){
-    // Handoff only makes sense for the whole session, and only when something
-    // is actually playing here. The sheet can stay open across playback
-    // stopping, so this is re-evaluated on every render and on status pushes
-    // rather than being frozen at open time.
-    state.canHandoff = playbackActive();
-    const handoffAllowed = state.index === null && state.canHandoff;
-    if (state.mode === 'handoff' && !handoffAllowed){
-      state.mode = 'copy';
-      setStatus('Playback stopped here, so Handoff is no longer available.');
-    }
     document.querySelectorAll('.pmMode').forEach((button) => {
-      const mode = button.dataset.peerMode || 'copy';
-      if (mode === 'handoff') button.classList.toggle('hidden', !handoffAllowed);
-      const on = mode === state.mode;
+      const on = (button.dataset.peerMode || 'send') === state.mode;
       button.classList.toggle('on', on);
       button.setAttribute('aria-checked', on ? 'true' : 'false');
     });
@@ -114,21 +187,17 @@
   }
 
   function setMode(mode){
-    const next = String(mode || 'copy');
-    if (next === 'handoff' && !(state.index === null && playbackActive())) return;
-    state.mode = next;
+    state.mode = String(mode || 'send') === 'copy' ? 'copy' : 'send';
     setStatus('');
     render();
   }
 
   function nothingToSend(){
-    if (state.mode === 'handoff') return !state.canHandoff;
-    return state.index === null && queueLength() === 0;
+    return !selectedNow() && selectedQueueIndexes().length === 0;
   }
 
   function actionVerb(){
-    if (state.mode === 'handoff') return 'Continue on';
-    return state.mode === 'move' ? 'Move to' : 'Send to';
+    return state.mode === 'copy' ? 'Copy to' : 'Send to';
   }
 
   function hostLabel(baseUrl){
@@ -230,7 +299,111 @@
     return 'No devices found yet. Add one by address below.';
   }
 
+  function pickRow(row){
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pmPickRow';
+    button.setAttribute('role', 'checkbox');
+    const on = isSelected(row);
+    button.setAttribute('aria-checked', on ? 'true' : 'false');
+    button.classList.toggle('on', on);
+    if (!row.sendable){
+      button.classList.add('blocked');
+      button.disabled = true;
+      button.title = row.reason;
+    } else {
+      button.title = on ? `Leave out ${row.title}` : `Include ${row.title}`;
+      button.addEventListener('click', () => toggleItem(row));
+    }
+
+    const check = document.createElement('span');
+    check.className = 'pmCheck';
+    check.setAttribute('aria-hidden', 'true');
+    check.textContent = row.sendable ? (on ? '✓' : '') : '✕';
+
+    const thumb = document.createElement('span');
+    thumb.className = 'pmPickThumb';
+    if (row.thumbnail){
+      const img = document.createElement('img');
+      img.src = row.thumbnail;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.addEventListener('error', () => img.remove());
+      thumb.appendChild(img);
+    }
+
+    const text = document.createElement('span');
+    text.className = 'pmDeviceText';
+    const title = document.createElement('span');
+    title.className = 'pmName';
+    title.textContent = row.title;
+    const meta = document.createElement('span');
+    meta.className = 'pmMeta';
+    if (row.kind === 'now'){
+      const at = nowPlayingPosition();
+      meta.textContent = at ? `Now playing · at ${at}` : 'Now playing';
+    } else {
+      meta.textContent = row.reason || row.channel || '';
+    }
+    text.appendChild(title);
+    text.appendChild(meta);
+
+    button.appendChild(check);
+    button.appendChild(thumb);
+    button.appendChild(text);
+    return button;
+  }
+
+  function nowPlayingPosition(){
+    const seconds = Number(lastStatus().position || 0);
+    if (!Number.isFinite(seconds) || seconds < 1) return '';
+    const total = Math.floor(seconds);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return hours ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
+  }
+
+  function toggleItem(row){
+    if (!row.sendable) return;
+    if (state.deselected.has(row.key)) state.deselected.delete(row.key);
+    else state.deselected.add(row.key);
+    setStatus('');
+    render();
+  }
+
+  function selectAll(on){
+    state.deselected.clear();
+    if (!on) state.items.forEach((row) => { if (row.sendable) state.deselected.add(row.key); });
+    setStatus('');
+    render();
+  }
+
+  function renderPicker(){
+    const wrap = $('peersPickWrap');
+    const list = $('peersPick');
+    if (!wrap || !list) return;
+    wrap.classList.toggle('hidden', state.items.length === 0);
+
+    const note = $('peersPickNote');
+    if (note) note.textContent = state.items.length ? modeNote() : '';
+
+    const bulk = $('peersPickBulk');
+    if (bulk) bulk.classList.toggle('hidden', state.items.length < 2);
+
+    // Status pushes re-render about once a second; rebuilding the list every
+    // time would fight the user's scroll and drop keyboard focus mid-toggle.
+    const signature = `${state.items.map((row) => `${row.key}:${isSelected(row) ? 1 : 0}`).join('|')}|${nowPlayingPosition()}`;
+    if (signature === state.pickSignature) return;
+    state.pickSignature = signature;
+
+    list.innerHTML = '';
+    state.items.forEach((row) => list.appendChild(pickRow(row)));
+  }
+
   function render(){
+    buildItems();
     const candidates = state.discovered.filter((c) => !state.peers.some((p) => p.device_id && p.device_id === c.device_id));
 
     const list = $('peersList');
@@ -267,6 +440,7 @@
 
     syncSubtitle();
     syncModes();
+    renderPicker();
   }
 
   async function probeAll(){
@@ -313,40 +487,53 @@
     const noun = accepted === 1 ? 'item' : 'items';
     if (result.status === 'handed_off'){
       const tail = accepted > 0 ? ` with ${accepted} more ${accepted === 1 ? 'item' : 'items'}` : '';
-      return {msg: `Now playing on ${name}${tail}`, kind: 'ok'};
+      const lead = result.kept_local ? 'Also playing on' : 'Now playing on';
+      return {msg: `${lead} ${name}${tail}`, kind: 'ok'};
     }
-    const verb = result.moved ? 'Moved' : 'Sent';
+    const verb = result.moved ? 'Moved' : 'Copied';
     if (!rejected.length) return {msg: `${verb} ${accepted} ${noun} to ${name}`, kind: 'ok'};
     const reason = rejected[0] && rejected[0].reason ? ` (${rejected[0].reason})` : '';
     return {msg: `${verb} ${accepted} of ${sent} to ${name} — ${rejected.length} skipped${reason}`, kind: ''};
   }
 
+  function sendRequest(peer){
+    const id = encodeURIComponent(peer.id);
+    const keepLocal = state.mode === 'copy';
+    const indexes = selectedQueueIndexes();
+    // Omitting the selection when it covers the whole queue means the server
+    // reads the queue itself, which stays correct even if an item was added
+    // between this render and the request.
+    const scoped = selectionCoversQueue() ? {} : {indexes};
+    if (selectedNow()){
+      // A session is in play, so this is the handoff payload either way; the
+      // mode only decides whether this device tears down afterwards.
+      return {path: `/peers/${id}/handoff`, body: Object.assign({keep_local: keepLocal}, scoped)};
+    }
+    // Nothing playing, or the user left it out: this is a plain queue transfer.
+    return {path: `/peers/${id}/send`, body: Object.assign({mode: keepLocal ? 'append' : 'move'}, scoped)};
+  }
+
   async function sendToPeer(peer){
     if (state.sending) return;
     if (nothingToSend()){
-      setStatus(state.mode === 'handoff' ? 'Nothing is playing to hand off.' : 'The queue is empty.', 'err');
+      setStatus('Nothing selected to send.', 'err');
       return;
     }
     state.sending = peer.id;
-    setStatus(state.mode === 'handoff' ? `Handing off to ${peer.name}…` : `Sending to ${peer.name}…`);
+    setStatus(`${state.mode === 'copy' ? 'Copying' : 'Sending'} to ${peer.name}…`);
     render();
     try {
-      const path = state.mode === 'handoff'
-        ? `/peers/${encodeURIComponent(peer.id)}/handoff`
-        : `/peers/${encodeURIComponent(peer.id)}/send`;
-      const body = state.mode === 'handoff'
-        ? {}
-        : {mode: state.mode === 'move' ? 'move' : 'append', index: state.index};
-      const result = await postJson(path, body);
+      const request = sendRequest(peer);
+      const result = await postJson(request.path, request.body);
       const summary = sendSummary(result);
       peer.online = true;
       peer.last_error = '';
       setStatus(summary.msg, summary.kind);
-      // Move and handoff change this device's own queue; let the shared remote
-      // catch up instead of leaving a stale list behind the sheet.
-      if (result.moved || result.status === 'handed_off'){
-        state.index = null;
-        state.itemTitle = '';
+      // Send changes this device's own queue and session; let the shared remote
+      // catch up instead of leaving a stale list behind the sheet. Copy leaves
+      // this device alone, so there is nothing to re-read.
+      if (result.moved || (result.status === 'handed_off' && !result.kept_local)){
+        state.deselected.clear();
         if (typeof window.refresh === 'function') window.refresh().catch(() => null);
       }
     } catch (e) {
@@ -483,10 +670,17 @@
     const bd = $('peersBackdrop');
     if (!bd || isOpen()) return;
     const scope = opts && typeof opts === 'object' ? opts : {};
-    state.index = Number.isInteger(scope.index) ? scope.index : null;
-    state.itemTitle = String(scope.title || '');
-    state.mode = 'copy';
-    state.canHandoff = playbackActive();
+    state.mode = 'send';
+    state.deselected.clear();
+    state.pickSignature = '';
+    buildItems();
+    if (Number.isInteger(scope.index)){
+      // Opened from one queue tile: that item is the whole point, so everything
+      // else — including the session — starts excluded.
+      state.items.forEach((row) => {
+        if (row.kind !== 'queue' || row.index !== scope.index) state.deselected.add(row.key);
+      });
+    }
     state.lastFocus = document.activeElement;
     bd.classList.remove('hidden');
     setStatus('');
@@ -527,8 +721,10 @@
   function bind(){
     $('queueSendBtn')?.addEventListener('click', () => open());
     document.querySelectorAll('.pmMode').forEach((button) => {
-      button.addEventListener('click', () => setMode(button.dataset.peerMode || 'copy'));
+      button.addEventListener('click', () => setMode(button.dataset.peerMode || 'send'));
     });
+    $('peersPickAll')?.addEventListener('click', () => selectAll(true));
+    $('peersPickNone')?.addEventListener('click', () => selectAll(false));
     $('peersCloseBtn')?.addEventListener('click', () => close());
     $('peersAddToggle')?.addEventListener('click', () => toggleAddForm());
     $('peerTestBtn')?.addEventListener('click', testAddress);
@@ -551,8 +747,10 @@
   }
 
   function syncPlayback(){
+    // Playback and the queue can both move while the sheet is open, so the
+    // item list is rebuilt from the pushed status rather than frozen at open.
     if (!isOpen()) return;
-    syncModes();
+    render();
   }
 
   window.relaytvPeers = {open, close, isOpen, refresh: load, syncPlayback};

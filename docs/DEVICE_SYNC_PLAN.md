@@ -187,17 +187,21 @@ disappears from the list looks like data loss.
 
 ### Mode selection
 
-Tapping a device performs **Copy**, the safe and common case. A segmented
-control at the top of the sheet switches mode, so no device row carries three
-buttons:
+A segmented control at the top of the sheet switches mode, so no device row
+carries several buttons. Tapping a device then acts immediately.
 
-- **Copy** — the sender keeps its queue. Default.
-- **Move** — the sender's queue clears only after confirmed receipt
-  (two-phase: clear on HTTP 200 only).
-- **Handoff** — "Continue on Bedroom TV": sends now-playing plus resume
-  position plus the queue, the receiver starts playing, the sender stops.
-  This is the flow with the most product value — walking from the couch to
-  the bedroom.
+Originally three modes (Copy / Move / Handoff, shipped in Phase 3). Phase 5
+reduced them to two — see "Phase 5 as shipped" for why:
+
+- **Send** — the full session plus the selected queue items go to the peer,
+  which starts playing; this device stops. Default. This is the flow with the
+  most product value — walking from the couch to the bedroom.
+- **Copy** — the same payload, but nothing here is torn down: both devices
+  play.
+
+Whether the session travels is a property of the selection, not the mode. With
+now-playing left out (or nothing playing), Send is the old Move and Copy is the
+old Copy, so no capability was lost.
 
 ### Feedback
 
@@ -223,6 +227,7 @@ remove), and this device's own name and discoverability toggle.
 | 2 | mDNS browse, adopt-from-nearby | **done** |
 | 3 | Per-item send, Move and Handoff modes | **done** |
 | 4 | Operator runbook, Home Assistant and companion-app notes | **done** |
+| 5 | Send/Copy modes, per-item selection in the sheet | **done** |
 
 Phase 4 added `docs/DEVICE_SYNC_OPERATIONS.md` (setup, discovery requirements,
 token handling, what travels, ordering guarantees, verification commands,
@@ -308,6 +313,45 @@ immediately rather than waiting for Phase 4.
 - Nine more cases in `tests/test_peers.py` and smoke coverage for the mode
   selector, Move emptying the sender, and per-item send.
 
+### Phase 5 as shipped
+
+Phase 5 is a UX correction, not new transport: no wire format changed, so a
+Phase 5 sender still transfers correctly to a device running a Phase 3 build.
+Only `/peers/*` — the sending half — moved.
+
+- **Two modes instead of three.** Copy/Move/Handoff asked the user to think
+  about payload *and* ownership at once, and Handoff appearing and disappearing
+  with playback made the control unstable. Send and Copy now differ only in what
+  happens on the sending device; what travels is decided by the selection below.
+  Nothing was lost: with now-playing deselected, Send is Move and Copy is the
+  old Copy.
+- **`indexes` on `POST /peers/{id}/send`** — sends a subset in queue order.
+  `index` stays for companion apps. A `move` of a subset removes only those
+  positions, highest first, so items held back keep their places.
+- **`indexes` and `keep_local` on `POST /peers/{id}/handoff`** — an absent body
+  still means "whole session, whole queue, stop here", so existing callers are
+  unaffected. `keep_local` skips the teardown entirely.
+- **Partial handoff goes idle only when the queue empties.** Removing just the
+  transferred items before clearing now-playing means this device advances into
+  whatever it kept, which is the same ordering rule Phase 3 established for the
+  opposite reason.
+- **Selection UI** — a "What to send" list below the device list holding the
+  session and each queue item, all selected by default, green filled circle for
+  in / hollow ring for out. Rows are keyed by URL rather than index, because
+  auto-next advancing while the sheet is open shifts every index and a selection
+  must not slide onto a different item. Live TV rows render disabled with the
+  reason, so an item that cannot travel says so before the send rather than
+  arriving as a `rejected` entry afterwards.
+- **The header carries the selection.** Tapping a device sends immediately, and
+  the list sits below the fold, so the subtitle always reads the current
+  selection (`Now playing + 3 items`) at the point of the tap. Device rows
+  disable when nothing is selected.
+- **Send pill gate widened** to `queue_length > 0 || playing || paused`;
+  otherwise a lone playing item with an empty queue had no entry point.
+- Four more cases in `tests/test_peers.py` (subset move, empty/out-of-range
+  selection, Copy leaving the session alone, partial handoff) and smoke coverage
+  for the picker defaults, toggling, All/None, and per-item scoping.
+
 ### Deviations from the original design
 
 - **Probe endpoint.** The plan used `GET /health` for reachability, but that
@@ -329,7 +373,9 @@ immediately rather than waiting for Phase 4.
   artwork and duration still only fill gaps, since preferring a peer's
   thumbnail would tie our artwork to that device staying reachable.
 - **Modes.** Phase 1 shipped `append`/`replace` server-side with a copy-only
-  sheet; Phase 3 added `move` and handoff behind the mode selector.
+  sheet; Phase 3 added `move` and handoff behind the mode selector; Phase 5
+  collapsed the selector to Send/Copy and moved "what travels" into an explicit
+  item selection.
 - **Discovery freshness.** The plan assumed a TTL'd cache fed by zeroconf
   callbacks. In practice a device that keeps advertising does not necessarily
   produce another callback before the TTL expires, so peers dropped off the list
@@ -371,6 +417,12 @@ immediately rather than waiting for Phase 4.
 - **One toast per handoff.** The receiver's queue import shares a code path with
   `/queue/import`, which raises an on-TV toast. A handoff raised two
   notifications for one action, so the import core took an `announce` flag.
+- **Two rooms playing the same thing is now a supported choice.** Phase 3
+  justified clearing the local session precisely so that would not happen by
+  accident. Phase 5's Copy makes it deliberate: same payload, same resume
+  position, no local teardown. The Phase 3 reasoning still holds for the
+  default — `keep_local` defaults to false, so an unqualified handoff still
+  moves the session rather than duplicating it.
 
 ## 9. Guardrails
 
