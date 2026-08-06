@@ -228,11 +228,12 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
       `${scenario.name}: mode selector is incomplete (${modes.join(',')})`,
     );
     await page.locator('[data-peer-mode="send"]').click();
-    await page.waitForFunction(() => document.querySelector('#peersTitle')?.textContent === 'Send to');
-    // The device list heads itself with the mode, next to the rows it acts on.
+    // The device list heads itself with the mode, next to the rows it acts on;
+    // the dialog title names the sheet and does not move.
+    await page.waitForFunction(() => document.querySelector('#peersListHead')?.textContent === 'Send to:');
     check(
-      (await page.locator('#peersListHead').textContent()) === 'Send to:',
-      `${scenario.name}: device list head did not follow the mode`,
+      (await page.locator('#peersTitle').textContent()) === 'Send to another device',
+      `${scenario.name}: dialog title is not static`,
     );
     await page.locator('[data-peer-mode="copy"]').click();
     await page.waitForFunction(() => document.querySelector('#peersListHead')?.textContent === 'Copy to:');

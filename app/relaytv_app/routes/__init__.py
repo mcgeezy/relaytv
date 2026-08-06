@@ -3486,7 +3486,7 @@ def ui():
       <div class="modal peersModal">
         <div class="modalTop">
           <div class="pmHeadText">
-            <div id="peersTitle" class="modalTitle">Send queue to</div>
+            <div id="peersTitle" class="modalTitle">Send to another device</div>
             <div id="peersSubtitle" class="pmSub">Nothing queued</div>
           </div>
           <div class="modalBtns">

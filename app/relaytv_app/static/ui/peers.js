@@ -160,14 +160,11 @@
   }
 
   function syncTitle(){
-    const label = state.mode === 'copy' ? 'Copy to' : 'Send to';
-    const el = $('peersTitle');
-    if (el) el.textContent = label;
-    // The device list and the item list are both lists in this sheet, so each
-    // one says what it is. This head also restates the mode next to the rows
-    // that act on it, which is where the tap happens.
+    // The dialog title stays static — it names the sheet, and doubles as the
+    // dialog's accessible name. The mode belongs on the list it acts on: that
+    // is where the tap happens, and on a phone the title is a scroll away.
     const head = $('peersListHead');
-    if (head) head.textContent = `${label}:`;
+    if (head) head.textContent = state.mode === 'copy' ? 'Copy to:' : 'Send to:';
   }
 
   function modeNote(){
