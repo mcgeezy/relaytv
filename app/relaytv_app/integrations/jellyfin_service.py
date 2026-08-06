@@ -288,12 +288,20 @@ def normalize_action(action: str | None, payload: dict | None) -> str:
         "unpause": "resume",
         "unpauseplayback": "resume",
         "resumeplayback": "resume",
-        # The single button on the Jellyfin remote; the client sends one
-        # command for both directions and expects the device to decide.
+        # Single buttons on the Jellyfin remote: the client sends one command
+        # for both directions and expects the device to decide which way.
         "playpause": "play_pause",
         "togglepause": "play_pause",
+        "togglemute": "toggle_mute",
+        "fastforward": "fast_forward",
     }
     return aliases.get(raw, raw)
+
+
+# Advertising PlayState authorizes the server to send any PlaystateCommand,
+# including the skip pair. These match Jellyfin's own client defaults.
+SKIP_BACK_SEC = 10.0
+SKIP_FORWARD_SEC = 30.0
 
 
 def playback_is_paused() -> bool:
@@ -307,6 +315,15 @@ def playback_is_paused() -> bool:
     if isinstance(props, dict) and props.get("pause") is not None:
         return bool(props.get("pause"))
     return str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
+
+
+def playback_is_muted() -> bool:
+    """Current mute state, for resolving a ToggleMute command."""
+    try:
+        props = player.mpv_get_many(["mute"])
+    except Exception:
+        return False
+    return bool(props.get("mute")) if isinstance(props, dict) else False
 
 
 def ticks_to_seconds(value: object) -> float | None:
@@ -3080,6 +3097,12 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
             emit_progress_hint()
             return out
 
+        if action in ("rewind", "fast_forward"):
+            delta = SKIP_FORWARD_SEC if action == "fast_forward" else -SKIP_BACK_SEC
+            out = {"ok": True, "action": action, "seconds": delta, "result": controls["seek_relative"](delta)}
+            emit_progress_hint()
+            return out
+
         if action == "next":
             out = {"ok": True, "action": "next", "result": controls["next"]()}
             emit_progress_hint()
@@ -3105,6 +3128,17 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
 
         if action == "unmute":
             out = {"ok": True, "action": "unmute", "result": controls["mute"](False)}
+            emit_progress_hint()
+            return out
+
+        if action == "toggle_mute":
+            muted = playback_is_muted()
+            out = {
+                "ok": True,
+                "action": "unmute" if muted else "mute",
+                "toggled_from": "toggle_mute",
+                "result": controls["mute"](not muted),
+            }
             emit_progress_hint()
             return out
 

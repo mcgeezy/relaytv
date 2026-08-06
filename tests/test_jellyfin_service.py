@@ -776,3 +776,97 @@ def test_play_method_follows_the_selected_stream_mode() -> None:
     assert jellyfin_service.play_method({"jellyfin_stream_mode": "transcode"}) == "Transcode"
     assert jellyfin_service.play_method({"jellyfin_stream_mode": "direct"}) == "DirectStream"
     assert jellyfin_service.play_method({}) == "DirectStream"
+
+
+# Every message the server is authorized to send by CAPABILITY_COMMANDS, in the
+# shape the control socket delivers it. Advertising PlayState authorizes the
+# whole PlaystateCommand family, not just the ones the web remote happens to
+# use today.
+ADVERTISED_TRAFFIC = [
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Pause"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Unpause"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "PlayPause"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Stop"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Seek", "SeekPositionTicks": 10_000_000}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "NextTrack"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "PreviousTrack"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Rewind"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "FastForward"}}),
+    ("SetVolume", {"MessageType": "GeneralCommand", "Data": {"Name": "SetVolume", "Arguments": {"Volume": "30"}}}),
+    ("Mute", {"MessageType": "GeneralCommand", "Data": {"Name": "Mute"}}),
+    ("Unmute", {"MessageType": "GeneralCommand", "Data": {"Name": "Unmute"}}),
+    ("ToggleMute", {"MessageType": "GeneralCommand", "Data": {"Name": "ToggleMute"}}),
+]
+
+
+@pytest.mark.parametrize("capability,message", ADVERTISED_TRAFFIC, ids=lambda v: v if isinstance(v, str) else "")
+def test_every_advertised_capability_reaches_a_handler(capability, message, monkeypatch) -> None:
+    """Advertising a command RelayTV cannot execute puts a dead button on the remote.
+
+    ToggleMute shipped exactly that way once: accepted by the server, 400 at the
+    ingress, silent on the TV.
+    """
+    from relaytv_app.integrations import jellyfin_ws
+
+    assert capability in jellyfin_receiver.CAPABILITY_COMMANDS
+
+    dispatched: list[str] = []
+    controls = {
+        name: (lambda *a, _n=name, **kw: dispatched.append(_n))
+        for name in ("stop", "pause", "resume", "seek", "seek_relative", "next", "previous", "set_volume", "mute")
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+    monkeypatch.setattr(jellyfin_service, "playback_is_paused", lambda: False)
+    monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: False)
+
+    routed = jellyfin_ws.normalize_message(message)
+    assert routed is not None, f"{capability}: socket dropped the message"
+    action, payload = routed
+
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(action=action or None, payload=payload), controls=controls, ui=_noop_ui()
+    )
+    assert out["ok"] is True
+    assert dispatched, f"{capability}: handled but dispatched nothing"
+
+
+def test_toggle_mute_flips_both_ways(monkeypatch) -> None:
+    calls: list[bool] = []
+    controls = {
+        "stop": lambda: None, "pause": lambda: None, "resume": lambda: None,
+        "seek": lambda sec: None, "seek_relative": lambda delta: None,
+        "next": lambda: None, "previous": lambda: None, "set_volume": lambda vol: None,
+        "mute": lambda muted: calls.append(muted),
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: False)
+    assert jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
+    )["action"] == "mute"
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: True)
+    assert jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
+    )["action"] == "unmute"
+
+    assert calls == [True, False]
+
+
+def test_skip_commands_seek_by_jellyfin_default_amounts(monkeypatch) -> None:
+    deltas: list[float] = []
+    controls = {
+        "stop": lambda: None, "pause": lambda: None, "resume": lambda: None,
+        "seek": lambda sec: None, "seek_relative": lambda delta: deltas.append(delta),
+        "next": lambda: None, "previous": lambda: None, "set_volume": lambda vol: None,
+        "mute": lambda muted: None,
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "Rewind"}), controls=controls, ui=_noop_ui())
+    jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "FastForward"}), controls=controls, ui=_noop_ui())
+
+    assert deltas == [-10.0, 30.0]

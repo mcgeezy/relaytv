@@ -2412,6 +2412,7 @@ def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
             "pause": lambda: pause(),
             "resume": lambda: resume(),
             "seek": lambda sec: seek_abs(SeekAbsReq(sec=float(sec))),
+            "seek_relative": lambda delta: _seek_relative_result(float(delta)),
             "next": lambda: next_track(),
             "previous": lambda: previous(),
             "set_volume": lambda vol: volume(VolumeReq(set=vol)),
