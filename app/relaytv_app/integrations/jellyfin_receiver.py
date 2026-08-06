@@ -666,6 +666,10 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
             pass
     with _LOCK:
         out = dict(_STATUS)
+    # The old socket is bound to the old server and token. Drop it here rather
+    # than waiting for the heartbeat, so the previous server cannot land one
+    # more playback command on this device after the switch.
+    _stop_control_socket()
     _start_worker()
     if _env_bool("RELAYTV_JELLYFIN_AUTO_REGISTER", False):
         try:
@@ -724,8 +728,12 @@ def set_device_identity(name: str) -> dict[str, object]:
         _STATUS["connected"] = False
         _STATUS["last_auth_ok"] = None
         _STATUS["last_register_ok"] = None
+        _STATUS["media_control_verified"] = None
     _catalog_cache_clear()
     _clear_register_retry_state()
+    # The socket was opened under the old device id; it has to be re-dialled
+    # under the new one or the rename never reaches the cast list.
+    _stop_control_socket()
     return status()
 
 

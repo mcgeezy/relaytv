@@ -148,15 +148,17 @@ def test_keepalive_interval_is_half_the_server_timeout() -> None:
     assert jellyfin_ws._keepalive_interval("nonsense") == pytest.approx(30.0)
 
 
-def test_read_loop_answers_force_keepalive(monkeypatch) -> None:
+def _session(deadline_sec=3.0):
+    """A session whose stop flag trips after a short deadline."""
+    s = jellyfin_ws._Session(("http://jf.lan:8096", "relaytv-den", "fp"))
+    stop_at = time.monotonic() + deadline_sec
+    s.stop.is_set = lambda: time.monotonic() > stop_at  # type: ignore[method-assign]
+    return s
+
+
+def test_read_loop_answers_force_keepalive() -> None:
     ws = FakeSocket([json.dumps({"MessageType": "ForceKeepAlive", "Data": 2})])
-    stop_at = time.monotonic() + 3.0
-
-    def _fake_is_set():
-        return time.monotonic() > stop_at
-
-    monkeypatch.setattr(jellyfin_ws._STOP, "is_set", _fake_is_set)
-    jellyfin_ws._read_loop(ws)
+    jellyfin_ws._read_loop(ws, _session())
 
     assert ws.sent, "no KeepAlive was ever sent"
     assert all(json.loads(m)["MessageType"] == "KeepAlive" for m in ws.sent)
@@ -170,7 +172,18 @@ def test_backoff_grows_and_is_capped(monkeypatch) -> None:
     assert jellyfin_ws.backoff_sec(50) == 60.0
 
 
-def test_a_slow_command_does_not_stall_keepalives(monkeypatch) -> None:
+def test_backoff_survives_a_very_long_outage() -> None:
+    """The failure count keeps climbing while a server stays down.
+
+    Capping only the result still evaluates 2**(n-1) first, which overflows the
+    float multiply around failure 1025 — roughly 17 hours in at the default
+    delay — and the OverflowError took the socket worker down with it.
+    """
+    for failures in (1024, 1025, 100_000, 2**31):
+        assert jellyfin_ws.backoff_sec(failures) == 60.0
+
+
+def test_a_slow_command_does_not_stall_keepalives() -> None:
     """Starting mpv takes seconds; the reader must not wait for it.
 
     If commands ran inline, this ForceKeepAlive would go unanswered for the
@@ -185,10 +198,9 @@ def test_a_slow_command_does_not_stall_keepalives(monkeypatch) -> None:
         return {"ok": True}
 
     jellyfin_receiver.register_command_sink(_slow_sink)
+    session = _session()
     try:
-        jellyfin_ws._COMMANDS = jellyfin_ws.queue.Queue(maxsize=8)
-        worker = threading.Thread(target=jellyfin_ws._command_worker, daemon=True)
-        jellyfin_ws._STOP.clear()
+        worker = threading.Thread(target=jellyfin_ws._command_worker, args=(session,), daemon=True)
         worker.start()
 
         ws = FakeSocket(
@@ -197,9 +209,7 @@ def test_a_slow_command_does_not_stall_keepalives(monkeypatch) -> None:
                 json.dumps({"MessageType": "Play", "Data": {"ItemIds": ["x"]}}),
             ]
         )
-        stop_at = time.monotonic() + 3.0
-        monkeypatch.setattr(jellyfin_ws._STOP, "is_set", lambda: time.monotonic() > stop_at)
-        jellyfin_ws._read_loop(ws)
+        jellyfin_ws._read_loop(ws, session)
 
         assert started.is_set(), "command never reached the worker"
         assert ws.sent, "keepalive was starved by the in-flight command"
@@ -208,11 +218,12 @@ def test_a_slow_command_does_not_stall_keepalives(monkeypatch) -> None:
         jellyfin_receiver.register_command_sink(None)
 
 
-def test_command_backlog_is_bounded(monkeypatch) -> None:
+def test_command_backlog_is_bounded() -> None:
     """A burst while playback is starting is dropped, not replayed later."""
-    jellyfin_ws._COMMANDS = jellyfin_ws.queue.Queue(maxsize=2)
+    session = jellyfin_ws._Session(("u", "d", "f"))
+    session.commands = jellyfin_ws.queue.Queue(maxsize=2)
     for _ in range(5):
-        jellyfin_ws._submit("play", {})
+        jellyfin_ws._submit(session, "play", {})
     assert jellyfin_ws.status()["commands_dropped"] == 3
 
 
@@ -317,3 +328,163 @@ def test_ensure_registration_reregisters_after_invalidation(monkeypatch) -> None
     jellyfin_receiver.invalidate_registration("socket_connected")
     jellyfin_receiver._ensure_registration()
     assert calls == [1]
+
+
+# --- session lifetime ------------------------------------------------------
+
+
+def test_proxy_is_only_passed_when_the_library_accepts_it() -> None:
+    """connect() gained proxy in websockets 15.0.
+
+    On 13.x and 14.x passing it is a TypeError on every single connection, so
+    a build that lands an older websockets must degrade, not fail closed.
+    """
+    import inspect as _inspect
+
+    from websockets.sync.client import connect
+
+    supported = "proxy" in _inspect.signature(connect).parameters
+    assert jellyfin_ws._PROXY_KWARG_SUPPORTED is supported
+
+
+def test_connect_omits_proxy_on_an_older_websockets(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class _Conn:
+        def recv(self, timeout=None):
+            raise TimeoutError
+
+        def send(self, message):
+            pass
+
+        def close(self):
+            pass
+
+    def _fake_connect(url, **kwargs):
+        if "proxy" in kwargs:
+            raise TypeError("create_connection() got an unexpected keyword argument 'proxy'")
+        seen.update(kwargs)
+        return _Conn()
+
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", _fake_connect)
+    monkeypatch.setattr(jellyfin_ws, "_PROXY_KWARG_SUPPORTED", False)
+    monkeypatch.setattr(
+        jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
+    )
+    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": None)
+
+    session = _session(deadline_sec=0.0)
+    jellyfin_ws._connect_once(session)
+
+    assert "proxy" not in seen
+    assert seen["max_size"] == 2**20
+
+
+def test_each_session_owns_its_stop_flag() -> None:
+    """A reader parked in recv() can outlive stop().
+
+    With one module-level event, the next start would clear the flag out from
+    under the survivor and it would carry on dispatching from a server nobody
+    is talking to any more. A generation's flag can only ever be set.
+    """
+    first = jellyfin_ws._Session(("u", "d", "f1"))
+    first.stop.set()
+    second = jellyfin_ws._Session(("u", "d", "f2"))
+
+    assert second.stop.is_set() is False
+    assert first.stop.is_set() is True, "starting a new session un-stopped the old one"
+
+
+def test_stop_closes_the_live_connection() -> None:
+    """Closing is what makes stop() prompt; joining alone waits out recv."""
+    closed = threading.Event()
+
+    class _Conn:
+        def close(self):
+            closed.set()
+
+    session = jellyfin_ws._Session(("u", "d", "f"))
+    session.ws = _Conn()
+    jellyfin_ws._CURRENT = session
+
+    jellyfin_ws.stop()
+
+    assert closed.is_set()
+    assert session.stop.is_set()
+    assert jellyfin_ws._CURRENT is None
+
+
+def test_a_stopped_session_drops_queued_commands() -> None:
+    """Commands queued before a server switch belong to the old server."""
+    ran: list[str] = []
+    jellyfin_receiver.register_command_sink(lambda action, payload: ran.append(action))
+    try:
+        session = jellyfin_ws._Session(("u", "d", "f"))
+        session.commands.put_nowait(("play", {}))
+        session.stop.set()
+        jellyfin_ws._command_worker(session)
+        assert ran == []
+    finally:
+        jellyfin_receiver.register_command_sink(None)
+
+
+def test_identity_change_restarts_the_socket(monkeypatch) -> None:
+    """Switching server or credentials must not leave the old socket attached.
+
+    ensure_running() used to return on "thread is alive", so the previous
+    Jellyfin server kept a live command channel to this device while the new
+    session had nothing listening.
+    """
+    identity = {"value": ("http://old.lan:8096", "relaytv-den", "fp-old")}
+    started: list[tuple[str, str, str]] = []
+    stopped: list[int] = []
+
+    monkeypatch.setattr(jellyfin_ws, "_identity", lambda: identity["value"])
+    monkeypatch.setattr(jellyfin_ws, "_start", lambda ident: started.append(ident))
+    monkeypatch.setattr(jellyfin_ws, "stop", lambda: stopped.append(1))
+
+    jellyfin_ws.ensure_running()
+    assert started == [("http://old.lan:8096", "relaytv-den", "fp-old")]
+
+    # Pretend that session is now live.
+    live = jellyfin_ws._Session(identity["value"])
+    live.reader = threading.Thread(target=lambda: time.sleep(2.0), daemon=True)
+    live.reader.start()
+    jellyfin_ws._CURRENT = live
+    try:
+        jellyfin_ws.ensure_running()
+        assert stopped == [] and len(started) == 1, "restarted an unchanged session"
+
+        identity["value"] = ("http://new.lan:8096", "relaytv-den", "fp-new")
+        jellyfin_ws.ensure_running()
+        assert stopped == [1], "old socket was left attached to the old server"
+        assert started[-1] == ("http://new.lan:8096", "relaytv-den", "fp-new")
+    finally:
+        jellyfin_ws._CURRENT = None
+
+
+def test_identity_fingerprints_the_token() -> None:
+    """The bound identity is compared, never displayed — keep the token out."""
+    from relaytv_app.integrations import jellyfin_ws as mod
+
+    def _fake_status():
+        return {"enabled": True, "running": True, "server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
+
+    real_status, real_token, real_sink = (
+        jellyfin_receiver.status,
+        jellyfin_receiver.active_token,
+        jellyfin_receiver.command_sink_registered,
+    )
+    jellyfin_receiver.status = _fake_status
+    jellyfin_receiver.active_token = lambda: "super-secret-token"
+    jellyfin_receiver.command_sink_registered = lambda: True
+    try:
+        identity = mod._identity()
+    finally:
+        jellyfin_receiver.status = real_status
+        jellyfin_receiver.active_token = real_token
+        jellyfin_receiver.command_sink_registered = real_sink
+
+    assert identity is not None
+    assert "super-secret-token" not in "".join(identity)

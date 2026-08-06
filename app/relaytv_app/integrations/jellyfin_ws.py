@@ -13,6 +13,8 @@ package registers. No playback logic lives here.
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import queue
 import threading
@@ -31,6 +33,24 @@ except Exception:  # pragma: no cover - dependency may be optional in some envs
 
 logger = get_logger("jellyfin_ws")
 
+
+def _supports_proxy_kwarg() -> bool:
+    """Whether this websockets build accepts ``proxy``.
+
+    Added in websockets 15.0. pyproject requires that floor, but a distro or
+    transitive install can still land 13/14, where passing it is a TypeError on
+    every single connection. Feature-detect rather than fail closed.
+    """
+    if _ws_connect is None:
+        return False
+    try:
+        return "proxy" in inspect.signature(_ws_connect).parameters
+    except Exception:
+        return False
+
+
+_PROXY_KWARG_SUPPORTED = _supports_proxy_kwarg()
+
 # The server tells us its keepalive period on connect (``ForceKeepAlive``);
 # this is only what we assume until it does.
 _DEFAULT_KEEPALIVE_SEC = 60.0
@@ -41,10 +61,29 @@ _DEFAULT_KEEPALIVE_SEC = 60.0
 _COMMAND_QUEUE_MAX = 32
 
 _LOCK = threading.Lock()
-_THREAD: threading.Thread | None = None
-_WORKER: threading.Thread | None = None
-_STOP = threading.Event()
-_COMMANDS: queue.Queue | None = None
+
+
+class _Session:
+    """One generation of the socket: its threads, its queue, its own stop flag.
+
+    The stop flag must not be shared between generations. ``stop()`` cannot
+    always join a reader that is parked in ``recv``, so an old thread can
+    outlive the call; with a module-level event, the next ``ensure_running``
+    would clear the flag out from under it and the zombie would carry on
+    dispatching commands from a server nobody is talking to any more. An event
+    owned by the generation can only ever be set, never un-set.
+    """
+
+    def __init__(self, bound: tuple[str, str, str]):
+        self.stop = threading.Event()
+        self.commands: queue.Queue = queue.Queue(maxsize=_COMMAND_QUEUE_MAX)
+        self.bound = bound
+        self.ws = None
+        self.reader: threading.Thread | None = None
+        self.worker: threading.Thread | None = None
+
+
+_CURRENT: _Session | None = None
 _STATE: dict[str, object] = {
     "connected": False,
     "last_connect_ts": None,
@@ -161,15 +200,16 @@ def _keepalive_interval(force_keepalive_data: object) -> float:
 def backoff_sec(failures: int) -> float:
     base = max(0.5, _env_float("RELAYTV_JELLYFIN_WS_RETRY_BASE_SEC", 3.0))
     cap = max(base, _env_float("RELAYTV_JELLYFIN_WS_RETRY_MAX_SEC", 60.0))
-    return min(cap, base * (2 ** max(0, int(failures) - 1)))
+    # Clamp the exponent, not just the result. A server that stays down keeps
+    # incrementing the failure count, and 2**1024 overflows the float multiply
+    # long before the cap is applied — about 17 hours in at the default delay.
+    steps = max(0, min(int(failures) - 1, 32))
+    return min(cap, base * (2**steps))
 
 
-def _submit(action: str, payload: dict[str, object]) -> None:
-    q = _COMMANDS
-    if q is None:
-        return
+def _submit(session: _Session, action: str, payload: dict[str, object]) -> None:
     try:
-        q.put_nowait((action, payload))
+        session.commands.put_nowait((action, payload))
         with _LOCK:
             _STATE["commands_received"] = int(_STATE.get("commands_received") or 0) + 1
     except queue.Full:
@@ -178,21 +218,21 @@ def _submit(action: str, payload: dict[str, object]) -> None:
         logger.warning("jellyfin_ws_command_dropped backlog_full action=%s", action or "playstate")
 
 
-def _command_worker() -> None:
+def _command_worker(session: _Session) -> None:
     """Run commands off the reader thread.
 
     Starting mpv takes several seconds (6-12s on a Pi). Executing a Play on the
     reader would stall keepalives long enough for the server to drop the
     session mid-handoff, so the reader only enqueues.
     """
-    while not _STOP.is_set():
-        q = _COMMANDS
-        if q is None:
-            _STOP.wait(0.2)
-            continue
+    while not session.stop.is_set():
         try:
-            item = q.get(timeout=0.5)
+            item = session.commands.get(timeout=0.5)
         except queue.Empty:
+            continue
+        if session.stop.is_set():
+            # Stopped while this was queued: the command belongs to a session
+            # that is over, and running it now would act on the wrong server.
             continue
         action, payload = item
         try:
@@ -202,10 +242,10 @@ def _command_worker() -> None:
             logger.warning("jellyfin_ws_command_failed action=%s err=%s", action or "playstate", jellyfin_receiver._sanitize_error_text(e))
 
 
-def _read_loop(ws) -> None:
+def _read_loop(ws, session: _Session) -> None:
     keepalive = _DEFAULT_KEEPALIVE_SEC / 2.0
     next_keepalive = time.monotonic() + keepalive
-    while not _STOP.is_set():
+    while not session.stop.is_set():
         timeout = max(0.2, min(5.0, next_keepalive - time.monotonic()))
         try:
             raw = ws.recv(timeout=timeout)
@@ -225,13 +265,13 @@ def _read_loop(ws) -> None:
             else:
                 routed = normalize_message(envelope)
                 if routed is not None:
-                    _submit(routed[0], routed[1])
+                    _submit(session, routed[0], routed[1])
         if time.monotonic() >= next_keepalive:
             ws.send(json.dumps({"MessageType": "KeepAlive"}))
             next_keepalive = time.monotonic() + keepalive
 
 
-def _connect_once() -> None:
+def _connect_once(session: _Session) -> None:
     st = jellyfin_receiver.status()
     url = socket_url(
         server_url=str(st.get("server_url") or ""),
@@ -240,10 +280,17 @@ def _connect_once() -> None:
     )
     if not url:
         raise RuntimeError("jellyfin socket not configured")
-    open_timeout = _env_float("RELAYTV_JELLYFIN_WS_CONNECT_TIMEOUT_SEC", 8.0)
-    # proxy=None: websockets 15+ honours HTTP_PROXY by default, which would send
-    # a LAN media-server connection through an unrelated proxy.
-    with _ws_connect(url, open_timeout=open_timeout, proxy=None, max_size=2**20) as ws:
+    kwargs: dict[str, object] = {
+        "open_timeout": _env_float("RELAYTV_JELLYFIN_WS_CONNECT_TIMEOUT_SEC", 8.0),
+        "max_size": 2**20,
+    }
+    if _PROXY_KWARG_SUPPORTED:
+        # websockets 15+ honours HTTP_PROXY by default, which would route a LAN
+        # media-server connection through an unrelated proxy.
+        kwargs["proxy"] = None
+    ws = _ws_connect(url, **kwargs)
+    session.ws = ws
+    try:
         with _LOCK:
             _STATE["connected"] = True
             _STATE["last_connect_ts"] = int(time.time())
@@ -254,21 +301,25 @@ def _connect_once() -> None:
         # rather than trusting a registration that succeeded against the
         # server instance that just went away.
         jellyfin_receiver.invalidate_registration("socket_connected")
+        _read_loop(ws, session)
+    finally:
+        session.ws = None
+        with _LOCK:
+            _STATE["connected"] = False
         try:
-            _read_loop(ws)
-        finally:
-            with _LOCK:
-                _STATE["connected"] = False
+            ws.close()
+        except Exception:
+            pass
 
 
-def _socket_worker() -> None:
+def _socket_worker(session: _Session) -> None:
     failures = 0
-    while not _STOP.is_set():
+    while not session.stop.is_set():
         if not _ready():
-            _STOP.wait(2.0)
+            session.stop.wait(2.0)
             continue
         try:
-            _connect_once()
+            _connect_once(session)
             failures = 0
         except Exception as e:
             failures += 1
@@ -276,52 +327,101 @@ def _socket_worker() -> None:
             with _LOCK:
                 _STATE["reconnects"] = int(_STATE.get("reconnects") or 0) + 1
             logger.warning("jellyfin_ws_disconnected failures=%d err=%s", failures, jellyfin_receiver._sanitize_error_text(e))
-        if _STOP.is_set():
+        if session.stop.is_set():
             break
-        _STOP.wait(backoff_sec(failures) if failures else 1.0)
+        try:
+            delay = backoff_sec(failures) if failures else 1.0
+        except Exception:
+            delay = 60.0
+        session.stop.wait(delay)
 
 
 def _ready() -> bool:
     """Only dial once there is a session worth attaching a socket to."""
+    return bool(_identity())
+
+
+def _identity() -> tuple[str, str, str] | None:
+    """What this device would connect as right now, or None if it cannot.
+
+    The token is fingerprinted rather than kept: this value is only ever
+    compared, and a secret that is never stored cannot leak from a comparison.
+    """
     st = jellyfin_receiver.status()
     if not bool(st.get("enabled")) or not bool(st.get("running")):
-        return False
-    if not str(st.get("server_url") or "").strip():
-        return False
-    if not str(st.get("device_id") or "").strip():
-        return False
-    if not jellyfin_receiver.active_token():
-        return False
-    return jellyfin_receiver.command_sink_registered()
+        return None
+    server_url = str(st.get("server_url") or "").strip()
+    device_id = str(st.get("device_id") or "").strip()
+    token = jellyfin_receiver.active_token()
+    if not server_url or not device_id or not token:
+        return None
+    if not jellyfin_receiver.command_sink_registered():
+        return None
+    fingerprint = hashlib.sha256(token.encode("utf-8", "ignore")).hexdigest()[:16]
+    return (server_url, device_id, fingerprint)
 
 
 def ensure_running() -> None:
-    """Start the socket threads if they should be up and are not."""
-    global _THREAD, _WORKER, _COMMANDS
+    """Start the socket if it should be up, or restart it if it is stale.
+
+    A socket is bound to the server, device identity, and token it dialled
+    with. Changing any of them in settings leaves the old socket attached to
+    the old server, still receiving playback commands, while the new session
+    has nothing listening — so drift is a restart, not a no-op.
+    """
     if not enabled() or _ws_connect is None:
         return
-    if not _ready():
+    identity = _identity()
+    if identity is None:
         return
     with _LOCK:
-        if _THREAD is not None and _THREAD.is_alive():
+        session = _CURRENT
+        alive = session is not None and session.reader is not None and session.reader.is_alive()
+        if alive and session.bound == identity:
             return
-        _STOP.clear()
-        _COMMANDS = queue.Queue(maxsize=_COMMAND_QUEUE_MAX)
-        _WORKER = threading.Thread(target=_command_worker, daemon=True, name="relaytv-jellyfin-ws-commands")
-        _WORKER.start()
-        _THREAD = threading.Thread(target=_socket_worker, daemon=True, name="relaytv-jellyfin-ws")
-        _THREAD.start()
+        stale = alive
+    if stale:
+        logger.info("jellyfin_ws_restart reason=identity_changed")
+        stop()
+    _start(identity)
+
+
+def _start(identity: tuple[str, str, str]) -> None:
+    global _CURRENT
+    with _LOCK:
+        if _CURRENT is not None and _CURRENT.reader is not None and _CURRENT.reader.is_alive():
+            return
+        session = _Session(identity)
+        session.worker = threading.Thread(
+            target=_command_worker, args=(session,), daemon=True, name="relaytv-jellyfin-ws-commands"
+        )
+        session.reader = threading.Thread(
+            target=_socket_worker, args=(session,), daemon=True, name="relaytv-jellyfin-ws"
+        )
+        _CURRENT = session
+    session.worker.start()
+    session.reader.start()
 
 
 def stop() -> None:
-    global _THREAD, _WORKER, _COMMANDS
-    _STOP.set()
+    global _CURRENT
     with _LOCK:
-        thread, worker = _THREAD, _WORKER
-        _THREAD = None
-        _WORKER = None
-        _COMMANDS = None
-    for t in (thread, worker):
+        session = _CURRENT
+        _CURRENT = None
+    if session is None:
+        _reset_state()
+        return
+    session.stop.set()
+    # Closing the live connection is what makes this prompt: a reader parked in
+    # recv() would otherwise sit there for the rest of its timeout, and joining
+    # past that would stall every caller of stop().
+    ws = session.ws
+    if ws is not None:
+        try:
+            ws.close()
+        except Exception:
+            pass
+    for t in (session.reader, session.worker):
         if t is not None and t.is_alive():
-            t.join(timeout=1.0)
+            t.join(timeout=2.0)
     _reset_state()
