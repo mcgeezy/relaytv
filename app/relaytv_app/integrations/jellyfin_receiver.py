@@ -46,9 +46,14 @@ _STATUS: dict[str, object] = {
     "last_stopped_ts": None,
     "last_stopped_ok": None,
     "last_stopped_error": None,
+    "last_playing_ts": None,
+    "last_playing_ok": None,
+    "last_playing_error": None,
     "register_retry_failures": 0,
     "next_register_retry_ts": None,
     "last_register_backoff_sec": 0.0,
+    # None until a session readback has been attempted; see _verify_registration.
+    "media_control_verified": None,
     "auth_user_configured": False,
     "authenticated": False,
     "auth_user": "",
@@ -84,6 +89,7 @@ _AUTH_SESSION_ID: str = ""
 _STOP_EVENT = threading.Event()
 _THREAD: threading.Thread | None = None
 _PROGRESS_PROVIDER = None
+_COMMAND_SINK = None
 _REGISTER_RETRY_FAILURES = 0
 _NEXT_REGISTER_RETRY_TS = 0.0
 _CATALOG_CACHE_LOCK = threading.Lock()
@@ -356,6 +362,7 @@ def start() -> None:
         _STATUS["register_retry_failures"] = 0
         _STATUS["next_register_retry_ts"] = None
         _STATUS["last_register_backoff_sec"] = 0.0
+        _STATUS["media_control_verified"] = None
         _REGISTER_RETRY_FAILURES = 0
         _NEXT_REGISTER_RETRY_TS = 0.0
         _LAST_STOPPED_SIGNATURE = ""
@@ -371,6 +378,7 @@ def start() -> None:
 
 def stop() -> None:
     _stop_worker()
+    _stop_control_socket()
     with _LOCK:
         _STATUS["running"] = False
         _STATUS["connected"] = False
@@ -467,7 +475,27 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
 
 def status() -> dict[str, object]:
     with _LOCK:
-        return _status_with_sync_health(_STATUS)
+        out = _status_with_sync_health(_STATUS)
+    # Merged outside the lock: the socket module reads this status, so holding
+    # ours while calling into it would invite a deadlock later.
+    return _with_control_socket_status(out)
+
+
+def _with_control_socket_status(out: dict[str, object]) -> dict[str, object]:
+    ws = _control_socket_status()
+    out["ws_enabled"] = bool(ws.get("enabled")) if ws else False
+    out["ws_available"] = bool(ws.get("available")) if ws else False
+    out["ws_connected"] = bool(ws.get("connected")) if ws else False
+    out["ws_last_connect_ts"] = ws.get("last_connect_ts") if ws else None
+    out["ws_last_error"] = ws.get("last_error") if ws else None
+    out["ws_reconnects"] = int(ws.get("reconnects") or 0) if ws else 0
+    out["ws_keepalive_sec"] = ws.get("keepalive_sec") if ws else None
+    out["ws_commands_received"] = int(ws.get("commands_received") or 0) if ws else 0
+    out["ws_commands_dropped"] = int(ws.get("commands_dropped") or 0) if ws else 0
+    # The one field that answers "can I cast to this device?": the server only
+    # offers a session that advertises media control *and* holds a live socket.
+    out["cast_target_ready"] = bool(out.get("media_control_verified")) and bool(out.get("ws_connected"))
+    return out
 
 
 def detect_server_type(server_url: str, *, timeout_sec: float = 3.0) -> dict[str, object]:
@@ -621,6 +649,7 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
         _STATUS["register_retry_failures"] = 0
         _STATUS["next_register_retry_ts"] = None
         _STATUS["last_register_backoff_sec"] = 0.0
+        _STATUS["media_control_verified"] = None
         _STATUS["last_stopped_ts"] = None
         _STATUS["last_stopped_ok"] = None
         _STATUS["last_stopped_error"] = None
@@ -649,6 +678,7 @@ def disconnect() -> dict[str, object]:
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     _stop_worker()
+    _stop_control_socket()
     with _LOCK:
         _STATUS["running"] = False
         _STATUS["connected"] = False
@@ -660,6 +690,7 @@ def disconnect() -> dict[str, object]:
         _STATUS["register_retry_failures"] = 0
         _STATUS["next_register_retry_ts"] = None
         _STATUS["last_register_backoff_sec"] = 0.0
+        _STATUS["media_control_verified"] = None
         _ACCESS_TOKEN = ""
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
@@ -2335,6 +2366,29 @@ def register_progress_provider(fn) -> None:
     _PROGRESS_PROVIDER = fn
 
 
+def register_command_sink(fn) -> None:
+    """Register the callable that executes an inbound Jellyfin command.
+
+    Same seam as ``register_progress_provider``: this module stays transport
+    and never reaches into the routes package, so the socket hands normalized
+    commands back out to whoever owns playback control.
+    """
+    global _COMMAND_SINK
+    _COMMAND_SINK = fn
+
+
+def dispatch_command(action: str, payload: dict[str, object]) -> object:
+    """Run a socket-sourced command through the registered ingress."""
+    sink = _COMMAND_SINK
+    if sink is None:
+        raise RuntimeError("no jellyfin command sink registered")
+    return sink(action, payload)
+
+
+def command_sink_registered() -> bool:
+    return _COMMAND_SINK is not None
+
+
 def _build_url(path: str) -> str:
     st = status()
     base = str(st.get("server_url") or "").strip().rstrip("/")
@@ -2490,6 +2544,76 @@ def authenticate_once() -> dict[str, object]:
         return {"ok": False, "reason": "auth_failed", "error": msg}
 
 
+"""Commands advertised to the server, as ``GeneralCommandType`` members.
+
+Jellyfin has two disjoint command enums and rejects a body that mixes them.
+``Stop``/``Pause``/``Unpause``/``Seek``/``NextTrack``/``PreviousTrack`` are
+``PlaystateCommand`` values and arrive over the socket as a single ``Playstate``
+message, which ``PlayState`` here covers; listing them individually is a 400.
+
+Only commands RelayTV actually executes belong here. Advertising one without a
+handler puts a button on every Jellyfin remote in the house that does nothing.
+"""
+CAPABILITY_COMMANDS = (
+    "PlayState",
+    "Play",
+    "PlayNext",
+    "SetVolume",
+    "Mute",
+    "Unmute",
+    "ToggleMute",
+)
+
+CAPABILITY_MEDIA_TYPES = ("Video", "Audio")
+
+
+def capabilities_payload() -> dict[str, object]:
+    """The ``ClientCapabilitiesDto`` body, posted unwrapped.
+
+    Wrapping it as ``{"Capabilities": {...}}`` is accepted with a 204 and then
+    bound as an all-default DTO, which silently *erases* the session's
+    capabilities. Registration looked healthy for as long as that was the first
+    shape tried.
+    """
+    return {
+        "PlayableMediaTypes": list(CAPABILITY_MEDIA_TYPES),
+        "SupportedCommands": list(CAPABILITY_COMMANDS),
+        "SupportsMediaControl": True,
+        "SupportsPersistentIdentifier": True,
+    }
+
+
+def _capabilities_query(device_id: str) -> str:
+    q: list[tuple[str, str]] = [("id", device_id)]
+    q.extend(("playableMediaTypes", value) for value in CAPABILITY_MEDIA_TYPES)
+    q.extend(("supportedCommands", value) for value in CAPABILITY_COMMANDS)
+    q.append(("supportsMediaControl", "true"))
+    q.append(("supportsPersistentIdentifier", "true"))
+    return _urlparse.urlencode(q, doseq=True)
+
+
+def read_session_capabilities(device_id: str = "", *, timeout: float = 3.0) -> dict[str, object]:
+    """Ask the server what it recorded for this device's session.
+
+    A 204 from the capabilities POST is not evidence: the server returns one
+    whether or not the body bound to anything. Only the session readback tells
+    us media control is really advertised, so registration asserts on this.
+    """
+    did = str(device_id or status().get("device_id") or "").strip()
+    if not did:
+        return {}
+    url = _build_url(f"/Sessions?deviceId={_urlparse.quote(did)}")
+    if not url:
+        return {}
+    rows = _get_json(url, timeout=timeout, token=_active_token())
+    if not isinstance(rows, list):
+        return {}
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("DeviceId") or "").strip() == did:
+            return row
+    return {}
+
+
 def register_receiver_once() -> dict[str, object]:
     st = status()
     if not bool(st.get("enabled")) or not bool(st.get("running")):
@@ -2497,69 +2621,53 @@ def register_receiver_once() -> dict[str, object]:
     base = str(st.get("server_url") or "").strip().rstrip("/")
     if not base:
         return {"ok": False, "reason": "no_server_url"}
-    payload_pascal = {
-        "PlayableMediaTypes": ["Video", "Audio"],
-        "SupportedCommands": ["Play", "Stop", "Pause", "Unpause", "Seek", "NextTrack", "PreviousTrack"],
-        "SupportsMediaControl": True,
-        "SupportsPersistentIdentifier": True,
-    }
-    payload_camel = {
-        "playableMediaTypes": ["Video", "Audio"],
-        "supportedCommands": ["Play", "Stop", "Pause", "Unpause", "Seek", "NextTrack", "PreviousTrack"],
-        "supportsMediaControl": True,
-        "supportsPersistentIdentifier": True,
-    }
     did = str(st.get("device_id") or "").strip()
-    q = [
-        ("id", did),
-        ("playableMediaTypes", "Video"),
-        ("playableMediaTypes", "Audio"),
-        ("supportedCommands", "Play"),
-        ("supportedCommands", "Stop"),
-        ("supportedCommands", "Pause"),
-        ("supportedCommands", "Unpause"),
-        ("supportedCommands", "Seek"),
-        ("supportedCommands", "NextTrack"),
-        ("supportedCommands", "PreviousTrack"),
-        ("supportsMediaControl", "true"),
-        ("supportsPersistentIdentifier", "true"),
-    ]
-    cap_qs = _urlparse.urlencode(q, doseq=True)
+    payload = capabilities_payload()
+    # The query-string form is what older Emby builds accept; it stays as a
+    # fallback so an Emby server that rejects the DTO body still registers.
     candidates: list[tuple[str, str, dict | None]] = [
-        ("full_wrapped", f"{base}/Sessions/Capabilities/Full", {"Capabilities": payload_pascal}),
-        ("full_wrapped_with_id", f"{base}/Sessions/Capabilities/Full?id={_urlparse.quote(did)}", {"Capabilities": payload_pascal}),
-        ("full_pascal", f"{base}/Sessions/Capabilities/Full", payload_pascal),
-        ("full_camel", f"{base}/Sessions/Capabilities/Full", payload_camel),
-        ("caps_query", f"{base}/Sessions/Capabilities?{cap_qs}", None),
+        ("full", f"{base}/Sessions/Capabilities/Full", payload),
+        ("caps_query", f"{base}/Sessions/Capabilities?{_capabilities_query(did)}", None),
     ]
     timeout = float(os.getenv("RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC", "3"))
     last_err = "register_failed"
     last_name = ""
     last_url = ""
     try:
-        for name, url, payload in candidates:
+        for name, url, body in candidates:
             try:
-                if payload is None:
+                if body is None:
                     _post_no_body(url, timeout=timeout)
                 else:
-                    _post_json(url, payload, timeout=timeout)
-                with _LOCK:
-                    _STATUS["connected"] = True
-                    _STATUS["last_register_ts"] = int(time.time())
-                    _STATUS["last_register_ok"] = True
-                    _STATUS["last_register_error"] = None
-                    _STATUS["last_error"] = None
-                return {"ok": True, "url": url, "method": name}
+                    _post_json(url, body, timeout=timeout)
             except Exception as e:
                 last_err = _format_http_error(e)
                 last_name = name
                 last_url = url
+                continue
+
+            verified = _verify_registration(did, timeout=timeout)
+            if verified is False:
+                last_err = "server did not record media control for this session"
+                last_name = name
+                last_url = url
+                continue
+
+            with _LOCK:
+                _STATUS["connected"] = True
+                _STATUS["last_register_ts"] = int(time.time())
+                _STATUS["last_register_ok"] = True
+                _STATUS["last_register_error"] = None
+                _STATUS["last_error"] = None
+                _STATUS["media_control_verified"] = verified
+            return {"ok": True, "url": url, "method": name, "verified": verified}
         with _LOCK:
             _STATUS["connected"] = False
             _STATUS["last_register_ts"] = int(time.time())
             _STATUS["last_register_ok"] = False
             _STATUS["last_register_error"] = f"{last_name}: {last_err}"
             _STATUS["last_error"] = f"{last_name}: {last_err}"
+            _STATUS["media_control_verified"] = False
         return {"ok": False, "reason": "register_failed", "error": f"{last_name}: {last_err}", "url": last_url}
     except Exception as e:
         msg = _format_http_error(e)
@@ -2570,6 +2678,22 @@ def register_receiver_once() -> dict[str, object]:
             _STATUS["last_register_error"] = msg
             _STATUS["last_error"] = msg
         return {"ok": False, "reason": "register_failed", "error": msg}
+
+
+def _verify_registration(device_id: str, *, timeout: float) -> bool | None:
+    """True if the server advertises media control, False if it does not.
+
+    ``None`` means the readback itself failed — a server that hides ``/Sessions``
+    behind a proxy or an Emby build shaped differently should not be treated as
+    a registration failure, so the caller accepts the POST on its own terms.
+    """
+    try:
+        session = read_session_capabilities(device_id, timeout=timeout)
+    except Exception:
+        return None
+    if not session:
+        return None
+    return bool(session.get("SupportsMediaControl"))
 
 
 def _register_retry_enabled() -> bool:
@@ -2630,6 +2754,38 @@ def _ensure_registration(now_ts: float | None = None) -> None:
     _schedule_register_retry(now_val, failures, delay)
 
 
+def _ensure_control_socket() -> None:
+    """Keep the cast-target socket up. Imported late to avoid an import cycle."""
+    try:
+        from . import jellyfin_ws
+    except Exception:
+        return
+    try:
+        jellyfin_ws.ensure_running()
+    except Exception:
+        pass
+
+
+def _stop_control_socket() -> None:
+    try:
+        from . import jellyfin_ws
+    except Exception:
+        return
+    try:
+        jellyfin_ws.stop()
+    except Exception:
+        pass
+
+
+def _control_socket_status() -> dict[str, object]:
+    try:
+        from . import jellyfin_ws
+
+        return jellyfin_ws.status()
+    except Exception:
+        return {}
+
+
 def _ensure_authentication() -> None:
     if not runtime_config.snapshot().flag("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
         return
@@ -2641,6 +2797,39 @@ def _ensure_authentication() -> None:
     if not bool(st.get("auth_user_configured")):
         return
     authenticate_once()
+
+
+def send_playback_start_once(payload: dict | None = None) -> dict[str, object]:
+    """Report playback start to ``/Sessions/Playing``.
+
+    Progress alone eventually populates the session, but only on the next
+    heartbeat tick. Announcing the start means the phone that just cast shows
+    the item as playing straight away instead of an empty remote for a few
+    seconds.
+    """
+    st = status()
+    if not bool(st.get("enabled")) or not bool(st.get("running")):
+        return {"ok": False, "reason": "disabled"}
+    body = payload if isinstance(payload, dict) else {}
+    if not body:
+        return {"ok": False, "reason": "no_payload"}
+    url = _build_url(os.getenv("RELAYTV_JELLYFIN_PLAYING_PATH", "/Sessions/Playing"))
+    if not url:
+        return {"ok": False, "reason": "no_server_url"}
+    try:
+        _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")))
+    except Exception as e:
+        msg = _format_http_error(e)
+        with _LOCK:
+            _STATUS["last_playing_ts"] = int(time.time())
+            _STATUS["last_playing_ok"] = False
+            _STATUS["last_playing_error"] = msg
+        return {"ok": False, "reason": "playing_failed", "error": msg}
+    with _LOCK:
+        _STATUS["last_playing_ts"] = int(time.time())
+        _STATUS["last_playing_ok"] = True
+        _STATUS["last_playing_error"] = None
+    return {"ok": True}
 
 
 def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]:
@@ -2741,6 +2930,7 @@ def _heartbeat_worker() -> None:
             _ensure_authentication()
             send_progress_once()
             _ensure_registration()
+            _ensure_control_socket()
             _maybe_retry_detection()
         except Exception:
             pass

@@ -29,6 +29,98 @@ The modern browse shell is the sole supported presentation. The former
 `jfui=modern|classic` comparison switch and its local-storage preference were
 removed after design acceptance.
 
+## Cast Target
+
+Each RelayTV device registers itself as one Jellyfin session and appears in the
+**Cast** menu of the Jellyfin web and mobile clients. Pick it there and the
+server sends playback to that TV; the phone then acts as the remote (play/pause,
+scrubber, next/previous, volume).
+
+Nothing needs configuring beyond the normal Jellyfin credentials. RelayTV is one
+full install per TV, so a household of three RelayTV boxes shows three cast
+targets, each named by its `device_name` setting.
+
+### How it works
+
+Three things must all be true before the server will offer the device:
+
+1. **Authenticated session.** `POST /Users/AuthenticateByName` under this
+   device's `DeviceId`/`Device` identity.
+2. **Capabilities recorded.** `POST /Sessions/Capabilities/Full` with
+   `SupportsMediaControl` and the commands RelayTV implements. RelayTV reads the
+   session back afterwards and only reports `last_register_ok` once the server
+   confirms it — a 204 is not evidence, because the server returns one whether
+   or not the body bound to anything.
+3. **A live control socket.** RelayTV holds a WebSocket open on
+   `/socket?api_key=…&deviceId=…`. The server computes `SupportsRemoteControl`
+   as "media control advertised **and** a socket attached", so without it the
+   device is invisible to casting even with perfect capabilities.
+
+The socket answers the server's `ForceKeepAlive` on its stated interval, and
+reconnects with exponential backoff (3s doubling to 60s) if the server restarts.
+Inbound `Play`, `Playstate`, and `GeneralCommand` messages are normalized and
+run through the same command ingress as `POST /integrations/jellyfin/command`.
+Commands execute on their own worker so a play that takes ten seconds to start
+mpv cannot starve the keepalive and drop the session.
+
+### Advertised commands
+
+`PlayState` (the whole playstate family: pause, unpause, play/pause toggle,
+stop, seek, next, previous), `Play`, `PlayNext`, `SetVolume`, `Mute`, `Unmute`,
+`ToggleMute`.
+
+Only commands RelayTV actually executes are advertised. A command listed here
+without a handler would put a dead button on every Jellyfin remote in the house.
+The list must contain `GeneralCommandType` members only — `Stop`/`Pause`/`Seek`
+and friends are `PlaystateCommand` values and the server rejects a body mixing
+the two with a 400.
+
+### Environment
+
+- `RELAYTV_JELLYFIN_WS_ENABLED=1` (default; set `0` to keep the library
+  integration without offering the device for casting)
+- `RELAYTV_JELLYFIN_WS_CONNECT_TIMEOUT_SEC=8`
+- `RELAYTV_JELLYFIN_WS_RETRY_BASE_SEC=3`
+- `RELAYTV_JELLYFIN_WS_RETRY_MAX_SEC=60`
+
+### Verifying
+
+```bash
+curl -s http://<host>:8787/integrations/jellyfin/status \
+  | jq '{cast_target_ready, media_control_verified, ws_connected, ws_last_error, ws_reconnects}'
+```
+
+`cast_target_ready: true` is the single field that answers "can I cast to this
+device". Server-side confirmation, from a machine with an admin token:
+
+```bash
+curl -s "http://<jellyfin>:8096/Sessions" -H 'Authorization: MediaBrowser Token="<token>"' \
+  | jq '.[] | select(.DeviceId | startswith("relaytv"))
+        | {DeviceName, SupportsRemoteControl, SupportsMediaControl, SupportedCommands}'
+```
+
+### Troubleshooting
+
+**The device never appears in the Cast menu.** Check `cast_target_ready`. If
+`media_control_verified` is false the capabilities POST is being rejected or
+ignored — `last_register_error` says which. If `ws_connected` is false, see the
+next two entries.
+
+**`ws_available: false`.** The `websockets` package is missing from the image.
+The library integration keeps working; only casting is unavailable.
+
+**`ws_connected` flaps, `ws_reconnects` climbing.** The server is restarting, or
+a proxy between RelayTV and Jellyfin is closing idle sockets faster than the
+keepalive interval. `ws_keepalive_sec` shows the interval the server asked for.
+
+**The device appears but commands do nothing.** Sessions are scoped per user:
+the device is only offered to the account RelayTV authenticated as, plus admins.
+Check `auth_user` matches the account casting from.
+
+**`ws_commands_dropped` is non-zero.** Commands arrived faster than playback
+could start and the backlog was capped. Expected under a burst of remote taps;
+sustained growth means playback starts are hanging.
+
 Discovery:
 
 - RelayTV can advertise itself on LAN via mDNS (`_relaytv._tcp`) for server-side auto-discovery/bridge workflows.
@@ -206,6 +298,12 @@ Episode adjacency resilience:
 - `register_retry_failures`
 - `next_register_retry_ts`
 - `last_register_backoff_sec`
+- `media_control_verified` (session readback; `null` until attempted)
+- `last_playing_ts`, `last_playing_ok`, `last_playing_error`
+- `cast_target_ready`
+- `ws_enabled`, `ws_available`, `ws_connected`
+- `ws_last_connect_ts`, `ws_last_error`, `ws_reconnects`, `ws_keepalive_sec`
+- `ws_commands_received`, `ws_commands_dropped`
 - `auth_user_configured`
 - `authenticated`
 - `auth_user`

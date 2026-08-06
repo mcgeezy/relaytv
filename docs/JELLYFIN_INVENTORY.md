@@ -94,7 +94,7 @@ duplicate command-id suppression, play through `playback_service`).
 - `_jellyfin_svg`
 - `pwa_jellyfin_svg`
 
-### `routes/jellyfin.py` (40)
+### `routes/jellyfin.py` (41)
 
 - `_extract_jellyfin_audio_stream_index_from_url`
 - `_extract_jellyfin_item_id_from_url_raw`
@@ -106,6 +106,7 @@ duplicate command-id suppression, play through `playback_service`).
 - `_jellyfin_runtime_selected_audio_stream`
 - `_jellyfin_runtime_selected_subtitle_stream`
 - `_jellyfin_should_suppress_duplicate_ui_action`
+- `_jellyfin_socket_command`
 - `_jellyfin_stopped_snapshot`
 - `_require_jellyfin_catalog_ready`
 - `_require_jellyfin_catalog_ready_for_playback`

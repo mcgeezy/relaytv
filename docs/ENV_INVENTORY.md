@@ -163,6 +163,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_PASSWORD` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_PLAYING_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_PLAY_DEBOUNCE_SEC` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
@@ -181,6 +182,10 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_UI_ACTION_DEDUPE_SEC` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_USERNAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_USER_ID` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_WS_CONNECT_TIMEOUT_SEC` | `integrations/jellyfin_ws.py` | - | static env |
+| `RELAYTV_JELLYFIN_WS_ENABLED` | `integrations/jellyfin_ws.py` | - | static env |
+| `RELAYTV_JELLYFIN_WS_RETRY_BASE_SEC` | `integrations/jellyfin_ws.py` | - | static env |
+| `RELAYTV_JELLYFIN_WS_RETRY_MAX_SEC` | `integrations/jellyfin_ws.py` | - | static env |
 | `RELAYTV_LOGO_IMAGE` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_LOGO_PATH` | `routes/__init__.py`<br>`routes/assets.py` | - | static env |
 | `RELAYTV_LOG_LEVEL` | `debug.py` | - | static env |

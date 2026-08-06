@@ -110,6 +110,9 @@ EXPECTED_JELLYFIN_ROUTE_FUNCTIONS: dict[str, set[str]] = {
         "_jellyfin_runtime_selected_audio_stream",
         "_jellyfin_runtime_selected_subtitle_stream",
         "_jellyfin_should_suppress_duplicate_ui_action",
+        # Transport adapter: hands socket-sourced commands to the same ingress
+        # the HTTP endpoint uses. No product logic of its own.
+        "_jellyfin_socket_command",
         "_jellyfin_stopped_snapshot",
         "_require_jellyfin_catalog_ready",
         "_require_jellyfin_catalog_ready_for_playback",

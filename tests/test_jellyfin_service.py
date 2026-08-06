@@ -595,3 +595,184 @@ def test_provider_display_name_reflects_server_type(monkeypatch) -> None:
 
     monkeypatch.setattr(state, "get_settings", lambda: {})
     assert resolver._provider_display_name("jellyfin") == "Jellyfin"
+
+
+# --- cast-target registration ----------------------------------------------
+
+# Jellyfin's GeneralCommandType, as served by 10.11's OpenAPI schema. Pinned
+# here because the bug this guards was advertising PlaystateCommand values in
+# a GeneralCommandType field: the server answered 400, and the wrapped-body
+# fallback that "succeeded" instead wrote empty capabilities.
+GENERAL_COMMAND_TYPES = frozenset(
+    {
+        "MoveUp", "MoveDown", "MoveLeft", "MoveRight", "PageUp", "PageDown",
+        "PreviousLetter", "NextLetter", "ToggleOsd", "ToggleContextMenu", "Select",
+        "Back", "TakeScreenshot", "SendKey", "SendString", "GoHome", "GoToSettings",
+        "VolumeUp", "VolumeDown", "Mute", "Unmute", "ToggleMute", "SetVolume",
+        "SetAudioStreamIndex", "SetSubtitleStreamIndex", "ToggleFullscreen",
+        "DisplayContent", "GoToSearch", "DisplayMessage", "SetRepeatMode",
+        "ChannelUp", "ChannelDown", "Guide", "ToggleStats", "PlayMediaSource",
+        "PlayTrailers", "SetShuffleQueue", "PlayState", "PlayNext", "ToggleOsdMenu",
+        "Play", "SetMaxStreamingBitrate", "SetPlaybackOrder",
+    }
+)
+
+
+def test_advertised_commands_are_all_general_command_types() -> None:
+    unknown = set(jellyfin_receiver.CAPABILITY_COMMANDS) - GENERAL_COMMAND_TYPES
+    assert unknown == set(), f"not GeneralCommandType members: {sorted(unknown)}"
+
+
+def test_capabilities_body_is_not_wrapped() -> None:
+    """A wrapped body binds as an all-default DTO and erases capabilities.
+
+    The server still answers 204, so nothing downstream notices.
+    """
+    payload = jellyfin_receiver.capabilities_payload()
+    assert "Capabilities" not in payload
+    assert payload["SupportsMediaControl"] is True
+    assert payload["PlayableMediaTypes"] == ["Video", "Audio"]
+    assert "PlayState" in payload["SupportedCommands"]
+
+
+def test_register_posts_the_unwrapped_body_and_verifies_it(monkeypatch) -> None:
+    posts: list[tuple[str, dict]] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+    monkeypatch.setattr(
+        jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: posts.append((url, payload))
+    )
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "read_session_capabilities",
+        lambda device_id="", timeout=3.0: {"DeviceId": device_id, "SupportsMediaControl": True},
+    )
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is True
+    assert out["verified"] is True
+    assert len(posts) == 1
+    url, body = posts[0]
+    assert url == "http://jf.lan:8096/Sessions/Capabilities/Full"
+    assert body == jellyfin_receiver.capabilities_payload()
+    assert jellyfin_receiver._STATUS["media_control_verified"] is True
+
+
+def test_register_fails_when_the_server_did_not_record_media_control(monkeypatch) -> None:
+    """The exact live failure: 204 accepted, capabilities silently empty."""
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+    monkeypatch.setattr(jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: None)
+    monkeypatch.setattr(jellyfin_receiver, "_post_no_body", lambda url, timeout=3.0: None)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "read_session_capabilities",
+        lambda device_id="", timeout=3.0: {"DeviceId": device_id, "SupportsMediaControl": False},
+    )
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is False
+    assert "media control" in str(out["error"])
+    assert jellyfin_receiver._STATUS["connected"] is False
+
+
+def test_register_accepts_a_server_that_hides_its_session_list(monkeypatch) -> None:
+    """A proxy or an Emby build may not answer the readback; that is not a failure."""
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+    monkeypatch.setattr(jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: None)
+
+    def _boom(device_id="", timeout=3.0):
+        raise RuntimeError("404")
+
+    monkeypatch.setattr(jellyfin_receiver, "read_session_capabilities", _boom)
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is True
+    assert out["verified"] is None
+
+
+def test_register_falls_back_to_the_query_form_for_emby(monkeypatch) -> None:
+    attempts: list[str] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://emby.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+
+    def _reject_body(url, payload, timeout=3.0):
+        attempts.append(url)
+        raise RuntimeError("HTTP 400")
+
+    def _accept_query(url, timeout=3.0):
+        attempts.append(url)
+
+    monkeypatch.setattr(jellyfin_receiver, "_post_json", _reject_body)
+    monkeypatch.setattr(jellyfin_receiver, "_post_no_body", _accept_query)
+    monkeypatch.setattr(jellyfin_receiver, "read_session_capabilities", lambda device_id="", timeout=3.0: {})
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is True
+    assert out["method"] == "caps_query"
+    assert "/Sessions/Capabilities?" in attempts[1]
+    assert "supportedCommands=PlayState" in attempts[1]
+
+
+# --- remote-friendly playback reporting ------------------------------------
+
+
+def test_play_pause_toggles_against_current_state(monkeypatch) -> None:
+    calls: list[str] = []
+    controls = {
+        "stop": lambda: None,
+        "pause": lambda: calls.append("pause"),
+        "resume": lambda: calls.append("resume"),
+        "seek": lambda sec: None,
+        "next": lambda: None,
+        "previous": lambda: None,
+        "set_volume": lambda vol: None,
+        "mute": lambda muted: None,
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_paused", lambda: False)
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Command": "PlayPause"}), controls=controls, ui=_noop_ui()
+    )
+    assert out["action"] == "pause"
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_paused", lambda: True)
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Command": "PlayPause"}), controls=controls, ui=_noop_ui()
+    )
+    assert out["action"] == "resume"
+
+    assert calls == ["pause", "resume"]
+
+
+def test_progress_payload_lets_the_remote_scrub(monkeypatch) -> None:
+    """Without CanSeek the Jellyfin remote renders a read-only progress bar."""
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {"pause": False, "time-pos": 12.0, "duration": 100.0})
+
+    payload = jellyfin_service.progress_snapshot()
+
+    assert payload["CanSeek"] is True
+    assert payload["PlayMethod"] == "DirectStream"
+
+
+def test_play_method_follows_the_selected_stream_mode() -> None:
+    assert jellyfin_service.play_method({"jellyfin_stream_mode": "transcode"}) == "Transcode"
+    assert jellyfin_service.play_method({"jellyfin_stream_mode": "direct"}) == "DirectStream"
+    assert jellyfin_service.play_method({}) == "DirectStream"
