@@ -232,7 +232,14 @@ async function runScenario(browser, baseUrl, peerUrl, scenario, screenshotDir) {
 
     // The picker lists the session and the queue, all selected, and a live
     // channel is offered as unselectable rather than failing after the send.
+    // Reopen first: exclusions deliberately survive while the sheet stays open,
+    // and "starts fully selected" is a claim about opening it.
     await seedSenderQueue(page);
+    await page.keyboard.press('Escape');
+    await page.locator('#peersBackdrop').waitFor({ state: 'hidden' });
+    await page.locator('#queueSendBtn').click();
+    await page.locator('#peersBackdrop:not(.hidden)').waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('#peersPick .pmPickRow').length > 0);
     const picker = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('#peersPick .pmPickRow'));
       return {
