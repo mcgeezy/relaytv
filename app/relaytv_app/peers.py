@@ -135,9 +135,17 @@ def normalize_base_url(value: object) -> str:
     # send; peers authenticate with a bearer token instead.
     if parsed.username or parsed.password:
         raise PeerError("device address must not contain credentials")
+    try:
+        # urlsplit defers port parsing until the attribute is read, so an
+        # operator's typo ("tv.local:8O87") or an out-of-range number raises
+        # here rather than above. Without this it escapes as a 500 instead of
+        # the actionable message every other bad address gets.
+        port = parsed.port
+    except ValueError:
+        raise PeerError("device address has an invalid port")
     netloc = f"[{host}]" if ":" in host else host
-    if parsed.port is not None:
-        netloc = f"{netloc}:{parsed.port}"
+    if port is not None:
+        netloc = f"{netloc}:{port}"
     path = (parsed.path or "").rstrip("/")
     return urlunsplit((scheme, netloc, path, "", ""))
 
@@ -454,20 +462,26 @@ def wire_item(item: object) -> dict | None:
     return entry
 
 
-def wire_items(items: list[object] | None) -> tuple[list[dict], list[dict]]:
-    """Split items into transferable wire entries and reported skips.
+def wire_entries(items: list[object] | None) -> tuple[list[dict], list[dict], list[object]]:
+    """Split items into wire entries, reported skips, and each entry's source.
 
     IPTV items are the expected skip: their stream URLs may carry credentials
     anywhere in the path, so ``public_media_item`` withholds the URL entirely
     and there is nothing portable left to send. Report them instead of
     dropping them silently.
+
+    The third list pairs each entry with the local queue item it came from, so
+    a caller giving up ownership can act on what the peer actually took rather
+    than on what it offered.
     """
     entries: list[dict] = []
     skipped: list[dict] = []
+    sources: list[object] = []
     for item in list(items or []):
         entry = wire_item(item)
         if entry is not None:
             entries.append(entry)
+            sources.append(item)
             continue
         provider = str((item or {}).get("provider") or "").strip().lower() if isinstance(item, dict) else ""
         skipped.append(
@@ -476,7 +490,48 @@ def wire_items(items: list[object] | None) -> tuple[list[dict], list[dict]]:
                 "reason": "iptv_channels_stay_on_this_device" if provider == "iptv" else "item_has_no_shareable_url",
             }
         )
+    return entries, skipped, sources
+
+
+def wire_items(items: list[object] | None) -> tuple[list[dict], list[dict]]:
+    """Wire entries and skips, without the source pairing."""
+    entries, skipped, _sources = wire_entries(items)
     return entries, skipped
+
+
+def accepted_sources(
+    entries: list[dict],
+    sources: list[object],
+    response: dict,
+) -> list[object]:
+    """Which local items the peer actually took, from its per-item results.
+
+    Anything the receiver rejected stays behind: it never landed there, so
+    dropping it here would destroy it. When a peer reports no per-item results
+    at all, its summary count is the only evidence available — and if that does
+    not account for everything sent, nothing is claimed, because deleting on a
+    guess is the one outcome this transfer must never produce.
+    """
+    results = response.get("results") if isinstance(response.get("results"), list) else []
+    if results:
+        rejected_urls = {
+            str(entry.get("url") or "")
+            for entry in results
+            if isinstance(entry, dict) and not entry.get("accepted")
+        }
+        return [
+            source
+            for entry, source in zip(entries, sources)
+            if str(entry.get("url") or "") not in rejected_urls
+        ]
+    if int(response.get("accepted") or 0) >= len(entries):
+        return list(sources)
+    logger.warning(
+        "peer_send_unverified sent=%d accepted=%s results=0 keeping_local_items",
+        len(entries),
+        response.get("accepted"),
+    )
+    return []
 
 
 def sender_payload() -> dict[str, str]:
@@ -505,10 +560,14 @@ def _post_to_peer(peer_id: str, record: dict, path: str, payload: dict) -> dict:
     return response
 
 
-def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> dict:
-    """Send queue items to a peer and normalize its import response."""
+def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> tuple[dict, list[object]]:
+    """Send queue items to a peer and normalize its import response.
+
+    Returns the response alongside the local items the peer accepted, so a
+    caller giving up ownership drops only what actually landed there.
+    """
     record = require_record(peer_id)
-    entries, skipped = wire_items(items)
+    entries, skipped, sources = wire_entries(items)
     if not entries:
         if skipped:
             raise PeerError("none of these items can be sent to another device")
@@ -538,29 +597,35 @@ def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> di
         accepted,
         len(rejected),
     )
-    return {
-        "status": "sent",
-        "peer": public_peer(require_record(peer_id)),
-        "mode": normalized_mode,
-        "sent": len(entries),
-        "accepted": accepted,
-        "rejected": rejected,
-        "queue_length": int(response.get("queue_length") or 0),
-    }
+    return (
+        {
+            "status": "sent",
+            "peer": public_peer(require_record(peer_id)),
+            "mode": normalized_mode,
+            "sent": len(entries),
+            "accepted": accepted,
+            "rejected": rejected,
+            "queue_length": int(response.get("queue_length") or 0),
+        },
+        accepted_sources(entries, sources, response),
+    )
 
 
-def handoff_playback(peer_id: str, *, snapshot: dict, items: list[object]) -> dict:
+def handoff_playback(
+    peer_id: str, *, snapshot: dict, items: list[object]
+) -> tuple[dict, list[object]]:
     """Ask a peer to continue the current playback, then report what it did.
 
     The caller stops local playback only after this returns successfully: a
     handoff that failed in transit must leave the user watching what they were
-    already watching.
+    already watching. As with ``send_queue``, the accepted local items come
+    back so the caller drops only what landed.
     """
     record = require_record(peer_id)
     now_playing = wire_item(snapshot.get("item"))
     if now_playing is None:
         raise PeerError("what is playing cannot be sent to another device")
-    entries, skipped = wire_items(items)
+    entries, skipped, sources = wire_entries(items)
 
     position = snapshot.get("position")
     try:
@@ -593,13 +658,16 @@ def handoff_playback(peer_id: str, *, snapshot: dict, items: list[object]) -> di
         len(entries),
         playing,
     )
-    return {
-        "status": "handed_off",
-        "peer": public_peer(require_record(peer_id)),
-        "playing": playing,
-        "resume_pos": resume_pos,
-        "sent": len(entries),
-        "accepted": int(response.get("accepted") or 0),
-        "rejected": rejected,
-        "queue_length": int(response.get("queue_length") or 0),
-    }
+    return (
+        {
+            "status": "handed_off",
+            "peer": public_peer(require_record(peer_id)),
+            "playing": playing,
+            "resume_pos": resume_pos,
+            "sent": len(entries),
+            "accepted": int(response.get("accepted") or 0),
+            "rejected": rejected,
+            "queue_length": int(response.get("queue_length") or 0),
+        },
+        accepted_sources(entries, sources, response),
+    )

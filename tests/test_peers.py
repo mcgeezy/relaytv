@@ -54,7 +54,18 @@ def test_base_url_normalization_rejects_unsafe_addresses() -> None:
     assert peers.normalize_base_url("http://tv.local:8787/") == "http://tv.local:8787"
     assert peers.normalize_base_url("https://tv.local/relay/") == "https://tv.local/relay"
 
-    for bad in ("", "ftp://tv.local", "http://", "http://user:pass@tv.local"):
+    # A mistyped or out-of-range port must come back as an operator-facing
+    # PeerError like every other bad address. urlsplit parses the port lazily,
+    # so these raise ValueError on attribute access rather than at parse time.
+    for bad in (
+        "",
+        "ftp://tv.local",
+        "http://",
+        "http://user:pass@tv.local",
+        "http://tv.local:notaport",
+        "http://tv.local:99999",
+        "http://tv.local:-1",
+    ):
         with pytest.raises(peers.PeerError):
             peers.normalize_base_url(bad)
 
@@ -815,6 +826,98 @@ def test_copy_sends_the_session_but_keeps_playing_here(client, peers_file, stub_
     assert stopped == []
     assert cleared == []
     assert _queue_titles() == ["Next up"]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
+def test_move_keeps_items_the_peer_rejected(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(
+        peers,
+        "_request",
+        lambda *a, **k: {
+            "accepted": 1,
+            "queue_length": 1,
+            "results": [
+                {"url": "https://example.com/keep", "title": "Keep", "accepted": True},
+                {
+                    "url": "https://example.com/reject",
+                    "title": "Reject",
+                    "accepted": False,
+                    "reason": "provider_not_configured",
+                },
+            ],
+        },
+    )
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.append({"url": "https://example.com/keep", "title": "Keep"})
+        state.QUEUE.append({"url": "https://example.com/reject", "title": "Reject"})
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+    assert moved.status_code == 200
+    assert [entry["reason"] for entry in moved.json()["rejected"]] == ["provider_not_configured"]
+    # It never landed on the peer, so dropping it here would destroy it.
+    assert _queue_titles() == ["Reject"]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
+def test_move_keeps_items_that_could_not_travel_at_all(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(peers, "_request", lambda *a, **k: {"accepted": 1, "queue_length": 1, "results": []})
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.append({"url": "https://example.com/ok", "title": "Portable"})
+        state.QUEUE.append({"url": "http://iptv.example/live/u/p/9.ts", "title": "CNN", "provider": "iptv"})
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+    assert moved.status_code == 200
+    assert [entry["reason"] for entry in moved.json()["rejected"]] == ["iptv_channels_stay_on_this_device"]
+    # A live channel has no shareable URL, so it was never offered to the peer.
+    assert _queue_titles() == ["CNN"]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
+def test_move_drops_the_sent_item_even_if_the_queue_shifted(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+
+    def _request_while_the_queue_moves(*args, **kwargs):
+        # A send can take tens of seconds; auto-next consuming the head in that
+        # window shifts every index below it.
+        with state.QUEUE_LOCK:
+            state.QUEUE.pop(0)
+        return {"accepted": 1, "queue_length": 1, "results": []}
+
+    monkeypatch.setattr(peers, "_request", _request_while_the_queue_moves)
+    _seed_queue("Head", "Sent", "Innocent")
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move", "indexes": [1]})
+    assert moved.status_code == 200
+    # The item that travelled is the item that goes, whatever position it now
+    # holds. Reusing index 1 would have destroyed "Innocent", which was never
+    # sent anywhere.
+    assert _queue_titles() == ["Innocent"]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
+def test_move_keeps_everything_when_the_peer_reports_nothing(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    # No per-item results and a count that does not cover what was sent: there
+    # is no evidence of what landed, so nothing is given up.
+    monkeypatch.setattr(peers, "_request", lambda *a, **k: {"accepted": 0, "queue_length": 0})
+    _seed_queue("First", "Second")
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+    assert moved.status_code == 200
+    assert moved.json()["local_queue_length"] == 2
+    assert _queue_titles() == ["First", "Second"]
 
     with state.QUEUE_LOCK:
         state.QUEUE.clear()

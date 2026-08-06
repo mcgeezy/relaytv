@@ -129,6 +129,11 @@ Every destructive step waits for confirmation from the other device:
 - **Send** drops the local items only after the peer confirms the import, and
   stops local playback only after the peer reports it took over. A transfer that
   fails in transit loses nothing and leaves you watching what you were watching.
+- **Send** gives up only what the other device actually accepted. Anything it
+  rejected — an unconfigured provider, say — and anything that could not travel
+  at all stays here. The items are matched by identity, not by their position
+  in the queue, so a transfer that takes a while cannot delete something that
+  moved into a sent item's slot in the meantime.
 - **Copy** changes nothing locally at all, so there is nothing to undo.
 - On the receiving side, a handoff takes over playback *before* importing the
   queue. A device that cannot start playing does not end up holding the items
