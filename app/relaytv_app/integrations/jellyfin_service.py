@@ -285,10 +285,45 @@ def normalize_action(action: str | None, payload: dict | None) -> str:
         "unmuteaudio": "unmute",
         "pauseplayback": "pause",
         "resumeback": "resume",
+        "unpause": "resume",
         "unpauseplayback": "resume",
         "resumeplayback": "resume",
+        # Single buttons on the Jellyfin remote: the client sends one command
+        # for both directions and expects the device to decide which way.
+        "playpause": "play_pause",
+        "togglepause": "play_pause",
+        "togglemute": "toggle_mute",
+        "fastforward": "fast_forward",
     }
     return aliases.get(raw, raw)
+
+
+# Advertising PlayState authorizes the server to send any PlaystateCommand,
+# including the skip pair. These match Jellyfin's own client defaults.
+SKIP_BACK_SEC = 10.0
+SKIP_FORWARD_SEC = 30.0
+
+
+def playback_is_paused() -> bool:
+    """Current pause state, for resolving a PlayPause toggle."""
+    try:
+        if not bool(player.is_playing()):
+            return True
+        props = player.mpv_get_many(["pause"])
+    except Exception:
+        return False
+    if isinstance(props, dict) and props.get("pause") is not None:
+        return bool(props.get("pause"))
+    return str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
+
+
+def playback_is_muted() -> bool:
+    """Current mute state, for resolving a ToggleMute command."""
+    try:
+        props = player.mpv_get_many(["mute"])
+    except Exception:
+        return False
+    return bool(props.get("mute")) if isinstance(props, dict) else False
 
 
 def ticks_to_seconds(value: object) -> float | None:
@@ -1626,6 +1661,34 @@ def emit_progress_hint() -> None:
         pass
 
 
+def emit_playback_start_hint() -> None:
+    """Announce playback start, then the first progress tick, off the request path.
+
+    Ordering matters: Jellyfin builds the session's now-playing item from the
+    start report, so a progress post that beats it describes an item the server
+    does not think is playing yet.
+    """
+    def _run() -> None:
+        try:
+            payload = progress_snapshot()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict) and payload:
+            try:
+                jellyfin_receiver.send_playback_start_once(payload)
+            except Exception:
+                pass
+        try:
+            jellyfin_receiver.send_progress_once()
+        except Exception:
+            pass
+
+    try:
+        threading.Thread(target=_run, daemon=True, name="relaytv-jellyfin-start-hint").start()
+    except Exception:
+        pass
+
+
 def _require_current_jellyfin_item() -> tuple[dict, str]:
     """Return (now_playing, item_id) for the active Jellyfin item or raise 409/502."""
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
@@ -2163,6 +2226,16 @@ def emit_stopped_hint(position_sec: float | None = None, duration_sec: float | N
     emit_stopped_payload(stopped_snapshot(position_sec, duration_sec))
 
 
+def play_method(now: dict | None) -> str:
+    """Report how the stream is being served, in Jellyfin's PlayMethod terms.
+
+    RelayTV always pulls a server-produced stream URL rather than the original
+    file, so a direct stream is ``DirectStream``, never ``DirectPlay``.
+    """
+    mode = str((now or {}).get("jellyfin_stream_mode") or "").strip().lower()
+    return "Transcode" if mode == "transcode" else "DirectStream"
+
+
 def progress_snapshot() -> dict | None:
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     if not now:
@@ -2171,7 +2244,15 @@ def progress_snapshot() -> dict | None:
     if not item_id:
         return None
     is_playing = bool(player.is_playing())
-    props = player.mpv_get_many(["pause", "time-pos", "duration", "mute", "volume"]) if is_playing else {}
+    if not is_playing:
+        # RelayTV keeps the last item in NOW_PLAYING so its own UI can resume
+        # it, but the Jellyfin session is over: the stopped report already
+        # carried the final position. Posting progress anyway re-creates the
+        # session's NowPlayingItem seconds after Stop cleared it, leaving a
+        # stale "paused" entry on every remote until something else plays.
+        # Pausing does not reach here — a paused mpv still reports playing.
+        return None
+    props = player.mpv_get_many(["pause", "time-pos", "duration", "mute", "volume"])
 
     pos = props.get("time-pos") if isinstance(props, dict) else None
     dur = props.get("duration") if isinstance(props, dict) else None
@@ -2200,7 +2281,11 @@ def progress_snapshot() -> dict | None:
     pos_ticks = max(0, int(pos_f * 10_000_000))
     payload = {
         "ItemId": item_id,
-        "IsPaused": bool(props.get("pause")) if is_playing and isinstance(props, dict) else (not is_playing),
+        "IsPaused": bool(props.get("pause")) if isinstance(props, dict) else False,
+        # Without CanSeek the remote renders a read-only progress bar: the
+        # scrubber cannot be dragged and Jellyfin will not send Seek at all.
+        "CanSeek": True,
+        "PlayMethod": play_method(now),
     }
     play_session_id = str(now.get("jellyfin_play_session_id") or "").strip()
     if play_session_id:
@@ -2982,7 +3067,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
                     ui["queue_event"]("jellyfin_playlist", queue=queue_snapshot, queue_length=len(queue_snapshot), source="jellyfin")
             if isinstance(stopped_payload, dict) and stopped_payload:
                 emit_stopped_payload(stopped_payload)
-            emit_progress_hint()
+            emit_playback_start_hint()
             ui["jellyfin_event"]("play", refresh_active_tab=True, refresh_status=True, reason=play_mode or "play")
             return {"ok": True, "action": "play", "now_playing": now}
 
@@ -3000,11 +3085,29 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
             emit_progress_hint()
             return out
 
+        if action == "play_pause":
+            paused = playback_is_paused()
+            resolved = "resume" if paused else "pause"
+            out = {
+                "ok": True,
+                "action": resolved,
+                "toggled_from": "play_pause",
+                "result": controls["resume"]() if paused else controls["pause"](),
+            }
+            emit_progress_hint()
+            return out
+
         if action == "seek":
             sec = extract_seek_seconds(req)
             if sec is None:
                 raise HTTPException(status_code=400, detail="seek command requires start_pos or payload.position")
             out = {"ok": True, "action": "seek", "result": controls["seek"](float(sec))}
+            emit_progress_hint()
+            return out
+
+        if action in ("rewind", "fast_forward"):
+            delta = SKIP_FORWARD_SEC if action == "fast_forward" else -SKIP_BACK_SEC
+            out = {"ok": True, "action": action, "seconds": delta, "result": controls["seek_relative"](delta)}
             emit_progress_hint()
             return out
 
@@ -3033,6 +3136,17 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
 
         if action == "unmute":
             out = {"ok": True, "action": "unmute", "result": controls["mute"](False)}
+            emit_progress_hint()
+            return out
+
+        if action == "toggle_mute":
+            muted = playback_is_muted()
+            out = {
+                "ok": True,
+                "action": "unmute" if muted else "mute",
+                "toggled_from": "toggle_mute",
+                "result": controls["mute"](not muted),
+            }
             emit_progress_hint()
             return out
 

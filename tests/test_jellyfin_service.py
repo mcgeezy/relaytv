@@ -595,3 +595,333 @@ def test_provider_display_name_reflects_server_type(monkeypatch) -> None:
 
     monkeypatch.setattr(state, "get_settings", lambda: {})
     assert resolver._provider_display_name("jellyfin") == "Jellyfin"
+
+
+# --- cast-target registration ----------------------------------------------
+
+# Jellyfin's GeneralCommandType, as served by 10.11's OpenAPI schema. Pinned
+# here because the bug this guards was advertising PlaystateCommand values in
+# a GeneralCommandType field: the server answered 400, and the wrapped-body
+# fallback that "succeeded" instead wrote empty capabilities.
+GENERAL_COMMAND_TYPES = frozenset(
+    {
+        "MoveUp", "MoveDown", "MoveLeft", "MoveRight", "PageUp", "PageDown",
+        "PreviousLetter", "NextLetter", "ToggleOsd", "ToggleContextMenu", "Select",
+        "Back", "TakeScreenshot", "SendKey", "SendString", "GoHome", "GoToSettings",
+        "VolumeUp", "VolumeDown", "Mute", "Unmute", "ToggleMute", "SetVolume",
+        "SetAudioStreamIndex", "SetSubtitleStreamIndex", "ToggleFullscreen",
+        "DisplayContent", "GoToSearch", "DisplayMessage", "SetRepeatMode",
+        "ChannelUp", "ChannelDown", "Guide", "ToggleStats", "PlayMediaSource",
+        "PlayTrailers", "SetShuffleQueue", "PlayState", "PlayNext", "ToggleOsdMenu",
+        "Play", "SetMaxStreamingBitrate", "SetPlaybackOrder",
+    }
+)
+
+
+def test_advertised_commands_are_all_general_command_types() -> None:
+    unknown = set(jellyfin_receiver.CAPABILITY_COMMANDS) - GENERAL_COMMAND_TYPES
+    assert unknown == set(), f"not GeneralCommandType members: {sorted(unknown)}"
+
+
+def test_capabilities_body_is_not_wrapped() -> None:
+    """A wrapped body binds as an all-default DTO and erases capabilities.
+
+    The server still answers 204, so nothing downstream notices.
+    """
+    payload = jellyfin_receiver.capabilities_payload()
+    assert "Capabilities" not in payload
+    assert payload["SupportsMediaControl"] is True
+    assert payload["PlayableMediaTypes"] == ["Video", "Audio"]
+    assert "PlayState" in payload["SupportedCommands"]
+
+
+def test_register_posts_the_unwrapped_body_and_verifies_it(monkeypatch) -> None:
+    posts: list[tuple[str, dict]] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: posts.append(
+            (jellyfin_receiver._context_url(context, path), payload)
+        ),
+    )
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_read_session_capabilities_for",
+        lambda context, device_id="", timeout=3.0: {
+            "DeviceId": device_id,
+            "SupportsMediaControl": True,
+        },
+    )
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is True
+    assert out["verified"] is True
+    assert len(posts) == 1
+    url, body = posts[0]
+    assert url == "http://jf.lan:8096/Sessions/Capabilities/Full"
+    assert body == jellyfin_receiver.capabilities_payload()
+    assert jellyfin_receiver._STATUS["media_control_verified"] is True
+
+
+def test_register_fails_when_the_server_did_not_record_media_control(monkeypatch) -> None:
+    """The exact live failure: 204 accepted, capabilities silently empty."""
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: None,
+    )
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_no_body_for",
+        lambda context, path, timeout=3.0: None,
+    )
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_read_session_capabilities_for",
+        lambda context, device_id="", timeout=3.0: {
+            "DeviceId": device_id,
+            "SupportsMediaControl": False,
+        },
+    )
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is False
+    assert "media control" in str(out["error"])
+    assert jellyfin_receiver._STATUS["connected"] is False
+
+
+def test_register_accepts_a_server_that_hides_its_session_list(monkeypatch) -> None:
+    """A proxy or an Emby build may not answer the readback; that is not a failure."""
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: None,
+    )
+
+    def _boom(context, device_id="", timeout=3.0):
+        raise RuntimeError("404")
+
+    monkeypatch.setattr(jellyfin_receiver, "_read_session_capabilities_for", _boom)
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is True
+    assert out["verified"] is None
+
+
+def test_register_falls_back_to_the_query_form_for_emby(monkeypatch) -> None:
+    attempts: list[str] = []
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://emby.lan:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
+
+    def _reject_body(context, path, payload, timeout=3.0):
+        attempts.append(jellyfin_receiver._context_url(context, path))
+        raise RuntimeError("HTTP 400")
+
+    def _accept_query(context, path, timeout=3.0):
+        attempts.append(jellyfin_receiver._context_url(context, path))
+
+    monkeypatch.setattr(jellyfin_receiver, "_post_json_for", _reject_body)
+    monkeypatch.setattr(jellyfin_receiver, "_post_no_body_for", _accept_query)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_read_session_capabilities_for",
+        lambda context, device_id="", timeout=3.0: {},
+    )
+
+    out = jellyfin_receiver.register_receiver_once()
+
+    assert out["ok"] is True
+    assert out["method"] == "caps_query"
+    assert "/Sessions/Capabilities?" in attempts[1]
+    assert "supportedCommands=PlayState" in attempts[1]
+
+
+# --- remote-friendly playback reporting ------------------------------------
+
+
+def test_play_pause_toggles_against_current_state(monkeypatch) -> None:
+    calls: list[str] = []
+    controls = {
+        "stop": lambda: None,
+        "pause": lambda: calls.append("pause"),
+        "resume": lambda: calls.append("resume"),
+        "seek": lambda sec: None,
+        "next": lambda: None,
+        "previous": lambda: None,
+        "set_volume": lambda vol: None,
+        "mute": lambda muted: None,
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_paused", lambda: False)
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Command": "PlayPause"}), controls=controls, ui=_noop_ui()
+    )
+    assert out["action"] == "pause"
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_paused", lambda: True)
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Command": "PlayPause"}), controls=controls, ui=_noop_ui()
+    )
+    assert out["action"] == "resume"
+
+    assert calls == ["pause", "resume"]
+
+
+def test_progress_payload_lets_the_remote_scrub(monkeypatch) -> None:
+    """Without CanSeek the Jellyfin remote renders a read-only progress bar."""
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {"pause": False, "time-pos": 12.0, "duration": 100.0})
+
+    payload = jellyfin_service.progress_snapshot()
+
+    assert payload["CanSeek"] is True
+    assert payload["PlayMethod"] == "DirectStream"
+
+
+def test_play_method_follows_the_selected_stream_mode() -> None:
+    assert jellyfin_service.play_method({"jellyfin_stream_mode": "transcode"}) == "Transcode"
+    assert jellyfin_service.play_method({"jellyfin_stream_mode": "direct"}) == "DirectStream"
+    assert jellyfin_service.play_method({}) == "DirectStream"
+
+
+# Every message the server is authorized to send by CAPABILITY_COMMANDS, in the
+# shape the control socket delivers it. Advertising PlayState authorizes the
+# whole PlaystateCommand family, not just the ones the web remote happens to
+# use today.
+ADVERTISED_TRAFFIC = [
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Pause"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Unpause"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "PlayPause"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Stop"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Seek", "SeekPositionTicks": 10_000_000}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "NextTrack"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "PreviousTrack"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Rewind"}}),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "FastForward"}}),
+    ("SetVolume", {"MessageType": "GeneralCommand", "Data": {"Name": "SetVolume", "Arguments": {"Volume": "30"}}}),
+    ("Mute", {"MessageType": "GeneralCommand", "Data": {"Name": "Mute"}}),
+    ("Unmute", {"MessageType": "GeneralCommand", "Data": {"Name": "Unmute"}}),
+    ("ToggleMute", {"MessageType": "GeneralCommand", "Data": {"Name": "ToggleMute"}}),
+]
+
+
+@pytest.mark.parametrize("capability,message", ADVERTISED_TRAFFIC, ids=lambda v: v if isinstance(v, str) else "")
+def test_every_advertised_capability_reaches_a_handler(capability, message, monkeypatch) -> None:
+    """Advertising a command RelayTV cannot execute puts a dead button on the remote.
+
+    ToggleMute shipped exactly that way once: accepted by the server, 400 at the
+    ingress, silent on the TV.
+    """
+    from relaytv_app.integrations import jellyfin_ws
+
+    assert capability in jellyfin_receiver.CAPABILITY_COMMANDS
+
+    dispatched: list[str] = []
+    controls = {
+        name: (lambda *a, _n=name, **kw: dispatched.append(_n))
+        for name in ("stop", "pause", "resume", "seek", "seek_relative", "next", "previous", "set_volume", "mute")
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+    monkeypatch.setattr(jellyfin_service, "playback_is_paused", lambda: False)
+    monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: False)
+
+    routed = jellyfin_ws.normalize_message(message)
+    assert routed is not None, f"{capability}: socket dropped the message"
+    action, payload = routed
+
+    out = jellyfin_service.handle_command(
+        FakeCommandReq(action=action or None, payload=payload), controls=controls, ui=_noop_ui()
+    )
+    assert out["ok"] is True
+    assert dispatched, f"{capability}: handled but dispatched nothing"
+
+
+def test_toggle_mute_flips_both_ways(monkeypatch) -> None:
+    calls: list[bool] = []
+    controls = {
+        "stop": lambda: None, "pause": lambda: None, "resume": lambda: None,
+        "seek": lambda sec: None, "seek_relative": lambda delta: None,
+        "next": lambda: None, "previous": lambda: None, "set_volume": lambda vol: None,
+        "mute": lambda muted: calls.append(muted),
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: False)
+    assert jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
+    )["action"] == "mute"
+
+    monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: True)
+    assert jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
+    )["action"] == "unmute"
+
+    assert calls == [True, False]
+
+
+def test_skip_commands_seek_by_jellyfin_default_amounts(monkeypatch) -> None:
+    deltas: list[float] = []
+    controls = {
+        "stop": lambda: None, "pause": lambda: None, "resume": lambda: None,
+        "seek": lambda sec: None, "seek_relative": lambda delta: deltas.append(delta),
+        "next": lambda: None, "previous": lambda: None, "set_volume": lambda vol: None,
+        "mute": lambda muted: None,
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "Rewind"}), controls=controls, ui=_noop_ui())
+    jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "FastForward"}), controls=controls, ui=_noop_ui())
+
+    assert deltas == [-10.0, 30.0]
+
+
+def test_progress_stops_when_playback_stops(monkeypatch) -> None:
+    """A stopped session must not keep reporting progress.
+
+    NOW_PLAYING is deliberately retained after a stop so RelayTV's own UI can
+    resume it. Reporting that to Jellyfin re-created the session's
+    NowPlayingItem seconds after Stop cleared it, so every remote showed a
+    stale paused entry indefinitely.
+    """
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
+    monkeypatch.setattr(player, "is_playing", lambda: False)
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {})
+
+    assert jellyfin_service.progress_snapshot() is None
+
+
+def test_progress_still_reports_a_paused_item(monkeypatch) -> None:
+    """Pause is not stop: a paused mpv still reports playing, and the remote
+    needs the position to keep its scrubber honest."""
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {"pause": True, "time-pos": 42.0, "duration": 100.0})
+
+    payload = jellyfin_service.progress_snapshot()
+
+    assert payload is not None
+    assert payload["IsPaused"] is True
+    assert payload["PositionTicks"] == 420_000_000

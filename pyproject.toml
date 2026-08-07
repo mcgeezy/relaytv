@@ -14,6 +14,12 @@ dependencies = [
   "fastapi>=0.115,<1",
   "python-multipart>=0.0.9,<1",
   "uvicorn[standard]>=0.30,<1",
+  # Jellyfin control socket. It already arrives via uvicorn[standard], but the
+  # cast target is a product feature and must not depend on another package's
+  # extra continuing to pull it in. The floor is 15 because that is where
+  # connect() gained the proxy argument; the code still runs on 13/14 without
+  # proxy suppression, but 15 is what we want on a LAN.
+  "websockets>=15,<17",
   "yt-dlp>=2024.1",
 ]
 
