@@ -642,12 +642,19 @@ def test_register_posts_the_unwrapped_body_and_verifies_it(monkeypatch) -> None:
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
     monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
     monkeypatch.setattr(
-        jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: posts.append((url, payload))
+        jellyfin_receiver,
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: posts.append(
+            (jellyfin_receiver._context_url(context, path), payload)
+        ),
     )
     monkeypatch.setattr(
         jellyfin_receiver,
-        "read_session_capabilities",
-        lambda device_id="", timeout=3.0: {"DeviceId": device_id, "SupportsMediaControl": True},
+        "_read_session_capabilities_for",
+        lambda context, device_id="", timeout=3.0: {
+            "DeviceId": device_id,
+            "SupportsMediaControl": True,
+        },
     )
 
     out = jellyfin_receiver.register_receiver_once()
@@ -667,12 +674,23 @@ def test_register_fails_when_the_server_did_not_record_media_control(monkeypatch
     monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
     monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
-    monkeypatch.setattr(jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: None)
-    monkeypatch.setattr(jellyfin_receiver, "_post_no_body", lambda url, timeout=3.0: None)
     monkeypatch.setattr(
         jellyfin_receiver,
-        "read_session_capabilities",
-        lambda device_id="", timeout=3.0: {"DeviceId": device_id, "SupportsMediaControl": False},
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: None,
+    )
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_no_body_for",
+        lambda context, path, timeout=3.0: None,
+    )
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_read_session_capabilities_for",
+        lambda context, device_id="", timeout=3.0: {
+            "DeviceId": device_id,
+            "SupportsMediaControl": False,
+        },
     )
 
     out = jellyfin_receiver.register_receiver_once()
@@ -688,12 +706,16 @@ def test_register_accepts_a_server_that_hides_its_session_list(monkeypatch) -> N
     monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.lan:8096")
     monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
-    monkeypatch.setattr(jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: None)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: None,
+    )
 
-    def _boom(device_id="", timeout=3.0):
+    def _boom(context, device_id="", timeout=3.0):
         raise RuntimeError("404")
 
-    monkeypatch.setattr(jellyfin_receiver, "read_session_capabilities", _boom)
+    monkeypatch.setattr(jellyfin_receiver, "_read_session_capabilities_for", _boom)
 
     out = jellyfin_receiver.register_receiver_once()
 
@@ -708,16 +730,20 @@ def test_register_falls_back_to_the_query_form_for_emby(monkeypatch) -> None:
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://emby.lan:8096")
     monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-den")
 
-    def _reject_body(url, payload, timeout=3.0):
-        attempts.append(url)
+    def _reject_body(context, path, payload, timeout=3.0):
+        attempts.append(jellyfin_receiver._context_url(context, path))
         raise RuntimeError("HTTP 400")
 
-    def _accept_query(url, timeout=3.0):
-        attempts.append(url)
+    def _accept_query(context, path, timeout=3.0):
+        attempts.append(jellyfin_receiver._context_url(context, path))
 
-    monkeypatch.setattr(jellyfin_receiver, "_post_json", _reject_body)
-    monkeypatch.setattr(jellyfin_receiver, "_post_no_body", _accept_query)
-    monkeypatch.setattr(jellyfin_receiver, "read_session_capabilities", lambda device_id="", timeout=3.0: {})
+    monkeypatch.setattr(jellyfin_receiver, "_post_json_for", _reject_body)
+    monkeypatch.setattr(jellyfin_receiver, "_post_no_body_for", _accept_query)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_read_session_capabilities_for",
+        lambda context, device_id="", timeout=3.0: {},
+    )
 
     out = jellyfin_receiver.register_receiver_once()
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 import os
 import threading
 from ..config import env_bool as _env_bool
@@ -34,6 +35,35 @@ _TRANSACTION = threading.RLock()
 # outgoing server takes seconds, and landing late would pin the new server's
 # address to the old server's identity.
 _CONFIG_GENERATION = 0
+
+
+@dataclass(frozen=True, repr=False)
+class _RequestContext:
+    """One secret-bearing, point-in-time view used by a network operation.
+
+    ``repr`` is deliberately disabled: authentication material must not leak if
+    a caller logs an exception or a local while debugging a failed request.
+    """
+
+    generation: int
+    enabled: bool
+    running: bool
+    server_url: str
+    device_id: str
+    device_name: str
+    client_name: str
+    client_version: str
+    username: str
+    password: str
+    token: str
+    catalog_user_id: str
+    authenticated: bool
+    connected: bool
+    last_register_ok: bool | None
+    register_retry_failures: int
+    next_register_retry_ts: float
+    last_detect_ok: bool | None
+    last_detect_ts: float | None
 
 _STATUS: dict[str, object] = {
     "enabled": False,
@@ -350,6 +380,11 @@ def _effective_catalog_user(st: dict[str, object]) -> tuple[str, str]:
 
 
 def start() -> None:
+    with _control_socket_suspended():
+        _start_locked()
+
+
+def _start_locked() -> None:
     """Initialize Jellyfin receiver runtime state (network wiring added later)."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     cfg = _read_config()
@@ -600,21 +635,25 @@ def _persist_server_type(server_type: str, product_name: str = "", *, generation
             _STATUS["server_product_name"] = ""
 
     gen = config_generation() if generation is None else int(generation)
-    if not _publish(gen, _apply):
-        return
-    if not changed:
-        return
-    try:
-        runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_TYPE", st)
-    except Exception:
-        pass
-    try:
-        from .. import state as _state
+    # Status and durable settings are one short commit. A configuration
+    # transaction must not land between them and let a retired detection result
+    # persist after its in-memory write was accepted.
+    with _TRANSACTION:
+        if not _publish(gen, _apply):
+            return
+        if not changed:
+            return
+        try:
+            runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_TYPE", st)
+        except Exception:
+            pass
+        try:
+            from .. import state as _state
 
-        if hasattr(_state, "update_settings"):
-            _state.update_settings({"jellyfin_server_type": st})
-    except Exception:
-        pass
+            if hasattr(_state, "update_settings"):
+                _state.update_settings({"jellyfin_server_type": st})
+        except Exception:
+            pass
 
 
 def set_server_type(server_type: str) -> dict[str, object]:
@@ -622,7 +661,8 @@ def set_server_type(server_type: str) -> dict[str, object]:
     st = str(server_type or "").strip().lower()
     if st not in ("jellyfin", "emby"):
         raise ValueError("server_type must be jellyfin or emby")
-    _persist_server_type(st)
+    with _configuration_transaction(suspend_socket=False):
+        _persist_server_type(st, generation=config_generation())
     return status()
 
 
@@ -643,26 +683,32 @@ def _config_generation_current(generation: int) -> bool:
         return int(_CONFIG_GENERATION) == int(generation)
 
 
-def config_snapshot() -> dict[str, object]:
-    """Everything network work needs, plus the generation, captured together.
-
-    Reading the URL and then capturing the generation separately is a race in
-    itself: settings can change in between, leaving work that dialled the old
-    server holding a generation that says it is current.
-    """
+def _request_context() -> _RequestContext:
+    """Capture every input for one network operation under one lock."""
     with _LOCK:
-        return {
-            "generation": int(_CONFIG_GENERATION),
-            "enabled": bool(_STATUS.get("enabled")),
-            "running": bool(_STATUS.get("running")),
-            "server_url": str(_STATUS.get("server_url") or "").strip().rstrip("/"),
-            "device_id": str(_STATUS.get("device_id") or "").strip(),
-            "device_name": str(_STATUS.get("device_name") or "RelayTV"),
-            "client_name": str(_STATUS.get("client_name") or "RelayTV"),
-            "client_version": str(_STATUS.get("client_version") or "1.0"),
-            "username": str(_AUTH_USERNAME or ""),
-            "password": str(_AUTH_PASSWORD or ""),
-        }
+        detect_ts = _STATUS.get("last_detect_ts")
+        catalog_user_id, _catalog_user_source = _effective_catalog_user(_STATUS)
+        return _RequestContext(
+            generation=int(_CONFIG_GENERATION),
+            enabled=bool(_STATUS.get("enabled")),
+            running=bool(_STATUS.get("running")),
+            server_url=str(_STATUS.get("server_url") or "").strip().rstrip("/"),
+            device_id=str(_STATUS.get("device_id") or "").strip(),
+            device_name=str(_STATUS.get("device_name") or "RelayTV"),
+            client_name=str(_STATUS.get("client_name") or "RelayTV"),
+            client_version=str(_STATUS.get("client_version") or "1.0"),
+            username=str(_AUTH_USERNAME or ""),
+            password=str(_AUTH_PASSWORD or ""),
+            token=str(_ACCESS_TOKEN or _API_KEY or ""),
+            catalog_user_id=catalog_user_id,
+            authenticated=bool(_STATUS.get("authenticated")),
+            connected=bool(_STATUS.get("connected")),
+            last_register_ok=_STATUS.get("last_register_ok") if isinstance(_STATUS.get("last_register_ok"), bool) else None,
+            register_retry_failures=int(_REGISTER_RETRY_FAILURES or 0),
+            next_register_retry_ts=float(_NEXT_REGISTER_RETRY_TS or 0.0),
+            last_detect_ok=_STATUS.get("last_detect_ok") if isinstance(_STATUS.get("last_detect_ok"), bool) else None,
+            last_detect_ts=float(detect_ts) if isinstance(detect_ts, (int, float)) else None,
+        )
 
 
 def _publish(generation: int, apply) -> bool:
@@ -696,15 +742,16 @@ def _run_detection(server_url: str, *, generation: int | None = None) -> dict[st
         _STATUS["last_detect_ok"] = bool(result.get("ok"))
         _STATUS["last_detect_error"] = result.get("error")
 
-    if not _publish(gen, _apply):
-        logger.info("jellyfin_detect_discarded reason=config_changed")
-        return {"ok": False, "reason": "config_changed"}
-    if result.get("ok"):
-        _persist_server_type(
-            str(result.get("server_type") or ""),
-            str(result.get("product_name") or ""),
-            generation=gen,
-        )
+    with _TRANSACTION:
+        if not _publish(gen, _apply):
+            logger.info("jellyfin_detect_discarded reason=config_changed")
+            return {"ok": False, "reason": "config_changed"}
+        if result.get("ok"):
+            _persist_server_type(
+                str(result.get("server_type") or ""),
+                str(result.get("product_name") or ""),
+                generation=gen,
+            )
     return result
 
 
@@ -715,21 +762,18 @@ def _maybe_retry_detection() -> None:
     and at most every 300s, so an endpoint hidden by a proxy doesn't get
     hammered on every heartbeat.
     """
-    st = status()
-    if st.get("last_detect_ok") is True:
+    context = _request_context()
+    if not context.enabled or not context.running:
         return
-    if not (bool(st.get("authenticated")) or bool(st.get("last_register_ok"))):
+    if context.last_detect_ok is True:
         return
-    last_ts = st.get("last_detect_ts")
-    if last_ts and (time.time() - float(last_ts)) < 300.0:
+    if not (context.authenticated or context.last_register_ok is True):
         return
-    # URL and generation come from the same snapshot, so the probe can never
-    # hold a generation that belongs to a different server.
-    snapshot = config_snapshot()
-    base = str(snapshot.get("server_url") or "").strip()
-    if not base:
+    if context.last_detect_ts and (time.time() - context.last_detect_ts) < 300.0:
         return
-    _run_detection(base, generation=int(snapshot["generation"]))
+    if not context.server_url:
+        return
+    _run_detection(context.server_url, generation=context.generation)
 
 
 def connect(*, server_url: str, api_key: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
@@ -978,12 +1022,12 @@ def _build_emby_headers(*, token: str = "") -> dict[str, str]:
 
 def get_item_metadata(item_id: str, *, token_override: str = "", server_url_override: str = "") -> dict[str, object]:
     iid = str(item_id or "").strip()
-    st = status()
-    base = str(server_url_override or st.get("server_url") or "").strip().rstrip("/")
+    context = _request_context()
+    base = str(server_url_override or context.server_url or "").strip().rstrip("/")
     if not iid or not base:
         return {}
-    token = str(token_override or _active_token() or "").strip()
-    user_id = str(st.get("catalog_user_id") or st.get("auth_user_id") or "").strip()
+    token = str(token_override or context.token or "").strip()
+    user_id = context.catalog_user_id
     token_key = hashlib.sha1(token.encode("utf-8", "ignore")).hexdigest()[:12] if token else "-"
     cache_key = f"meta:{base}:{user_id}:{iid}:{token_key}"
     cached = _catalog_cache_get(cache_key)
@@ -991,10 +1035,10 @@ def get_item_metadata(item_id: str, *, token_override: str = "", server_url_over
         _mark_catalog_ok()
         return _attach_thumb(dict(cached))
 
-    client_name = str(st.get("client_name") or "RelayTV")
-    device_name = str(st.get("device_name") or "RelayTV")
-    device_id = str(st.get("device_id") or "relaytv")
-    client_version = str(st.get("client_version") or "1.0")
+    client_name = context.client_name
+    device_name = context.device_name
+    device_id = context.device_id or "relaytv"
+    client_version = context.client_version
 
     def _headers() -> dict[str, str]:
         out: dict[str, str] = {}
@@ -1397,11 +1441,8 @@ def _extract_total_count(payload: object, default_count: int = 0) -> int:
 
 
 def _catalog_base_token_user() -> tuple[str, str, str]:
-    st = status()
-    base = str(st.get("server_url") or "").strip().rstrip("/")
-    token = _active_token()
-    user_id = str(st.get("catalog_user_id") or st.get("auth_user_id") or "").strip()
-    return base, token, user_id
+    context = _request_context()
+    return context.server_url, context.token, context.catalog_user_id
 
 
 def get_item_detail(item_id: str, *, refresh: bool = False) -> dict[str, object]:
@@ -2553,61 +2594,83 @@ def command_sink_registered() -> bool:
     return _COMMAND_SINK is not None
 
 
-def _build_url(path: str) -> str:
-    st = status()
-    base = str(st.get("server_url") or "").strip().rstrip("/")
-    p = (path or "").strip()
-    if not p:
-        return base
+def _context_url(context: _RequestContext, path: str) -> str:
+    """Build a URL without consulting mutable receiver state."""
+    p = str(path or "").strip()
     if p.startswith("http://") or p.startswith("https://"):
         return p
-    if not base:
+    if not p:
+        return context.server_url
+    if not context.server_url:
         return p
     if not p.startswith("/"):
         p = f"/{p}"
-    return f"{base}{p}"
+    return f"{context.server_url}{p}"
 
 
-def _post_json(url: str, payload: dict, *, timeout: float = 3.0) -> None:
+def _context_headers(context: _RequestContext) -> dict[str, str]:
+    """Authentication headers derived entirely from one request context."""
+    token = context.token.strip()
+    out: dict[str, str] = {}
+    if token:
+        out["X-Emby-Token"] = token
+        out["Authorization"] = f'MediaBrowser Token="{token}"'
+    auth = (
+        f'MediaBrowser Client="{context.client_name}", '
+        f'Device="{context.device_name}", '
+        f'DeviceId="{context.device_id or "relaytv"}", '
+        f'Version="{context.client_version}"'
+    )
+    if token:
+        auth = f'{auth}, Token="{token}"'
+    out["X-Emby-Authorization"] = auth
+    return out
+
+
+def _post_json_for(
+    context: _RequestContext,
+    path: str,
+    payload: dict,
+    *,
+    timeout: float = 3.0,
+) -> str:
+    """POST JSON using only values captured with ``context.generation``."""
+    url = _context_url(context, path)
     body = json.dumps(payload).encode("utf-8")
     req = _urlrequest.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    st = status()
-    token = _active_token()
-    if token:
-        req.add_header("X-Emby-Token", token)
-        req.add_header("Authorization", f'MediaBrowser Token="{token}"')
-    auth = (
-        f'MediaBrowser Client="{st.get("client_name")}", '
-        f'Device="{st.get("device_name")}", '
-        f'DeviceId="{st.get("device_id")}", '
-        f'Version="{st.get("client_version")}"'
-    )
-    if token:
-        auth = f'{auth}, Token="{token}"'
-    req.add_header("X-Emby-Authorization", auth)
+    for key, value in _context_headers(context).items():
+        req.add_header(key, value)
     with _urlrequest.urlopen(req, timeout=timeout):
-        return
+        pass
+    return url
 
 
-def _post_no_body(url: str, *, timeout: float = 3.0) -> None:
+def _post_no_body_for(context: _RequestContext, path: str, *, timeout: float = 3.0) -> str:
+    """POST an empty body using only values from one request context."""
+    url = _context_url(context, path)
     req = _urlrequest.Request(url, data=b"", method="POST")
-    st = status()
-    token = _active_token()
-    if token:
-        req.add_header("X-Emby-Token", token)
-        req.add_header("Authorization", f'MediaBrowser Token="{token}"')
-    auth = (
-        f'MediaBrowser Client="{st.get("client_name")}", '
-        f'Device="{st.get("device_name")}", '
-        f'DeviceId="{st.get("device_id")}", '
-        f'Version="{st.get("client_version")}"'
-    )
-    if token:
-        auth = f'{auth}, Token="{token}"'
-    req.add_header("X-Emby-Authorization", auth)
+    for key, value in _context_headers(context).items():
+        req.add_header(key, value)
     with _urlrequest.urlopen(req, timeout=timeout):
-        return
+        pass
+    return url
+
+
+def _get_json_for(context: _RequestContext, path: str, *, timeout: float = 5.0) -> object:
+    """GET JSON using only values from one request context."""
+    url = _context_url(context, path)
+    req = _urlrequest.Request(url, method="GET")
+    for key, value in _context_headers(context).items():
+        req.add_header(key, value)
+    with _urlrequest.urlopen(req, timeout=timeout) as resp:
+        raw = (resp.read() or b"{}").decode("utf-8", "ignore")
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
 
 
 def _sanitize_error_text(msg: object) -> str:
@@ -2639,24 +2702,20 @@ def _format_http_error(exc: Exception) -> str:
     return _sanitize_error_text(str(exc))
 
 
-def authenticate_once() -> dict[str, object]:
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, object]:
+    context = _context or _request_context()
+    if not context.enabled or not context.running:
         return {"ok": False, "reason": "disabled"}
-    # Inputs and generation in one capture: reading the URL first and stamping
-    # the generation afterwards lets settings change in between, leaving this
-    # request dialling the old server while claiming to be current.
-    snapshot = config_snapshot()
-    generation = int(snapshot["generation"])
-    base = str(snapshot["server_url"])
+    generation = context.generation
+    base = context.server_url
     if not base:
         return {"ok": False, "reason": "no_server_url"}
-    username = str(snapshot["username"])
-    password = str(snapshot["password"])
-    device_name = str(snapshot["device_name"])
-    device_id = str(snapshot["device_id"]) or "relaytv"
-    client_name = str(snapshot["client_name"])
-    client_version = str(snapshot["client_version"])
+    username = context.username
+    password = context.password
+    device_name = context.device_name
+    device_id = context.device_id or "relaytv"
+    client_name = context.client_name
+    client_version = context.client_version
     if not username or not password:
         return {"ok": False, "reason": "no_credentials"}
 
@@ -2780,13 +2839,31 @@ def read_session_capabilities(device_id: str = "", *, timeout: float = 3.0) -> d
     whether or not the body bound to anything. Only the session readback tells
     us media control is really advertised, so registration asserts on this.
     """
-    did = str(device_id or status().get("device_id") or "").strip()
+    context = _request_context()
+    return _read_session_capabilities_for(
+        context,
+        device_id=str(device_id or context.device_id or "").strip(),
+        timeout=timeout,
+    )
+
+
+def _read_session_capabilities_for(
+    context: _RequestContext,
+    *,
+    device_id: str,
+    timeout: float,
+) -> dict[str, object]:
+    """Read back capabilities from the same server/session just registered."""
+    did = str(device_id or "").strip()
     if not did:
         return {}
-    url = _build_url(f"/Sessions?deviceId={_urlparse.quote(did)}")
-    if not url:
+    if not context.server_url:
         return {}
-    rows = _get_json(url, timeout=timeout, token=_active_token())
+    rows = _get_json_for(
+        context,
+        f"/Sessions?deviceId={_urlparse.quote(did)}",
+        timeout=timeout,
+    )
     if not isinstance(rows, list):
         return {}
     for row in rows:
@@ -2795,34 +2872,33 @@ def read_session_capabilities(device_id: str = "", *, timeout: float = 3.0) -> d
     return {}
 
 
-def register_receiver_once() -> dict[str, object]:
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+def register_receiver_once(*, _context: _RequestContext | None = None) -> dict[str, object]:
+    context = _context or _request_context()
+    if not context.enabled or not context.running:
         return {"ok": False, "reason": "disabled"}
-    base = str(st.get("server_url") or "").strip().rstrip("/")
-    if not base:
+    if not context.server_url:
         return {"ok": False, "reason": "no_server_url"}
-    snapshot = config_snapshot()
-    did = str(snapshot["device_id"])
+    did = context.device_id
     payload = capabilities_payload()
     # The query-string form is what older Emby builds accept; it stays as a
     # fallback so an Emby server that rejects the DTO body still registers.
     candidates: list[tuple[str, str, dict | None]] = [
-        ("full", f"{base}/Sessions/Capabilities/Full", payload),
-        ("caps_query", f"{base}/Sessions/Capabilities?{_capabilities_query(did)}", None),
+        ("full", "/Sessions/Capabilities/Full", payload),
+        ("caps_query", f"/Sessions/Capabilities?{_capabilities_query(did)}", None),
     ]
     timeout = float(os.getenv("RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC", "3"))
-    generation = int(snapshot["generation"])
+    generation = context.generation
     last_err = "register_failed"
     last_name = ""
     last_url = ""
     try:
-        for name, url, body in candidates:
+        for name, path, body in candidates:
+            url = _context_url(context, path)
             try:
                 if body is None:
-                    _post_no_body(url, timeout=timeout)
+                    _post_no_body_for(context, path, timeout=timeout)
                 else:
-                    _post_json(url, body, timeout=timeout)
+                    _post_json_for(context, path, body, timeout=timeout)
             except Exception as e:
                 last_err = _format_http_error(e)
                 last_name = name
@@ -2831,7 +2907,7 @@ def register_receiver_once() -> dict[str, object]:
 
             # The readback is another network round trip, so it goes before
             # the ownership check rather than between it and the publish.
-            verified = _verify_registration(did, timeout=timeout)
+            verified = _verify_registration(context, timeout=timeout)
             if verified is False:
                 last_err = "server did not record media control for this session"
                 last_name = name
@@ -2863,16 +2939,20 @@ def register_receiver_once() -> dict[str, object]:
         return {"ok": False, "reason": "register_failed", "error": f"{last_name}: {last_err}", "url": last_url}
     except Exception as e:
         msg = _format_http_error(e)
-        with _LOCK:
+
+        def _apply_exception() -> None:
             _STATUS["connected"] = False
             _STATUS["last_register_ts"] = int(time.time())
             _STATUS["last_register_ok"] = False
             _STATUS["last_register_error"] = msg
             _STATUS["last_error"] = msg
+
+        if not _publish(generation, _apply_exception):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": False, "reason": "register_failed", "error": msg}
 
 
-def _verify_registration(device_id: str, *, timeout: float) -> bool | None:
+def _verify_registration(context: _RequestContext, *, timeout: float) -> bool | None:
     """True if the server advertises media control, False if it does not.
 
     ``None`` means the readback itself failed — a server that hides ``/Sessions``
@@ -2880,7 +2960,11 @@ def _verify_registration(device_id: str, *, timeout: float) -> bool | None:
     a registration failure, so the caller accepts the POST on its own terms.
     """
     try:
-        session = read_session_capabilities(device_id, timeout=timeout)
+        session = _read_session_capabilities_for(
+            context,
+            device_id=context.device_id,
+            timeout=timeout,
+        )
     except Exception:
         return None
     if not session:
@@ -2920,51 +3004,74 @@ def _register_backoff_sec(failures: int) -> float:
     return min(cap, base * (2 ** (f - 1)))
 
 
-def _schedule_register_retry(now_ts: float, failures: int, delay_sec: float) -> None:
-    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS
-    _REGISTER_RETRY_FAILURES = max(0, int(failures))
-    _NEXT_REGISTER_RETRY_TS = max(0.0, float(now_ts) + max(0.0, float(delay_sec)))
-    with _LOCK:
+def _schedule_register_retry(
+    now_ts: float,
+    failures: int,
+    delay_sec: float,
+    *,
+    generation: int | None = None,
+) -> bool:
+    def _apply() -> None:
+        global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS
+        _REGISTER_RETRY_FAILURES = max(0, int(failures))
+        _NEXT_REGISTER_RETRY_TS = max(0.0, float(now_ts) + max(0.0, float(delay_sec)))
         _STATUS["register_retry_failures"] = _REGISTER_RETRY_FAILURES
         _STATUS["next_register_retry_ts"] = int(_NEXT_REGISTER_RETRY_TS)
         _STATUS["last_register_backoff_sec"] = float(delay_sec)
-
-
-def _clear_register_retry_state() -> None:
-    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS
-    _REGISTER_RETRY_FAILURES = 0
-    _NEXT_REGISTER_RETRY_TS = 0.0
+    if generation is not None:
+        return _publish(generation, _apply)
     with _LOCK:
+        _apply()
+    return True
+
+
+def _clear_register_retry_state(*, generation: int | None = None) -> bool:
+    def _apply() -> None:
+        global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS
+        _REGISTER_RETRY_FAILURES = 0
+        _NEXT_REGISTER_RETRY_TS = 0.0
         _STATUS["register_retry_failures"] = 0
         _STATUS["next_register_retry_ts"] = None
         _STATUS["last_register_backoff_sec"] = 0.0
+    if generation is not None:
+        return _publish(generation, _apply)
+    with _LOCK:
+        _apply()
+    return True
 
 
 def _ensure_registration(now_ts: float | None = None) -> None:
     if not _register_retry_enabled():
         return
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+    context = _request_context()
+    if not context.enabled or not context.running:
         return
-    if not str(st.get("server_url") or "").strip():
+    if not context.server_url:
         return
-    if not bool(st.get("api_key_configured")) and not bool(st.get("authenticated")):
+    if not context.token:
         return
 
     now_val = float(now_ts if now_ts is not None else time.time())
-    if _NEXT_REGISTER_RETRY_TS and now_val < float(_NEXT_REGISTER_RETRY_TS):
+    if context.next_register_retry_ts and now_val < context.next_register_retry_ts:
         return
-    if bool(st.get("connected")) and bool(st.get("last_register_ok")):
+    if context.connected and context.last_register_ok is True:
         return
 
-    out = register_receiver_once()
+    out = register_receiver_once(_context=context)
     if bool(out.get("ok")):
-        _clear_register_retry_state()
+        _clear_register_retry_state(generation=context.generation)
+        return
+    if out.get("reason") == "config_changed":
         return
 
-    failures = _REGISTER_RETRY_FAILURES + 1
+    failures = context.register_retry_failures + 1
     delay = _register_backoff_sec(failures)
-    _schedule_register_retry(now_val, failures, delay)
+    _schedule_register_retry(
+        now_val,
+        failures,
+        delay,
+        generation=context.generation,
+    )
 
 
 def _ensure_control_socket() -> None:
@@ -2991,6 +3098,33 @@ def _stop_control_socket() -> None:
 
 
 @contextlib.contextmanager
+def _configuration_transaction(*, suspend_socket: bool):
+    """Serialize a configuration mutation and invalidate work at both ends.
+
+    Socket suspension is optional because a display-only change such as an
+    operator-selected server type must invalidate detection work but does not
+    require tearing down an otherwise healthy control channel.
+    """
+    with _TRANSACTION:
+        _advance_config_generation()
+        try:
+            if not suspend_socket:
+                yield
+                return
+            try:
+                from . import jellyfin_ws
+            except Exception:
+                yield
+                return
+            with jellyfin_ws.suspended():
+                yield
+        finally:
+            # This also covers an unavailable socket module and exceptions from
+            # either the socket context or the configuration body.
+            _advance_config_generation()
+
+
+@contextlib.contextmanager
 def _control_socket_suspended():
     """Run one configuration change to completion, with the socket held down.
 
@@ -3008,23 +3142,8 @@ def _control_socket_suspended():
     should sail through and find the suspension flag, not block on a lock for
     the length of a network probe.
     """
-    with _TRANSACTION:
-        # Advance on the way in *and* on the way out. Entering invalidates work
-        # that started under the previous configuration; leaving invalidates
-        # work that started mid-transaction, which would otherwise have
-        # captured a generation that was current while the settings it read
-        # were half-installed.
-        _advance_config_generation()
-        try:
-            from . import jellyfin_ws
-        except Exception:
-            yield
-            return
-        try:
-            with jellyfin_ws.suspended():
-                yield
-        finally:
-            _advance_config_generation()
+    with _configuration_transaction(suspend_socket=True):
+        yield
 
 
 def _control_socket_status() -> dict[str, object]:
@@ -3039,14 +3158,14 @@ def _control_socket_status() -> dict[str, object]:
 def _ensure_authentication() -> None:
     if not runtime_config.snapshot().flag("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
         return
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+    context = _request_context()
+    if not context.enabled or not context.running:
         return
-    if bool(st.get("authenticated")):
+    if context.authenticated:
         return
-    if not bool(st.get("auth_user_configured")):
+    if not context.username or not context.password:
         return
-    authenticate_once()
+    authenticate_once(_context=context)
 
 
 def send_playback_start_once(payload: dict | None = None) -> dict[str, object]:
@@ -3057,18 +3176,24 @@ def send_playback_start_once(payload: dict | None = None) -> dict[str, object]:
     the item as playing straight away instead of an empty remote for a few
     seconds.
     """
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+    context = _request_context()
+    if not context.enabled or not context.running:
         return {"ok": False, "reason": "disabled"}
     body = payload if isinstance(payload, dict) else {}
     if not body:
         return {"ok": False, "reason": "no_payload"}
-    generation = config_generation()
-    url = _build_url(os.getenv("RELAYTV_JELLYFIN_PLAYING_PATH", "/Sessions/Playing"))
+    generation = context.generation
+    path = os.getenv("RELAYTV_JELLYFIN_PLAYING_PATH", "/Sessions/Playing")
+    url = _context_url(context, path)
     if not url:
         return {"ok": False, "reason": "no_server_url"}
     try:
-        _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")))
+        _post_json_for(
+            context,
+            path,
+            body,
+            timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")),
+        )
     except Exception as e:
         msg = _format_http_error(e)
 
@@ -3091,22 +3216,32 @@ def send_playback_start_once(payload: dict | None = None) -> dict[str, object]:
     return {"ok": True}
 
 
-def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]:
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+def send_progress_payload_once(
+    payload: dict | None = None,
+    *,
+    _context: _RequestContext | None = None,
+) -> dict[str, object]:
+    context = _context or _request_context()
+    if not context.enabled or not context.running:
         return {"ok": False, "reason": "disabled"}
     body = payload if isinstance(payload, dict) else {}
     if not body:
         return {"ok": False, "reason": "no_payload"}
     # A post takes up to three seconds. Landing after a disconnect used to set
     # connected=True while running was already false.
-    generation = config_generation()
-    url = _build_url(os.getenv("RELAYTV_JELLYFIN_PROGRESS_PATH", "/Sessions/Playing/Progress"))
+    generation = context.generation
+    path = os.getenv("RELAYTV_JELLYFIN_PROGRESS_PATH", "/Sessions/Playing/Progress")
+    url = _context_url(context, path)
     if not url:
         return {"ok": False, "reason": "no_server_url"}
     t0 = time.monotonic()
     try:
-        _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")))
+        _post_json_for(
+            context,
+            path,
+            body,
+            timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")),
+        )
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
 
         def _apply() -> None:
@@ -3140,18 +3275,21 @@ def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]
 
 
 def send_progress_once() -> dict[str, object]:
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+    context = _request_context()
+    if not context.enabled or not context.running:
         return {"ok": False, "reason": "disabled"}
     if _PROGRESS_PROVIDER is None:
         return {"ok": False, "reason": "no_provider"}
     payload = _PROGRESS_PROVIDER()
-    return send_progress_payload_once(payload if isinstance(payload, dict) else None)
+    return send_progress_payload_once(
+        payload if isinstance(payload, dict) else None,
+        _context=context,
+    )
 
 
 def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]:
-    st = status()
-    if not bool(st.get("enabled")) or not bool(st.get("running")):
+    context = _request_context()
+    if not context.enabled or not context.running:
         return {"ok": False, "reason": "disabled"}
     body = payload if isinstance(payload, dict) else {}
     if not body:
@@ -3164,13 +3302,19 @@ def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]
             "suppressed_duplicate_stopped": True,
             "window_sec": _stopped_dedupe_sec(),
         }
-    generation = config_generation()
-    url = _build_url(os.getenv("RELAYTV_JELLYFIN_STOPPED_PATH", "/Sessions/Playing/Stopped"))
+    generation = context.generation
+    path = os.getenv("RELAYTV_JELLYFIN_STOPPED_PATH", "/Sessions/Playing/Stopped")
+    url = _context_url(context, path)
     if not url:
         return {"ok": False, "reason": "no_server_url"}
     t0 = time.monotonic()
     try:
-        _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC", "3")))
+        _post_json_for(
+            context,
+            path,
+            body,
+            timeout=float(os.getenv("RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC", "3")),
+        )
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
 
         def _apply() -> None:

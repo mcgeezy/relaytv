@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from relaytv_app import state
 from relaytv_app.integrations import jellyfin_receiver, jellyfin_ws
 
 
@@ -319,7 +320,12 @@ def test_ensure_registration_reregisters_after_invalidation(monkeypatch) -> None
     monkeypatch.setitem(jellyfin_receiver._STATUS, "authenticated", True)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "connected", True)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_register_ok", True)
-    monkeypatch.setattr(jellyfin_receiver, "register_receiver_once", lambda: calls.append(1) or {"ok": True})
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "tok")
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "register_receiver_once",
+        lambda **kwargs: calls.append(1) or {"ok": True},
+    )
 
     # Healthy: nothing to do.
     jellyfin_receiver._ensure_registration()
@@ -842,7 +848,7 @@ def test_concurrent_server_switches_do_not_interleave(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
     monkeypatch.setattr(jellyfin_receiver, "_start_worker", lambda: None)
     monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
-    monkeypatch.setattr(jellyfin_receiver, "authenticate_once", lambda: {"ok": False})
+    monkeypatch.setattr(jellyfin_receiver, "authenticate_once", lambda **kwargs: {"ok": False})
     monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
 
     def _detect(server_url, timeout_sec=3.0):
@@ -922,7 +928,7 @@ def test_an_in_flight_probe_cannot_publish_over_new_settings(monkeypatch) -> Non
     monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
     monkeypatch.setattr(jellyfin_receiver, "_start_worker", lambda: None)
     monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
-    monkeypatch.setattr(jellyfin_receiver, "authenticate_once", lambda: {"ok": False})
+    monkeypatch.setattr(jellyfin_receiver, "authenticate_once", lambda **kwargs: {"ok": False})
     monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
     for key, value in (
         ("enabled", True), ("running", True), ("authenticated", True),
@@ -1018,7 +1024,11 @@ def test_an_in_flight_progress_post_cannot_land_after_disconnect(monkeypatch) ->
         ("server_url", "http://jf.lan:8096"),
     ):
         monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
-    monkeypatch.setattr(jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: time.sleep(1.0))
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_post_json_for",
+        lambda context, path, payload, timeout=3.0: time.sleep(1.0),
+    )
 
     done = threading.Event()
 
@@ -1038,13 +1048,15 @@ def test_an_in_flight_progress_post_cannot_land_after_disconnect(monkeypatch) ->
 
 def test_authentication_captures_its_inputs_with_its_generation(monkeypatch) -> None:
     """Reading the URL and stamping the generation separately is its own race."""
-    snap = jellyfin_receiver.config_snapshot()
-    assert "generation" in snap and "server_url" in snap and "username" in snap
+    context = jellyfin_receiver._request_context()
+    assert isinstance(context.generation, int)
+    assert isinstance(context.server_url, str)
+    assert repr(context).startswith("<relaytv_app.integrations.jellyfin_receiver._RequestContext object at ")
     # The snapshot is taken under one lock, so it cannot straddle a transaction.
-    before = snap["generation"]
+    before = context.generation
     with jellyfin_receiver._control_socket_suspended():
         pass
-    assert jellyfin_receiver.config_snapshot()["generation"] != before
+    assert jellyfin_receiver._request_context().generation != before
 
 
 def test_publish_is_a_single_critical_section() -> None:
@@ -1055,3 +1067,231 @@ def test_publish_is_a_single_critical_section() -> None:
     assert applied == [1]
     assert jellyfin_receiver._publish(gen - 1, lambda: applied.append(2)) is False
     assert applied == [1], "a stale generation was allowed to write"
+
+
+def test_authentication_cannot_publish_after_its_snapshot_is_disconnected(monkeypatch) -> None:
+    """The enabled/running decision belongs to the same snapshot as the token."""
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
+    for key, value in (
+        ("enabled", True),
+        ("running", True),
+        ("authenticated", False),
+        ("server_url", "http://old.local:8096"),
+        ("auth_user_configured", True),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_USERNAME", "old-user")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_PASSWORD", "old-password")
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "")
+
+    original_context = jellyfin_receiver._request_context
+
+    def _capture_then_disconnect():
+        context = original_context()
+        jellyfin_receiver.disconnect()
+        return context
+
+    monkeypatch.setattr(jellyfin_receiver, "_request_context", _capture_then_disconnect)
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "AccessToken": "old-token",
+                    "User": {"Id": "old-user-id"},
+                    "SessionInfo": {"Id": "old-session"},
+                }
+            ).encode()
+
+    monkeypatch.setattr(jellyfin_receiver._urlrequest, "urlopen", lambda req, timeout=5: _Response())
+
+    result = jellyfin_receiver.authenticate_once()
+
+    assert result == {"ok": False, "reason": "config_changed"}
+    assert jellyfin_receiver._STATUS["running"] is False
+    assert jellyfin_receiver._STATUS["authenticated"] is False
+    assert jellyfin_receiver._ACCESS_TOKEN == ""
+
+
+def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> None:
+    """A URL and token captured together stay together even after a switch."""
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    with jellyfin_receiver._LOCK:
+        jellyfin_receiver._STATUS.update(
+            {
+                "enabled": True,
+                "running": True,
+                "server_url": "http://old.local:8096",
+                "device_id": "old-device",
+            }
+        )
+        jellyfin_receiver._ACCESS_TOKEN = "old-token"
+    context = jellyfin_receiver._request_context()
+
+    with jellyfin_receiver._control_socket_suspended():
+        with jellyfin_receiver._LOCK:
+            jellyfin_receiver._STATUS["server_url"] = "http://new.local:8096"
+            jellyfin_receiver._STATUS["device_id"] = "new-device"
+            jellyfin_receiver._ACCESS_TOKEN = "new-token"
+
+    requests: list[tuple[str, str | None]] = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def _capture(req, timeout=3.0):
+        requests.append((req.full_url, req.get_header("X-emby-token")))
+        return _Response()
+
+    monkeypatch.setattr(jellyfin_receiver._urlrequest, "urlopen", _capture)
+    jellyfin_receiver._post_json_for(context, "/Sessions/Playing/Progress", {"ItemId": "x"})
+
+    assert requests == [("http://old.local:8096/Sessions/Playing/Progress", "old-token")]
+
+
+def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
+    seen: list[tuple[str, int, str, str]] = []
+    for key, value in (
+        ("enabled", True),
+        ("running", True),
+        ("server_url", "http://jf.local:8096"),
+        ("device_id", "relaytv-device"),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "session-token")
+
+    def _post(context, path, payload, timeout=3.0):
+        seen.append(("post", id(context), context.server_url, context.token))
+
+    def _readback(context, device_id, timeout=3.0):
+        seen.append(("readback", id(context), context.server_url, context.token))
+        return {"DeviceId": device_id, "SupportsMediaControl": True}
+
+    monkeypatch.setattr(jellyfin_receiver, "_post_json_for", _post)
+    monkeypatch.setattr(jellyfin_receiver, "_read_session_capabilities_for", _readback)
+
+    result = jellyfin_receiver.register_receiver_once()
+
+    assert result["ok"] is True
+    assert seen == [
+        ("post", seen[0][1], "http://jf.local:8096", "session-token"),
+        ("readback", seen[0][1], "http://jf.local:8096", "session-token"),
+    ]
+
+
+def test_registration_switch_discards_the_old_context_result(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    for key, value in (
+        ("enabled", True),
+        ("running", True),
+        ("connected", False),
+        ("server_url", "http://old.local:8096"),
+        ("device_id", "old-device"),
+        ("media_control_verified", None),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "old-token")
+    posted: list[tuple[str, str, str]] = []
+
+    def _post_then_switch(context, path, payload, timeout=3.0):
+        posted.append((_context_url(context, path), context.device_id, context.token))
+        with jellyfin_receiver._control_socket_suspended():
+            with jellyfin_receiver._LOCK:
+                jellyfin_receiver._STATUS["server_url"] = "http://new.local:8096"
+                jellyfin_receiver._STATUS["device_id"] = "new-device"
+                jellyfin_receiver._ACCESS_TOKEN = "new-token"
+
+    def _context_url(context, path):
+        return jellyfin_receiver._context_url(context, path)
+
+    monkeypatch.setattr(jellyfin_receiver, "_post_json_for", _post_then_switch)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_read_session_capabilities_for",
+        lambda context, device_id, timeout=3.0: {
+            "DeviceId": device_id,
+            "SupportsMediaControl": True,
+        },
+    )
+
+    result = jellyfin_receiver.register_receiver_once()
+
+    assert result == {"ok": False, "reason": "config_changed"}
+    assert posted == [("http://old.local:8096/Sessions/Capabilities/Full", "old-device", "old-token")]
+    assert jellyfin_receiver._STATUS["server_url"] == "http://new.local:8096"
+    assert jellyfin_receiver._STATUS["connected"] is False
+    assert jellyfin_receiver._STATUS["media_control_verified"] is None
+
+
+def test_manual_server_type_change_invalidates_an_in_flight_detection(monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver.runtime_config, "set_value", lambda key, value: None)
+    monkeypatch.setattr(state, "update_settings", lambda values: None)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "jellyfin")
+
+    def _detect(url, timeout_sec=3.0):
+        started.set()
+        assert release.wait(5)
+        return {"ok": True, "server_type": "jellyfin", "product_name": "Jellyfin Server"}
+
+    monkeypatch.setattr(jellyfin_receiver, "detect_server_type", _detect)
+    result: list[dict[str, object]] = []
+    probe = threading.Thread(
+        target=lambda: result.append(jellyfin_receiver._run_detection("http://jf.local:8096")),
+        daemon=True,
+    )
+    probe.start()
+    assert started.wait(5)
+    jellyfin_receiver.set_server_type("emby")
+    release.set()
+    probe.join(timeout=5)
+
+    assert result == [{"ok": False, "reason": "config_changed"}]
+    assert jellyfin_receiver._STATUS["server_type"] == "emby"
+
+
+def test_configuration_transaction_advances_generation_when_body_raises() -> None:
+    before = jellyfin_receiver.config_generation()
+    with pytest.raises(RuntimeError):
+        with jellyfin_receiver._configuration_transaction(suspend_socket=False):
+            during = jellyfin_receiver.config_generation()
+            raise RuntimeError("settings failed")
+
+    assert during == before + 1
+    assert jellyfin_receiver.config_generation() == before + 2
+
+
+def test_retired_registration_does_not_schedule_retry_state(monkeypatch) -> None:
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://old.local:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "connected", False)
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "old-token")
+    monkeypatch.setattr(jellyfin_receiver, "_REGISTER_RETRY_FAILURES", 0)
+    monkeypatch.setattr(jellyfin_receiver, "_NEXT_REGISTER_RETRY_TS", 0.0)
+
+    def _retire_while_registering(*, _context=None):
+        with jellyfin_receiver._configuration_transaction(suspend_socket=False):
+            pass
+        return {"ok": False, "reason": "config_changed"}
+
+    monkeypatch.setattr(jellyfin_receiver, "register_receiver_once", _retire_while_registering)
+
+    jellyfin_receiver._ensure_registration(now_ts=100.0)
+
+    assert jellyfin_receiver._REGISTER_RETRY_FAILURES == 0
+    assert jellyfin_receiver._NEXT_REGISTER_RETRY_TS == 0.0
