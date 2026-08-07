@@ -15,7 +15,10 @@ from urllib import error as _urlerror
 from urllib import parse as _urlparse
 import platform
 from .. import device_identity
+from ..debug import get_logger
 from ..thumb_cache import attach_local_thumbnail
+
+logger = get_logger("jellyfin_receiver")
 
 _LOCK = threading.Lock()
 _THREAD_LOCK = threading.Lock()
@@ -25,6 +28,12 @@ _THREAD_LOCK = threading.Lock()
 # is not enough: a transaction spans several of them plus a network probe, and
 # two overlapping ones interleave into a state neither caller asked for.
 _TRANSACTION = threading.RLock()
+
+# Bumped by every configuration transaction. Network work started under one
+# generation must not publish its result under a later one: a probe of the
+# outgoing server takes seconds, and landing late would pin the new server's
+# address to the old server's identity.
+_CONFIG_GENERATION = 0
 
 _STATUS: dict[str, object] = {
     "enabled": False,
@@ -95,7 +104,10 @@ _AUTH_PASSWORD: str = ""
 _ACCESS_TOKEN: str = ""
 _AUTH_USER_ID: str = ""
 _AUTH_SESSION_ID: str = ""
+# The current heartbeat generation's stop flag. Replaced, never reused: see
+# _start_worker. Starts set so a stop before any start is a no-op.
 _STOP_EVENT = threading.Event()
+_STOP_EVENT.set()
 _THREAD: threading.Thread | None = None
 _PROGRESS_PROVIDER = None
 _COMMAND_SINK = None
@@ -607,8 +619,26 @@ def set_server_type(server_type: str) -> dict[str, object]:
     return status()
 
 
+def config_generation() -> int:
+    with _LOCK:
+        return int(_CONFIG_GENERATION)
+
+
+def _config_generation_current(generation: int) -> bool:
+    """Whether the configuration this work started under is still installed."""
+    with _LOCK:
+        return int(_CONFIG_GENERATION) == int(generation)
+
+
 def _run_detection(server_url: str) -> dict[str, object]:
+    generation = config_generation()
     result = detect_server_type(server_url)
+    # The probe takes seconds. If settings changed while it was in flight it is
+    # describing a server this device no longer points at, and publishing it
+    # would leave the new URL labelled with the old server's identity.
+    if not _config_generation_current(generation):
+        logger.info("jellyfin_detect_discarded reason=config_changed")
+        return {"ok": False, "reason": "config_changed"}
     with _LOCK:
         _STATUS["last_detect_ts"] = int(time.time())
         _STATUS["last_detect_ok"] = bool(result.get("ok"))
@@ -2563,6 +2593,7 @@ def authenticate_once() -> dict[str, object]:
     if not username or not password:
         return {"ok": False, "reason": "no_credentials"}
 
+    generation = config_generation()
     url = f"{base}/Users/AuthenticateByName"
     payload = {"Username": username, "Pw": password}
     req = _urlrequest.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
@@ -2588,6 +2619,11 @@ def authenticate_once() -> dict[str, object]:
         sess_id = str(session.get("Id") or "").strip()
         if not access_token:
             raise RuntimeError("authenticate response missing AccessToken")
+        # A token minted against the previous server or identity must not be
+        # installed over the current one.
+        if not _config_generation_current(generation):
+            logger.info("jellyfin_auth_discarded reason=config_changed")
+            return {"ok": False, "reason": "config_changed"}
         global _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
         with _LOCK:
             _ACCESS_TOKEN = access_token
@@ -2604,6 +2640,8 @@ def authenticate_once() -> dict[str, object]:
         return {"ok": True, "user_id": user_id, "session_id": sess_id}
     except Exception as e:
         msg = _format_http_error(e)
+        if not _config_generation_current(generation):
+            return {"ok": False, "reason": "config_changed"}
         with _LOCK:
             _STATUS["authenticated"] = False
             _STATUS["auth_user_id"] = ""
@@ -2701,6 +2739,7 @@ def register_receiver_once() -> dict[str, object]:
         ("caps_query", f"{base}/Sessions/Capabilities?{_capabilities_query(did)}", None),
     ]
     timeout = float(os.getenv("RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC", "3"))
+    generation = config_generation()
     last_err = "register_failed"
     last_name = ""
     last_url = ""
@@ -2717,6 +2756,9 @@ def register_receiver_once() -> dict[str, object]:
                 last_url = url
                 continue
 
+            if not _config_generation_current(generation):
+                logger.info("jellyfin_register_discarded reason=config_changed")
+                return {"ok": False, "reason": "config_changed"}
             verified = _verify_registration(did, timeout=timeout)
             if verified is False:
                 last_err = "server did not record media control for this session"
@@ -2732,6 +2774,8 @@ def register_receiver_once() -> dict[str, object]:
                 _STATUS["last_error"] = None
                 _STATUS["media_control_verified"] = verified
             return {"ok": True, "url": url, "method": name, "verified": verified}
+        if not _config_generation_current(generation):
+            return {"ok": False, "reason": "config_changed"}
         with _LOCK:
             _STATUS["connected"] = False
             _STATUS["last_register_ts"] = int(time.time())
@@ -2887,7 +2931,10 @@ def _control_socket_suspended():
     should sail through and find the suspension flag, not block on a lock for
     the length of a network probe.
     """
+    global _CONFIG_GENERATION
     with _TRANSACTION:
+        with _LOCK:
+            _CONFIG_GENERATION += 1
         try:
             from . import jellyfin_ws
         except Exception:
@@ -3044,8 +3091,8 @@ def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]
         return {"ok": False, "reason": "post_failed", "error": err, "latency_ms": latency_ms}
 
 
-def _heartbeat_worker() -> None:
-    while not _STOP_EVENT.is_set():
+def _heartbeat_worker(stop: threading.Event) -> None:
+    while not stop.is_set():
         try:
             _ensure_authentication()
             send_progress_once()
@@ -3055,18 +3102,30 @@ def _heartbeat_worker() -> None:
         except Exception:
             pass
         hb = max(2, int(float(status().get("heartbeat_sec") or 5)))
-        _STOP_EVENT.wait(hb)
+        stop.wait(hb)
 
 
 def _start_worker() -> None:
-    global _THREAD
+    """Start a heartbeat generation with a stop flag only it can see.
+
+    A module-level event cannot work here: _stop_worker gives the worker one
+    second to notice, a worker inside a network call outlives that, and the
+    next start would clear the shared flag out from under it. Two generations
+    then authenticate, register, post progress, and probe identity in
+    parallel — with an event owned by the generation, a retired one stays
+    retired.
+    """
+    global _THREAD, _STOP_EVENT
     with _THREAD_LOCK:
         if _THREAD is not None and _THREAD.is_alive():
             return
         if not bool(status().get("enabled")):
             return
-        _STOP_EVENT.clear()
-        _THREAD = threading.Thread(target=_heartbeat_worker, daemon=True, name="relaytv-jellyfin-heartbeat")
+        stop = threading.Event()
+        _STOP_EVENT = stop
+        _THREAD = threading.Thread(
+            target=_heartbeat_worker, args=(stop,), daemon=True, name="relaytv-jellyfin-heartbeat"
+        )
         _THREAD.start()
 
 

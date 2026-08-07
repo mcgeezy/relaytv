@@ -872,3 +872,92 @@ def test_concurrent_server_switches_do_not_interleave(monkeypatch) -> None:
     product = str(jellyfin_receiver._STATUS["server_product_name"])
     expected = "Server B" if "b.local" in url else "Server A"
     assert product == expected, f"torn state: {url} reported as {product}"
+
+
+# --- heartbeat generations -------------------------------------------------
+
+
+def test_a_retired_heartbeat_generation_stays_retired(monkeypatch) -> None:
+    """The heartbeat had the same reusable-stop-event bug as the socket.
+
+    _stop_worker gives it one second; a worker inside a network call outlives
+    that, and the next start cleared the shared flag out from under it. Two
+    generations then authenticated, registered, posted progress, and probed
+    server identity in parallel.
+    """
+    seen: dict[int, bool] = {}
+    lock = threading.Lock()
+
+    def _probe(stop):
+        me = threading.get_ident()
+        time.sleep(1.2)  # parked in a network call
+        with lock:
+            seen[me] = not stop.is_set()
+
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_receiver, "_heartbeat_worker", _probe)
+
+    jellyfin_receiver._start_worker()
+    first = jellyfin_receiver._THREAD
+    time.sleep(0.1)
+    jellyfin_receiver._stop_worker()  # join times out; `first` is still sleeping
+    jellyfin_receiver._start_worker()  # rapid reconnect
+    second = jellyfin_receiver._THREAD
+    try:
+        assert first is not second
+        time.sleep(2.0)
+        running = sum(1 for v in seen.values() if v)
+        assert len(seen) == 2, "both generations should have reported"
+        assert running == 1, f"{running} generations think they are live"
+    finally:
+        jellyfin_receiver._stop_worker()
+
+
+def test_an_in_flight_probe_cannot_publish_over_new_settings(monkeypatch) -> None:
+    """Serializing transactions does not stop work that started before one.
+
+    A detection probe of the outgoing server takes seconds; landing late left
+    the new server's address labelled with the old server's identity.
+    """
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_start_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "authenticate_once", lambda: {"ok": False})
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
+    for key, value in (
+        ("enabled", True), ("running", True), ("authenticated", True),
+        ("server_url", "http://old.local:8096"), ("server_type", "emby"),
+        ("server_product_name", "Old Server"), ("last_detect_ok", False), ("last_detect_ts", None),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+
+    def _detect(server_url, timeout_sec=3.0):
+        if "old.local" in server_url:
+            time.sleep(1.2)
+            return {"ok": True, "server_type": "emby", "product_name": "Old Server"}
+        return {"ok": True, "server_type": "jellyfin", "product_name": "New Server"}
+
+    monkeypatch.setattr(jellyfin_receiver, "detect_server_type", _detect)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_persist_server_type",
+        lambda st, pn="": jellyfin_receiver._STATUS.update({"server_type": st, "server_product_name": pn}),
+    )
+
+    probe = threading.Thread(target=jellyfin_receiver._maybe_retry_detection, daemon=True)
+    probe.start()
+    time.sleep(0.3)  # the probe is in flight when settings change
+    jellyfin_receiver.connect(server_url="http://new.local:8096")
+    probe.join(timeout=15)
+
+    assert "new.local" in str(jellyfin_receiver._STATUS["server_url"])
+    assert jellyfin_receiver._STATUS["server_product_name"] == "New Server"
+
+
+def test_config_generation_advances_once_per_transaction() -> None:
+    before = jellyfin_receiver.config_generation()
+    with jellyfin_receiver._control_socket_suspended():
+        during = jellyfin_receiver.config_generation()
+    assert during == before + 1
+    assert jellyfin_receiver._config_generation_current(before) is False
+    assert jellyfin_receiver._config_generation_current(during) is True
