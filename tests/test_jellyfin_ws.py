@@ -855,7 +855,7 @@ def test_concurrent_server_switches_do_not_interleave(monkeypatch) -> None:
     monkeypatch.setattr(
         jellyfin_receiver,
         "_persist_server_type",
-        lambda st, pn="": jellyfin_receiver._STATUS.update({"server_type": st, "server_product_name": pn}),
+        lambda st, pn="", **kw: jellyfin_receiver._STATUS.update({"server_type": st, "server_product_name": pn}),
     )
 
     threads = [
@@ -941,7 +941,7 @@ def test_an_in_flight_probe_cannot_publish_over_new_settings(monkeypatch) -> Non
     monkeypatch.setattr(
         jellyfin_receiver,
         "_persist_server_type",
-        lambda st, pn="": jellyfin_receiver._STATUS.update({"server_type": st, "server_product_name": pn}),
+        lambda st, pn="", **kw: jellyfin_receiver._STATUS.update({"server_type": st, "server_product_name": pn}),
     )
 
     probe = threading.Thread(target=jellyfin_receiver._maybe_retry_detection, daemon=True)
@@ -954,10 +954,104 @@ def test_an_in_flight_probe_cannot_publish_over_new_settings(monkeypatch) -> Non
     assert jellyfin_receiver._STATUS["server_product_name"] == "New Server"
 
 
-def test_config_generation_advances_once_per_transaction() -> None:
+def test_config_generation_advances_on_entry_and_on_commit() -> None:
+    """Both ends matter.
+
+    Entering invalidates work that started under the previous configuration.
+    Leaving invalidates work that started *mid*-transaction, which would
+    otherwise hold a generation that was current while the settings it read
+    were only half-installed.
+    """
     before = jellyfin_receiver.config_generation()
     with jellyfin_receiver._control_socket_suspended():
         during = jellyfin_receiver.config_generation()
-    assert during == before + 1
+        assert during == before + 1
+    after = jellyfin_receiver.config_generation()
+
+    assert after == during + 1
     assert jellyfin_receiver._config_generation_current(before) is False
-    assert jellyfin_receiver._config_generation_current(during) is True
+    assert jellyfin_receiver._config_generation_current(during) is False
+    assert jellyfin_receiver._config_generation_current(after) is True
+
+
+def test_work_started_mid_transaction_is_also_invalidated(monkeypatch) -> None:
+    """The generation must advance on commit, not only on entry.
+
+    Bumping only on the way in leaves a window: work that captures the new
+    generation while the transaction body is still installing settings read the
+    *old* URL and then published as though it were current. Driven
+    deterministically — the real window is microseconds wide, so racing it with
+    a sleep would prove nothing either way.
+    """
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "emby")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_product_name", "Old Server")
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "detect_server_type",
+        lambda url, timeout_sec=3.0: {"ok": True, "server_type": "emby", "product_name": "Old Server"},
+    )
+
+    # A probe that captured its generation inside a transaction, before the
+    # settings it read had finished being installed.
+    with jellyfin_receiver._control_socket_suspended():
+        captured = jellyfin_receiver.config_generation()
+
+    result = jellyfin_receiver._run_detection("http://old.local:8096", generation=captured)
+
+    assert result == {"ok": False, "reason": "config_changed"}
+    assert jellyfin_receiver._STATUS["server_product_name"] == "Old Server"
+
+
+def test_an_in_flight_progress_post_cannot_land_after_disconnect(monkeypatch) -> None:
+    """Progress posts take up to three seconds.
+
+    One completing after a disconnect set connected=True while running was
+    already false — a session reported live that nothing was driving.
+    """
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_start_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
+    for key, value in (
+        ("enabled", True), ("running", True), ("connected", False),
+        ("server_url", "http://jf.lan:8096"),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_post_json", lambda url, payload, timeout=3.0: time.sleep(1.0))
+
+    done = threading.Event()
+
+    def _post():
+        jellyfin_receiver.send_progress_payload_once({"ItemId": "x"})
+        done.set()
+
+    t = threading.Thread(target=_post, daemon=True)
+    t.start()
+    time.sleep(0.2)  # the post is in flight
+    jellyfin_receiver.disconnect()
+    assert done.wait(10)
+
+    assert jellyfin_receiver._STATUS["running"] is False
+    assert jellyfin_receiver._STATUS["connected"] is False, "a retired post reported the session live"
+
+
+def test_authentication_captures_its_inputs_with_its_generation(monkeypatch) -> None:
+    """Reading the URL and stamping the generation separately is its own race."""
+    snap = jellyfin_receiver.config_snapshot()
+    assert "generation" in snap and "server_url" in snap and "username" in snap
+    # The snapshot is taken under one lock, so it cannot straddle a transaction.
+    before = snap["generation"]
+    with jellyfin_receiver._control_socket_suspended():
+        pass
+    assert jellyfin_receiver.config_snapshot()["generation"] != before
+
+
+def test_publish_is_a_single_critical_section() -> None:
+    """Check and write must not be separable, or a transaction slips between."""
+    applied: list[int] = []
+    gen = jellyfin_receiver.config_generation()
+    assert jellyfin_receiver._publish(gen, lambda: applied.append(1)) is True
+    assert applied == [1]
+    assert jellyfin_receiver._publish(gen - 1, lambda: applied.append(2)) is False
+    assert applied == [1], "a stale generation was allowed to write"

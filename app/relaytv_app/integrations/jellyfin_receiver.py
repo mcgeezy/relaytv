@@ -584,17 +584,24 @@ def detect_server_type(server_url: str, *, timeout_sec: float = 3.0) -> dict[str
         return {"ok": False, "server_type": "", "product_name": "", "version": "", "error": _format_http_error(e)}
 
 
-def _persist_server_type(server_type: str, product_name: str = "") -> None:
+def _persist_server_type(server_type: str, product_name: str = "", *, generation: int | None = None) -> None:
     st = str(server_type or "").strip().lower()
     if st not in ("jellyfin", "emby"):
         return
-    with _LOCK:
+    changed = False
+
+    def _apply() -> None:
+        nonlocal changed
         changed = _STATUS.get("server_type") != st
         _STATUS["server_type"] = st
         if product_name:
             _STATUS["server_product_name"] = str(product_name)
         elif changed:
             _STATUS["server_product_name"] = ""
+
+    gen = config_generation() if generation is None else int(generation)
+    if not _publish(gen, _apply):
+        return
     if not changed:
         return
     try:
@@ -619,6 +626,12 @@ def set_server_type(server_type: str) -> dict[str, object]:
     return status()
 
 
+def _advance_config_generation() -> None:
+    global _CONFIG_GENERATION
+    with _LOCK:
+        _CONFIG_GENERATION += 1
+
+
 def config_generation() -> int:
     with _LOCK:
         return int(_CONFIG_GENERATION)
@@ -630,21 +643,68 @@ def _config_generation_current(generation: int) -> bool:
         return int(_CONFIG_GENERATION) == int(generation)
 
 
-def _run_detection(server_url: str) -> dict[str, object]:
-    generation = config_generation()
-    result = detect_server_type(server_url)
-    # The probe takes seconds. If settings changed while it was in flight it is
-    # describing a server this device no longer points at, and publishing it
-    # would leave the new URL labelled with the old server's identity.
-    if not _config_generation_current(generation):
-        logger.info("jellyfin_detect_discarded reason=config_changed")
-        return {"ok": False, "reason": "config_changed"}
+def config_snapshot() -> dict[str, object]:
+    """Everything network work needs, plus the generation, captured together.
+
+    Reading the URL and then capturing the generation separately is a race in
+    itself: settings can change in between, leaving work that dialled the old
+    server holding a generation that says it is current.
+    """
     with _LOCK:
+        return {
+            "generation": int(_CONFIG_GENERATION),
+            "enabled": bool(_STATUS.get("enabled")),
+            "running": bool(_STATUS.get("running")),
+            "server_url": str(_STATUS.get("server_url") or "").strip().rstrip("/"),
+            "device_id": str(_STATUS.get("device_id") or "").strip(),
+            "device_name": str(_STATUS.get("device_name") or "RelayTV"),
+            "client_name": str(_STATUS.get("client_name") or "RelayTV"),
+            "client_version": str(_STATUS.get("client_version") or "1.0"),
+            "username": str(_AUTH_USERNAME or ""),
+            "password": str(_AUTH_PASSWORD or ""),
+        }
+
+
+def _publish(generation: int, apply) -> bool:
+    """Apply a status mutation only if the configuration has not moved on.
+
+    The check and the write share one acquisition of ``_LOCK`` so a transaction
+    cannot slip between them. ``apply`` runs with the lock held and must not
+    re-acquire it.
+    """
+    with _LOCK:
+        if int(_CONFIG_GENERATION) != int(generation):
+            return False
+        apply()
+        return True
+
+
+def _run_detection(server_url: str, *, generation: int | None = None) -> dict[str, object]:
+    """Probe a server's identity and publish the result, if it is still ours.
+
+    The probe takes seconds. If settings changed while it was in flight it is
+    describing a server this device no longer points at, and publishing would
+    leave the new URL labelled with the old server's identity. The generation
+    is captured by the caller where the URL came from, so the two cannot
+    disagree.
+    """
+    gen = int(generation) if generation is not None else config_generation()
+    result = detect_server_type(server_url)
+
+    def _apply() -> None:
         _STATUS["last_detect_ts"] = int(time.time())
         _STATUS["last_detect_ok"] = bool(result.get("ok"))
         _STATUS["last_detect_error"] = result.get("error")
+
+    if not _publish(gen, _apply):
+        logger.info("jellyfin_detect_discarded reason=config_changed")
+        return {"ok": False, "reason": "config_changed"}
     if result.get("ok"):
-        _persist_server_type(str(result.get("server_type") or ""), str(result.get("product_name") or ""))
+        _persist_server_type(
+            str(result.get("server_type") or ""),
+            str(result.get("product_name") or ""),
+            generation=gen,
+        )
     return result
 
 
@@ -658,15 +718,18 @@ def _maybe_retry_detection() -> None:
     st = status()
     if st.get("last_detect_ok") is True:
         return
-    base = str(st.get("server_url") or "").strip()
-    if not base:
-        return
     if not (bool(st.get("authenticated")) or bool(st.get("last_register_ok"))):
         return
     last_ts = st.get("last_detect_ts")
     if last_ts and (time.time() - float(last_ts)) < 300.0:
         return
-    _run_detection(base)
+    # URL and generation come from the same snapshot, so the probe can never
+    # hold a generation that belongs to a different server.
+    snapshot = config_snapshot()
+    base = str(snapshot.get("server_url") or "").strip()
+    if not base:
+        return
+    _run_detection(base, generation=int(snapshot["generation"]))
 
 
 def connect(*, server_url: str, api_key: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
@@ -2580,20 +2643,23 @@ def authenticate_once() -> dict[str, object]:
     st = status()
     if not bool(st.get("enabled")) or not bool(st.get("running")):
         return {"ok": False, "reason": "disabled"}
-    base = str(st.get("server_url") or "").strip().rstrip("/")
+    # Inputs and generation in one capture: reading the URL first and stamping
+    # the generation afterwards lets settings change in between, leaving this
+    # request dialling the old server while claiming to be current.
+    snapshot = config_snapshot()
+    generation = int(snapshot["generation"])
+    base = str(snapshot["server_url"])
     if not base:
         return {"ok": False, "reason": "no_server_url"}
-    with _LOCK:
-        username = str(_AUTH_USERNAME or "")
-        password = str(_AUTH_PASSWORD or "")
-        device_name = str(_STATUS.get("device_name") or "RelayTV")
-        device_id = str(_STATUS.get("device_id") or "relaytv")
-        client_name = str(_STATUS.get("client_name") or "RelayTV")
-        client_version = str(_STATUS.get("client_version") or "1.0")
+    username = str(snapshot["username"])
+    password = str(snapshot["password"])
+    device_name = str(snapshot["device_name"])
+    device_id = str(snapshot["device_id"]) or "relaytv"
+    client_name = str(snapshot["client_name"])
+    client_version = str(snapshot["client_version"])
     if not username or not password:
         return {"ok": False, "reason": "no_credentials"}
 
-    generation = config_generation()
     url = f"{base}/Users/AuthenticateByName"
     payload = {"Username": username, "Pw": password}
     req = _urlrequest.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
@@ -2619,13 +2685,13 @@ def authenticate_once() -> dict[str, object]:
         sess_id = str(session.get("Id") or "").strip()
         if not access_token:
             raise RuntimeError("authenticate response missing AccessToken")
-        # A token minted against the previous server or identity must not be
-        # installed over the current one.
-        if not _config_generation_current(generation):
-            logger.info("jellyfin_auth_discarded reason=config_changed")
-            return {"ok": False, "reason": "config_changed"}
         global _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
-        with _LOCK:
+
+        def _apply() -> None:
+            # A token minted against the previous server or identity must never
+            # be installed over the current one, so the check and the install
+            # share one acquisition of the lock.
+            global _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
             _ACCESS_TOKEN = access_token
             _AUTH_USER_ID = user_id
             _AUTH_SESSION_ID = sess_id
@@ -2636,13 +2702,16 @@ def authenticate_once() -> dict[str, object]:
             _STATUS["last_auth_ok"] = True
             _STATUS["last_auth_error"] = None
             _STATUS["last_error"] = None
+
+        if not _publish(generation, _apply):
+            logger.info("jellyfin_auth_discarded reason=config_changed")
+            return {"ok": False, "reason": "config_changed"}
         _catalog_cache_clear()
         return {"ok": True, "user_id": user_id, "session_id": sess_id}
     except Exception as e:
         msg = _format_http_error(e)
-        if not _config_generation_current(generation):
-            return {"ok": False, "reason": "config_changed"}
-        with _LOCK:
+
+        def _apply_failure() -> None:
             _STATUS["authenticated"] = False
             _STATUS["auth_user_id"] = ""
             _STATUS["auth_session_id"] = ""
@@ -2650,6 +2719,9 @@ def authenticate_once() -> dict[str, object]:
             _STATUS["last_auth_ok"] = False
             _STATUS["last_auth_error"] = msg
             _STATUS["last_error"] = msg
+
+        if not _publish(generation, _apply_failure):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": False, "reason": "auth_failed", "error": msg}
 
 
@@ -2730,7 +2802,8 @@ def register_receiver_once() -> dict[str, object]:
     base = str(st.get("server_url") or "").strip().rstrip("/")
     if not base:
         return {"ok": False, "reason": "no_server_url"}
-    did = str(st.get("device_id") or "").strip()
+    snapshot = config_snapshot()
+    did = str(snapshot["device_id"])
     payload = capabilities_payload()
     # The query-string form is what older Emby builds accept; it stays as a
     # fallback so an Emby server that rejects the DTO body still registers.
@@ -2739,7 +2812,7 @@ def register_receiver_once() -> dict[str, object]:
         ("caps_query", f"{base}/Sessions/Capabilities?{_capabilities_query(did)}", None),
     ]
     timeout = float(os.getenv("RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC", "3"))
-    generation = config_generation()
+    generation = int(snapshot["generation"])
     last_err = "register_failed"
     last_name = ""
     last_url = ""
@@ -2756,9 +2829,8 @@ def register_receiver_once() -> dict[str, object]:
                 last_url = url
                 continue
 
-            if not _config_generation_current(generation):
-                logger.info("jellyfin_register_discarded reason=config_changed")
-                return {"ok": False, "reason": "config_changed"}
+            # The readback is another network round trip, so it goes before
+            # the ownership check rather than between it and the publish.
             verified = _verify_registration(did, timeout=timeout)
             if verified is False:
                 last_err = "server did not record media control for this session"
@@ -2766,23 +2838,28 @@ def register_receiver_once() -> dict[str, object]:
                 last_url = url
                 continue
 
-            with _LOCK:
+            def _apply(_verified=verified, _now=None) -> None:
                 _STATUS["connected"] = True
                 _STATUS["last_register_ts"] = int(time.time())
                 _STATUS["last_register_ok"] = True
                 _STATUS["last_register_error"] = None
                 _STATUS["last_error"] = None
-                _STATUS["media_control_verified"] = verified
+                _STATUS["media_control_verified"] = _verified
+
+            if not _publish(generation, _apply):
+                logger.info("jellyfin_register_discarded reason=config_changed")
+                return {"ok": False, "reason": "config_changed"}
             return {"ok": True, "url": url, "method": name, "verified": verified}
-        if not _config_generation_current(generation):
-            return {"ok": False, "reason": "config_changed"}
-        with _LOCK:
+        def _apply_failure() -> None:
             _STATUS["connected"] = False
             _STATUS["last_register_ts"] = int(time.time())
             _STATUS["last_register_ok"] = False
             _STATUS["last_register_error"] = f"{last_name}: {last_err}"
             _STATUS["last_error"] = f"{last_name}: {last_err}"
             _STATUS["media_control_verified"] = False
+
+        if not _publish(generation, _apply_failure):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": False, "reason": "register_failed", "error": f"{last_name}: {last_err}", "url": last_url}
     except Exception as e:
         msg = _format_http_error(e)
@@ -2931,17 +3008,23 @@ def _control_socket_suspended():
     should sail through and find the suspension flag, not block on a lock for
     the length of a network probe.
     """
-    global _CONFIG_GENERATION
     with _TRANSACTION:
-        with _LOCK:
-            _CONFIG_GENERATION += 1
+        # Advance on the way in *and* on the way out. Entering invalidates work
+        # that started under the previous configuration; leaving invalidates
+        # work that started mid-transaction, which would otherwise have
+        # captured a generation that was current while the settings it read
+        # were half-installed.
+        _advance_config_generation()
         try:
             from . import jellyfin_ws
         except Exception:
             yield
             return
-        with jellyfin_ws.suspended():
-            yield
+        try:
+            with jellyfin_ws.suspended():
+                yield
+        finally:
+            _advance_config_generation()
 
 
 def _control_socket_status() -> dict[str, object]:
@@ -2980,6 +3063,7 @@ def send_playback_start_once(payload: dict | None = None) -> dict[str, object]:
     body = payload if isinstance(payload, dict) else {}
     if not body:
         return {"ok": False, "reason": "no_payload"}
+    generation = config_generation()
     url = _build_url(os.getenv("RELAYTV_JELLYFIN_PLAYING_PATH", "/Sessions/Playing"))
     if not url:
         return {"ok": False, "reason": "no_server_url"}
@@ -2987,15 +3071,23 @@ def send_playback_start_once(payload: dict | None = None) -> dict[str, object]:
         _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")))
     except Exception as e:
         msg = _format_http_error(e)
-        with _LOCK:
+
+        def _apply_failure() -> None:
             _STATUS["last_playing_ts"] = int(time.time())
             _STATUS["last_playing_ok"] = False
             _STATUS["last_playing_error"] = msg
+
+        if not _publish(generation, _apply_failure):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": False, "reason": "playing_failed", "error": msg}
-    with _LOCK:
+
+    def _apply() -> None:
         _STATUS["last_playing_ts"] = int(time.time())
         _STATUS["last_playing_ok"] = True
         _STATUS["last_playing_error"] = None
+
+    if not _publish(generation, _apply):
+        return {"ok": False, "reason": "config_changed"}
     return {"ok": True}
 
 
@@ -3006,6 +3098,9 @@ def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]
     body = payload if isinstance(payload, dict) else {}
     if not body:
         return {"ok": False, "reason": "no_payload"}
+    # A post takes up to three seconds. Landing after a disconnect used to set
+    # connected=True while running was already false.
+    generation = config_generation()
     url = _build_url(os.getenv("RELAYTV_JELLYFIN_PROGRESS_PATH", "/Sessions/Playing/Progress"))
     if not url:
         return {"ok": False, "reason": "no_server_url"}
@@ -3013,7 +3108,8 @@ def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]
     try:
         _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_PROGRESS_TIMEOUT_SEC", "3")))
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
-        with _LOCK:
+
+        def _apply() -> None:
             _STATUS["connected"] = True
             _STATUS["last_progress_ts"] = int(time.time())
             _STATUS["last_progress_ok"] = True
@@ -3021,11 +3117,15 @@ def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]
             _STATUS["progress_success_count"] = int(_STATUS.get("progress_success_count") or 0) + 1
             _STATUS["last_progress_latency_ms"] = latency_ms
             _STATUS["last_error"] = None
+
+        if not _publish(generation, _apply):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": True, "url": url, "latency_ms": latency_ms}
     except Exception as e:
         err = _format_http_error(e)
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
-        with _LOCK:
+
+        def _apply_failure() -> None:
             _STATUS["connected"] = False
             _STATUS["last_progress_ts"] = int(time.time())
             _STATUS["last_progress_ok"] = False
@@ -3033,6 +3133,9 @@ def send_progress_payload_once(payload: dict | None = None) -> dict[str, object]
             _STATUS["progress_failure_count"] = int(_STATUS.get("progress_failure_count") or 0) + 1
             _STATUS["last_progress_latency_ms"] = latency_ms
             _STATUS["last_error"] = err
+
+        if not _publish(generation, _apply_failure):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": False, "reason": "post_failed", "error": err, "latency_ms": latency_ms}
 
 
@@ -3061,6 +3164,7 @@ def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]
             "suppressed_duplicate_stopped": True,
             "window_sec": _stopped_dedupe_sec(),
         }
+    generation = config_generation()
     url = _build_url(os.getenv("RELAYTV_JELLYFIN_STOPPED_PATH", "/Sessions/Playing/Stopped"))
     if not url:
         return {"ok": False, "reason": "no_server_url"}
@@ -3068,7 +3172,8 @@ def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]
     try:
         _post_json(url, body, timeout=float(os.getenv("RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC", "3")))
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
-        with _LOCK:
+
+        def _apply() -> None:
             _STATUS["connected"] = True
             _STATUS["last_stopped_ts"] = int(time.time())
             _STATUS["last_stopped_ok"] = True
@@ -3076,11 +3181,15 @@ def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]
             _STATUS["stopped_success_count"] = int(_STATUS.get("stopped_success_count") or 0) + 1
             _STATUS["last_stopped_latency_ms"] = latency_ms
             _STATUS["last_error"] = None
+
+        if not _publish(generation, _apply):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": True, "url": url, "latency_ms": latency_ms}
     except Exception as e:
         err = _format_http_error(e)
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
-        with _LOCK:
+
+        def _apply_failure() -> None:
             _STATUS["connected"] = False
             _STATUS["last_stopped_ts"] = int(time.time())
             _STATUS["last_stopped_ok"] = False
@@ -3088,6 +3197,9 @@ def send_playback_stopped_once(payload: dict | None = None) -> dict[str, object]
             _STATUS["stopped_failure_count"] = int(_STATUS.get("stopped_failure_count") or 0) + 1
             _STATUS["last_stopped_latency_ms"] = latency_ms
             _STATUS["last_error"] = err
+
+        if not _publish(generation, _apply_failure):
+            return {"ok": False, "reason": "config_changed"}
         return {"ok": False, "reason": "post_failed", "error": err, "latency_ms": latency_ms}
 
 
