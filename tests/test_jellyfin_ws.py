@@ -1295,3 +1295,29 @@ def test_retired_registration_does_not_schedule_retry_state(monkeypatch) -> None
 
     assert jellyfin_receiver._REGISTER_RETRY_FAILURES == 0
     assert jellyfin_receiver._NEXT_REGISTER_RETRY_TS == 0.0
+
+
+def test_stale_retry_scheduling_is_rejected_at_the_publish() -> None:
+    """The guard on _schedule_register_retry covers its own window.
+
+    test_retired_registration_does_not_schedule_retry_state exercises the
+    earlier `config_changed` return, so it passes with or without this guard.
+    The window this closes is narrower: registration fails for an ordinary
+    reason and settings change before the backoff is recorded, which would
+    otherwise pin a retry deadline belonging to the previous server.
+    """
+    stale = jellyfin_receiver.config_generation() - 1
+    before_failures = jellyfin_receiver._REGISTER_RETRY_FAILURES
+    before_ts = jellyfin_receiver._NEXT_REGISTER_RETRY_TS
+
+    assert jellyfin_receiver._schedule_register_retry(100.0, 5, 30.0, generation=stale) is False
+    assert jellyfin_receiver._REGISTER_RETRY_FAILURES == before_failures
+    assert jellyfin_receiver._NEXT_REGISTER_RETRY_TS == before_ts
+
+    assert jellyfin_receiver._clear_register_retry_state(generation=stale) is False
+
+    # The current generation still writes.
+    current = jellyfin_receiver.config_generation()
+    assert jellyfin_receiver._schedule_register_retry(100.0, 5, 30.0, generation=current) is True
+    assert jellyfin_receiver._REGISTER_RETRY_FAILURES == 5
+    jellyfin_receiver._clear_register_retry_state()
