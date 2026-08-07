@@ -1321,3 +1321,69 @@ def test_stale_retry_scheduling_is_rejected_at_the_publish() -> None:
     assert jellyfin_receiver._schedule_register_retry(100.0, 5, 30.0, generation=current) is True
     assert jellyfin_receiver._REGISTER_RETRY_FAILURES == 5
     jellyfin_receiver._clear_register_retry_state()
+
+
+def test_teardown_does_not_hang_on_a_heartbeat_blocked_in_a_publish(monkeypatch) -> None:
+    """The one interleaving that looks like a cycle.
+
+    Teardown holds _TRANSACTION and then joins the heartbeat, while the
+    heartbeat wants _TRANSACTION to publish a detection result. The join can
+    never succeed, so it must stay bounded — an unbounded join here is a
+    deadlock, and nothing else in the design would catch it.
+    """
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
+    for key, value in (
+        ("enabled", True), ("running", True), ("authenticated", True),
+        ("server_url", "http://jf.lan:8096"), ("server_type", "emby"),
+        ("server_product_name", "Old Server"),
+        ("last_detect_ok", False), ("last_detect_ts", None),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+
+    teardown_holds_lock = threading.Event()
+    heartbeat_started = threading.Event()
+    outcome: dict = {}
+
+    def _detect(url, timeout_sec=3.0):
+        # Finish the probe only once teardown owns the transaction, so the
+        # publish that follows is guaranteed to block on it.
+        teardown_holds_lock.wait(10)
+        return {"ok": True, "server_type": "emby", "product_name": "Old Server"}
+
+    monkeypatch.setattr(jellyfin_receiver, "detect_server_type", _detect)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_persist_server_type",
+        lambda st, pn="", **kw: jellyfin_receiver._STATUS.update(
+            {"server_type": st, "server_product_name": pn}
+        ),
+    )
+
+    def _heartbeat():
+        gen = jellyfin_receiver.config_generation()
+        heartbeat_started.set()
+        outcome["detection"] = jellyfin_receiver._run_detection("http://jf.lan:8096", generation=gen)
+
+    hb = threading.Thread(target=_heartbeat, daemon=True)
+    hb.start()
+    assert heartbeat_started.wait(5)
+
+    def _stop_worker():
+        teardown_holds_lock.set()
+        time.sleep(0.2)  # let the heartbeat reach the blocked publish
+        hb.join(timeout=1.0)
+
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", _stop_worker)
+
+    started = time.monotonic()
+    jellyfin_receiver.disconnect()
+    elapsed = time.monotonic() - started
+    hb.join(timeout=10)
+
+    assert elapsed < 6.0, f"teardown took {elapsed:.1f}s — the join is no longer bounded"
+    assert hb.is_alive() is False
+    assert jellyfin_receiver._STATUS["running"] is False
+    # The heartbeat wakes after teardown releases and discards its own result.
+    assert outcome["detection"] == {"ok": False, "reason": "config_changed"}
+    assert jellyfin_receiver._STATUS["server_product_name"] == "Old Server"
