@@ -186,7 +186,13 @@ async function pasteIntoAddUrl(){
   inp.select();
 }
 
+// Guards the window between submitting and the modal closing. Resolving a link
+// can take seconds, and the modal stays open and clickable throughout — a
+// second tap in that window used to add the item all over again.
+let addUrlSubmitting = false;
+
 async function submitAddUrl(mode){
+  if (addUrlSubmitting) return;
   const inp = document.getElementById('addUrlInput');
   if (!inp) return;
   const url = normalizeUrl(inp.value);
@@ -196,12 +202,17 @@ async function submitAddUrl(mode){
     return;
   }
 
-  if (mode === 'queue') {
-    await post('/enqueue', {url});
-  } else {
-    await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
+  addUrlSubmitting = true;
+  try {
+    if (mode === 'queue') {
+      await post('/enqueue', {url});
+    } else {
+      await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
+    }
+    closeAddUrl();
+  } finally {
+    addUrlSubmitting = false;
   }
-  closeAddUrl();
 }
 
 function _setNotifyHelper(msg, kind){
@@ -2815,10 +2826,18 @@ function bindAddUrlUi(){
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeAddUrl();
-    // When the modal is open, Enter defaults to Play
+    // When the modal is open, Enter defaults to Play.
     const open = bd && !bd.classList.contains('hidden');
+    if (!open || e.key !== 'Enter') return;
     const target = e.target;
-    if (open && e.key === 'Enter' && !(target && target.closest && target.closest('#notifySection'))) submitAddUrl('play');
+    if (!(target && target.closest)) { submitAddUrl('play'); return; }
+    if (target.closest('#notifySection')) return;
+    // A focused control already turns Enter into a click, so handling it here
+    // too submits twice — and from the Queue button that meant one keypress
+    // firing play_now *and* enqueue, adding the item twice and stealing
+    // playback with it.
+    if (target.closest('button, a[href], select, textarea')) return;
+    submitAddUrl('play');
   });
 }
 
