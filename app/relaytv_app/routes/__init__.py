@@ -2398,7 +2398,7 @@ _jellyfin_should_suppress_duplicate_play = jellyfin_service.should_suppress_dupl
 _jellyfin_should_suppress_duplicate_ui_action = jellyfin_service.should_suppress_duplicate_ui_action
 
 
-def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
+def _jellyfin_integration_command_impl(req: JellyfinCommandReq, *, guard=None):
     """Normalized Jellyfin command ingress; product logic in jellyfin_service.
 
     This wrapper owns the route-side seams: playback control dispatch and
@@ -2407,6 +2407,7 @@ def _jellyfin_integration_command_impl(req: JellyfinCommandReq):
     """
     return jellyfin_service.handle_command(
         req,
+        guard=guard,
         controls={
             "stop": lambda: stop(),
             "pause": lambda: pause(),
