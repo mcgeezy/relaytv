@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/mcgeezy/relaytv/compare/v0.8.0...v0.9.0) (2026-08-08)
+
+
+### Features
+
+* appear as a Jellyfin cast target ([#54](https://github.com/mcgeezy/relaytv/issues/54)) ([b30839a](https://github.com/mcgeezy/relaytv/commit/b30839a6337a385a36f138c9bbaab02547ff3fe1))
+* send playback and the queue to another RelayTV device ([#52](https://github.com/mcgeezy/relaytv/issues/52)) ([606827a](https://github.com/mcgeezy/relaytv/commit/606827a705a5a35223a363448234bc5e362fe91e))
+
+
+### Bug Fixes
+
+* stop a retired Jellyfin session from driving the player ([#55](https://github.com/mcgeezy/relaytv/issues/55)) ([4620719](https://github.com/mcgeezy/relaytv/commit/462071999c93b57c3aaee65bc0f2cc84cadfa1fb))
+* stop the Add URL modal submitting twice ([#56](https://github.com/mcgeezy/relaytv/issues/56)) ([fe21eee](https://github.com/mcgeezy/relaytv/commit/fe21eee8f415e6b3db594a85129b3965e148e872))
+
 ## [0.8.0](https://github.com/mcgeezy/relaytv/compare/v0.7.3...v0.8.0) (2026-07-22)
 
 
