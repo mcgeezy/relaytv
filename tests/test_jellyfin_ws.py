@@ -193,7 +193,7 @@ def test_a_slow_command_does_not_stall_keepalives() -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def _slow_sink(action, payload):
+    def _slow_sink(action, payload, **kw):
         started.set()
         release.wait(5.0)
         return {"ok": True}
@@ -274,7 +274,7 @@ def test_dispatch_requires_a_registered_sink() -> None:
 
 def test_dispatch_reaches_the_registered_sink() -> None:
     seen: list[tuple[str, dict]] = []
-    jellyfin_receiver.register_command_sink(lambda action, payload: seen.append((action, payload)))
+    jellyfin_receiver.register_command_sink(lambda action, payload, **kw: seen.append((action, payload)))
     try:
         jellyfin_receiver.dispatch_command("play", {"ItemIds": ["a"]})
         assert seen == [("play", {"ItemIds": ["a"]})]
@@ -424,7 +424,7 @@ def test_stop_closes_the_live_connection() -> None:
 def test_a_stopped_session_drops_queued_commands() -> None:
     """Commands queued before a server switch belong to the old server."""
     ran: list[str] = []
-    jellyfin_receiver.register_command_sink(lambda action, payload: ran.append(action))
+    jellyfin_receiver.register_command_sink(lambda action, payload, **kw: ran.append(action))
     try:
         session = jellyfin_ws._Session(("u", "d", "f"))
         session.commands.put_nowait(("play", {}))
@@ -1387,3 +1387,104 @@ def test_teardown_does_not_hang_on_a_heartbeat_blocked_in_a_publish(monkeypatch)
     # The heartbeat wakes after teardown releases and discards its own result.
     assert outcome["detection"] == {"ok": False, "reason": "config_changed"}
     assert jellyfin_receiver._STATUS["server_product_name"] == "Old Server"
+
+
+def test_a_retired_session_cannot_start_playback(monkeypatch) -> None:
+    """Setting session.stop cannot cancel a command already running.
+
+    Starting mpv takes 6-12s on a Pi and stop() only joins for two, so a
+    disconnect or server switch mid-Play used to let the retired command drive
+    the player anyway — content from a server we had already left.
+    """
+    effects: list[str] = []
+    started = threading.Event()
+
+    def _slow_ingress(action, payload, *, guard=None):
+        started.set()
+        time.sleep(1.5)  # resolution + mpv startup, uncancellable
+        if guard is not None and not guard():
+            return {"ok": False, "reason": "session_retired"}
+        effects.append(str(payload.get("server")))
+        return {"ok": True}
+
+    jellyfin_receiver.register_command_sink(_slow_ingress)
+    session = jellyfin_ws._Session(("http://old.lan:8096", "relaytv-abc", "fp-old"))
+    jellyfin_ws._CURRENT = session
+    session.worker = threading.Thread(target=jellyfin_ws._command_worker, args=(session,), daemon=True)
+    session.reader = threading.Thread(target=lambda: session.stop.wait(30), daemon=True)
+    session.worker.start()
+    session.reader.start()
+
+    session.commands.put_nowait(("play", {"server": "OLD"}))
+    assert started.wait(5), "command never reached the worker"
+
+    jellyfin_ws.stop()  # server switch lands mid-Play
+    time.sleep(2.5)
+
+    assert effects == [], "a retired session drove the player"
+
+
+def test_the_live_session_still_starts_playback() -> None:
+    """The guard must not block the ordinary path."""
+    effects: list[str] = []
+    done = threading.Event()
+
+    def _ingress(action, payload, *, guard=None):
+        if guard is not None and not guard():
+            done.set()
+            return {"ok": False, "reason": "session_retired"}
+        effects.append(str(payload.get("server")))
+        done.set()
+        return {"ok": True}
+
+    jellyfin_receiver.register_command_sink(_ingress)
+    session = jellyfin_ws._Session(("http://jf.lan:8096", "relaytv-abc", "fp"))
+    jellyfin_ws._CURRENT = session
+    session.worker = threading.Thread(target=jellyfin_ws._command_worker, args=(session,), daemon=True)
+    session.worker.start()
+    try:
+        session.commands.put_nowait(("play", {"server": "LIVE"}))
+        assert done.wait(5)
+        assert effects == ["LIVE"]
+    finally:
+        session.stop.set()
+        jellyfin_ws._CURRENT = None
+
+
+def test_handle_command_rechecks_ownership_before_touching_the_player(monkeypatch) -> None:
+    """The service layer is where the guard has to bite.
+
+    Everything before playback_service.play_now is network work that cannot be
+    interrupted, so the check happens immediately before the transition.
+    """
+    from relaytv_app.integrations import jellyfin_service
+
+    dispatched: list[str] = []
+    controls = {
+        name: (lambda *a, _n=name, **kw: dispatched.append(_n))
+        for name in ("stop", "pause", "resume", "seek", "seek_relative", "next", "previous", "set_volume", "mute")
+    }
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+
+    class _Req:
+        action = "pause"
+        url = None
+        start_pos = None
+        use_ytdlp = True
+        payload: dict = {}
+
+    ui = {
+        "toast": lambda **kw: None,
+        "notification_display_sec": lambda: 4.0,
+        "queue_event": lambda event, **kw: None,
+        "jellyfin_event": lambda event, **kw: None,
+    }
+
+    out = jellyfin_service.handle_command(_Req(), controls=controls, ui=ui, guard=lambda: False)
+    assert out["reason"] == "session_retired"
+    assert dispatched == [], "a retired command reached the player"
+
+    out = jellyfin_service.handle_command(_Req(), controls=controls, ui=ui, guard=lambda: True)
+    assert out["ok"] is True
+    assert dispatched == ["pause"]

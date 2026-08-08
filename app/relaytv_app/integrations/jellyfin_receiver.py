@@ -2582,12 +2582,17 @@ def register_command_sink(fn) -> None:
     _COMMAND_SINK = fn
 
 
-def dispatch_command(action: str, payload: dict[str, object]) -> object:
-    """Run a socket-sourced command through the registered ingress."""
+def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> object:
+    """Run a socket-sourced command through the registered ingress.
+
+    ``guard`` answers "is the connection that sent this still the live one?".
+    It is re-checked at the point of effect because a command already running
+    cannot be cancelled — see handle_command.
+    """
     sink = _COMMAND_SINK
     if sink is None:
         raise RuntimeError("no jellyfin command sink registered")
-    return sink(action, payload)
+    return sink(action, payload, guard=guard)
 
 
 def command_sink_registered() -> bool:

@@ -255,9 +255,17 @@ def _command_worker(session: _Session) -> None:
             # Stopped while this was queued: the command belongs to a session
             # that is over, and running it now would act on the wrong server.
             continue
+        # Starting the command is not enough to own it: mpv takes 6-12s to come
+        # up and stop() only joins for two, so the ingress re-checks ownership
+        # immediately before it touches the player.
         action, payload = item
+
+        def _owned(_session=session) -> bool:
+            with _LOCK:
+                return _CURRENT is _session and not _session.stop.is_set()
+
         try:
-            jellyfin_receiver.dispatch_command(action, payload)
+            jellyfin_receiver.dispatch_command(action, payload, guard=_owned)
         except Exception as e:
             _mark_error(e, session=session)
             logger.warning("jellyfin_ws_command_failed action=%s err=%s", action or "playstate", jellyfin_receiver._sanitize_error_text(e))
