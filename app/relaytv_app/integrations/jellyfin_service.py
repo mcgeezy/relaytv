@@ -2536,7 +2536,7 @@ def _playlist_entry_display_fields(entry: dict, iid: str, *, api_key: str, serve
     return out
 
 
-def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
+def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None):
     """Normalized Jellyfin command ingress (v1: Play/Stop/Pause/Resume/Seek/Next).
 
     ``controls`` maps stop/pause/resume/seek/next/previous/set_volume/mute
@@ -2548,6 +2548,22 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
     st = jellyfin_receiver.status()
     if not bool(st.get("enabled")):
         raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+
+    def still_owned() -> bool:
+        """Is the connection that sent this command still the live one?
+
+        Resolving an item takes several network round trips and starting mpv
+        takes 6-12s on a Pi, none of which can be cancelled. A disconnect or
+        server switch in that window cannot stop the command, so the check
+        happens again immediately before anything touches the player: a
+        command from a server we have since left must not start playback.
+        """
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return True
 
     action = normalize_action(req.action, req.payload)
     jellyfin_receiver.mark_command(action)
@@ -2842,6 +2858,9 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
                         }
                     )
                     _remember(iid, qurl, q_media_source_id)
+                if queued and not still_owned():
+                    logger.info("jellyfin_command_discarded action=queue_only reason=session_retired")
+                    return {"ok": False, "action": "queue_only", "reason": "session_retired"}
                 if queued:
                     with state.QUEUE_LOCK:
                         if play_mode == "playnext":
@@ -2910,6 +2929,9 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
                             dur = None
                         stopped_payload = stopped_snapshot_from_now(cur_copy, pos, dur)
             clear_queue_for_play = play_mode == "playnow"
+            if not still_owned():
+                logger.info("jellyfin_command_discarded action=play reason=session_retired")
+                return {"ok": False, "action": "play", "reason": "session_retired"}
             playback_service.suppress_auto_next(2.0)
             play_item_payload = smart_item_from_url(source_url, start_pos=start_sec)
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
@@ -3052,6 +3074,8 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
                         }
                     )
                     _remember_seen(iid, qurl, q_media_source_id)
+                if queued and not still_owned():
+                    queued = []
                 if queued:
                     with state.QUEUE_LOCK:
                         state.QUEUE.extend(queued)
@@ -3070,6 +3094,10 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict):
             emit_playback_start_hint()
             ui["jellyfin_event"]("play", refresh_active_tab=True, refresh_status=True, reason=play_mode or "play")
             return {"ok": True, "action": "play", "now_playing": now}
+
+        if not still_owned():
+            logger.info("jellyfin_command_discarded action=%s reason=session_retired", action or "unknown")
+            return {"ok": False, "action": action or "unknown", "reason": "session_retired"}
 
         if action == "stop":
             res = controls["stop"]()

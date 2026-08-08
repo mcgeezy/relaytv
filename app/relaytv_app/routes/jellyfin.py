@@ -124,20 +124,21 @@ def _reset_jellyfin_command_state() -> None:
     reset()
 
 
-def _jellyfin_integration_command_impl(req: JellyfinCommandReq) -> dict[str, object]:
+def _jellyfin_integration_command_impl(req: JellyfinCommandReq, *, guard=None) -> dict[str, object]:
     from . import _jellyfin_integration_command_impl as command
 
-    return command(req)
+    return command(req, guard=guard)
 
 
-def _jellyfin_socket_command(action: str, payload: dict) -> dict[str, object]:
+def _jellyfin_socket_command(action: str, payload: dict, *, guard=None) -> dict[str, object]:
     """Execute a command that arrived over the Jellyfin control socket.
 
     Registered into the receiver so the socket reaches the same ingress the
     HTTP endpoint uses, rather than growing a second copy of command handling.
     """
     return _jellyfin_integration_command_impl(
-        _jellyfin_command_req(action=action or None, payload=payload or {})
+        _jellyfin_command_req(action=action or None, payload=payload or {}),
+        guard=guard,
     )
 
 
