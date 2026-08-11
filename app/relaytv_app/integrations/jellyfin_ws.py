@@ -337,7 +337,7 @@ def _connect_once(session: _Session) -> None:
     st = jellyfin_receiver.status()
     url = socket_url(
         server_url=str(st.get("server_url") or ""),
-        token=jellyfin_receiver.active_token(),
+        token=jellyfin_receiver.control_token(),
         device_id=str(st.get("device_id") or ""),
     )
     if not url:
@@ -426,7 +426,7 @@ def _identity() -> tuple[str, str, str] | None:
         return None
     server_url = str(st.get("server_url") or "").strip()
     device_id = str(st.get("device_id") or "").strip()
-    token = jellyfin_receiver.active_token()
+    token = jellyfin_receiver.control_token()
     if not server_url or not device_id or not token:
         return None
     if not jellyfin_receiver.command_sink_registered():

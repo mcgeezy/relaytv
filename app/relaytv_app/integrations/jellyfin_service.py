@@ -56,8 +56,8 @@ def _first_nonempty_str(values: list[object]) -> str:
     return ""
 
 
-def access_token() -> str:
-    """Prefer authenticated login-session token; fall back to configured API key."""
+def catalog_token() -> str:
+    """Credential for user-scoped catalog, metadata, and media requests."""
     return _first_nonempty_str([jellyfin_receiver.session_token(), jellyfin_receiver.api_key()])
 
 
@@ -1848,7 +1848,7 @@ def _restart_with_stream_params(
         settings_snapshot = state.get_settings()
     except Exception:
         settings_snapshot = {}
-    auth_token = access_token()
+    auth_token = catalog_token()
 
     source_url = build_item_stream_url(
         item_id,
@@ -2445,7 +2445,7 @@ def smart_item_from_url(url: str, *, start_pos: float | None = None, lightweight
         origin = url_origin(shared)
         server_url = origin or str(st.get("server_url") or "")
         link_api_key = _extract_api_key_from_url(shared)
-        token = link_api_key or access_token()
+        token = link_api_key or catalog_token()
         pref_audio_idx, pref_sub_idx = preferred_stream_indices(item_id)
         normalized_url = normalize_source_url(shared, server_url=server_url, api_key=token)
         normalized_url = apply_stream_params(
@@ -2690,7 +2690,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 settings_snapshot = state.get_settings()
             except Exception:
                 settings_snapshot = {}
-            auth_token = access_token()
+            auth_token = catalog_token()
             pref_audio_idx = ""
             pref_sub_idx = ""
             resolved_detail: dict[str, object] = {}

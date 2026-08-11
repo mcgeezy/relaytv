@@ -1,6 +1,6 @@
 # Jellyfin Shared Cast Target Roadmap
 
-Status: in progress (M1 complete)
+Status: in progress (M2 complete)
 
 Branch: `fix/jellyfin-shared-cast-target`
 
@@ -153,7 +153,7 @@ Planned commit: `fix: configure Jellyfin cast API key in settings`
 
 ### M2 — Separate control and catalog credentials
 
-Status: pending
+Status: complete
 
 Deliverables:
 
@@ -302,7 +302,7 @@ Update this table in the commit that completes each milestone.
 | --- | --- | --- | --- |
 | M0 Design | complete | roadmap commit | document review; `git diff --check` |
 | M1 Settings | complete | this commit | 253 focused tests; full suite; Ruff; diff check |
-| M2 Credential split | pending | — | — |
+| M2 Credential split | complete | this commit | 149 focused tests; full suite; Ruff; diff check |
 | M3 Observability | pending | — | — |
 | M4 Multi-user verification | pending | — | — |
 | M5 Operator docs | pending | — | — |

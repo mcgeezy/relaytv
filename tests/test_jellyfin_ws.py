@@ -377,7 +377,7 @@ def test_connect_omits_proxy_on_an_older_websockets(monkeypatch) -> None:
     monkeypatch.setattr(
         jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
     )
-    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": None)
 
     session = _session(deadline_sec=0.0)
@@ -479,17 +479,17 @@ def test_identity_fingerprints_the_token() -> None:
 
     real_status, real_token, real_sink = (
         jellyfin_receiver.status,
-        jellyfin_receiver.active_token,
+        jellyfin_receiver.control_token,
         jellyfin_receiver.command_sink_registered,
     )
     jellyfin_receiver.status = _fake_status
-    jellyfin_receiver.active_token = lambda: "super-secret-token"
+    jellyfin_receiver.control_token = lambda: "super-secret-token"
     jellyfin_receiver.command_sink_registered = lambda: True
     try:
         identity = mod._identity()
     finally:
         jellyfin_receiver.status = real_status
-        jellyfin_receiver.active_token = real_token
+        jellyfin_receiver.control_token = real_token
         jellyfin_receiver.command_sink_registered = real_sink
 
     assert identity is not None
@@ -559,7 +559,7 @@ def test_a_late_handshake_cannot_hijack_the_live_session(monkeypatch) -> None:
     monkeypatch.setattr(
         jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
     )
-    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": invalidated.append(reason))
 
     retired = jellyfin_ws._Session(("u", "d", "f"))
@@ -594,7 +594,7 @@ def test_the_live_session_still_publishes_and_reasserts(monkeypatch) -> None:
     monkeypatch.setattr(
         jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
     )
-    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": invalidated.append(reason))
 
     session = _session(deadline_sec=0.5)
@@ -629,7 +629,7 @@ def test_connect_bounds_the_closing_handshake(monkeypatch) -> None:
     monkeypatch.setattr(
         jellyfin_receiver, "status", lambda: {"server_url": "http://jf.lan:8096", "device_id": "relaytv-den"}
     )
-    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": None)
 
     session = _session(deadline_sec=0.0)
@@ -816,7 +816,7 @@ def test_disconnect_cannot_leave_a_socket_behind(monkeypatch) -> None:
         ("server_url", "http://jf.lan:8096"), ("device_id", "relaytv-abc"),
     ):
         monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
-    monkeypatch.setattr(jellyfin_receiver, "active_token", lambda: "tok")
+    monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "command_sink_registered", lambda: True)
     # The real join waits a second for a parked heartbeat and then gives up.
     monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: time.sleep(1.0))
@@ -1059,6 +1059,39 @@ def test_authentication_captures_its_inputs_with_its_generation(monkeypatch) -> 
     assert jellyfin_receiver._request_context().generation != before
 
 
+def test_request_context_separates_shared_control_from_catalog_login(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "catalog-user-token")
+
+    context = jellyfin_receiver._request_context()
+
+    assert context.control_token == "shared-api-key"
+    assert context.catalog_token == "catalog-user-token"
+    assert jellyfin_receiver.control_token() == "shared-api-key"
+    assert jellyfin_receiver.catalog_token() == "catalog-user-token"
+
+
+def test_catalog_login_does_not_change_shared_socket_identity(monkeypatch) -> None:
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "status",
+        lambda: {
+            "enabled": True,
+            "running": True,
+            "server_url": "http://jf.local:8096",
+            "device_id": "relaytv-device",
+        },
+    )
+    monkeypatch.setattr(jellyfin_receiver, "command_sink_registered", lambda: True)
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "")
+    before = jellyfin_ws._identity()
+
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "catalog-user-token")
+
+    assert jellyfin_ws._identity() == before
+
+
 def test_publish_is_a_single_critical_section() -> None:
     """Check and write must not be separable, or a transaction slips between."""
     applied: list[int] = []
@@ -1124,6 +1157,8 @@ def test_authentication_cannot_publish_after_its_snapshot_is_disconnected(monkey
 def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> None:
     """A URL and token captured together stay together even after a switch."""
     monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "old-control-token")
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "old-catalog-token")
     with jellyfin_receiver._LOCK:
         jellyfin_receiver._STATUS.update(
             {
@@ -1133,14 +1168,14 @@ def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> 
                 "device_id": "old-device",
             }
         )
-        jellyfin_receiver._ACCESS_TOKEN = "old-token"
     context = jellyfin_receiver._request_context()
 
     with jellyfin_receiver._control_socket_suspended():
         with jellyfin_receiver._LOCK:
             jellyfin_receiver._STATUS["server_url"] = "http://new.local:8096"
             jellyfin_receiver._STATUS["device_id"] = "new-device"
-            jellyfin_receiver._ACCESS_TOKEN = "new-token"
+            jellyfin_receiver._API_KEY = "new-control-token"
+            jellyfin_receiver._ACCESS_TOKEN = "new-catalog-token"
 
     requests: list[tuple[str, str | None]] = []
 
@@ -1158,7 +1193,7 @@ def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> 
     monkeypatch.setattr(jellyfin_receiver._urlrequest, "urlopen", _capture)
     jellyfin_receiver._post_json_for(context, "/Sessions/Playing/Progress", {"ItemId": "x"})
 
-    assert requests == [("http://old.local:8096/Sessions/Playing/Progress", "old-token")]
+    assert requests == [("http://old.local:8096/Sessions/Playing/Progress", "old-control-token")]
 
 
 def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
@@ -1170,13 +1205,14 @@ def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
         ("device_id", "relaytv-device"),
     ):
         monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "session-token")
 
     def _post(context, path, payload, timeout=3.0):
-        seen.append(("post", id(context), context.server_url, context.token))
+        seen.append(("post", id(context), context.server_url, context.control_token))
 
     def _readback(context, device_id, timeout=3.0):
-        seen.append(("readback", id(context), context.server_url, context.token))
+        seen.append(("readback", id(context), context.server_url, context.control_token))
         return {"DeviceId": device_id, "SupportsMediaControl": True}
 
     monkeypatch.setattr(jellyfin_receiver, "_post_json_for", _post)
@@ -1186,8 +1222,8 @@ def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
 
     assert result["ok"] is True
     assert seen == [
-        ("post", seen[0][1], "http://jf.local:8096", "session-token"),
-        ("readback", seen[0][1], "http://jf.local:8096", "session-token"),
+        ("post", seen[0][1], "http://jf.local:8096", "shared-api-key"),
+        ("readback", seen[0][1], "http://jf.local:8096", "shared-api-key"),
     ]
 
 
@@ -1202,11 +1238,12 @@ def test_registration_switch_discards_the_old_context_result(monkeypatch) -> Non
         ("media_control_verified", None),
     ):
         monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "old-token")
     posted: list[tuple[str, str, str]] = []
 
     def _post_then_switch(context, path, payload, timeout=3.0):
-        posted.append((_context_url(context, path), context.device_id, context.token))
+        posted.append((_context_url(context, path), context.device_id, context.control_token))
         with jellyfin_receiver._control_socket_suspended():
             with jellyfin_receiver._LOCK:
                 jellyfin_receiver._STATUS["server_url"] = "http://new.local:8096"

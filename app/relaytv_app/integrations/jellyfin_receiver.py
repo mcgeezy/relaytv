@@ -55,7 +55,8 @@ class _RequestContext:
     client_version: str
     username: str
     password: str
-    token: str
+    control_token: str
+    catalog_token: str
     catalog_user_id: str
     authenticated: bool
     connected: bool
@@ -699,7 +700,8 @@ def _request_context() -> _RequestContext:
             client_version=str(_STATUS.get("client_version") or "1.0"),
             username=str(_AUTH_USERNAME or ""),
             password=str(_AUTH_PASSWORD or ""),
-            token=str(_ACCESS_TOKEN or _API_KEY or ""),
+            control_token=str(_API_KEY or _ACCESS_TOKEN or ""),
+            catalog_token=str(_ACCESS_TOKEN or _API_KEY or ""),
             catalog_user_id=catalog_user_id,
             authenticated=bool(_STATUS.get("authenticated")),
             connected=bool(_STATUS.get("connected")),
@@ -956,16 +958,16 @@ def api_key() -> str:
         return str(_API_KEY or "")
 
 
-def _active_token() -> str:
+def control_token() -> str:
+    """Return the credential that owns the receiver's shared control plane."""
     with _LOCK:
-        if _ACCESS_TOKEN:
-            return str(_ACCESS_TOKEN)
-        return str(_API_KEY or "")
+        return str(_API_KEY or _ACCESS_TOKEN or "")
 
 
-def active_token() -> str:
-    """Public accessor used by route helpers."""
-    return _active_token()
+def catalog_token() -> str:
+    """Return the credential used for user-scoped catalog and media work."""
+    with _LOCK:
+        return str(_ACCESS_TOKEN or _API_KEY or "")
 
 
 def session_token() -> str:
@@ -1026,7 +1028,7 @@ def get_item_metadata(item_id: str, *, token_override: str = "", server_url_over
     base = str(server_url_override or context.server_url or "").strip().rstrip("/")
     if not iid or not base:
         return {}
-    token = str(token_override or context.token or "").strip()
+    token = str(token_override or context.catalog_token or "").strip()
     user_id = context.catalog_user_id
     token_key = hashlib.sha1(token.encode("utf-8", "ignore")).hexdigest()[:12] if token else "-"
     cache_key = f"meta:{base}:{user_id}:{iid}:{token_key}"
@@ -1462,7 +1464,7 @@ def _extract_total_count(payload: object, default_count: int = 0) -> int:
 
 def _catalog_base_token_user() -> tuple[str, str, str]:
     context = _request_context()
-    return context.server_url, context.token, context.catalog_user_id
+    return context.server_url, context.catalog_token, context.catalog_user_id
 
 
 def get_item_detail(item_id: str, *, refresh: bool = False) -> dict[str, object]:
@@ -2634,8 +2636,8 @@ def _context_url(context: _RequestContext, path: str) -> str:
 
 
 def _context_headers(context: _RequestContext) -> dict[str, str]:
-    """Authentication headers derived entirely from one request context."""
-    token = context.token.strip()
+    """Control-plane authentication captured in one request context."""
+    token = context.control_token.strip()
     out: dict[str, str] = {}
     if token:
         out["X-Emby-Token"] = token
@@ -3073,7 +3075,7 @@ def _ensure_registration(now_ts: float | None = None) -> None:
         return
     if not context.server_url:
         return
-    if not context.token:
+    if not context.control_token:
         return
 
     now_val = float(now_ts if now_ts is not None else time.time())

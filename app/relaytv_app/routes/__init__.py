@@ -2548,7 +2548,7 @@ def _first_nonempty_str(values: list[object]) -> str:
 # Pure Jellyfin helpers (docs/ARCHITECTURE.md)
 # live in integrations/jellyfin_service.py. These aliases keep the routes
 # compatibility surface and existing monkeypatch targets stable.
-_jellyfin_access_token = jellyfin_service.access_token
+_jellyfin_catalog_token = jellyfin_service.catalog_token
 _extract_jellyfin_play_url = jellyfin_service.extract_play_url
 _extract_jellyfin_item_id = jellyfin_service.extract_item_id
 _canonical_jellyfin_item_id = jellyfin_service.canonical_item_id
