@@ -49,6 +49,7 @@ class SettingsReq(BaseModel):
     iptv_enabled: bool | None = None
     jellyfin_enabled: bool | None = None
     jellyfin_server_url: str | None = None
+    jellyfin_api_key: str | None = None
     jellyfin_username: str | None = None
     jellyfin_password: str | None = None
     jellyfin_user_id: str | None = None
@@ -76,6 +77,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out = dict(raw or {})
     has_jf_pw = bool(str(out.get("jellyfin_password") or "").strip())
     has_seerr_key = bool(str(out.get("seerr_api_key") or "").strip())
+    has_jf_api_key = bool(str(out.get("jellyfin_api_key") or "").strip())
     yt_cookie_path = str(out.get("youtube_cookies_path") or "").strip()
     has_yt_cookies = bool(yt_cookie_path) and os.path.exists(yt_cookie_path)
     out["jellyfin_password"] = ""
@@ -83,6 +85,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["jellyfin_password_configured"] = has_jf_pw
     out["seerr_api_key"] = ""
     out["seerr_api_key_configured"] = has_seerr_key
+    out["jellyfin_api_key_configured"] = has_jf_api_key
     out["youtube_cookies_path"] = ""
     out["youtube_cookies_configured"] = has_yt_cookies
     out["youtube_use_invidious"] = bool(out.get("youtube_use_invidious"))
@@ -382,6 +385,8 @@ def update_settings(req: SettingsReq):
         )
     if "jellyfin_server_url" in requested_keys and updated.get("jellyfin_server_url") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_URL", str(updated.get("jellyfin_server_url") or "").strip())
+    if "jellyfin_api_key" in requested_keys and updated.get("jellyfin_api_key") is not None:
+        runtime_config.set_value("RELAYTV_JELLYFIN_API_KEY", str(updated.get("jellyfin_api_key") or "").strip())
     if "jellyfin_username" in requested_keys and updated.get("jellyfin_username") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_USERNAME", str(updated.get("jellyfin_username") or "").strip())
     if "jellyfin_password" in requested_keys and updated.get("jellyfin_password") is not None:
@@ -396,7 +401,9 @@ def update_settings(req: SettingsReq):
         runtime_config.set_value("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(updated.get("jellyfin_playback_mode") or "auto").strip().lower())
     if "jellyfin_server_type" in requested_keys and updated.get("jellyfin_server_type") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_TYPE", str(updated.get("jellyfin_server_type") or "jellyfin").strip().lower())
-    if requested_keys.intersection({"jellyfin_enabled", "jellyfin_server_url", "jellyfin_username", "jellyfin_password"}):
+    if requested_keys.intersection(
+        {"jellyfin_enabled", "jellyfin_server_url", "jellyfin_api_key", "jellyfin_username", "jellyfin_password"}
+    ):
         runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1")
 
     live_applied: list[str] = []
@@ -477,6 +484,7 @@ def update_settings(req: SettingsReq):
     jellyfin_setting_keys = {
         "jellyfin_enabled",
         "jellyfin_server_url",
+        "jellyfin_api_key",
         "jellyfin_username",
         "jellyfin_password",
     }
@@ -484,13 +492,14 @@ def update_settings(req: SettingsReq):
         try:
             jf_enabled = bool(updated.get("jellyfin_enabled"))
             jf_server = str(updated.get("jellyfin_server_url") or "").strip()
+            jf_api_key = str(updated.get("jellyfin_api_key") or "").strip()
             jf_user = str(updated.get("jellyfin_username") or "").strip()
             jf_pw = str(updated.get("jellyfin_password") or "").strip()
             jf_device_name = str(updated.get("device_name") or "RelayTV")
-            if jf_enabled and jf_server and jf_user and jf_pw:
+            if jf_enabled and jf_server and (jf_api_key or (jf_user and jf_pw)):
                 jellyfin_receiver.connect(
                     server_url=jf_server,
-                    api_key="",
+                    api_key=jf_api_key,
                     device_name=jf_device_name,
                 )
                 live_applied.extend(
@@ -501,11 +510,11 @@ def update_settings(req: SettingsReq):
                     k for k in sorted(requested_keys.intersection(jellyfin_setting_keys)) if k not in live_apply_failed
                 )
                 jellyfin_receiver.mark_error("jellyfin_server_url_required")
-            elif jf_enabled and (not jf_user or not jf_pw):
+            elif jf_enabled and not jf_api_key and (not jf_user or not jf_pw):
                 live_apply_failed.extend(
                     k for k in sorted(requested_keys.intersection(jellyfin_setting_keys)) if k not in live_apply_failed
                 )
-                jellyfin_receiver.mark_error("jellyfin_login_required")
+                jellyfin_receiver.mark_error("jellyfin_credentials_required")
             else:
                 jellyfin_receiver.disconnect()
                 live_applied.extend(

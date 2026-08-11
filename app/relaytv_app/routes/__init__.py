@@ -4537,6 +4537,23 @@ def ui():
         </div>
 
         <div class="fieldRow">
+          <label class="fieldLbl">Server API key</label>
+          <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+          <div class="hint">Makes RelayTV a shared Jellyfin cast target for users allowed to control shared devices. API keys are administrator-level secrets.</div>
+          <div class="toggleRow">
+            <div class="toggleCopy">
+              <div class="toggleTitle">Clear stored API key</div>
+              <div class="toggleHint">Remove the saved server API key on the next apply.</div>
+            </div>
+            <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
+              <input type="checkbox" id="setJfClearApiKey" />
+              <span class="toggleTrack" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="hint" id="setJfApiKeyState"></div>
+        </div>
+
+        <div class="fieldRow">
           <label class="fieldLbl">Username</label>
           <input id="setJfUsername" class="input" placeholder="server username" />
         </div>

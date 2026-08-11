@@ -145,7 +145,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_IPTV_MAX_PLAYLIST_BYTES` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_PROBE_TIMEOUT_SEC` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_ADJACENT_SEASON_PROBE_MAX` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_API_KEY` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`state.py` | `main.py` | settings bus |
+| `RELAYTV_JELLYFIN_API_KEY` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUDIO_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUTH_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUTH_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |

@@ -149,6 +149,7 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
     _apply(
         jellyfin_enabled=True,
         jellyfin_server_url=" https://jf.example ",
+        jellyfin_api_key=" shared-key ",
         jellyfin_username=" mark ",
         jellyfin_password=" hunter2 ",
         jellyfin_user_id=" uid-1 ",
@@ -160,6 +161,7 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
 
     assert _cfg("RELAYTV_JELLYFIN_ENABLED") == "1"
     assert _cfg("RELAYTV_JELLYFIN_SERVER_URL") == "https://jf.example"
+    assert _cfg("RELAYTV_JELLYFIN_API_KEY") == "shared-key"
     assert _cfg("RELAYTV_JELLYFIN_USERNAME") == "mark"
     assert _cfg("RELAYTV_JELLYFIN_PASSWORD") == "hunter2"
     assert _cfg("RELAYTV_JELLYFIN_USER_ID") == "uid-1"
@@ -201,6 +203,39 @@ def test_settings_apply_syncs_server_type_to_live_receiver(quiet_settings_apply,
     assert applied == ["emby"]
     assert "jellyfin_server_type" in response["live_applied"]
     assert "jellyfin_server_type" not in response["live_apply_failed"]
+
+
+def test_settings_apply_connects_api_key_only_receiver(quiet_settings_apply, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        settings_routes.jellyfin_receiver,
+        "connect",
+        lambda **kwargs: calls.append(dict(kwargs)),
+    )
+
+    response = _apply(
+        jellyfin_enabled=True,
+        jellyfin_server_url=" https://jf.example ",
+        jellyfin_api_key=" shared-key ",
+    )
+
+    assert calls == [
+        {
+            "server_url": "https://jf.example",
+            "api_key": "shared-key",
+            "device_name": "RelayTV",
+        }
+    ]
+    assert "jellyfin_api_key" in response["live_applied"]
+    assert "jellyfin_api_key" not in response["live_apply_failed"]
+
+
+def test_settings_apply_clears_jellyfin_api_key(quiet_settings_apply) -> None:
+    runtime_config.set_value("RELAYTV_JELLYFIN_API_KEY", "old-key")
+
+    _apply(jellyfin_api_key="")
+
+    assert _cfg("RELAYTV_JELLYFIN_API_KEY") == ""
 
 
 def test_settings_apply_does_not_write_env_beyond_mirror_contract(quiet_settings_apply) -> None:

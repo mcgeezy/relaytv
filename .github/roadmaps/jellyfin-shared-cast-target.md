@@ -1,6 +1,6 @@
 # Jellyfin Shared Cast Target Roadmap
 
-Status: planned
+Status: in progress (M1 complete)
 
 Branch: `fix/jellyfin-shared-cast-target`
 
@@ -130,7 +130,7 @@ Commit: `docs: plan Jellyfin shared cast target`
 
 ### M1 — Add API-key Settings lifecycle
 
-Status: pending
+Status: complete
 
 Deliverables:
 
@@ -301,7 +301,7 @@ Update this table in the commit that completes each milestone.
 | Milestone | Status | Commit | Tests / evidence |
 | --- | --- | --- | --- |
 | M0 Design | complete | roadmap commit | document review; `git diff --check` |
-| M1 Settings | pending | — | — |
+| M1 Settings | complete | this commit | 253 focused tests; full suite; Ruff; diff check |
 | M2 Credential split | pending | — | — |
 | M3 Observability | pending | — | — |
 | M4 Multi-user verification | pending | — | — |

@@ -2437,6 +2437,9 @@ async function loadSettingsUi(){
   const iptvEnabled = document.getElementById('setIptvEnabled');
   const jfEnabled = document.getElementById('setJfEnabled');
   const jfServerUrl = document.getElementById('setJfServerUrl');
+  const jfApiKeyInput = document.getElementById('setJfApiKey');
+  const jfClearApiKey = document.getElementById('setJfClearApiKey');
+  const jfApiKeyState = document.getElementById('setJfApiKeyState');
   const jfUsername = document.getElementById('setJfUsername');
   const jfUserId = document.getElementById('setJfUserId');
   const jfPwInput = document.getElementById('setJfPassword');
@@ -2478,6 +2481,13 @@ async function loadSettingsUi(){
   );
   if (jfEnabled) jfEnabled.checked = !!cur.jellyfin_enabled;
   if (jfServerUrl) jfServerUrl.value = (cur.jellyfin_server_url || defaultJellyfinServerUrl());
+  if (jfApiKeyInput) jfApiKeyInput.value = '';
+  if (jfClearApiKey) jfClearApiKey.checked = false;
+  if (jfApiKeyState) {
+    const hasApiKey = !!cur.jellyfin_api_key_configured;
+    jfApiKeyState.textContent = hasApiKey ? 'Server API key is stored.' : 'No server API key stored.';
+    jfApiKeyState.setAttribute('data-configured', hasApiKey ? '1' : '0');
+  }
   if (jfUsername) jfUsername.value = (cur.jellyfin_username || '');
   if (jfUserId) jfUserId.value = (cur.jellyfin_user_id || '');
   if (jfAudioLang) jfAudioLang.value = (cur.jellyfin_audio_lang || '');
@@ -2791,6 +2801,9 @@ function bindSettingsUi(){
     }
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
+    const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
+    const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
+    const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
     const jfUser = (document.getElementById('setJfUsername')?.value || '').trim();
     const jfUserId = (document.getElementById('setJfUserId')?.value || '').trim();
     const jfPass = (document.getElementById('setJfPassword')?.value || '').trim();
@@ -2803,8 +2816,9 @@ function bindSettingsUi(){
 
     if (jfEnabled) {
       if (!jfServer) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Server URL is required.'; } return; }
-      if (!jfUser) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Username is required.'; } return; }
-      if (!jfPass && !jfPwConfigured) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Password is required.'; } return; }
+      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
+      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
+      if (!hasApiKey && !hasLogin) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A server API key or username and password is required.'; } return; }
     }
 
     const payload = {
@@ -2818,6 +2832,7 @@ function bindSettingsUi(){
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
       apply_now: true
     };
+    if (jfApiKey || jfClearApiKey) payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
 
     if (jfApplyBtn) jfApplyBtn.disabled = true;
@@ -2960,6 +2975,9 @@ function bindSettingsUi(){
     const uploadRetentionHours = Number(document.getElementById('setUploadRetentionHours')?.value || '24');
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
+    const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
+    const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
+    const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
     const jfUser = (document.getElementById('setJfUsername')?.value || '').trim();
     const jfUserId = (document.getElementById('setJfUserId')?.value || '').trim();
     const jfPass = (document.getElementById('setJfPassword')?.value || '').trim();
@@ -2988,8 +3006,9 @@ function bindSettingsUi(){
     }
     if (jfEnabled) {
       if (!jfServer) { alert(`${jfBrandName()} server URL is required.`); return; }
-      if (!jfUser) { alert(`${jfBrandName()} username is required.`); return; }
-      if (!jfPass && !jfPwConfigured) { alert(`${jfBrandName()} password is required.`); return; }
+      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
+      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
+      if (!hasApiKey && !hasLogin) { alert(`A ${jfBrandName()} server API key or username and password is required.`); return; }
     }
     if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
     if (seerrEnabled && seerrRequestMode !== 'caller_session' && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required for shared browsing.'); return; }
@@ -3043,6 +3062,7 @@ function bindSettingsUi(){
     Object.entries(tvControl).forEach(([key, value]) => {
       if (tvBaseline[key] !== undefined && value !== tvBaseline[key]) payload[key] = value;
     });
+    if (jfApiKey || jfClearApiKey) payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
     if (seerrApiKey) payload.seerr_api_key = seerrApiKey;
     if (seerrClearApiKey) payload.seerr_api_key_clear = true;
