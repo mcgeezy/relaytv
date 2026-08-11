@@ -349,6 +349,11 @@ def _connect_once(session: _Session) -> None:
         # already gone away must not hold either of those for ten seconds.
         "close_timeout": _CLOSE_TIMEOUT_SEC,
         "max_size": 2**20,
+        # The browser-compatible query string authenticates the socket, but it
+        # doesn't carry client identity. A token-free authorization header lets
+        # Jellyfin name this userless shared session after the configured TV
+        # instead of its own server name and RelayTV's opaque DeviceId.
+        "additional_headers": jellyfin_receiver.control_socket_identity_headers(st),
     }
     if _PROXY_KWARG_SUPPORTED:
         # websockets 15+ honours HTTP_PROXY by default, which would route a LAN

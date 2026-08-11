@@ -985,6 +985,40 @@ def control_token() -> str:
         return str(_API_KEY or _ACCESS_TOKEN or "")
 
 
+def control_socket_identity_headers(status_snapshot: dict[str, object] | None = None) -> dict[str, str]:
+    """Identify the cast device during the websocket HTTP handshake.
+
+    The socket URL carries the credential, while this token-free header gives
+    Jellyfin the configured display name. Without it, an API-key websocket is
+    created as the server itself and falls back to DeviceId for its name, so
+    the cast menu shows e.g. ``Jellyfin Server - relaytv-...``.
+
+    Jellyfin deliberately owns the API-key session's client label (the API key
+    name) and keeps the session userless. Keeping the token out of this header
+    preserves that shared-session behavior and avoids duplicating the secret.
+    """
+    st = status_snapshot if isinstance(status_snapshot, dict) else status()
+
+    def _component(key: str, fallback: str) -> str:
+        value = str(st.get(key) or fallback).strip() or fallback
+        # Jellyfin URL-decodes authorization components. Encoding here keeps a
+        # display name containing quotes or commas from changing header fields.
+        return _urlparse.quote(value, safe="")
+
+    client_name = _component("client_name", "RelayTV")
+    device_name = _component("device_name", "RelayTV")
+    device_id = _component("device_id", "relaytv")
+    client_version = _component("client_version", "1.0")
+    return {
+        "Authorization": (
+            f'MediaBrowser Client="{client_name}", '
+            f'Device="{device_name}", '
+            f'DeviceId="{device_id}", '
+            f'Version="{client_version}"'
+        )
+    }
+
+
 def catalog_token() -> str:
     """Return the credential used for user-scoped catalog and media work."""
     with _LOCK:

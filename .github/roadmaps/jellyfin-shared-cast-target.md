@@ -247,6 +247,23 @@ the generated fix note is the appropriate release treatment.
 
 Planned commit: `docs: document shared Jellyfin cast targets`
 
+### M6 — Correct shared-session presentation
+
+Status: implementation complete; live menu refresh pending
+
+Deliverables:
+
+- Identify the websocket handshake with the configured device name so an API
+  key session does not fall back to the Jellyfin server name and opaque device
+  ID.
+- Keep the API key only in the socket URL; the identity header must not repeat
+  or expose the credential.
+- Document Jellyfin Web's presentation constraint: a userless shared session
+  has no user subtitle, and the API-key name supplies its client suffix.
+- Add regression coverage for the handshake identity and secret boundary.
+
+Planned commit: `fix: identify shared Jellyfin cast sessions`
+
 ## Round 2 — Caller-Specific Playback Attribution
 
 Status: deferred, retained in roadmap
@@ -311,4 +328,5 @@ Update this table in the commit that completes each milestone.
 | M3 Observability | complete | this commit | 328 focused tests; full suite; Ruff; diff check |
 | M4 Multi-user verification | partial | this commit | 65 focused tests; full suite; live two-user acceptance pending |
 | M5 Operator docs | complete | this commit | operations setup, permissions, rotation, status, and limitation documented |
+| M6 Session presentation | complete | this commit | websocket identity and token-isolation regression coverage; live menu refresh pending |
 | Round 2 Caller attribution | deferred | separate branch/PR | retained above |

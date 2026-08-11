@@ -257,6 +257,58 @@ def test_socket_url_carries_the_token_and_device() -> None:
     assert jellyfin_ws.socket_url(server_url="http://jf.lan:8096", token="", device_id="d") == ""
 
 
+def test_socket_handshake_identifies_the_display_device_without_repeating_the_token(monkeypatch) -> None:
+    """API-key sockets otherwise inherit the server name and opaque DeviceId."""
+    seen: dict[str, object] = {}
+
+    class _Conn:
+        def recv(self, timeout=None):
+            raise TimeoutError
+
+        def send(self, message):
+            pass
+
+        def close(self):
+            pass
+
+    def _fake_connect(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return _Conn()
+
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", _fake_connect)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "status",
+        lambda: {
+            "server_url": "http://jf.lan:8096",
+            "device_id": "relaytv-stable",
+            "device_name": "Living Room",
+            "client_name": "RelayTV",
+            "client_version": "1.0",
+        },
+    )
+    monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "shared-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": None)
+
+    session = _session(deadline_sec=0.0)
+    jellyfin_ws._CURRENT = session
+    try:
+        jellyfin_ws._connect_once(session)
+    finally:
+        jellyfin_ws._CURRENT = None
+
+    assert "api_key=shared-api-key" in str(seen["url"])
+    headers = seen["additional_headers"]
+    assert headers == {
+        "Authorization": (
+            'MediaBrowser Client="RelayTV", Device="Living%20Room", '
+            'DeviceId="relaytv-stable", Version="1.0"'
+        )
+    }
+    assert "shared-api-key" not in str(headers)
+
+
 def test_the_access_token_never_reaches_status_or_logs(caplog) -> None:
     """A failed handshake reports the URL it tried, and that URL holds the token."""
     token = "super-secret-token"

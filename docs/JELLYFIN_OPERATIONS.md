@@ -165,7 +165,8 @@ Shared URL behavior:
 For a cast target that users across the Jellyfin server can select, configure
 a **Server API key** in RelayTV Settings. Create the key in the Jellyfin admin
 dashboard under **Advanced → API Keys**, then paste it into the Jellyfin / Emby
-integration section and apply.
+integration section and apply. Name the key **RelayTV** if you want Jellyfin's
+cast menu to label the target as `<configured device name> - RelayTV`.
 
 The API key owns RelayTV's control plane:
 
@@ -183,6 +184,11 @@ key; use **Clear stored API key** to remove it explicitly.
 Jellyfin still applies its own user policy. The target is available to all
 users whose policy allows shared-device control; RelayTV cannot make it appear
 for a user whose Jellyfin **shared device control** permission is disabled.
+
+Jellyfin Web reserves the cast menu's second row for an authenticated session
+user. A shared API-key target is intentionally userless, so its API-key name is
+shown as the client suffix on the first row instead. Assigning a user merely to
+populate that second row would make the target user-scoped again.
 
 Username/password authentication is independent and remains recommended for
 RelayTV's on-device catalog. When both credentials are configured:
