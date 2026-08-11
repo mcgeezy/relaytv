@@ -3348,6 +3348,11 @@ def _status_payload() -> dict[str, object]:
     jf_running = bool(jf_status.get("running"))
     jf_connected = bool(jf_status.get("connected"))
     jf_authenticated = bool(jf_status.get("authenticated"))
+    jf_control_auth_source = str(jf_status.get("control_auth_source") or "none")
+    jf_cast_target_scope = str(jf_status.get("cast_target_scope") or "unavailable")
+    jf_cast_target_ready = bool(jf_status.get("cast_target_ready"))
+    jf_catalog_auth_source = str(jf_status.get("catalog_auth_source") or "none")
+    jf_catalog_ready = bool(jf_status.get("catalog_ready"))
     jf_sync_health = str(jf_status.get("sync_health") or "")
     jf_sync_health_reason = str(jf_status.get("sync_health_reason") or "")
     jf_last_sync_age_sec = jf_status.get("last_sync_age_sec")
@@ -3424,6 +3429,11 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_running": jf_running,
         "jellyfin_connected": jf_connected,
         "jellyfin_authenticated": jf_authenticated,
+        "jellyfin_control_auth_source": jf_control_auth_source,
+        "jellyfin_cast_target_scope": jf_cast_target_scope,
+        "jellyfin_cast_target_ready": jf_cast_target_ready,
+        "jellyfin_catalog_auth_source": jf_catalog_auth_source,
+        "jellyfin_catalog_ready": jf_catalog_ready,
         "jellyfin_sync_health": jf_sync_health,
         "jellyfin_sync_health_reason": jf_sync_health_reason,
         "jellyfin_last_sync_age_sec": jf_last_sync_age_sec,

@@ -202,7 +202,7 @@ def test_ui_smoke() -> None:
     assert js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
     assert 'id="setJfClearPassword"' in response.text
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
-    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in js
+    assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in js
     assert 'class="toggleSwitch"' in response.text
     assert 'data-idle-enable="${key}"' in js
     assert 'class="chk"' not in response.text

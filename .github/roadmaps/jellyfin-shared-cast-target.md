@@ -1,6 +1,6 @@
 # Jellyfin Shared Cast Target Roadmap
 
-Status: in progress (M2 complete)
+Status: in progress (M3 complete)
 
 Branch: `fix/jellyfin-shared-cast-target`
 
@@ -181,7 +181,7 @@ Planned commit: `fix: separate Jellyfin cast and catalog credentials`
 
 ### M3 — Make shared-target state observable
 
-Status: pending
+Status: complete
 
 Deliverables:
 
@@ -303,7 +303,7 @@ Update this table in the commit that completes each milestone.
 | M0 Design | complete | roadmap commit | document review; `git diff --check` |
 | M1 Settings | complete | this commit | 253 focused tests; full suite; Ruff; diff check |
 | M2 Credential split | complete | this commit | 149 focused tests; full suite; Ruff; diff check |
-| M3 Observability | pending | — | — |
+| M3 Observability | complete | this commit | 328 focused tests; full suite; Ruff; diff check |
 | M4 Multi-user verification | pending | — | — |
 | M5 Operator docs | pending | — | — |
 | Round 2 Caller attribution | deferred | separate branch/PR | retained above |

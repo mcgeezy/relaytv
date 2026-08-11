@@ -262,6 +262,44 @@ def test_receiver_status_reports_socket_health_without_secrets() -> None:
     assert st["cast_target_ready"] is False
 
 
+def test_receiver_status_reports_shared_control_and_catalog_sources(monkeypatch) -> None:
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.local:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "api_key_configured", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "authenticated", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "last_register_ok", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "media_control_verified", True)
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_control_socket_status",
+        lambda: {"enabled": True, "available": True, "connected": True},
+    )
+
+    st = jellyfin_receiver.status()
+
+    assert st["control_auth_source"] == "api_key"
+    assert st["cast_target_scope"] == "shared"
+    assert st["cast_target_ready"] is True
+    assert st["catalog_auth_source"] == "user_session"
+    assert st["catalog_ready"] is True
+
+
+def test_receiver_status_reports_legacy_login_as_user_scoped(monkeypatch) -> None:
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.local:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "api_key_configured", False)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "authenticated", True)
+
+    st = jellyfin_receiver.status()
+
+    assert st["control_auth_source"] == "user_session"
+    assert st["cast_target_scope"] == "user_scoped"
+    assert st["catalog_auth_source"] == "user_session"
+    assert st["catalog_ready"] is True
+
+
 # --- dispatch seam ---------------------------------------------------------
 
 
@@ -1152,6 +1190,41 @@ def test_authentication_cannot_publish_after_its_snapshot_is_disconnected(monkey
     assert jellyfin_receiver._STATUS["running"] is False
     assert jellyfin_receiver._STATUS["authenticated"] is False
     assert jellyfin_receiver._ACCESS_TOKEN == ""
+
+
+def test_catalog_auth_failure_does_not_degrade_shared_control(monkeypatch) -> None:
+    for key, value in (
+        ("enabled", True),
+        ("running", True),
+        ("connected", True),
+        ("server_url", "http://jf.local:8096"),
+        ("api_key_configured", True),
+        ("authenticated", False),
+        ("last_register_ok", True),
+        ("media_control_verified", True),
+        ("last_error", "control-plane-marker"),
+    ):
+        monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_USERNAME", "catalog-user")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_PASSWORD", "bad-password")
+    monkeypatch.setattr(
+        jellyfin_receiver._urlrequest,
+        "urlopen",
+        lambda req, timeout=5: (_ for _ in ()).throw(OSError("catalog login rejected")),
+    )
+
+    result = jellyfin_receiver.authenticate_once()
+    st = jellyfin_receiver.status()
+
+    assert result["reason"] == "auth_failed"
+    assert st["connected"] is True
+    assert st["sync_health"] == "ok"
+    assert st["control_auth_source"] == "api_key"
+    assert st["cast_target_scope"] == "shared"
+    assert st["last_error"] == "control-plane-marker"
+    assert "catalog login rejected" in str(st["last_auth_error"])
 
 
 def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> None:

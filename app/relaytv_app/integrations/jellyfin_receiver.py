@@ -491,6 +491,27 @@ def mark_heartbeat() -> None:
 def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     out = dict(raw)
     now_ts = int(time.time())
+    if bool(out.get("api_key_configured")):
+        out["control_auth_source"] = "api_key"
+        out["cast_target_scope"] = "shared"
+    elif bool(out.get("authenticated")):
+        out["control_auth_source"] = "user_session"
+        out["cast_target_scope"] = "user_scoped"
+    else:
+        out["control_auth_source"] = "none"
+        out["cast_target_scope"] = "unavailable"
+    if bool(out.get("authenticated")):
+        out["catalog_auth_source"] = "user_session"
+    elif bool(out.get("api_key_configured")):
+        out["catalog_auth_source"] = "api_key"
+    else:
+        out["catalog_auth_source"] = "none"
+    out["catalog_ready"] = bool(
+        out.get("enabled")
+        and out.get("running")
+        and str(out.get("server_url") or "").strip()
+        and out.get("catalog_auth_source") != "none"
+    )
     catalog_user_id, catalog_user_source = _effective_catalog_user(raw)
     out["catalog_user_id"] = catalog_user_id
     out["catalog_user_source"] = catalog_user_source
@@ -2787,7 +2808,8 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
             _STATUS["last_auth_ts"] = int(time.time())
             _STATUS["last_auth_ok"] = True
             _STATUS["last_auth_error"] = None
-            _STATUS["last_error"] = None
+            if not _API_KEY:
+                _STATUS["last_error"] = None
 
         if not _publish(generation, _apply):
             logger.info("jellyfin_auth_discarded reason=config_changed")
@@ -2804,7 +2826,8 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
             _STATUS["last_auth_ts"] = int(time.time())
             _STATUS["last_auth_ok"] = False
             _STATUS["last_auth_error"] = msg
-            _STATUS["last_error"] = msg
+            if not _API_KEY:
+                _STATUS["last_error"] = msg
 
         if not _publish(generation, _apply_failure):
             return {"ok": False, "reason": "config_changed"}

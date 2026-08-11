@@ -2505,8 +2505,10 @@ async function loadSettingsUi(){
     const enabled = jfStatus && Object.prototype.hasOwnProperty.call(jfStatus, 'enabled')
       ? !!jfStatus.enabled
       : !!cur.jellyfin_enabled;
-    const up = !!(enabled && jfStatus && (jfStatus.connected || jfStatus.authenticated));
-    jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';
+    const castReady = !!(enabled && jfStatus && jfStatus.cast_target_ready);
+    const up = !!(enabled && jfStatus && (castReady || jfStatus.connected || jfStatus.authenticated));
+    const castScope = String((jfStatus && jfStatus.cast_target_scope) || 'unavailable');
+    jfBadge.textContent = enabled ? (castReady ? (castScope === 'shared' ? 'Shared Cast' : 'Cast Ready') : (up ? 'Connected' : 'Down')) : 'Disabled';
     jfBadge.classList.remove('up', 'down', 'warn', 'unknown');
     jfBadge.classList.add(enabled ? (up ? 'up' : 'down') : 'unknown');
   }
@@ -2522,6 +2524,11 @@ async function loadSettingsUi(){
       const pLat = Number.isFinite(Number(jfStatus.last_progress_latency_ms)) ? `${Number(jfStatus.last_progress_latency_ms)}ms` : 'n/a';
       const sLat = Number.isFinite(Number(jfStatus.last_stopped_latency_ms)) ? `${Number(jfStatus.last_stopped_latency_ms)}ms` : 'n/a';
       const auth = jfStatus.authenticated ? 'yes' : 'no';
+      const castReady = jfStatus.cast_target_ready ? 'ready' : 'not ready';
+      const castScope = (jfStatus.cast_target_scope || 'unavailable').toString();
+      const controlAuth = (jfStatus.control_auth_source || 'none').toString();
+      const catalogReady = jfStatus.catalog_ready ? 'ready' : 'not ready';
+      const catalogAuth = (jfStatus.catalog_auth_source || 'none').toString();
       const catalogUserId = (jfStatus.catalog_user_id || '').toString().trim();
       const catalogUserSource = (jfStatus.catalog_user_source || 'none').toString().trim();
       const catalogUser = catalogUserId ? `${catalogUserId} (${catalogUserSource || 'preferred'})` : 'auto';
@@ -2534,7 +2541,7 @@ async function loadSettingsUi(){
       const healthReason = (jfStatus.sync_health_reason || '').toString().trim();
       const err = (jfStatus.last_error || '').toString().trim();
       jfSyncDiag.textContent =
-        `Health: ${health}${healthReason ? ` (${healthReason})` : ''} · Auth: ${auth} · Catalog user: ${catalogUser} · Cache: ${cacheDiag} (clears: ${cacheClears}${cacheClearReason ? `, ${cacheClearReason}` : ''}) · Progress ok/fail: ${pOk}/${pFail} (${pLat}) · Stopped ok/fail: ${sOk}/${sFail} (${sLat}) · Stop dedupe: ${sSupp}` +
+        `Health: ${health}${healthReason ? ` (${healthReason})` : ''} · Cast: ${castReady}, ${castScope} (${controlAuth}) · Catalog: ${catalogReady} (${catalogAuth}), login: ${auth}, user: ${catalogUser} · Cache: ${cacheDiag} (clears: ${cacheClears}${cacheClearReason ? `, ${cacheClearReason}` : ''}) · Progress ok/fail: ${pOk}/${pFail} (${pLat}) · Stopped ok/fail: ${sOk}/${sFail} (${sLat}) · Stop dedupe: ${sSupp}` +
         (err ? ` · Last error: ${err}` : '');
     }
   }
