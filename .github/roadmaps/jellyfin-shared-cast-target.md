@@ -1,6 +1,6 @@
 # Jellyfin Shared Cast Target Roadmap
 
-Status: in progress (M4 automated verification complete; live acceptance pending)
+Status: implementation complete; live two-user acceptance pending
 
 Branch: `fix/jellyfin-shared-cast-target`
 
@@ -228,7 +228,7 @@ Planned commit: `test: cover shared Jellyfin cast lifecycle`
 
 ### M5 — Complete operator documentation
 
-Status: pending
+Status: complete
 
 Deliverables:
 
@@ -238,7 +238,12 @@ Deliverables:
 - Regenerate machine-checked inventories only if their public surfaces change.
 - Decide whether this user-visible fix warrants a release highlight; do not
   edit `CHANGELOG.md`.
-- Mark this roadmap complete with final test and live-verification evidence.
+- Mark implementation complete and record any live-verification evidence or
+  remaining external acceptance dependency.
+
+Release-highlight decision: no new highlight file. This is a corrective
+extension of the Jellyfin cast-target feature already highlighted in 0.9.0;
+the generated fix note is the appropriate release treatment.
 
 Planned commit: `docs: document shared Jellyfin cast targets`
 
@@ -305,5 +310,5 @@ Update this table in the commit that completes each milestone.
 | M2 Credential split | complete | this commit | 149 focused tests; full suite; Ruff; diff check |
 | M3 Observability | complete | this commit | 328 focused tests; full suite; Ruff; diff check |
 | M4 Multi-user verification | partial | this commit | 65 focused tests; full suite; live two-user acceptance pending |
-| M5 Operator docs | pending | — | — |
+| M5 Operator docs | complete | this commit | operations setup, permissions, rotation, status, and limitation documented |
 | Round 2 Caller attribution | deferred | separate branch/PR | retained above |
