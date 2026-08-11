@@ -1,6 +1,6 @@
 # Jellyfin Shared Cast Target Roadmap
 
-Status: in progress (M3 complete)
+Status: in progress (M4 automated verification complete; live acceptance pending)
 
 Branch: `fix/jellyfin-shared-cast-target`
 
@@ -201,7 +201,7 @@ Planned commit: `fix: report Jellyfin cast target scope`
 
 ### M4 — Verify multi-user behavior and lifecycle safety
 
-Status: pending
+Status: automated verification complete; live acceptance pending
 
 Deliverables:
 
@@ -304,6 +304,6 @@ Update this table in the commit that completes each milestone.
 | M1 Settings | complete | this commit | 253 focused tests; full suite; Ruff; diff check |
 | M2 Credential split | complete | this commit | 149 focused tests; full suite; Ruff; diff check |
 | M3 Observability | complete | this commit | 328 focused tests; full suite; Ruff; diff check |
-| M4 Multi-user verification | pending | — | — |
+| M4 Multi-user verification | partial | this commit | 65 focused tests; full suite; live two-user acceptance pending |
 | M5 Operator docs | pending | — | — |
 | Round 2 Caller attribution | deferred | separate branch/PR | retained above |

@@ -85,6 +85,22 @@ def test_play_message_becomes_a_play_command() -> None:
     assert payload["MessageId"] == "m-1"
 
 
+def test_play_message_preserves_the_controlling_user() -> None:
+    routed = jellyfin_ws.normalize_message(
+        {
+            "MessageType": "Play",
+            "Data": {
+                "ItemIds": ["abc"],
+                "PlayCommand": "PlayNow",
+                "ControllingUserId": "different-user-id",
+            },
+        }
+    )
+
+    assert routed is not None
+    assert routed[1]["ControllingUserId"] == "different-user-id"
+
+
 def test_playstate_leaves_the_action_for_the_normalizer() -> None:
     """Playstate carries its verb in the body, which normalize_action reads."""
     from relaytv_app.integrations import jellyfin_service
@@ -916,6 +932,43 @@ def test_concurrent_server_switches_do_not_interleave(monkeypatch) -> None:
     product = str(jellyfin_receiver._STATUS["server_product_name"])
     expected = "Server B" if "b.local" in url else "Server A"
     assert product == expected, f"torn state: {url} reported as {product}"
+
+
+def test_rapid_api_key_rotation_leaves_one_current_shared_socket(monkeypatch) -> None:
+    """Every key rotation retires the previous shared identity exactly once."""
+    started: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(jellyfin_ws, "enabled", lambda: True)
+    monkeypatch.setattr(jellyfin_ws, "_ws_connect", object())
+    monkeypatch.setattr(jellyfin_receiver, "_start_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_stop_worker", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_clear", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "_run_detection", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(jellyfin_receiver, "command_sink_registered", lambda: True)
+
+    def _start(identity):
+        started.append(identity)
+        jellyfin_ws._CURRENT = jellyfin_ws._Session(identity)
+
+    monkeypatch.setattr(jellyfin_ws, "_start", _start)
+    expected_device_id = jellyfin_receiver.derive_device_id()
+    try:
+        for key in ("shared-key-1", "shared-key-2", "shared-key-3"):
+            jellyfin_receiver.connect(
+                server_url="http://jf.local:8096",
+                api_key=key,
+                device_name="Living Room",
+            )
+            jellyfin_ws.ensure_running()
+
+        assert len(started) == 3
+        assert len(set(started)) == 3
+        assert jellyfin_ws._CURRENT is not None
+        assert jellyfin_ws._CURRENT.bound == started[-1]
+        assert jellyfin_ws._CURRENT.bound == jellyfin_ws._identity()
+        assert jellyfin_receiver._STATUS["device_id"] == expected_device_id
+        assert jellyfin_receiver.control_token() == "shared-key-3"
+    finally:
+        jellyfin_ws._CURRENT = None
 
 
 # --- heartbeat generations -------------------------------------------------
