@@ -6128,14 +6128,95 @@ def test_a_failed_resume_still_reports_its_reason(monkeypatch, tmp_path) -> None
     from relaytv_app import player
 
     log = tmp_path / "mpv.log"
-    log.write_text("[ 19.85][e][stream] Failed to open http://x/y.\n", encoding="utf-8")
+    log.write_text("", encoding="utf-8")
     monkeypatch.setenv("MPV_LOG_FILE", str(log))
 
     player.note_playback_started(300.0)   # resumed five minutes in
+    # mpv writes its error after the play begins, which is the real ordering.
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write("[ 19.85][e][stream] Failed to open http://x/y.\n")
     player.note_playback_failure_if_no_progress({"title": "Resumed", "resume_pos": 300.0})
     assert "Failed to open" in (player.last_playback_error() or "")
 
     # Real progress from that same resume point is not a failure.
     player.note_playback_started(300.0)
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write("[ 25.00][e][stream] Failed to open http://x/y.\n")
     player.note_playback_failure_if_no_progress({"title": "Resumed", "resume_pos": 340.0})
     assert player.last_playback_error() is None
+
+
+def test_a_stale_error_is_not_blamed_on_a_later_item(monkeypatch, tmp_path) -> None:
+    """The log is cumulative; the diagnostic must not be.
+
+    A short clip that ends quietly after an earlier 403 would otherwise inherit
+    that 403, and /status would name the wrong item.
+    """
+    from relaytv_app import player
+
+    log = tmp_path / "mpv.log"
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+    log.write_text("[ 19.85][e][stream] Failed to open http://old/item.\n", encoding="utf-8")
+
+    # A new play starts; everything above belongs to the previous item.
+    player.note_playback_started(0.0)
+    player.note_playback_failure_if_no_progress({"title": "Short clip", "resume_pos": 0.5})
+
+    assert player.last_playback_error() is None, "an earlier item's failure was reused"
+
+
+def test_a_rotated_log_does_not_hide_the_current_failure(monkeypatch, tmp_path) -> None:
+    """Rotation restarts the file at zero, so a saved offset would skip past it."""
+    from relaytv_app import player
+
+    log = tmp_path / "mpv.log"
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+    log.write_text("x" * 5000, encoding="utf-8")
+
+    player.note_playback_started(0.0)          # offset recorded at 5000
+    log.write_text("[ 1.00][e][stream] Failed to open http://x/y.\n", encoding="utf-8")  # rotated
+
+    player.note_playback_failure_if_no_progress({"title": "After rotate", "resume_pos": 0.0})
+    assert "Failed to open" in (player.last_playback_error() or "")
+
+
+def test_every_mpv_backend_writes_the_diagnostic_log(monkeypatch) -> None:
+    """The mpv and Qt external_mpv backends launch through _build_mpv_args.
+
+    Gating the log on debug there left last_playback_error reading a file those
+    backends never create, despite the feature claiming to explain any failure.
+    """
+    from relaytv_app import player
+
+    monkeypatch.delenv("MPV_LOG_FILE", raising=False)
+    monkeypatch.delenv("RELAYTV_DEBUG", raising=False)
+    monkeypatch.delenv("MPV_DEBUG", raising=False)
+
+    args = player._build_mpv_args("http://example.com/video.mp4", None, "play")
+    joined = " ".join(args)
+    assert "--log-file=" in joined, "no mpv log outside debug: failures would be unexplained"
+
+
+def test_a_failed_item_is_recorded_even_when_the_queue_advances(monkeypatch) -> None:
+    """The common case: a queue is present, so natural_end advances.
+
+    That path never reached the queue-empty handler, and the successor's
+    play_item cleared the error, so playlist users saw nothing at all.
+    """
+    from relaytv_app import playback_service, player, state
+
+    seen: list[object] = []
+    monkeypatch.setattr(player, "note_playback_failure_if_no_progress", lambda now: seen.append(now))
+    monkeypatch.setattr(player, "_set_auto_next_transition", lambda *_a, **_k: None)
+    monkeypatch.setattr(playback_service, "advance_queue", lambda **_k: "advanced")
+    monkeypatch.setattr(state, "NOW_PLAYING", {"title": "Failed item", "resume_pos": 0.0})
+
+    with state.QUEUE_LOCK:
+        state.QUEUE[:] = [{"url": "http://example.com/next"}]
+    try:
+        assert playback_service.natural_end() == "advanced"
+    finally:
+        with state.QUEUE_LOCK:
+            state.QUEUE.clear()
+
+    assert seen and (seen[0] or {}).get("title") == "Failed item"

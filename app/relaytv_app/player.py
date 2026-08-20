@@ -2593,9 +2593,10 @@ def _build_mpv_args(
         runtime_profile = {}
     decode_profile = str(runtime_profile.get("decode_profile") or "").strip().lower()
 
-    log_file = (os.getenv("MPV_LOG_FILE") or "").strip()
-    if not log_file and debug:
-        log_file = "/tmp/mpv.log"
+    # Always log. The mpv and Qt external_mpv backends launch through here, and
+    # gating this on debug left last_playback_error reading a file those
+    # backends never create — or worse, a stale one from an earlier session.
+    log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or _mpv_log_path()
     mpv_args: list[str] = [
         "mpv",
         "--fs",
@@ -5236,6 +5237,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 
 _LAST_PLAYBACK_ERROR: str | None = None
 _PLAYBACK_STARTED_POS: float = 0.0
+_PLAYBACK_LOG_OFFSET: int = 0
 _PLAYBACK_ERROR_LOCK = threading.Lock()
 _MPV_ERROR_LINE = re.compile(r"^\[[^\]]*\]\[[ef]\]\[(?P<src>[^\]]+)\]\s*(?P<msg>.+)$")
 
@@ -5251,6 +5253,13 @@ def set_last_playback_error(reason: str | None) -> None:
         _LAST_PLAYBACK_ERROR = (str(reason).strip() or None) if reason else None
 
 
+def _mpv_log_size() -> int:
+    try:
+        return int(os.path.getsize(_mpv_log_path()))
+    except Exception:
+        return 0
+
+
 def note_playback_started(start_pos: float | None) -> None:
     """Remember where this item began playing.
 
@@ -5259,14 +5268,19 @@ def note_playback_started(start_pos: float | None) -> None:
     minutes of progress — and a resumed stream that dies instantly would look
     like a completed play and report nothing.
     """
-    global _PLAYBACK_STARTED_POS, _LAST_PLAYBACK_ERROR
+    global _PLAYBACK_STARTED_POS, _LAST_PLAYBACK_ERROR, _PLAYBACK_LOG_OFFSET
     try:
         value = max(0.0, float(start_pos or 0.0))
     except Exception:
         value = 0.0
+    offset = _mpv_log_size()
     with _PLAYBACK_ERROR_LOCK:
         _PLAYBACK_STARTED_POS = value
         _LAST_PLAYBACK_ERROR = None
+        # Everything already in the log belongs to an earlier item. Without
+        # this, a short clip that ends quietly inherits the previous play's
+        # 403 and /status blames the wrong thing.
+        _PLAYBACK_LOG_OFFSET = offset
 
 
 def playback_started_pos() -> float:
@@ -5279,17 +5293,25 @@ def _mpv_log_path() -> str:
 
 
 def read_mpv_failure_reason(*, tail_bytes: int = 65536) -> str:
-    """The most recent error mpv logged, condensed to one line.
+    """The most recent error mpv logged *for the current item*, as one line.
 
-    URLs are dropped: a googlevideo link is a screenful of signed query string
-    and can carry credentials for other providers.
+    Reading starts where this play began, so an older failure cannot be
+    attributed to a later item. URLs are dropped: a googlevideo link is a
+    screenful of signed query string and can carry credentials for other
+    providers.
     """
     path = _mpv_log_path()
+    with _PLAYBACK_ERROR_LOCK:
+        start = int(_PLAYBACK_LOG_OFFSET)
     try:
         with open(path, "rb") as handle:
             handle.seek(0, os.SEEK_END)
             size = handle.tell()
-            handle.seek(max(0, size - tail_bytes))
+            # A rotated log restarts from zero; the old offset would then skip
+            # past everything this play wrote.
+            if start > size:
+                start = 0
+            handle.seek(max(start, size - tail_bytes))
             chunk = handle.read().decode("utf-8", "ignore")
     except Exception:
         return ""
