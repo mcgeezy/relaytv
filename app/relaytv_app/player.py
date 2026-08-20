@@ -5243,8 +5243,24 @@ _MPV_ERROR_LINE = re.compile(r"^\[[^\]]*\]\[[ef]\]\[(?P<src>[^\]]+)\]\s*(?P<msg>
 
 
 def last_playback_error() -> str | None:
+    """Why the most recent attempt failed, if it did and nothing has superseded it.
+
+    Reported until the next attempt demonstrably plays, so a failure is still
+    visible while its successor is starting — which is the whole window in
+    which a queue advance would otherwise hide it.
+    """
     with _PLAYBACK_ERROR_LOCK:
-        return _LAST_PLAYBACK_ERROR
+        reason = _LAST_PLAYBACK_ERROR
+    if not reason:
+        return None
+    try:
+        now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        position = float((now or {}).get("resume_pos") or 0.0)
+    except Exception:
+        return reason
+    if (position - playback_started_pos()) >= 2.0:
+        return None
+    return reason
 
 
 def set_last_playback_error(reason: str | None) -> None:
@@ -5276,10 +5292,15 @@ def note_playback_started(start_pos: float | None) -> None:
     offset = _mpv_log_size()
     with _PLAYBACK_ERROR_LOCK:
         _PLAYBACK_STARTED_POS = value
-        _LAST_PLAYBACK_ERROR = None
-        # Everything already in the log belongs to an earlier item. Without
-        # this, a short clip that ends quietly inherits the previous play's
-        # 403 and /status blames the wrong thing.
+        # The previous failure is deliberately *not* cleared here. When a queue
+        # advances, the successor starts within milliseconds of the failure
+        # being recorded, so clearing on start meant nothing ever observed it.
+        # It is superseded instead: by this attempt playing (see
+        # last_playback_error) or by how this attempt ends.
+        #
+        # Everything already in the log belongs to an earlier item, so the read
+        # window starts here — a short clip that ends quietly must not inherit
+        # the previous play's 403.
         _PLAYBACK_LOG_OFFSET = offset
 
 
@@ -5374,6 +5395,9 @@ def note_playback_failure_if_no_progress(now: dict | None) -> str:
         return ""
     reason = read_mpv_failure_reason()
     if not reason:
+        # This attempt ended without a diagnosable failure, so whatever was
+        # stored belongs to an older one and has had its chance to be seen.
+        set_last_playback_error(None)
         return ""
     set_last_playback_error(reason)
     logger.info(

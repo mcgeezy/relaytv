@@ -472,7 +472,10 @@ if [ -z "$YTDLP_AUTO_UPDATE_VAL" ]; then
   YTDLP_AUTO_UPDATE_VAL="0"
 fi
 if [ -z "$YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL" ]; then
-  YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL="24"
+  # Must match the app default in container_entrypoint.run_yt_dlp_update. The
+  # block below omits the variable when it equals this value, so a mismatch
+  # would silently rewrite an operator's explicit schedule on every regenerate.
+  YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL="6"
 fi
 if [ -z "$YTDLP_AUTO_UPDATE_TIMEOUT_SEC_VAL" ]; then
   YTDLP_AUTO_UPDATE_TIMEOUT_SEC_VAL="180"
@@ -1158,7 +1161,7 @@ if [ "${YTDLP_AUTO_UPDATE_VAL}" != "0" ]; then
   YTDLP_ENV_BLOCK+=$(emit_env_line "RELAYTV_YTDLP_AUTO_UPDATE" "${YTDLP_AUTO_UPDATE_VAL}")
   YTDLP_ENV_BLOCK+=$'\n'
 fi
-if [ "${YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL}" != "24" ]; then
+if [ "${YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL}" != "6" ]; then
   YTDLP_ENV_BLOCK+=$(emit_env_line "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS" "${YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL}")
   YTDLP_ENV_BLOCK+=$'\n'
 fi

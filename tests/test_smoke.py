@@ -6287,3 +6287,72 @@ def test_the_reader_follows_an_operator_log_file_override(monkeypatch) -> None:
     assert player._mpv_log_path() == "/var/log/mpv.log"
     monkeypatch.setenv("MPV_LOG_FILE", "/explicit.log")
     assert player._mpv_log_path() == "/explicit.log"
+
+
+def test_the_installer_interval_default_matches_the_app_default() -> None:
+    """The installer omits the variable when it equals its own default.
+
+    If the two defaults drift, regenerating .env silently rewrites an explicit
+    schedule — an operator who asked for 24h would quietly get the app default
+    instead, with nothing in the file to show it happened.
+    """
+    installer = (ROOT_DIR / "scripts" / "install.sh").read_text(encoding="utf-8")
+    app_default = container_entrypoint._parse_float_env({}, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 6.0)
+
+    assert f'YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL="{int(app_default)}"' in installer
+    assert f'"${{YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL}}" != "{int(app_default)}"' in installer
+
+
+def test_a_queued_failure_is_still_visible_while_the_next_item_starts(monkeypatch, tmp_path) -> None:
+    """The successor starts within milliseconds of the failure being recorded.
+
+    Clearing on start meant /status never exposed it whenever a queue advanced,
+    which is the common case — the earlier natural_end fix alone did not help.
+    """
+    from relaytv_app import player, state
+
+    log = tmp_path / "mpv.log"
+    log.write_text("", encoding="utf-8")
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+
+    # Item A plays, fails, and its reason is recorded.
+    player.note_playback_started(0.0)
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write("[ 9.9][e][stream] Failed to open http://a/.\n")
+    monkeypatch.setattr(state, "NOW_PLAYING", {"title": "A", "resume_pos": 0.0})
+    player.note_playback_failure_if_no_progress(state.NOW_PLAYING)
+    assert "Failed to open" in (player.last_playback_error() or "")
+
+    # The queue advances: B starts immediately, before it has played anything.
+    player.note_playback_started(0.0)
+    monkeypatch.setattr(state, "NOW_PLAYING", {"title": "B", "resume_pos": 0.0})
+    assert "Failed to open" in (player.last_playback_error() or ""), \
+        "the failure vanished the moment the queue advanced"
+
+    # Once B is genuinely playing, it supersedes A's failure.
+    monkeypatch.setattr(state, "NOW_PLAYING", {"title": "B", "resume_pos": 30.0})
+    assert player.last_playback_error() is None
+
+
+def test_rotation_follows_an_operator_log_file_override(monkeypatch, tmp_path) -> None:
+    """_build_mpv_args suppresses its own --log-file when an operator supplies one.
+
+    Rotating the default path then leaves the log mpv is really writing to
+    growing unbounded for the life of the idle player — on tmpfs.
+    """
+    from relaytv_app import qt_shell_app
+
+    monkeypatch.delenv("MPV_LOG_FILE", raising=False)
+    monkeypatch.delenv("MPV_ARGS", raising=False)
+    custom = tmp_path / "custom-mpv.log"
+    monkeypatch.setenv("RELAYTV_QT_SHELL_MPV_ARGS", f"--gpu-api=opengl --log-file={custom}")
+
+    assert qt_shell_app._effective_mpv_log_path() == str(custom)
+
+    custom.write_bytes(b"x" * (qt_shell_app._MPV_LOG_MAX_BYTES + 1))
+    monkeypatch.setattr(qt_shell_app, "_mpv_log_last_check", 0.0)
+    reopened: list[str] = []
+    qt_shell_app._rotate_mpv_log_if_needed(reopened.append)
+
+    assert not custom.exists(), "the operator's log was left to grow unbounded"
+    assert reopened == [str(custom)]

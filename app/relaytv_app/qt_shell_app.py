@@ -492,6 +492,30 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
     return out
 
 
+def _effective_mpv_log_path() -> str:
+    """The log mpv is actually writing, including an operator's override.
+
+    _build_mpv_args suppresses its own --log-file when one arrives through
+    RELAYTV_QT_SHELL_MPV_ARGS or MPV_ARGS, so rotating the default path would
+    leave the real log growing unbounded for the life of the idle player.
+    """
+    explicit = (os.getenv("MPV_LOG_FILE") or "").strip()
+    if explicit:
+        return explicit
+    for name in ("RELAYTV_QT_SHELL_MPV_ARGS", "MPV_ARGS"):
+        parts = _split_env_args(name)
+        for index, token in enumerate(parts):
+            if token.startswith("--log-file="):
+                value = token.split("=", 1)[1].strip()
+                if value:
+                    return value
+            elif token == "--log-file" and index + 1 < len(parts):
+                value = parts[index + 1].strip()
+                if value:
+                    return value
+    return "/tmp/mpv.log"
+
+
 _MPV_LOG_MAX_BYTES = 2_000_000
 _mpv_log_last_check = 0.0
 
@@ -521,7 +545,7 @@ def _rotate_mpv_log_if_needed(reopen) -> None:
     if (now - _mpv_log_last_check) < 60.0:
         return
     _mpv_log_last_check = now
-    path = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+    path = _effective_mpv_log_path()
     if not _truncate_mpv_log(path):
         return
     try:
@@ -571,7 +595,7 @@ def _build_mpv_args(
     # errors reach nothing at all: a stream that 403s looks, from the outside,
     # like a successful play that simply stopped. The file is capped and
     # truncated on each launch, so it stays cheap on tmpfs.
-    log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+    log_file = _effective_mpv_log_path()
     _truncate_mpv_log(log_file)
     if not _has_opt(args + extra, "--log-file"):
         args.append(f"--log-file={log_file}")
