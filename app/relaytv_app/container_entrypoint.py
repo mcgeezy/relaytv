@@ -591,6 +591,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         _normalize_path_env(env)
+        # Prune before the update toggle is consulted. The PATH prefix above is
+        # unconditional, so an operator who enabled auto-update once, turned it
+        # off, and then deployed an image with a newer yt-dlp would otherwise
+        # keep running the old persisted copy forever — the update path, which
+        # is where pruning used to live, never runs with the toggle off.
+        _prune_persisted_ytdlp(env)
         _normalize_runtime_defaults(env)
         _sync_legacy_brand_assets()
         _yt_dlp_auto_update(env)

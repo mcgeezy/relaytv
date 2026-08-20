@@ -6220,3 +6220,70 @@ def test_a_failed_item_is_recorded_even_when_the_queue_advances(monkeypatch) -> 
             state.QUEUE.clear()
 
     assert seen and (seen[0] or {}).get("title") == "Failed item"
+
+
+def test_a_stale_persisted_copy_is_pruned_even_with_updates_disabled(monkeypatch, tmp_path) -> None:
+    """The PATH prefix is unconditional, so pruning must be too.
+
+    Enable auto-update once, turn it off, then deploy an image carrying a newer
+    yt-dlp: the old persisted copy would keep winning indefinitely, because
+    pruning used to live only inside the update path.
+    """
+    update_dir = tmp_path / "ytdlp"
+    (update_dir / "bin").mkdir(parents=True)
+    (update_dir / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setenv("RELAYTV_YTDLP_UPDATE_DIR", str(update_dir))
+    monkeypatch.setenv("RELAYTV_YTDLP_AUTO_UPDATE", "0")
+
+    def _version(_env, *, path=None, user_site=True):
+        return "2026.01.01" if user_site else "2026.08.19"   # persisted vs image
+
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
+    monkeypatch.setattr(container_entrypoint, "_normalize_runtime_defaults", lambda env: None)
+    monkeypatch.setattr(container_entrypoint, "_sync_legacy_brand_assets", lambda: None)
+    monkeypatch.setattr(container_entrypoint, "refresh_display_credentials", lambda env: dict(env))
+
+    started: list[list[str]] = []
+
+    class _Proc:
+        returncode = 0
+
+        def wait(self, *a, **k):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        container_entrypoint.subprocess, "Popen", lambda args, **kw: started.append(list(args)) or _Proc()
+    )
+
+    container_entrypoint.main(["true"])
+
+    assert not (update_dir / "bin" / "yt-dlp").exists(), "the stale copy still shadows the image"
+
+
+def test_the_reader_follows_an_operator_log_file_override(monkeypatch) -> None:
+    """The builders skip their own --log-file when an operator supplies one.
+
+    If the reader keeps opening /tmp/mpv.log it reports nothing, or a stale
+    reason from a different backend, on exactly those devices.
+    """
+    from relaytv_app import player
+
+    monkeypatch.delenv("MPV_LOG_FILE", raising=False)
+    for name in player._MPV_ARG_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    assert player._mpv_log_path() == "/tmp/mpv.log"
+
+    monkeypatch.setenv("RELAYTV_QT_SHELL_MPV_ARGS", "--gpu-api=opengl --log-file=/data/mpv-custom.log")
+    assert player._mpv_log_path() == "/data/mpv-custom.log"
+
+    # The separated form too, and MPV_LOG_FILE still wins when both are set.
+    monkeypatch.delenv("RELAYTV_QT_SHELL_MPV_ARGS")
+    monkeypatch.setenv("MPV_ARGS", "--log-file /var/log/mpv.log")
+    assert player._mpv_log_path() == "/var/log/mpv.log"
+    monkeypatch.setenv("MPV_LOG_FILE", "/explicit.log")
+    assert player._mpv_log_path() == "/explicit.log"

@@ -5288,8 +5288,38 @@ def playback_started_pos() -> float:
         return float(_PLAYBACK_STARTED_POS)
 
 
+# The env vars whose --log-file the launch builders honour instead of adding
+# their own. The reader has to resolve the same override, or it reports nothing
+# for a device whose operator pointed mpv's log somewhere else.
+_MPV_ARG_ENV_VARS = (
+    "RELAYTV_QT_SHELL_MPV_ARGS",
+    "RELAYTV_QT_EXTERNAL_MPV_ARGS",
+    "MPV_ARGS",
+    "MPV_EXTRA_ARGS",
+)
+
+
+def _mpv_log_override() -> str:
+    """An operator-supplied --log-file from the mpv argument overrides."""
+    for name in _MPV_ARG_ENV_VARS:
+        try:
+            parts = shlex.split((os.getenv(name) or "").strip())
+        except Exception:
+            continue
+        for index, token in enumerate(parts):
+            if token.startswith("--log-file="):
+                value = token.split("=", 1)[1].strip()
+                if value:
+                    return value
+            elif token == "--log-file" and index + 1 < len(parts):
+                value = parts[index + 1].strip()
+                if value:
+                    return value
+    return ""
+
+
 def _mpv_log_path() -> str:
-    return (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+    return (os.getenv("MPV_LOG_FILE") or "").strip() or _mpv_log_override() or "/tmp/mpv.log"
 
 
 def read_mpv_failure_reason(*, tail_bytes: int = 65536) -> str:
