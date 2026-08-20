@@ -492,6 +492,15 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
     return out
 
 
+def _truncate_mpv_log(path: str, *, max_bytes: int = 2_000_000) -> None:
+    """Keep the mpv log from growing without bound on tmpfs."""
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > max_bytes:
+            os.remove(path)
+    except Exception:
+        pass
+
+
 def _build_mpv_args(
     stream: str,
     wid: int,
@@ -529,10 +538,13 @@ def _build_mpv_args(
         "--osd-playing-msg=",
         "--term-playing-msg=",
     ]
-    log_file = (os.getenv("MPV_LOG_FILE") or "").strip()
-    if not log_file and debug:
-        log_file = "/tmp/mpv.log"
-    if log_file and not _has_opt(args + extra, "--log-file"):
+    # Always keep an mpv log. mpv runs with --no-terminal, so without this its
+    # errors reach nothing at all: a stream that 403s looks, from the outside,
+    # like a successful play that simply stopped. The file is capped and
+    # truncated on each launch, so it stays cheap on tmpfs.
+    log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+    _truncate_mpv_log(log_file)
+    if not _has_opt(args + extra, "--log-file"):
         args.append(f"--log-file={log_file}")
     if debug and not _has_opt(args + extra, "--msg-level"):
         args.append("--msg-level=all=debug")
@@ -1091,11 +1103,8 @@ class _QtLibMpvPlayer:
         self._set_opt_best_effort("terminal", "no")
         self._set_opt_best_effort("force-window", "yes")
 
-        log_file = (os.getenv("MPV_LOG_FILE") or "").strip()
-        if not log_file and self.debug:
-            log_file = "/tmp/mpv.log"
-        if log_file:
-            self._set_opt_best_effort("log-file", log_file)
+        log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+        self._set_opt_best_effort("log-file", log_file)
         if self.debug:
             self._set_opt_best_effort("msg-level", "all=debug")
 

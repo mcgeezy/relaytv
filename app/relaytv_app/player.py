@@ -5226,10 +5226,92 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 
 
 
+# --- playback failure reason -------------------------------------------------
+#
+# mpv runs with --no-terminal, so a stream that fails to open says nothing on
+# stdout. The reason only exists in mpv's own log, which is why a 403 could
+# present as a 200 from /play_now, a clean container log, and a TV that quietly
+# went idle ten seconds in.
+
+_LAST_PLAYBACK_ERROR: str | None = None
+_PLAYBACK_ERROR_LOCK = threading.Lock()
+_MPV_ERROR_LINE = re.compile(r"^\[[^\]]*\]\[[ef]\]\[(?P<src>[^\]]+)\]\s*(?P<msg>.+)$")
+
+
+def last_playback_error() -> str | None:
+    with _PLAYBACK_ERROR_LOCK:
+        return _LAST_PLAYBACK_ERROR
+
+
+def set_last_playback_error(reason: str | None) -> None:
+    global _LAST_PLAYBACK_ERROR
+    with _PLAYBACK_ERROR_LOCK:
+        _LAST_PLAYBACK_ERROR = (str(reason).strip() or None) if reason else None
+
+
+def _mpv_log_path() -> str:
+    return (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+
+
+def read_mpv_failure_reason(*, tail_bytes: int = 65536) -> str:
+    """The most recent error mpv logged, condensed to one line.
+
+    URLs are dropped: a googlevideo link is a screenful of signed query string
+    and can carry credentials for other providers.
+    """
+    path = _mpv_log_path()
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - tail_bytes))
+            chunk = handle.read().decode("utf-8", "ignore")
+    except Exception:
+        return ""
+    reason = ""
+    for line in chunk.splitlines():
+        matched = _MPV_ERROR_LINE.match(line.strip())
+        if not matched:
+            continue
+        msg = matched.group("msg").strip()
+        if not msg:
+            continue
+        msg = re.sub(r"https?://\S+", "<url>", msg)
+        reason = f"{matched.group('src')}: {msg}"[:300]
+    return reason
+
+
+def note_playback_failure_if_no_progress(now: dict | None) -> str:
+    """Record why a play produced nothing, when it produced nothing.
+
+    Called where playback has ended: if the item never advanced, this was a
+    failure rather than a finished video, and the operator deserves the reason
+    in the ordinary log instead of having to enable debug and reproduce it.
+    """
+    try:
+        position = float((now or {}).get("resume_pos") or 0.0)
+    except Exception:
+        position = 0.0
+    if position >= 2.0:
+        set_last_playback_error(None)
+        return ""
+    reason = read_mpv_failure_reason()
+    if not reason:
+        return ""
+    set_last_playback_error(reason)
+    logger.info(
+        "playback_failed title=%r reason=%s",
+        str((now or {}).get("title") or "")[:80],
+        reason,
+    )
+    return reason
+
+
 def _handle_playback_idle_no_queue() -> None:
     """Transition app/UI state when playback has ended and queue is empty."""
     global _NATURAL_IDLE_RESET_UNTIL, _NATURAL_IDLE_ENSURE_TIMER
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    note_playback_failure_if_no_progress(now)
     update_history_progress(now, completed=_history_item_completed(now), force=True)
     _emit_jellyfin_stopped_from_now(now)
     # Only clear now-playing when not in a user-closed resumable session.

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -63,14 +64,56 @@ def _sync_legacy_brand_assets() -> None:
             _eprint(f"entrypoint: failed to seed legacy asset {dst}: {exc}")
 
 
+def _ytdlp_update_dir(env: dict[str, str]) -> Path:
+    """Where auto-updated yt-dlp lives.
+
+    Deliberately on the data volume, not ``$HOME/.local``: ``HOME`` is ``/tmp``
+    and ``/tmp`` is tmpfs, so a user-site install evaporated on every container
+    recreate. The update state file already lives on ``/data``, so the old
+    split meant state said "checked recently" while the binary had silently
+    reverted to the image's copy — and the interval gate then suppressed a
+    re-check for hours.
+    """
+    raw = (env.get("RELAYTV_YTDLP_UPDATE_DIR") or "").strip() or "/data/ytdlp"
+    return Path(raw)
+
+
 def _normalize_path_env(env: dict[str, str]) -> None:
-    """Ensure user-level script installs (for yt-dlp auto-update) are callable."""
-    home = (env.get("HOME") or "").strip() or "/tmp"
-    user_bin = str(Path(home) / ".local" / "bin")
+    """Make the persisted yt-dlp install callable by the server and its workers."""
+    update_dir = _ytdlp_update_dir(env)
+    # PYTHONUSERBASE steers `pip install --user` here, and the same variable
+    # makes the interpreter import from it, so the console script and the
+    # package always come from one place.
+    env["PYTHONUSERBASE"] = str(update_dir)
+    user_bin = str(update_dir / "bin")
     cur = env.get("PATH") or ""
     parts = [p for p in cur.split(":") if p]
     if user_bin not in parts:
         env["PATH"] = f"{user_bin}:{cur}" if cur else user_bin
+
+
+def _version_key(raw: str) -> tuple:
+    """Comparable form of a yt-dlp version, for "is the image newer?" checks."""
+    text = str(raw or "").strip()
+    if not text:
+        return ()
+    try:
+        from pip._vendor.packaging.version import parse as _parse  # type: ignore
+
+        return (1, _parse(text))
+    except Exception:
+        pass
+    parts: list[int] = []
+    for chunk in text.replace("-", ".").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return (0, tuple(parts))
+
+
+def _path_without(env: dict[str, str], drop: str) -> str:
+    return ":".join(p for p in (env.get("PATH") or "").split(":") if p and p != drop)
 
 
 def _host_model() -> str:
@@ -157,7 +200,10 @@ def _write_json_file(path: Path, payload: dict) -> None:
         _eprint(f"entrypoint: failed to write {path}: {exc}")
 
 
-def _yt_dlp_version(env: dict[str, str]) -> str:
+def _yt_dlp_version(env: dict[str, str], *, path: str | None = None) -> str:
+    run_env = dict(env)
+    if path is not None:
+        run_env["PATH"] = path
     try:
         p = subprocess.run(
             ["yt-dlp", "--version"],
@@ -165,13 +211,49 @@ def _yt_dlp_version(env: dict[str, str]) -> str:
             capture_output=True,
             text=True,
             timeout=10,
-            env=env,
+            env=run_env,
         )
     except Exception:
         return ""
     if p.returncode != 0:
         return ""
     return (p.stdout or "").strip().splitlines()[0] if (p.stdout or "").strip() else ""
+
+
+def _discard_persisted_ytdlp(update_dir: Path, reason: str) -> None:
+    try:
+        shutil.rmtree(update_dir)
+    except FileNotFoundError:
+        return
+    except Exception as exc:
+        _eprint(f"entrypoint: yt-dlp persisted copy could not be removed ({reason}): {exc}")
+        return
+    _eprint(f"entrypoint: yt-dlp persisted copy discarded ({reason})")
+
+
+def _prune_persisted_ytdlp(env: dict[str, str]) -> None:
+    """Drop the persisted install when it is unusable or older than the image.
+
+    A tree on ``/data`` outlives the image around it. Two ways that goes wrong:
+    the console script's shebang names an interpreter a rebuilt image no longer
+    ships, or a newer image ships a yt-dlp ahead of what we once installed. In
+    both cases the persisted copy is first on PATH and would win, so it has to
+    be removed rather than merely ignored.
+    """
+    update_dir = _ytdlp_update_dir(env)
+    if not (update_dir / "bin" / "yt-dlp").exists():
+        return
+
+    persisted = _yt_dlp_version(env)
+    if not persisted:
+        _discard_persisted_ytdlp(update_dir, "not executable")
+        return
+
+    image = _yt_dlp_version(env, path=_path_without(env, str(update_dir / "bin")))
+    if not image:
+        return
+    if _version_key(image) > _version_key(persisted):
+        _discard_persisted_ytdlp(update_dir, f"image {image} is newer than persisted {persisted}")
 
 
 def _yt_dlp_auto_update(env: dict[str, str]) -> None:
@@ -188,53 +270,76 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
     file so both callers share one schedule. ``force`` bypasses the interval
     (used when the settings toggle is switched on).
     """
-    interval_hours = max(0.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 24.0))
+    interval_hours = max(0.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 6.0))
     timeout_sec = max(10.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC", 180.0))
     state_path_raw = (env.get("RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE") or "/data/.relaytv-ytdlp-update.json").strip()
     state_path = Path(state_path_raw)
     if not state_path.is_absolute():
         state_path = Path("/data") / state_path
 
+    _prune_persisted_ytdlp(env)
+
     now = float(time.time())
     state = _read_json_file(state_path)
     last_ts = float(state.get("last_check_ts") or 0.0)
     next_due_ts = last_ts + (interval_hours * 3600.0)
-    if (not force) and interval_hours > 0 and last_ts > 0 and now < next_due_ts:
+    before = _yt_dlp_version(env)
+    # The interval alone is not a safe gate. The state file lives on /data and
+    # survives anything, so if the installed copy has moved out from under it —
+    # a rebuilt image, a discarded persisted tree — "checked recently" would
+    # keep us on a stale yt-dlp for hours. Trust the gate only while the
+    # version we are looking at is the one the state describes.
+    reverted = bool(state.get("after_version")) and before != str(state.get("after_version"))
+    if (not force) and (not reverted) and interval_hours > 0 and last_ts > 0 and now < next_due_ts:
         _eprint(
             f"entrypoint: yt-dlp auto-update skipped (next check in {int(next_due_ts - now)}s)"
         )
         return False
+    if reverted:
+        _eprint(
+            f"entrypoint: yt-dlp auto-update forced (installed={before or 'unknown'} "
+            f"state={state.get('after_version') or 'unknown'})"
+        )
 
-    before = _yt_dlp_version(env)
     _eprint(f"entrypoint: yt-dlp auto-update check start (current={before or 'unknown'})")
 
-    rc = -1
-    err = ""
-    try:
-        p = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--user",
-                "--upgrade",
-                "--no-cache-dir",
-                "yt-dlp",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            env=env,
-        )
-        rc = int(p.returncode)
-        if p.returncode != 0:
-            err = (p.stderr or p.stdout or "").strip()[:600]
-    except Exception as exc:
-        err = str(exc)
+    channel = (env.get("RELAYTV_YTDLP_UPDATE_CHANNEL") or "nightly").strip().lower()
+    if channel not in ("nightly", "stable"):
+        channel = "nightly"
+
+    def _pip_install(pre: bool) -> tuple[int, str]:
+        cmd = [sys.executable, "-m", "pip", "install", "--user", "--upgrade", "--no-cache-dir"]
+        if pre:
+            cmd.append("--pre")
+        cmd.append("yt-dlp")
+        try:
+            proc = subprocess.run(
+                cmd, check=False, capture_output=True, text=True, timeout=timeout_sec, env=env
+            )
+        except Exception as exc:
+            return -1, str(exc)
+        if proc.returncode != 0:
+            return int(proc.returncode), (proc.stderr or proc.stdout or "").strip()[:600]
+        return 0, ""
+
+    used_channel = channel
+    rc, err = _pip_install(pre=(channel == "nightly"))
+    if rc != 0 and channel == "nightly":
+        # A broken nightly must not leave the device worse off than the stable
+        # channel it would otherwise have been running.
+        _eprint(f"entrypoint: yt-dlp nightly install failed (rc={rc}); falling back to stable")
+        used_channel = "stable"
+        rc, err = _pip_install(pre=False)
 
     after = _yt_dlp_version(env)
+    if rc == 0 and not after:
+        # Installed but not runnable: almost always a console-script shebang
+        # pointing at an interpreter this image no longer ships.
+        _discard_persisted_ytdlp(_ytdlp_update_dir(env), "installed copy did not run")
+        after = _yt_dlp_version(env)
+        rc = 1
+        err = err or "installed yt-dlp did not execute; reverted to the image copy"
+
     changed = bool(before and after and before != after)
     ok = (rc == 0)
     _write_json_file(
@@ -246,6 +351,8 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
             "before_version": before,
             "after_version": after,
             "updated": changed,
+            "channel": used_channel,
+            "install_dir": str(_ytdlp_update_dir(env)),
             "error": err,
         },
     )

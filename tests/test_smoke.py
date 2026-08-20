@@ -5706,3 +5706,246 @@ def test_auto_next_skips_stale_iptv_channel_instead_of_blocking(monkeypatch: pyt
     assert result['skipped_unplayable'] == 1
     assert play_calls == [good_item]
     assert player.state.QUEUE == []
+
+
+# --- yt-dlp update durability ------------------------------------------------
+#
+# A six-week-old yt-dlp broke YouTube playback: the resolve succeeded, mpv got
+# 403 on the stream, and the device went idle ~10s in. The updater had been
+# running and reporting success the whole time, because its install landed in
+# tmpfs while its state file lived on /data.
+
+
+def test_update_path_points_at_the_persistent_volume() -> None:
+    env = {"PATH": "/usr/local/bin:/usr/bin", "HOME": "/tmp"}
+    container_entrypoint._normalize_path_env(env)
+
+    assert env["PYTHONUSERBASE"] == "/data/ytdlp"
+    assert env["PATH"].split(":")[0] == "/data/ytdlp/bin"
+    # $HOME is /tmp and /tmp is tmpfs; an install there dies on every recreate.
+    assert "/tmp/.local/bin" not in env["PATH"]
+
+
+def test_update_dir_is_configurable() -> None:
+    env = {"PATH": "/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": "/data/custom"}
+    container_entrypoint._normalize_path_env(env)
+    assert env["PYTHONUSERBASE"] == "/data/custom"
+    assert env["PATH"].startswith("/data/custom/bin:")
+
+
+def test_version_key_orders_yt_dlp_versions() -> None:
+    key = container_entrypoint._version_key
+    assert key("2026.8.19") > key("2026.7.4")
+    assert key("2026.8.19") > key("2026.8.4")
+    assert key("") == ()
+
+
+def test_a_persisted_copy_older_than_the_image_is_discarded(monkeypatch, tmp_path) -> None:
+    """A tree on /data outlives the image around it.
+
+    Left alone it stays first on PATH, so a rebuilt image shipping a newer
+    yt-dlp would be shadowed by the old persisted one indefinitely.
+    """
+    update_dir = tmp_path / "ytdlp"
+    (update_dir / "bin").mkdir(parents=True)
+    (update_dir / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
+    env = {"PATH": f"{update_dir}/bin:/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": str(update_dir)}
+
+    def _version(_env, *, path=None):
+        return "2026.01.01" if path is None else "2026.08.19"  # persisted, image
+
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
+    container_entrypoint._prune_persisted_ytdlp(env)
+
+    assert not update_dir.exists()
+
+
+def test_a_persisted_copy_newer_than_the_image_is_kept(monkeypatch, tmp_path) -> None:
+    update_dir = tmp_path / "ytdlp"
+    (update_dir / "bin").mkdir(parents=True)
+    (update_dir / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
+    env = {"PATH": f"{update_dir}/bin:/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": str(update_dir)}
+
+    def _version(_env, *, path=None):
+        return "2026.08.19" if path is None else "2026.01.01"
+
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
+    container_entrypoint._prune_persisted_ytdlp(env)
+
+    assert update_dir.exists(), "the newer persisted copy was thrown away"
+
+
+def test_a_persisted_copy_that_cannot_run_is_discarded(monkeypatch, tmp_path) -> None:
+    """Usually a console-script shebang naming an interpreter the image dropped."""
+    update_dir = tmp_path / "ytdlp"
+    (update_dir / "bin").mkdir(parents=True)
+    (update_dir / "bin" / "yt-dlp").write_text("#!/usr/bin/python3.9\n", encoding="utf-8")
+    env = {"PATH": f"{update_dir}/bin:/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": str(update_dir)}
+
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "")
+    container_entrypoint._prune_persisted_ytdlp(env)
+
+    assert not update_dir.exists()
+
+
+def _update_env(tmp_path, **extra):
+    state_file = tmp_path / "update.json"
+    env = {
+        "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE": str(state_file),
+        "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS": "6",
+        "RELAYTV_YTDLP_UPDATE_DIR": str(tmp_path / "ytdlp"),
+    }
+    env.update(extra)
+    return env, state_file
+
+
+def test_a_reverted_install_forces_a_check_despite_a_fresh_timestamp(monkeypatch, tmp_path) -> None:
+    """The post-deploy case that kept devices on a stale yt-dlp for hours.
+
+    The state file survives on /data; the install used not to. So after a
+    recreate the state said "checked minutes ago" while the binary had gone
+    back to the image's copy, and the interval gate suppressed the re-check.
+    """
+    import time as _time
+
+    env, state_file = _update_env(tmp_path)
+    state_file.write_text(
+        json.dumps({"last_check_ts": _time.time(), "after_version": "2026.08.19"}), encoding="utf-8"
+    )
+    pip_calls: list[list[str]] = []
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.07.04")
+    monkeypatch.setattr(
+        container_entrypoint.subprocess,
+        "run",
+        lambda cmd, **kw: pip_calls.append(list(cmd)) or subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+
+    container_entrypoint.run_yt_dlp_update(env)
+
+    assert pip_calls, "a reverted install was not re-checked"
+
+
+def test_a_matching_install_still_honours_the_interval(monkeypatch, tmp_path) -> None:
+    import time as _time
+
+    env, state_file = _update_env(tmp_path)
+    state_file.write_text(
+        json.dumps({"last_check_ts": _time.time(), "after_version": "2026.08.19"}), encoding="utf-8"
+    )
+    pip_calls: list[list[str]] = []
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.08.19")
+    monkeypatch.setattr(
+        container_entrypoint.subprocess,
+        "run",
+        lambda cmd, **kw: pip_calls.append(list(cmd)) or subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+
+    assert container_entrypoint.run_yt_dlp_update(env) is False
+    assert pip_calls == []
+
+
+def test_nightly_channel_passes_pre_and_stable_does_not(monkeypatch, tmp_path) -> None:
+    """Every release between 2026.7.4 and 2026.8.19 was a .dev0 pre-release.
+
+    `pip install --upgrade` skips those by design, which is how a device sat on
+    a six-week-old yt-dlp while every check honestly reported "nothing newer".
+    """
+    for channel, expect_pre in (("nightly", True), ("stable", False)):
+        env, _ = _update_env(tmp_path / channel, RELAYTV_YTDLP_UPDATE_CHANNEL=channel)
+        (tmp_path / channel).mkdir(parents=True, exist_ok=True)
+        pip_calls: list[list[str]] = []
+        monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.08.19")
+        monkeypatch.setattr(
+            container_entrypoint.subprocess,
+            "run",
+            lambda cmd, **kw: pip_calls.append(list(cmd)) or subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        container_entrypoint.run_yt_dlp_update(env, force=True)
+        assert pip_calls, channel
+        assert ("--pre" in pip_calls[0]) is expect_pre, channel
+
+
+def test_a_failed_nightly_falls_back_to_stable(monkeypatch, tmp_path) -> None:
+    """A broken nightly must not leave the device worse off than stable."""
+    env, state_file = _update_env(tmp_path)
+    (tmp_path / "ytdlp").mkdir(parents=True, exist_ok=True)
+    pip_calls: list[list[str]] = []
+
+    def _run(cmd, **kw):
+        pip_calls.append(list(cmd))
+        rc = 1 if "--pre" in cmd else 0
+        return subprocess.CompletedProcess(cmd, rc, "", "boom")
+
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.08.19")
+    monkeypatch.setattr(container_entrypoint.subprocess, "run", _run)
+
+    assert container_entrypoint.run_yt_dlp_update(env, force=True) is True
+    assert len(pip_calls) == 2
+    assert "--pre" in pip_calls[0] and "--pre" not in pip_calls[1]
+    assert json.loads(state_file.read_text(encoding="utf-8"))["channel"] == "stable"
+
+
+def test_an_install_that_does_not_run_is_reverted(monkeypatch, tmp_path) -> None:
+    env, state_file = _update_env(tmp_path)
+    update_dir = tmp_path / "ytdlp"
+    (update_dir / "bin").mkdir(parents=True)
+    (update_dir / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    # Prune sees a working copy; the post-install probe finds it unrunnable.
+    calls = {"n": 0}
+
+    def _version(_env, *, path=None):
+        calls["n"] += 1
+        return "2026.07.04" if calls["n"] <= 3 else ""
+
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
+    monkeypatch.setattr(
+        container_entrypoint.subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+
+    container_entrypoint.run_yt_dlp_update(env, force=True)
+
+    saved = json.loads(state_file.read_text(encoding="utf-8"))
+    assert saved["ok"] is False
+    assert "did not execute" in saved["error"]
+
+
+# --- playback failure visibility ---------------------------------------------
+
+
+def test_mpv_failure_reason_is_extracted_and_redacted(monkeypatch, tmp_path) -> None:
+    """mpv runs with --no-terminal, so its log is the only place this exists."""
+    from relaytv_app import player
+
+    log = tmp_path / "mpv.log"
+    log.write_text(
+        "[   0.10][v][cplayer] Starting playback...\n"
+        "[  19.85][w][ffmpeg] https: HTTP error 403 Forbidden\n"
+        "[  19.85][e][stream] Failed to open https://rr2---sn-x.googlevideo.com/videoplayback?sig=SECRET.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+
+    reason = player.read_mpv_failure_reason()
+
+    assert "Failed to open" in reason
+    assert "SECRET" not in reason, "a signed stream URL leaked into the log line"
+    assert "<url>" in reason
+
+
+def test_a_failed_play_records_a_reason_and_a_finished_one_clears_it(monkeypatch, tmp_path) -> None:
+    from relaytv_app import player
+
+    log = tmp_path / "mpv.log"
+    log.write_text("[ 19.85][e][stream] Failed to open http://x/y.\n", encoding="utf-8")
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+
+    player.set_last_playback_error(None)
+    player.note_playback_failure_if_no_progress({"title": "Something", "resume_pos": 0.0})
+    assert "Failed to open" in (player.last_playback_error() or "")
+
+    # An item that actually played is not a failure, whatever the log still holds.
+    player.note_playback_failure_if_no_progress({"title": "Something", "resume_pos": 240.0})
+    assert player.last_playback_error() is None

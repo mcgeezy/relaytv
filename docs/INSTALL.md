@@ -367,15 +367,45 @@ and tune the schedule:
 
 ```bash
 RELAYTV_YTDLP_AUTO_UPDATE=1
-RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS=24
+RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS=6
 RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC=180
 RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE=/data/.relaytv-ytdlp-update.json
+RELAYTV_YTDLP_UPDATE_DIR=/data/ytdlp
+RELAYTV_YTDLP_UPDATE_CHANNEL=nightly
 ```
+
+Updates install to `RELAYTV_YTDLP_UPDATE_DIR` on the data volume, so they
+survive a container recreate. `$HOME` is `/tmp` and `/tmp` is tmpfs, so the
+older user-site location was discarded on every deploy while the update state
+file (on `/data`) still read "checked recently" — leaving the device on the
+image's yt-dlp until the interval elapsed again.
+
+`RELAYTV_YTDLP_UPDATE_CHANNEL` defaults to `nightly` because yt-dlp ships
+extractor fixes there first; stable can go weeks between releases while a site
+change breaks playback. A failed nightly install falls back to `stable`
+automatically, and `stable` pins the old behaviour. A persisted copy is
+discarded if it will not run or if a rebuilt image ships something newer.
 
 Official release images disable `yt-dlp` auto-update by default for source and
 object traceability. Enabling it is a user opt-in that may improve resolver
 freshness, but audited/reproducible build claims only cover the image as built.
 See [RELEASE.md](RELEASE.md) for release input details.
+
+### Playback starts then stops after a few seconds
+
+Almost always a stale yt-dlp. The resolve succeeds, so `POST /play_now` returns
+200 and the container log looks clean, but the stream URL it produced is one the
+site now rejects and mpv dies on the first fetch. mpv runs with `--no-terminal`,
+so its reason is not on stdout — check instead:
+
+```bash
+curl -s http://<host>:8787/status | jq .last_playback_error
+cat /data/.relaytv-ytdlp-update.json
+```
+
+`last_playback_error` carries mpv's own message (for example
+`stream: Failed to open <url>` after an HTTP 403). If yt-dlp is behind, force a
+check by toggling auto-update off and on in Settings, or restart the container.
 
 ### CEC
 

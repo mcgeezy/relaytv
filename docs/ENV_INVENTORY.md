@@ -337,6 +337,8 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_YTDLP_COOKIES_FROM_BROWSER` | `resolver.py` | - | static env |
 | `RELAYTV_YTDLP_COOKIES_UPLOAD_PATH` | `routes/settings.py` | - | static env |
 | `RELAYTV_YTDLP_JS_RUNTIME` | `resolver.py` | - | static env |
+| `RELAYTV_YTDLP_UPDATE_CHANNEL` | `container_entrypoint.py` | - | pre-app entrypoint |
+| `RELAYTV_YTDLP_UPDATE_DIR` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_USE_NODE` | `resolver.py` | - | static env |
 | `USE_INVIDIOUS` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `YTDLP_ARGS` | `resolver.py` | - | static env |
