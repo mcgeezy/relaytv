@@ -612,6 +612,10 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "qt_runtime_mode_configured": qt_mode_configured,
         "qt_runtime_mode_effective": qt_mode_effective,
         "player_runtime_engine": player_runtime_engine,
+        # Why the last play produced nothing, when it produced nothing. mpv is
+        # launched with --no-terminal, so this is the only place its reason
+        # surfaces without turning on debug and reproducing the failure.
+        "last_playback_error": (getattr(player, "last_playback_error", lambda: None)() or None),
         "backend_runtime_mismatch": backend_runtime_mismatch,
         "qt_shell_running": qt_running,
         "qt_shell_pid": qt_shell_pid,

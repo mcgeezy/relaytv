@@ -2593,9 +2593,10 @@ def _build_mpv_args(
         runtime_profile = {}
     decode_profile = str(runtime_profile.get("decode_profile") or "").strip().lower()
 
-    log_file = (os.getenv("MPV_LOG_FILE") or "").strip()
-    if not log_file and debug:
-        log_file = "/tmp/mpv.log"
+    # Always log. The mpv and Qt external_mpv backends launch through here, and
+    # gating this on debug left last_playback_error reading a file those
+    # backends never create — or worse, a stale one from an earlier session.
+    log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or _mpv_log_path()
     mpv_args: list[str] = [
         "mpv",
         "--fs",
@@ -4937,6 +4938,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     provider = item.get("provider") or provider_from_url(raw)
     http_headers = _item_http_headers(item)
     play_t0 = time.monotonic()
+    note_playback_started(start_pos)
     debug_log("player", f"play_item start mode={mode} provider={provider} use_resolver={use_resolver}")
     if provider == "iptv":
         debug_log(
@@ -5226,10 +5228,191 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 
 
 
+# --- playback failure reason -------------------------------------------------
+#
+# mpv runs with --no-terminal, so a stream that fails to open says nothing on
+# stdout. The reason only exists in mpv's own log, which is why a 403 could
+# present as a 200 from /play_now, a clean container log, and a TV that quietly
+# went idle ten seconds in.
+
+_LAST_PLAYBACK_ERROR: str | None = None
+_PLAYBACK_STARTED_POS: float = 0.0
+_PLAYBACK_LOG_OFFSET: int = 0
+_PLAYBACK_ERROR_LOCK = threading.Lock()
+_MPV_ERROR_LINE = re.compile(r"^\[[^\]]*\]\[[ef]\]\[(?P<src>[^\]]+)\]\s*(?P<msg>.+)$")
+
+
+def last_playback_error() -> str | None:
+    """Why the most recent attempt failed, if it did and nothing has superseded it.
+
+    Reported until the next attempt demonstrably plays, so a failure is still
+    visible while its successor is starting — which is the whole window in
+    which a queue advance would otherwise hide it.
+    """
+    with _PLAYBACK_ERROR_LOCK:
+        reason = _LAST_PLAYBACK_ERROR
+    if not reason:
+        return None
+    try:
+        now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        position = float((now or {}).get("resume_pos") or 0.0)
+    except Exception:
+        return reason
+    if (position - playback_started_pos()) >= 2.0:
+        return None
+    return reason
+
+
+def set_last_playback_error(reason: str | None) -> None:
+    global _LAST_PLAYBACK_ERROR
+    with _PLAYBACK_ERROR_LOCK:
+        _LAST_PLAYBACK_ERROR = (str(reason).strip() or None) if reason else None
+
+
+def _mpv_log_size() -> int:
+    try:
+        return int(os.path.getsize(_mpv_log_path()))
+    except Exception:
+        return 0
+
+
+def note_playback_started(start_pos: float | None) -> None:
+    """Remember where this item began playing.
+
+    Progress has to be measured from here, not from zero. ``resume_pos`` tracks
+    the live position, so an item resumed at 5 minutes already reads as five
+    minutes of progress — and a resumed stream that dies instantly would look
+    like a completed play and report nothing.
+    """
+    global _PLAYBACK_STARTED_POS, _LAST_PLAYBACK_ERROR, _PLAYBACK_LOG_OFFSET
+    try:
+        value = max(0.0, float(start_pos or 0.0))
+    except Exception:
+        value = 0.0
+    offset = _mpv_log_size()
+    with _PLAYBACK_ERROR_LOCK:
+        _PLAYBACK_STARTED_POS = value
+        # The previous failure is deliberately *not* cleared here. When a queue
+        # advances, the successor starts within milliseconds of the failure
+        # being recorded, so clearing on start meant nothing ever observed it.
+        # It is superseded instead: by this attempt playing (see
+        # last_playback_error) or by how this attempt ends.
+        #
+        # Everything already in the log belongs to an earlier item, so the read
+        # window starts here — a short clip that ends quietly must not inherit
+        # the previous play's 403.
+        _PLAYBACK_LOG_OFFSET = offset
+
+
+def playback_started_pos() -> float:
+    with _PLAYBACK_ERROR_LOCK:
+        return float(_PLAYBACK_STARTED_POS)
+
+
+# The env vars whose --log-file the launch builders honour instead of adding
+# their own. The reader has to resolve the same override, or it reports nothing
+# for a device whose operator pointed mpv's log somewhere else.
+_MPV_ARG_ENV_VARS = (
+    "RELAYTV_QT_SHELL_MPV_ARGS",
+    "RELAYTV_QT_EXTERNAL_MPV_ARGS",
+    "MPV_ARGS",
+    "MPV_EXTRA_ARGS",
+)
+
+
+def _mpv_log_override() -> str:
+    """An operator-supplied --log-file from the mpv argument overrides."""
+    for name in _MPV_ARG_ENV_VARS:
+        try:
+            parts = shlex.split((os.getenv(name) or "").strip())
+        except Exception:
+            continue
+        for index, token in enumerate(parts):
+            if token.startswith("--log-file="):
+                value = token.split("=", 1)[1].strip()
+                if value:
+                    return value
+            elif token == "--log-file" and index + 1 < len(parts):
+                value = parts[index + 1].strip()
+                if value:
+                    return value
+    return ""
+
+
+def _mpv_log_path() -> str:
+    return (os.getenv("MPV_LOG_FILE") or "").strip() or _mpv_log_override() or "/tmp/mpv.log"
+
+
+def read_mpv_failure_reason(*, tail_bytes: int = 65536) -> str:
+    """The most recent error mpv logged *for the current item*, as one line.
+
+    Reading starts where this play began, so an older failure cannot be
+    attributed to a later item. URLs are dropped: a googlevideo link is a
+    screenful of signed query string and can carry credentials for other
+    providers.
+    """
+    path = _mpv_log_path()
+    with _PLAYBACK_ERROR_LOCK:
+        start = int(_PLAYBACK_LOG_OFFSET)
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            # A rotated log restarts from zero; the old offset would then skip
+            # past everything this play wrote.
+            if start > size:
+                start = 0
+            handle.seek(max(start, size - tail_bytes))
+            chunk = handle.read().decode("utf-8", "ignore")
+    except Exception:
+        return ""
+    reason = ""
+    for line in chunk.splitlines():
+        matched = _MPV_ERROR_LINE.match(line.strip())
+        if not matched:
+            continue
+        msg = matched.group("msg").strip()
+        if not msg:
+            continue
+        msg = re.sub(r"https?://\S+", "<url>", msg)
+        reason = f"{matched.group('src')}: {msg}"[:300]
+    return reason
+
+
+def note_playback_failure_if_no_progress(now: dict | None) -> str:
+    """Record why a play produced nothing, when it produced nothing.
+
+    Called where playback has ended: if the item never advanced, this was a
+    failure rather than a finished video, and the operator deserves the reason
+    in the ordinary log instead of having to enable debug and reproduce it.
+    """
+    try:
+        position = float((now or {}).get("resume_pos") or 0.0)
+    except Exception:
+        position = 0.0
+    if (position - playback_started_pos()) >= 2.0:
+        set_last_playback_error(None)
+        return ""
+    reason = read_mpv_failure_reason()
+    if not reason:
+        # This attempt ended without a diagnosable failure, so whatever was
+        # stored belongs to an older one and has had its chance to be seen.
+        set_last_playback_error(None)
+        return ""
+    set_last_playback_error(reason)
+    logger.info(
+        "playback_failed title=%r reason=%s",
+        str((now or {}).get("title") or "")[:80],
+        reason,
+    )
+    return reason
+
+
 def _handle_playback_idle_no_queue() -> None:
     """Transition app/UI state when playback has ended and queue is empty."""
     global _NATURAL_IDLE_RESET_UNTIL, _NATURAL_IDLE_ENSURE_TIMER
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    note_playback_failure_if_no_progress(now)
     update_history_progress(now, completed=_history_item_completed(now), force=True)
     _emit_jellyfin_stopped_from_now(now)
     # Only clear now-playing when not in a user-closed resumable session.

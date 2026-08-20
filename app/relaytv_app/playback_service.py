@@ -162,6 +162,17 @@ def natural_end() -> str:
     transition guards, suppression window) stays with the monitor; this is
     the decision policy. Returns the action taken, for logging/tests.
     """
+    # Record why this item ended before deciding what happens next. The
+    # queue-empty handler below also does it, but that branch is only reached
+    # with an empty queue — so playlist and queue users, the common case, got no
+    # diagnostic at all, and the successor's play_item then cleared it.
+    try:
+        player.note_playback_failure_if_no_progress(
+            state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        )
+    except Exception:
+        pass
+
     with state.QUEUE_LOCK:
         has_queue = bool(state.QUEUE)
     if not has_queue:
