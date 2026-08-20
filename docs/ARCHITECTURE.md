@@ -55,6 +55,15 @@ milestone logs live in git history.
 - `app/relaytv_app/integrations/jellyfin_receiver.py`: Jellyfin/Emby
   transport, auth, server-type detection, status, catalog cache, and
   progress/stopped calls.
+- `app/relaytv_app/integrations/jellyfin_ws.py`: the control socket that
+  makes the device a cast target. Transport only, like the receiver: it
+  normalizes inbound `Play`/`Playstate`/`GeneralCommand` messages and hands
+  them to a command sink the routes package registers, so the socket reuses
+  the same ingress as `POST /integrations/jellyfin/command` rather than
+  carrying a second copy of command handling. Each connection generation
+  owns its threads, queue, and stop flag, and configuration changes run as
+  transactions that suspend the socket — a retired generation can never be
+  restarted, publish status, or reach the player.
 - `scripts/`: install, doctor, host operations, and release support.
 
 ## Machine-Checked Guardrails
