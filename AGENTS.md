@@ -108,7 +108,8 @@ Boundaries the roadmap established, to preserve in new work:
 - `config.py` owns env parsing and the settings bus; runtime `os.environ`
   writes stay behind its explicit subprocess-mirroring boundary.
 - `integrations/jellyfin_service.py` owns Jellyfin product behavior;
-  `jellyfin_receiver.py` stays transport/session/catalog and never imports
-  the routes package.
+  `jellyfin_receiver.py` and `jellyfin_ws.py` stay transport and never import
+  the routes package — the control socket reaches playback through the command
+  sink the routes package registers, not by importing it.
 - Route modules own public endpoint registration; do not remove endpoint
   aliases without a migration path for companion apps and Home Assistant.

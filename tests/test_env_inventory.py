@@ -25,8 +25,15 @@ TABLE_END = "<!-- END GENERATED ENV TABLE -->"
 
 # App-config variables: the settings/env bus Phase 2 is migrating. Platform and
 # toolkit variables (DISPLAY, QT_*, XDG_*, ...) are intentionally out of scope.
+# MPV_* variables are named individually rather than matched as a family: the
+# tree also contains module attributes like MPV_PROC that are read with getattr
+# and would otherwise be reported as configuration. MPV_ARGS, MPV_DEBUG,
+# MPV_IPC_PATH and MPV_LOG_FILE were missing from the original pair even though
+# they are read the same way, which hid operator-facing knobs from the inventory
+# that is supposed to be the app configuration surface.
 _CONFIG_VAR = re.compile(
-    r"""["'](RELAYTV_[A-Z0-9_]+|YTDLP_[A-Z0-9_]+|USE_INVIDIOUS|INVIDIOUS_BASE|MPV_AUDIO_DEVICE|MPV_EXTRA_ARGS)["']"""
+    r"""["'](RELAYTV_[A-Z0-9_]+|YTDLP_[A-Z0-9_]+|USE_INVIDIOUS|INVIDIOUS_BASE"""
+    r"""|MPV_ARGS|MPV_AUDIO_DEVICE|MPV_DEBUG|MPV_EXTRA_ARGS|MPV_IPC_PATH|MPV_LOG_FILE)["']"""
 )
 
 # Runtime writes to the process environment (the in-process config bus).

@@ -12,7 +12,7 @@ PYTHONPATH=app python3 tests/test_env_inventory.py --write
 ## Scope
 
 In scope: `RELAYTV_*`, `YTDLP_*`, `USE_INVIDIOUS`, `INVIDIOUS_BASE`,
-`MPV_AUDIO_DEVICE`, and `MPV_EXTRA_ARGS` — the app configuration surface
+and the `MPV_*` player knobs — the app configuration surface
 managed behind `RuntimeConfig`.
 
 Out of scope: platform and toolkit variables (`DISPLAY`, `WAYLAND_DISPLAY`,
@@ -82,8 +82,12 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | Variable | Referenced in | Runtime writers | Classification |
 | --- | --- | --- | --- |
 | `INVIDIOUS_BASE` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `MPV_ARGS` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `MPV_AUDIO_DEVICE` | `config.py`<br>`player.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `MPV_DEBUG` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `MPV_EXTRA_ARGS` | `player.py` | - | static env |
+| `MPV_IPC_PATH` | `player.py`<br>`qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
+| `MPV_LOG_FILE` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_ACCESS_LOG` | `debug.py` | - | static env |
 | `RELAYTV_ACCESS_LOG_HOT_PATHS` | `debug.py` | - | static env |
 | `RELAYTV_ACCESS_LOG_LEVEL` | `debug.py` | - | static env |
