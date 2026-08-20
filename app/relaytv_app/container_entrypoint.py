@@ -200,10 +200,15 @@ def _write_json_file(path: Path, payload: dict) -> None:
         _eprint(f"entrypoint: failed to write {path}: {exc}")
 
 
-def _yt_dlp_version(env: dict[str, str], *, path: str | None = None) -> str:
+def _yt_dlp_version(env: dict[str, str], *, path: str | None = None, user_site: bool = True) -> str:
     run_env = dict(env)
     if path is not None:
         run_env["PATH"] = path
+    if not user_site:
+        # Dropping the persisted bin from PATH is not enough to see the image's
+        # copy: PYTHONUSERBASE still steers the import, so the console script in
+        # /usr/local/bin would load the persisted package and report its version.
+        run_env.pop("PYTHONUSERBASE", None)
     try:
         p = subprocess.run(
             ["yt-dlp", "--version"],
@@ -249,7 +254,9 @@ def _prune_persisted_ytdlp(env: dict[str, str]) -> None:
         _discard_persisted_ytdlp(update_dir, "not executable")
         return
 
-    image = _yt_dlp_version(env, path=_path_without(env, str(update_dir / "bin")))
+    image = _yt_dlp_version(
+        env, path=_path_without(env, str(update_dir / "bin")), user_site=False
+    )
     if not image:
         return
     if _version_key(image) > _version_key(persisted):

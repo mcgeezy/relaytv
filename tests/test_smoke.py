@@ -5751,7 +5751,7 @@ def test_a_persisted_copy_older_than_the_image_is_discarded(monkeypatch, tmp_pat
     (update_dir / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
     env = {"PATH": f"{update_dir}/bin:/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": str(update_dir)}
 
-    def _version(_env, *, path=None):
+    def _version(_env, *, path=None, user_site=True):
         return "2026.01.01" if path is None else "2026.08.19"  # persisted, image
 
     monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
@@ -5766,7 +5766,7 @@ def test_a_persisted_copy_newer_than_the_image_is_kept(monkeypatch, tmp_path) ->
     (update_dir / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
     env = {"PATH": f"{update_dir}/bin:/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": str(update_dir)}
 
-    def _version(_env, *, path=None):
+    def _version(_env, *, path=None, user_site=True):
         return "2026.08.19" if path is None else "2026.01.01"
 
     monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
@@ -5782,7 +5782,7 @@ def test_a_persisted_copy_that_cannot_run_is_discarded(monkeypatch, tmp_path) ->
     (update_dir / "bin" / "yt-dlp").write_text("#!/usr/bin/python3.9\n", encoding="utf-8")
     env = {"PATH": f"{update_dir}/bin:/usr/bin", "RELAYTV_YTDLP_UPDATE_DIR": str(update_dir)}
 
-    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "")
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "")
     container_entrypoint._prune_persisted_ytdlp(env)
 
     assert not update_dir.exists()
@@ -5813,7 +5813,7 @@ def test_a_reverted_install_forces_a_check_despite_a_fresh_timestamp(monkeypatch
         json.dumps({"last_check_ts": _time.time(), "after_version": "2026.08.19"}), encoding="utf-8"
     )
     pip_calls: list[list[str]] = []
-    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.07.04")
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.07.04")
     monkeypatch.setattr(
         container_entrypoint.subprocess,
         "run",
@@ -5833,7 +5833,7 @@ def test_a_matching_install_still_honours_the_interval(monkeypatch, tmp_path) ->
         json.dumps({"last_check_ts": _time.time(), "after_version": "2026.08.19"}), encoding="utf-8"
     )
     pip_calls: list[list[str]] = []
-    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.08.19")
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.08.19")
     monkeypatch.setattr(
         container_entrypoint.subprocess,
         "run",
@@ -5854,7 +5854,7 @@ def test_nightly_channel_passes_pre_and_stable_does_not(monkeypatch, tmp_path) -
         env, _ = _update_env(tmp_path / channel, RELAYTV_YTDLP_UPDATE_CHANNEL=channel)
         (tmp_path / channel).mkdir(parents=True, exist_ok=True)
         pip_calls: list[list[str]] = []
-        monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.08.19")
+        monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.08.19")
         monkeypatch.setattr(
             container_entrypoint.subprocess,
             "run",
@@ -5876,7 +5876,7 @@ def test_a_failed_nightly_falls_back_to_stable(monkeypatch, tmp_path) -> None:
         rc = 1 if "--pre" in cmd else 0
         return subprocess.CompletedProcess(cmd, rc, "", "boom")
 
-    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None: "2026.08.19")
+    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.08.19")
     monkeypatch.setattr(container_entrypoint.subprocess, "run", _run)
 
     assert container_entrypoint.run_yt_dlp_update(env, force=True) is True
@@ -5894,7 +5894,7 @@ def test_an_install_that_does_not_run_is_reverted(monkeypatch, tmp_path) -> None
     # Prune sees a working copy; the post-install probe finds it unrunnable.
     calls = {"n": 0}
 
-    def _version(_env, *, path=None):
+    def _version(_env, *, path=None, user_site=True):
         calls["n"] += 1
         return "2026.07.04" if calls["n"] <= 3 else ""
 
@@ -5949,3 +5949,26 @@ def test_a_failed_play_records_a_reason_and_a_finished_one_clears_it(monkeypatch
     # An item that actually played is not a failure, whatever the log still holds.
     player.note_playback_failure_if_no_progress({"title": "Something", "resume_pos": 240.0})
     assert player.last_playback_error() is None
+
+
+def test_the_image_version_probe_ignores_the_persisted_install(monkeypatch) -> None:
+    """Stripping PATH alone cannot see the image's yt-dlp.
+
+    PYTHONUSERBASE still steers the import, so /usr/local/bin/yt-dlp would load
+    the persisted package and report its version — making the "is the image
+    newer?" comparison always compare a version against itself.
+    """
+    seen: list[dict] = []
+
+    def _run(cmd, **kw):
+        seen.append(dict(kw.get("env") or {}))
+        return subprocess.CompletedProcess(cmd, 0, "2026.07.04\n", "")
+
+    monkeypatch.setattr(container_entrypoint.subprocess, "run", _run)
+    env = {"PATH": "/data/ytdlp/bin:/usr/local/bin", "PYTHONUSERBASE": "/data/ytdlp"}
+
+    container_entrypoint._yt_dlp_version(env, path="/usr/local/bin", user_site=False)
+    assert "PYTHONUSERBASE" not in seen[-1]
+
+    container_entrypoint._yt_dlp_version(env)
+    assert seen[-1].get("PYTHONUSERBASE") == "/data/ytdlp"
