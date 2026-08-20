@@ -151,6 +151,19 @@ cover the image as built and published. Runtime auto-update changes playback
 resolver behavior after the image is built and is not part of the audited
 release state.
 
+Opting in tracks yt-dlp's **nightly** channel by default
+(`RELAYTV_YTDLP_UPDATE_CHANNEL=nightly`), so the running resolver may be a
+pre-release build rather than a published version. That is deliberate — site
+changes break extractors faster than the stable channel releases, and stable
+went six weeks between releases while YouTube playback was broken — but it puts
+the resolver further from the audited image than a released version would.
+`RELAYTV_YTDLP_UPDATE_CHANNEL=stable` limits updates to released versions.
+
+Updated copies install to `RELAYTV_YTDLP_UPDATE_DIR` (`/data/ytdlp`) on the data
+volume and therefore persist across container recreates, so the resolver in use
+is not reset by redeploying the image. Removing that directory returns the
+device to the version the image shipped.
+
 ## Source Mapping
 
 For immutable releases, prefer this process:
