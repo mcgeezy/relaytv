@@ -296,23 +296,28 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
     # a rebuilt image, a discarded persisted tree — "checked recently" would
     # keep us on a stale yt-dlp for hours. Trust the gate only while the
     # version we are looking at is the one the state describes.
-    reverted = bool(state.get("after_version")) and before != str(state.get("after_version"))
-    if (not force) and (not reverted) and interval_hours > 0 and last_ts > 0 and now < next_due_ts:
+    channel = (env.get("RELAYTV_YTDLP_UPDATE_CHANNEL") or "nightly").strip().lower()
+    if channel not in ("nightly", "stable"):
+        channel = "nightly"
+
+    stale_reason = ""
+    if bool(state.get("after_version")) and before != str(state.get("after_version")):
+        stale_reason = f"installed={before or 'unknown'} state={state.get('after_version')}"
+    elif bool(state.get("last_check_ts")) and str(state.get("channel") or "stable") != channel:
+        # The recorded check answered a different question. Switching to the
+        # nightly channel must not wait out an interval that was satisfied by a
+        # stable-only check — that is the whole reason for switching.
+        stale_reason = f"channel={channel} state_channel={state.get('channel') or 'stable'}"
+
+    if (not force) and (not stale_reason) and interval_hours > 0 and last_ts > 0 and now < next_due_ts:
         _eprint(
             f"entrypoint: yt-dlp auto-update skipped (next check in {int(next_due_ts - now)}s)"
         )
         return False
-    if reverted:
-        _eprint(
-            f"entrypoint: yt-dlp auto-update forced (installed={before or 'unknown'} "
-            f"state={state.get('after_version') or 'unknown'})"
-        )
+    if stale_reason:
+        _eprint(f"entrypoint: yt-dlp auto-update forced ({stale_reason})")
 
     _eprint(f"entrypoint: yt-dlp auto-update check start (current={before or 'unknown'})")
-
-    channel = (env.get("RELAYTV_YTDLP_UPDATE_CHANNEL") or "nightly").strip().lower()
-    if channel not in ("nightly", "stable"):
-        channel = "nightly"
 
     def _pip_install(pre: bool) -> tuple[int, str]:
         cmd = [sys.executable, "-m", "pip", "install", "--user", "--upgrade", "--no-cache-dir"]

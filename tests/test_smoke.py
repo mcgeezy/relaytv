@@ -462,12 +462,19 @@ def test_yt_dlp_update_interval_gate_and_force(monkeypatch: pytest.MonkeyPatch, 
 
     pip_calls: list[object] = []
     state_file = tmp_path / "update.json"
-    state_file.write_text(json.dumps({"last_check_ts": _time.time()}), encoding="utf-8")
+    # Record the channel too: without it the state reads as a stable-era check,
+    # and the channel-switch guard would force a run before the interval.
+    state_file.write_text(
+        json.dumps({"last_check_ts": _time.time(), "channel": "nightly"}), encoding="utf-8"
+    )
     env = {
         "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE": str(state_file),
         "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS": "24",
+        "RELAYTV_YTDLP_UPDATE_DIR": str(tmp_path / "ytdlp"),
     }
-    monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda env: "2026.01.01")
+    monkeypatch.setattr(
+        container_entrypoint, "_yt_dlp_version", lambda env, *, path=None, user_site=True: "2026.01.01"
+    )
     monkeypatch.setattr(
         container_entrypoint.subprocess,
         "run",
@@ -5829,8 +5836,13 @@ def test_a_matching_install_still_honours_the_interval(monkeypatch, tmp_path) ->
     import time as _time
 
     env, state_file = _update_env(tmp_path)
+    # Same version and same channel as the state records: nothing has moved, so
+    # the interval is the only thing that should decide.
     state_file.write_text(
-        json.dumps({"last_check_ts": _time.time(), "after_version": "2026.08.19"}), encoding="utf-8"
+        json.dumps(
+            {"last_check_ts": _time.time(), "after_version": "2026.08.19", "channel": "nightly"}
+        ),
+        encoding="utf-8",
     )
     pip_calls: list[list[str]] = []
     monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.08.19")
@@ -5972,3 +5984,36 @@ def test_the_image_version_probe_ignores_the_persisted_install(monkeypatch) -> N
 
     container_entrypoint._yt_dlp_version(env)
     assert seen[-1].get("PYTHONUSERBASE") == "/data/ytdlp"
+
+
+def test_switching_channel_forces_a_check(monkeypatch, tmp_path) -> None:
+    """A recorded stable-only check answered a different question.
+
+    Switching to nightly must not wait out an interval that a stable check
+    satisfied, or the switch does nothing for hours — exactly when it is being
+    made because playback is broken right now.
+    """
+    import time as _time
+
+    env, state_file = _update_env(tmp_path, RELAYTV_YTDLP_UPDATE_CHANNEL="nightly")
+    (tmp_path / "ytdlp").mkdir(parents=True, exist_ok=True)
+    state_file.write_text(
+        json.dumps(
+            {"last_check_ts": _time.time(), "after_version": "2026.07.04", "channel": "stable"}
+        ),
+        encoding="utf-8",
+    )
+    pip_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.07.04"
+    )
+    monkeypatch.setattr(
+        container_entrypoint.subprocess,
+        "run",
+        lambda cmd, **kw: pip_calls.append(list(cmd)) or subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+
+    container_entrypoint.run_yt_dlp_update(env)
+
+    assert pip_calls, "the channel switch was suppressed by the interval"
+    assert "--pre" in pip_calls[0]
