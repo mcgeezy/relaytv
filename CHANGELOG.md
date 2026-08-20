@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.1](https://github.com/mcgeezy/relaytv/compare/v0.9.0...v0.9.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* keep yt-dlp current so playback stops dying on stale extractors ([#57](https://github.com/mcgeezy/relaytv/issues/57)) ([a0e1f2c](https://github.com/mcgeezy/relaytv/commit/a0e1f2c129b5b38dc8120725245ba49c0eda7575))
+
+
+### Documentation
+
+* correct the yt-dlp update defaults left stale by 0.9.1 ([#59](https://github.com/mcgeezy/relaytv/issues/59)) ([9454ff2](https://github.com/mcgeezy/relaytv/commit/9454ff2517bf371bbc98c9cfed778d200ae9de43))
+
 ## [0.9.0](https://github.com/mcgeezy/relaytv/compare/v0.8.0...v0.9.0) (2026-08-08)
 
 
