@@ -225,15 +225,47 @@ def _yt_dlp_version(env: dict[str, str], *, path: str | None = None, user_site: 
     return (p.stdout or "").strip().splitlines()[0] if (p.stdout or "").strip() else ""
 
 
-def _discard_persisted_ytdlp(update_dir: Path, reason: str) -> None:
+def _persisted_ytdlp_paths(update_dir: Path) -> list[Path]:
+    """Exactly what pip put there for yt-dlp, and nothing else."""
+    found: list[Path] = []
+    bin_dir = update_dir / "bin"
     try:
-        shutil.rmtree(update_dir)
-    except FileNotFoundError:
-        return
-    except Exception as exc:
-        _eprint(f"entrypoint: yt-dlp persisted copy could not be removed ({reason}): {exc}")
-        return
-    _eprint(f"entrypoint: yt-dlp persisted copy discarded ({reason})")
+        found.extend(sorted(bin_dir.glob("yt-dlp*")))
+    except Exception:
+        pass
+    try:
+        for site in update_dir.glob("lib/python*/site-packages"):
+            for pattern in ("yt_dlp", "yt_dlp-*.dist-info", "yt_dlp-*.egg-info"):
+                found.extend(sorted(site.glob(pattern)))
+    except Exception:
+        pass
+    return found
+
+
+def _discard_persisted_ytdlp(update_dir: Path, reason: str) -> None:
+    """Remove the persisted yt-dlp — only ever yt-dlp's own files.
+
+    This deliberately does not rmtree ``update_dir``. It is operator-supplied,
+    and pointing it at a shared directory is an easy mistake to make: with
+    ``RELAYTV_YTDLP_UPDATE_DIR=/data``, pip happily creates ``/data/bin`` and
+    one failed probe would otherwise delete settings, history, peers, the
+    device id and every upload.
+    """
+    removed = 0
+    for target in _persisted_ytdlp_paths(update_dir):
+        try:
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            _eprint(f"entrypoint: yt-dlp persisted copy could not be removed ({reason}): {exc}")
+            return
+    if removed:
+        _eprint(f"entrypoint: yt-dlp persisted copy discarded ({reason})")
 
 
 def _prune_persisted_ytdlp(env: dict[str, str]) -> None:
@@ -363,7 +395,12 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
             "before_version": before,
             "after_version": after,
             "updated": changed,
-            "channel": used_channel,
+            # The channel we were asked to track, which is what the staleness
+            # check compares against. A stable fallback must not read as a
+            # channel switch, or an unavailable nightly gets retried on every
+            # poll instead of once per interval.
+            "channel": channel,
+            "installed_channel": used_channel,
             "install_dir": str(_ytdlp_update_dir(env)),
             "error": err,
         },

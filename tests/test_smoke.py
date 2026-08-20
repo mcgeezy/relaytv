@@ -5764,7 +5764,7 @@ def test_a_persisted_copy_older_than_the_image_is_discarded(monkeypatch, tmp_pat
     monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", _version)
     container_entrypoint._prune_persisted_ytdlp(env)
 
-    assert not update_dir.exists()
+    assert not (update_dir / "bin" / "yt-dlp").exists()
 
 
 def test_a_persisted_copy_newer_than_the_image_is_kept(monkeypatch, tmp_path) -> None:
@@ -5792,7 +5792,7 @@ def test_a_persisted_copy_that_cannot_run_is_discarded(monkeypatch, tmp_path) ->
     monkeypatch.setattr(container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "")
     container_entrypoint._prune_persisted_ytdlp(env)
 
-    assert not update_dir.exists()
+    assert not (update_dir / "bin" / "yt-dlp").exists()
 
 
 def _update_env(tmp_path, **extra):
@@ -5894,7 +5894,11 @@ def test_a_failed_nightly_falls_back_to_stable(monkeypatch, tmp_path) -> None:
     assert container_entrypoint.run_yt_dlp_update(env, force=True) is True
     assert len(pip_calls) == 2
     assert "--pre" in pip_calls[0] and "--pre" not in pip_calls[1]
-    assert json.loads(state_file.read_text(encoding="utf-8"))["channel"] == "stable"
+    saved = json.loads(state_file.read_text(encoding="utf-8"))
+    # The requested channel is what the staleness check compares against, so a
+    # fallback must not masquerade as a channel switch.
+    assert saved["channel"] == "nightly"
+    assert saved["installed_channel"] == "stable"
 
 
 def test_an_install_that_does_not_run_is_reverted(monkeypatch, tmp_path) -> None:
@@ -6017,3 +6021,121 @@ def test_switching_channel_forces_a_check(monkeypatch, tmp_path) -> None:
 
     assert pip_calls, "the channel switch was suppressed by the interval"
     assert "--pre" in pip_calls[0]
+
+
+def test_pruning_never_touches_anything_but_yt_dlp(tmp_path) -> None:
+    """RELAYTV_YTDLP_UPDATE_DIR is operator-supplied and easy to point at /data.
+
+    pip will happily create bin/ and lib/ inside a shared directory, so pruning
+    must remove yt-dlp's own files rather than the directory it was told to use
+    — otherwise one failed probe deletes settings, history, peers, the device id
+    and every upload.
+    """
+    data = tmp_path / "data"
+    (data / "bin").mkdir(parents=True)
+    (data / "bin" / "yt-dlp").write_text("#!/bin/sh\n", encoding="utf-8")
+    site = data / "lib" / "python3.13" / "site-packages"
+    site.mkdir(parents=True)
+    (site / "yt_dlp").mkdir()
+    (site / "yt_dlp" / "__init__.py").write_text("", encoding="utf-8")
+    (site / "yt_dlp-2026.8.19.dist-info").mkdir()
+    (site / "some_other_package").mkdir()
+
+    precious = ["settings.json", "history.json", "peers.json", "device_id"]
+    for name in precious:
+        (data / name).write_text("precious", encoding="utf-8")
+    (data / "uploads").mkdir()
+    (data / "uploads" / "movie.mp4").write_text("x", encoding="utf-8")
+
+    container_entrypoint._discard_persisted_ytdlp(data, "test")
+
+    assert data.exists(), "the update directory itself was deleted"
+    for name in precious:
+        assert (data / name).read_text(encoding="utf-8") == "precious", name
+    assert (data / "uploads" / "movie.mp4").exists()
+    assert (site / "some_other_package").exists(), "an unrelated package was removed"
+    # ...and yt-dlp really is gone.
+    assert not (data / "bin" / "yt-dlp").exists()
+    assert not (site / "yt_dlp").exists()
+    assert not (site / "yt_dlp-2026.8.19.dist-info").exists()
+
+
+def test_a_stable_fallback_does_not_retrigger_on_every_poll(monkeypatch, tmp_path) -> None:
+    """An unavailable nightly must be retried once per interval, not per poll.
+
+    Driven as a full round trip — write the state by really running a fallback,
+    then run again — because recording the fallback channel as the *requested*
+    one is a write-side bug that reading a hand-built state file cannot catch.
+    """
+    env, _state_file = _update_env(tmp_path, RELAYTV_YTDLP_UPDATE_CHANNEL="nightly")
+    (tmp_path / "ytdlp").mkdir(parents=True, exist_ok=True)
+    pip_calls: list[list[str]] = []
+
+    def _run(cmd, **kw):
+        pip_calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 1 if "--pre" in cmd else 0, "", "no nightly")
+
+    monkeypatch.setattr(
+        container_entrypoint, "_yt_dlp_version", lambda _env, *, path=None, user_site=True: "2026.07.04"
+    )
+    monkeypatch.setattr(container_entrypoint.subprocess, "run", _run)
+
+    # First pass: nightly fails, stable succeeds, and the state is written.
+    container_entrypoint.run_yt_dlp_update(env, force=True)
+    assert len(pip_calls) == 2
+
+    # Second pass, well inside the interval: nothing has actually changed, so
+    # this must skip rather than retry the unavailable nightly.
+    pip_calls.clear()
+    assert container_entrypoint.run_yt_dlp_update(env) is False
+    assert pip_calls == []
+
+
+def test_the_mpv_log_is_rotated_while_the_player_keeps_running(monkeypatch, tmp_path) -> None:
+    """mpv runs --idle=yes and is reused across loadfiles.
+
+    A size check that only happens at launch never runs again on a device that
+    stays up for weeks, and /tmp is tmpfs. Removing the file alone is not
+    enough either — mpv holds the descriptor — so the log-file option has to be
+    re-set to make it reopen.
+    """
+    from relaytv_app import qt_shell_app
+
+    log = tmp_path / "mpv.log"
+    log.write_bytes(b"x" * 10)
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+    monkeypatch.setattr(qt_shell_app, "_mpv_log_last_check", 0.0)
+
+    reopened: list[str] = []
+    qt_shell_app._rotate_mpv_log_if_needed(reopened.append)
+    assert log.exists() and reopened == [], "a small log was rotated needlessly"
+
+    log.write_bytes(b"x" * (qt_shell_app._MPV_LOG_MAX_BYTES + 1))
+    monkeypatch.setattr(qt_shell_app, "_mpv_log_last_check", 0.0)
+    qt_shell_app._rotate_mpv_log_if_needed(reopened.append)
+
+    assert not log.exists()
+    assert reopened == [str(log)], "mpv was never told to reopen its log"
+
+
+def test_a_failed_resume_still_reports_its_reason(monkeypatch, tmp_path) -> None:
+    """resume_pos holds the live position, not progress since the start.
+
+    An item resumed at five minutes already reads as five minutes of progress,
+    so a resumed stream that dies instantly used to look like a completed play
+    and report nothing — the exact case this diagnostic exists for.
+    """
+    from relaytv_app import player
+
+    log = tmp_path / "mpv.log"
+    log.write_text("[ 19.85][e][stream] Failed to open http://x/y.\n", encoding="utf-8")
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+
+    player.note_playback_started(300.0)   # resumed five minutes in
+    player.note_playback_failure_if_no_progress({"title": "Resumed", "resume_pos": 300.0})
+    assert "Failed to open" in (player.last_playback_error() or "")
+
+    # Real progress from that same resume point is not a failure.
+    player.note_playback_started(300.0)
+    player.note_playback_failure_if_no_progress({"title": "Resumed", "resume_pos": 340.0})
+    assert player.last_playback_error() is None

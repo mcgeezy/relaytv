@@ -4937,6 +4937,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     provider = item.get("provider") or provider_from_url(raw)
     http_headers = _item_http_headers(item)
     play_t0 = time.monotonic()
+    note_playback_started(start_pos)
     debug_log("player", f"play_item start mode={mode} provider={provider} use_resolver={use_resolver}")
     if provider == "iptv":
         debug_log(
@@ -5234,6 +5235,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 # went idle ten seconds in.
 
 _LAST_PLAYBACK_ERROR: str | None = None
+_PLAYBACK_STARTED_POS: float = 0.0
 _PLAYBACK_ERROR_LOCK = threading.Lock()
 _MPV_ERROR_LINE = re.compile(r"^\[[^\]]*\]\[[ef]\]\[(?P<src>[^\]]+)\]\s*(?P<msg>.+)$")
 
@@ -5247,6 +5249,29 @@ def set_last_playback_error(reason: str | None) -> None:
     global _LAST_PLAYBACK_ERROR
     with _PLAYBACK_ERROR_LOCK:
         _LAST_PLAYBACK_ERROR = (str(reason).strip() or None) if reason else None
+
+
+def note_playback_started(start_pos: float | None) -> None:
+    """Remember where this item began playing.
+
+    Progress has to be measured from here, not from zero. ``resume_pos`` tracks
+    the live position, so an item resumed at 5 minutes already reads as five
+    minutes of progress — and a resumed stream that dies instantly would look
+    like a completed play and report nothing.
+    """
+    global _PLAYBACK_STARTED_POS, _LAST_PLAYBACK_ERROR
+    try:
+        value = max(0.0, float(start_pos or 0.0))
+    except Exception:
+        value = 0.0
+    with _PLAYBACK_ERROR_LOCK:
+        _PLAYBACK_STARTED_POS = value
+        _LAST_PLAYBACK_ERROR = None
+
+
+def playback_started_pos() -> float:
+    with _PLAYBACK_ERROR_LOCK:
+        return float(_PLAYBACK_STARTED_POS)
 
 
 def _mpv_log_path() -> str:
@@ -5292,7 +5317,7 @@ def note_playback_failure_if_no_progress(now: dict | None) -> str:
         position = float((now or {}).get("resume_pos") or 0.0)
     except Exception:
         position = 0.0
-    if position >= 2.0:
+    if (position - playback_started_pos()) >= 2.0:
         set_last_playback_error(None)
         return ""
     reason = read_mpv_failure_reason()

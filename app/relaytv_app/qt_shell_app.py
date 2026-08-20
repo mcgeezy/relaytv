@@ -492,11 +492,40 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
     return out
 
 
-def _truncate_mpv_log(path: str, *, max_bytes: int = 2_000_000) -> None:
-    """Keep the mpv log from growing without bound on tmpfs."""
+_MPV_LOG_MAX_BYTES = 2_000_000
+_mpv_log_last_check = 0.0
+
+
+def _truncate_mpv_log(path: str, *, max_bytes: int = _MPV_LOG_MAX_BYTES) -> bool:
+    """Drop the mpv log once it gets large. Returns True when it was removed."""
     try:
         if os.path.exists(path) and os.path.getsize(path) > max_bytes:
             os.remove(path)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _rotate_mpv_log_if_needed(reopen) -> None:
+    """Keep the log bounded for the life of the player, not just at launch.
+
+    mpv runs with --idle=yes and is reused across loadfile commands, so a check
+    that only happens when the process starts never runs again on a device that
+    stays up for weeks — and /tmp is tmpfs. Removing the file is not enough
+    either: mpv holds the descriptor and keeps writing at its old offset, so the
+    log-file option is re-set afterwards to make it reopen.
+    """
+    global _mpv_log_last_check
+    now = time.time()
+    if (now - _mpv_log_last_check) < 60.0:
+        return
+    _mpv_log_last_check = now
+    path = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+    if not _truncate_mpv_log(path):
+        return
+    try:
+        reopen(path)
     except Exception:
         pass
 
@@ -1001,6 +1030,9 @@ class _QtLibMpvPlayer:
         return self._track_list_cache
 
     def runtime_snapshot(self) -> dict[str, object]:
+        # The libmpv player is long-lived too, and its log had no size check at
+        # all — only the external-mpv launch path did.
+        _rotate_mpv_log_if_needed(lambda p: self.set_property("log-file", p))
         out: dict[str, object] = {
             "mpv_runtime_initialized": True,
             "mpv_runtime_error": "",
@@ -2981,6 +3013,9 @@ def main(argv: list[str] | None = None) -> int:
         cached = _subproc_snapshot_cache.get("data")
         if isinstance(cached, dict) and (now - float(_subproc_snapshot_cache.get("ts") or 0.0)) <= max_age_sec:
             return cached
+        _rotate_mpv_log_if_needed(
+            lambda p: _subprocess_mpv_ipc_request(["set_property", "log-file", p])
+        )
         try:
             props = _subprocess_mpv_get_props(
                 ["pause", "time-pos", "duration", "core-idle", "eof-reached", "path"]
