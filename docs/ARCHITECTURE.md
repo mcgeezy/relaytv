@@ -36,6 +36,12 @@ milestone logs live in git history.
   `device_id` (persisted outside `settings.json` so it survives a settings
   reset), display name, LAN address, and the identity payload advertised to
   peers and over mDNS.
+- `app/relaytv_app/realtime.py`: versioned realtime protocol primitives and the
+  process-local publication hub. Producers publish transport-neutral events;
+  the hub performs thread-to-event-loop handoff, bounded delivery, snapshot
+  coalescing, and subscriber accounting. Route adapters own SSE/WebSocket wire
+  framing, while playback and integration product behavior stay in their
+  established services.
 - `app/relaytv_app/discovery_mdns.py`: mDNS advertising and browsing for
   RelayTV devices. Browser callbacks only enqueue names; a worker thread
   resolves them and re-resolves known services on an interval, because

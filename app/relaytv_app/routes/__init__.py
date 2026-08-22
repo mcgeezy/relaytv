@@ -24,6 +24,7 @@ from .. import config, discovery_mdns, playback_service, player, public_media, r
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
+from ..realtime import OVERLAY_CHANNEL, UI_CHANNEL, realtime_hub
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
@@ -458,10 +459,7 @@ def _notification_capabilities() -> dict:
     strategy = _notification_strategy()
     available, reason = _notifications_available()
     visual_runtime_mode = _visual_runtime_mode()
-    try:
-        subscribers = len(_X11_OVERLAY_SUBS)
-    except Exception:
-        subscribers = 0
+    subscribers = realtime_hub.subscriber_count(OVERLAY_CHANNEL)
     overlay_info = state.get_overlay_delivery_state_info() if hasattr(state, "get_overlay_delivery_state_info") else {}
     if hasattr(state, "update_overlay_delivery_state"):
         overlay_state = str(overlay_info.get("overlay_delivery_state") or "")
@@ -872,15 +870,12 @@ def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
 
 
 # =========================
-# X11 Overlay notification hub (SSE)
+# Realtime event publication and SSE compatibility adapters
 # =========================
-
-_X11_OVERLAY_SUBS: set[asyncio.Queue] = set()
-_UI_EVENT_SUBS: set[asyncio.Queue] = set()
 
 def _x11_overlay_push(event: dict) -> None:
     """Push a toast/overlay event to any connected X11 overlay clients."""
-    if not _X11_OVERLAY_SUBS:
+    if realtime_hub.subscriber_count(OVERLAY_CHANNEL) <= 0:
         try:
             if hasattr(state, "update_overlay_delivery_state"):
                 state.update_overlay_delivery_state(
@@ -902,23 +897,11 @@ def _x11_overlay_push(event: dict) -> None:
             )
     except Exception:
         pass
-    payload = _json.dumps(event, separators=(",", ":"), ensure_ascii=False)
-    dead: list[asyncio.Queue] = []
-    for q in list(_X11_OVERLAY_SUBS):
-        try:
-            q.put_nowait(payload)
-        except Exception:
-            dead.append(q)
-    for q in dead:
-        try:
-            _X11_OVERLAY_SUBS.discard(q)
-        except Exception:
-            pass
+    realtime_hub.publish(OVERLAY_CHANNEL, str(event.get("type") or "toast"), event)
 
 async def _x11_overlay_sse() -> object:
     """Server-Sent Events stream for X11 overlay."""
-    q: asyncio.Queue[str] = asyncio.Queue(maxsize=50)
-    _X11_OVERLAY_SUBS.add(q)
+    subscription = realtime_hub.subscribe(OVERLAY_CHANNEL, transport="sse", maxsize=50)
     try:
         if hasattr(state, "update_overlay_delivery_state"):
             state.update_overlay_delivery_state(
@@ -929,26 +912,26 @@ async def _x11_overlay_sse() -> object:
             )
     except Exception:
         pass
-    # Send a hello so the client can confirm connectivity.
-    try:
-        q.put_nowait(_json.dumps({"type": "hello", "ts": time.time()}))
-    except Exception:
-        pass
-
     async def gen():
         try:
+            hello = _json.dumps({"type": "hello", "ts": time.time()})
+            yield f"data: {hello}\n\n"
             while True:
                 try:
-                    msg = await asyncio.wait_for(q.get(), timeout=15.0)
-                    yield f"data: {msg}\n\n"
+                    message = await asyncio.wait_for(subscription.get(), timeout=15.0)
+                    payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
                 except asyncio.TimeoutError:
                     yield f"data: {_json.dumps({'type': 'ping', 'ts': time.time()}, separators=(',', ':'))}\n\n"
         except asyncio.CancelledError:
             raise
         finally:
-            _X11_OVERLAY_SUBS.discard(q)
+            subscription.close()
             try:
-                if hasattr(state, "update_overlay_delivery_state") and not _X11_OVERLAY_SUBS:
+                if (
+                    hasattr(state, "update_overlay_delivery_state")
+                    and realtime_hub.subscriber_count(OVERLAY_CHANNEL) <= 0
+                ):
                     state.update_overlay_delivery_state(
                         "disconnected",
                         "subscriber_gone",
@@ -963,20 +946,7 @@ async def _x11_overlay_sse() -> object:
 
 def _ui_event_push(event_name: str, event: dict) -> None:
     """Push a lightweight UI event to any connected /ui SSE clients."""
-    if not _UI_EVENT_SUBS:
-        return
-    payload = _json.dumps(event, separators=(",", ":"), ensure_ascii=False)
-    dead: list[asyncio.Queue] = []
-    for q in list(_UI_EVENT_SUBS):
-        try:
-            q.put_nowait((event_name, payload))
-        except Exception:
-            dead.append(q)
-    for q in dead:
-        try:
-            _UI_EVENT_SUBS.discard(q)
-        except Exception:
-            pass
+    realtime_hub.publish(UI_CHANNEL, event_name, event)
 
 
 def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_length: int | None = None, source: str = "api") -> None:
@@ -2496,7 +2466,7 @@ def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         try:
-            if len(_X11_OVERLAY_SUBS) > 0:
+            if realtime_hub.subscriber_count(OVERLAY_CHANNEL) > 0:
                 return
         except Exception:
             pass
@@ -3251,8 +3221,7 @@ def status():
 
 
 async def _ui_events_sse(request: Request) -> object:
-    q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _UI_EVENT_SUBS.add(q)
+    subscription = realtime_hub.subscribe(UI_CHANNEL, transport="sse", maxsize=100)
 
     async def gen():
         last_fast_json = ""
@@ -3272,15 +3241,17 @@ async def _ui_events_sse(request: Request) -> object:
                     break
 
                 try:
-                    event_name, payload = await asyncio.wait_for(q.get(), timeout=0.75)
-                    yield f"event: {event_name}\ndata: {payload}\n\n"
+                    message = await asyncio.wait_for(subscription.get(), timeout=0.75)
+                    payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                    yield f"event: {message.event}\ndata: {payload}\n\n"
                     last_emit_ts = time.time()
                     while True:
                         try:
-                            event_name, payload = q.get_nowait()
+                            message = subscription.get_nowait()
                         except asyncio.QueueEmpty:
                             break
-                        yield f"event: {event_name}\ndata: {payload}\n\n"
+                        payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                        yield f"event: {message.event}\ndata: {payload}\n\n"
                         last_emit_ts = time.time()
                 except asyncio.TimeoutError:
                     pass
@@ -3320,7 +3291,7 @@ async def _ui_events_sse(request: Request) -> object:
                     yield f"event: ping\ndata: {ping}\n\n"
                     last_emit_ts = time.time()
         finally:
-            _UI_EVENT_SUBS.discard(q)
+            subscription.close()
 
     return StreamingResponse(
         gen(),

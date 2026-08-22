@@ -7,7 +7,12 @@ mutating commands remain authenticated HTTP requests.
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
+import copy
 from dataclasses import dataclass
+import itertools
+import threading
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,6 +25,9 @@ OVERLAY_WEBSOCKET_PATH = "/x11/overlay/ws"
 UI_SSE_PATH = "/ui/events"
 OVERLAY_SSE_PATH = "/x11/overlay/events"
 HEARTBEAT_SEC = 5
+UI_CHANNEL = "ui"
+OVERLAY_CHANNEL = "overlay"
+_COALESCED_EVENTS = frozenset({"playback", "status"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +54,7 @@ class RealtimeEvent:
         number = int(sequence)
         if number < 0:
             raise ValueError("realtime sequence must be non-negative")
-        payload = dict(data or {})
+        payload = copy.deepcopy(dict(data or {}))
         emitted_at = float(time.time() if timestamp is None else timestamp)
         return cls(event=name, sequence=number, data=payload, timestamp=emitted_at)
 
@@ -59,6 +67,199 @@ class RealtimeEvent:
             "timestamp": self.timestamp,
             "data": dict(self.data),
         }
+
+
+class RealtimeSubscriptionClosed(RuntimeError):
+    """Raised when a consumer waits on a retired subscription."""
+
+
+class RealtimeSubscription:
+    """Event-loop-owned bounded inbox registered with :class:`RealtimeHub`."""
+
+    def __init__(
+        self,
+        *,
+        hub: "RealtimeHub",
+        subscription_id: int,
+        channel: str,
+        transport: str,
+        loop: asyncio.AbstractEventLoop,
+        maxsize: int,
+    ) -> None:
+        self._hub = hub
+        self.subscription_id = subscription_id
+        self.channel = channel
+        self.transport = transport
+        self.loop = loop
+        self.maxsize = max(1, int(maxsize))
+        self._items: deque[RealtimeEvent] = deque()
+        self._available = asyncio.Event()
+        self._closed = False
+        self.offered = 0
+        self.dropped = 0
+        self.coalesced = 0
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def _offer_on_loop(self, event: RealtimeEvent) -> None:
+        if self._closed:
+            return
+        self.offered += 1
+        if event.event in _COALESCED_EVENTS:
+            for index in range(len(self._items) - 1, -1, -1):
+                if self._items[index].event == event.event:
+                    self._items[index] = event
+                    self.coalesced += 1
+                    self._available.set()
+                    return
+        if len(self._items) >= self.maxsize:
+            self._items.popleft()
+            self.dropped += 1
+        self._items.append(event)
+        self._available.set()
+
+    def _close_on_loop(self) -> None:
+        self._closed = True
+        self._items.clear()
+        self._available.set()
+
+    def schedule(self, event: RealtimeEvent) -> bool:
+        """Schedule delivery without touching asyncio state from this thread."""
+        if self._closed:
+            return False
+        try:
+            self.loop.call_soon_threadsafe(self._offer_on_loop, event)
+            return True
+        except RuntimeError:
+            self._hub.unsubscribe(self)
+            return False
+
+    async def get(self) -> RealtimeEvent:
+        while True:
+            if self._items:
+                item = self._items.popleft()
+                if not self._items:
+                    self._available.clear()
+                return item
+            if self._closed:
+                raise RealtimeSubscriptionClosed
+            self._available.clear()
+            await self._available.wait()
+
+    def get_nowait(self) -> RealtimeEvent:
+        if self._items:
+            item = self._items.popleft()
+            if not self._items:
+                self._available.clear()
+            return item
+        if self._closed:
+            raise RealtimeSubscriptionClosed
+        raise asyncio.QueueEmpty
+
+    def close(self) -> None:
+        self._hub.unsubscribe(self)
+
+
+class RealtimeHub:
+    """Process-local, thread-safe publication hub for realtime transports."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._subscriptions: dict[int, RealtimeSubscription] = {}
+        self._sequences: dict[str, int] = {}
+        self._ids = itertools.count(1)
+
+    def subscribe(
+        self,
+        channel: str,
+        *,
+        transport: str,
+        maxsize: int,
+    ) -> RealtimeSubscription:
+        name = str(channel or "").strip()
+        transport_name = str(transport or "").strip()
+        if not name or not transport_name:
+            raise ValueError("realtime channel and transport are required")
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            subscription = RealtimeSubscription(
+                hub=self,
+                subscription_id=next(self._ids),
+                channel=name,
+                transport=transport_name,
+                loop=loop,
+                maxsize=maxsize,
+            )
+            self._subscriptions[subscription.subscription_id] = subscription
+            return subscription
+
+    def unsubscribe(self, subscription: RealtimeSubscription) -> None:
+        with self._lock:
+            existing = self._subscriptions.get(subscription.subscription_id)
+            if existing is not subscription:
+                return
+            self._subscriptions.pop(subscription.subscription_id, None)
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is subscription.loop:
+            subscription._close_on_loop()
+            return
+        try:
+            subscription.loop.call_soon_threadsafe(subscription._close_on_loop)
+        except RuntimeError:
+            # A closed loop cannot have a waiter left to wake.
+            subscription._closed = True
+
+    def publish(self, channel: str, event: str, data: dict[str, Any]) -> int:
+        """Publish from any thread and return the number of scheduled clients."""
+        name = str(channel or "").strip()
+        if not name:
+            raise ValueError("realtime channel is required")
+        with self._lock:
+            sequence = self._sequences.get(name, 0) + 1
+            self._sequences[name] = sequence
+            message = RealtimeEvent.create(event, sequence, data)
+            targets = [
+                subscription
+                for subscription in self._subscriptions.values()
+                if subscription.channel == name
+            ]
+        return sum(1 for subscription in targets if subscription.schedule(message))
+
+    def subscriber_count(self, channel: str, *, transport: str | None = None) -> int:
+        with self._lock:
+            return sum(
+                1
+                for subscription in self._subscriptions.values()
+                if subscription.channel == channel
+                and (transport is None or subscription.transport == transport)
+            )
+
+    def metrics(self) -> dict[str, Any]:
+        with self._lock:
+            subscriptions = list(self._subscriptions.values())
+            sequences = dict(self._sequences)
+        by_channel: dict[str, int] = {}
+        by_transport: dict[str, int] = {}
+        for subscription in subscriptions:
+            by_channel[subscription.channel] = by_channel.get(subscription.channel, 0) + 1
+            by_transport[subscription.transport] = by_transport.get(subscription.transport, 0) + 1
+        return {
+            "subscribers": len(subscriptions),
+            "subscribers_by_channel": by_channel,
+            "subscribers_by_transport": by_transport,
+            "sequences": sequences,
+            "offered": sum(subscription.offered for subscription in subscriptions),
+            "dropped": sum(subscription.dropped for subscription in subscriptions),
+            "coalesced": sum(subscription.coalesced for subscription in subscriptions),
+        }
+
+
+realtime_hub = RealtimeHub()
 
 
 def realtime_capabilities_payload(*, websocket_enabled: bool) -> dict[str, Any]:
