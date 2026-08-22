@@ -387,3 +387,39 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
     assert "/realtime/capabilities" in response.text
     assert "/x11/overlay/ws" in response.text
     assert "/x11/overlay/events" in response.text
+
+
+def test_sse_adapters_preserve_legacy_wire_framing() -> None:
+    class ConnectedRequest:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    async def scenario() -> None:
+        ui_response = await routes._ui_events_sse(ConnectedRequest())
+        ui_stream = ui_response.body_iterator
+        overlay_response = await routes._x11_overlay_sse()
+        overlay_stream = overlay_response.body_iterator
+        try:
+            ui_hello = await anext(ui_stream)
+            overlay_hello = await anext(overlay_stream)
+            assert ui_hello.startswith("event: hello\ndata: {")
+            assert '"type":"hello"' in ui_hello
+            assert overlay_hello.startswith('data: {"type": "hello", "ts": ')
+
+            realtime_hub.publish(UI_CHANNEL, "queue", {"queue_length": 2})
+            realtime_hub.publish(
+                OVERLAY_CHANNEL,
+                "toast",
+                {"type": "toast", "text": "Ready"},
+            )
+            assert await asyncio.wait_for(anext(ui_stream), timeout=1) == (
+                'event: queue\ndata: {"queue_length":2}\n\n'
+            )
+            assert await asyncio.wait_for(anext(overlay_stream), timeout=1) == (
+                'data: {"type":"toast","text":"Ready"}\n\n'
+            )
+        finally:
+            await ui_stream.aclose()
+            await overlay_stream.aclose()
+
+    asyncio.run(scenario())

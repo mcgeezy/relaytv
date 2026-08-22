@@ -1,6 +1,6 @@
 # Realtime Connectivity Roadmap
 
-Status: M5 complete; cross-repository verification next
+Status: M6 automated verification complete; field soak pending
 Primary branch: `feat/realtime-connectivity`  
 Repositories: `relaytv`, `relaytv-ha`, `relaytv-android`
 
@@ -275,7 +275,7 @@ commits. A milestone is complete only after its listed tests pass.
 | M3 | `relaytv-ha` | WS/SSE/poll coordinator and `local_push` metadata | Complete |
 | M4 | `relaytv-android` | Native media-service WS/SSE/poll client | Complete |
 | M5 | `relaytv` | X11 overlay WebSocket transport | Complete |
-| M6 | all | Cross-version soak, documentation, and rollout decision | Planned |
+| M6 | all | Cross-version soak, documentation, and rollout decision | In progress — field soak pending |
 
 ## Verification Plan
 
@@ -338,6 +338,19 @@ git diff --check
 - multiple simultaneous browser, HA, Android, and overlay subscribers;
 - slow client and reconnect-storm behavior.
 
+### Automated milestone evidence
+
+| Repository | Branch commit | Verified gate |
+| --- | --- | --- |
+| `relaytv` | `5262dc4` plus M6 compatibility tests | `ruff check app tests`; full pytest; UI and generated-overlay JavaScript syntax checks |
+| `relaytv-ha` | `1b0bca6` | ruff; 38 pytest tests, including legacy `404`, fallback, ownership, and reconfigure ordering |
+| `relaytv-android` | `ac40c7b` | clean debug APK assembly; Android lint; 8 unit/MockWebServer tests |
+
+The automated matrix proves new-client/legacy-server selection and preserves
+the existing SSE wire framing for legacy clients. The remaining M6 work is a
+deployed direct/proxy and physical-device soak; it is intentionally not marked
+complete by unit or build results alone.
+
 ## Rollout and Deprecation Gates
 
 Release the server before companion clients. The server release must retain SSE
@@ -374,3 +387,4 @@ server milestone is ready to ship; do not add one during planning alone.
 | 2026-08-22 | M3 | Added Home Assistant capability discovery, owned WS/SSE/poll selection, sequence and generation guards, atomic reconfiguration, `local_push` metadata, and lifecycle/fallback tests. |
 | 2026-08-22 | M4 | Added Android native WebSocket/SSE selection, adaptive polling fallback, streaming-client ownership, generation-safe server/network switching, retained snapshots, and MockWebServer coverage. |
 | 2026-08-22 | M5 | Added the versioned X11 overlay WebSocket, origin/subprotocol enforcement, browser WS-to-SSE selection, stale-stream recovery, telemetry continuity, and route/client tests. |
+| 2026-08-22 | M6 automated | Verified server, Home Assistant, and Android gates; pinned legacy capability/SSE compatibility; added proxy, privacy, operations, release-checklist, and release-highlight documentation. Physical-device and deployed-proxy soak remains. |
