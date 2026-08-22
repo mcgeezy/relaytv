@@ -20,7 +20,7 @@ dependencies = [
   # connect() gained the proxy argument; the code still runs on 13/14 without
   # proxy suppression, but 15 is what we want on a LAN.
   "websockets>=15,<17",
-  "yt-dlp>=2024.1",
+  "yt-dlp[default,curl-cffi]>=2024.1",
 ]
 
 [project.optional-dependencies]

@@ -162,6 +162,21 @@ def _categorize_resolver_error(error_text: str) -> str:
         return "http_error"
     return "resolve_error"
 
+
+def _rumble_error_is_http_challenge(error_text: str) -> bool:
+    """Return whether Rumble's metadata request was rejected with HTTP 403."""
+    low = str(error_text or "").strip().lower()
+    return bool(
+        "http error 403" in low
+        or "403 forbidden" in low
+        or re.search(r"\b403\b", low)
+    )
+
+
+def _rumble_impersonation_unavailable(error_text: str) -> bool:
+    low = str(error_text or "").strip().lower()
+    return "impersonate target" in low and "not available" in low
+
 # =========================
 # URL helpers
 # =========================
@@ -549,6 +564,43 @@ def build_ytdlp_base_args() -> list[str]:
 
     return ["yt-dlp", *parts, "--no-playlist"]
 
+
+def _run_ytdlp_provider_command(
+    url: str,
+    base_args: list[str],
+    command_args: list[str],
+    *,
+    timeout: int | None = None,
+) -> tuple[subprocess.CompletedProcess, list[str], bool]:
+    """Run yt-dlp and conditionally recover from Rumble's HTTP challenge.
+
+    The ordinary request remains the fast path. Rumble alone gets one browser
+    impersonation retry after an HTTP 403; applying impersonation globally can
+    make other extractors slower or less reliable. The returned argv is the
+    strategy that produced the final response so live playback can give the
+    same options to mpv's yt-dlp hook.
+    """
+
+    def _invoke(args: list[str]) -> subprocess.CompletedProcess:
+        kwargs: dict[str, object] = {"check": False}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return run([*args, *command_args, url], **kwargs)
+
+    selected_args = list(base_args)
+    result = _invoke(selected_args)
+    provider = provider_from_url(url)
+    challenged = provider == "rumble" and _rumble_error_is_http_challenge(result.stderr)
+    if not challenged or _has_opt(selected_args, "--impersonate"):
+        return result, selected_args, challenged
+
+    selected_args = [*selected_args, "--impersonate", "chrome"]
+    logger.info(
+        "ytdlp_strategy_retry provider=rumble reason=http_403 strategy=impersonate_chrome"
+    )
+    return _invoke(selected_args), selected_args, True
+
+
 def resolve_streams_ytdlp(url: str):
     """
     Resolve direct stream URLs using yt-dlp.
@@ -576,10 +628,10 @@ def resolve_streams_ytdlp(url: str):
         candidates = ytdlp_format_policy.youtube_progressive_startup_candidates(settings, profile=profile)
     candidates = list(dict.fromkeys(candidates))
 
-    # For YouTube, print live_status alongside the stream URLs: live and
+    # For YouTube and Rumble, print live_status alongside the stream URLs: live and
     # just-ended (post_live) videos only expose segmented formats whose bare
     # URLs return 204 No Content, so they must not be handed to mpv directly.
-    resolve_live_status = is_youtube_url(u)
+    resolve_live_status = provider in {"youtube", "rumble"}
     output_args = (
         [
             "--print",
@@ -607,22 +659,28 @@ def resolve_streams_ytdlp(url: str):
 
     def _run_strategies(
         strategy_list: list[tuple[list[str], list[str]]],
-    ) -> tuple[object, str, str, str, list[str]]:
+    ) -> tuple[object, str, str, str, list[str], bool]:
         p_local = None
         err_local = ""
         selected_format = fmt or "auto"
         selected_candidate = fmt or ""
         selected_args: list[str] = list(base)
+        rumble_challenge_seen = False
         for args_base, strategy_candidates in strategy_list:
             debug_log("youtube", f"Trying yt-dlp strategy: {' '.join(args_base)} (host_arch={host_arch or 'unknown'})")
             _log_resolve(f"yt-dlp strategy start host_arch={host_arch or 'unknown'} args={' '.join(args_base)}")
             for cand in strategy_candidates:
                 t_attempt = time.monotonic()
-                cmd = [*args_base, *output_args, u] if not cand else [*args_base, "-f", cand, *output_args, u]
+                command_args = list(output_args) if not cand else ["-f", cand, *output_args]
                 selected_format = cand or "auto"
                 selected_candidate = cand
                 selected_args = list(args_base)
-                p_local = run(cmd, check=False)
+                p_local, selected_args, challenged = _run_ytdlp_provider_command(
+                    u,
+                    list(args_base),
+                    command_args,
+                )
+                rumble_challenge_seen = rumble_challenge_seen or challenged
                 elapsed_ms = int((time.monotonic() - t_attempt) * 1000)
                 debug_log(
                     "youtube",
@@ -630,7 +688,14 @@ def resolve_streams_ytdlp(url: str):
                 )
                 _log_resolve(f"yt-dlp attempt format={cand or 'auto'} rc={p_local.returncode} elapsed_ms={elapsed_ms}")
                 if p_local.returncode == 0 and (p_local.stdout or "").strip():
-                    return p_local, "", selected_format, selected_candidate, selected_args
+                    return (
+                        p_local,
+                        "",
+                        selected_format,
+                        selected_candidate,
+                        selected_args,
+                        rumble_challenge_seen,
+                    )
 
                 err_local = (p_local.stderr or "").strip()
                 low_err = err_local.lower()
@@ -648,23 +713,41 @@ def resolve_streams_ytdlp(url: str):
                 if _format_related_retry(low_err):
                     continue
                 break
-        return p_local, err_local, selected_format, selected_candidate, selected_args
+        return (
+            p_local,
+            err_local,
+            selected_format,
+            selected_candidate,
+            selected_args,
+            rumble_challenge_seen,
+        )
 
     p = None
     err = ""
     selected_format = fmt or "auto"
     selected_candidate = fmt or ""
     selected_args = list(base)
+    rumble_challenge_seen = False
     t0 = time.monotonic()
     if is_youtube_url(u) and ytdlp_format_policy.youtube_progressive_startup_enabled(profile):
         _log_resolve("youtube arm-safe staged resolver enabled")
-        p, err, selected_format, selected_candidate, selected_args = _run_strategies(
-            _build_youtube_arm_safe_strategies(base, candidates)
-        )
+        (
+            p,
+            err,
+            selected_format,
+            selected_candidate,
+            selected_args,
+            rumble_challenge_seen,
+        ) = _run_strategies(_build_youtube_arm_safe_strategies(base, candidates))
     else:
-        p, err, selected_format, selected_candidate, selected_args = _run_strategies(
-            strategies
-        )
+        (
+            p,
+            err,
+            selected_format,
+            selected_candidate,
+            selected_args,
+            rumble_challenge_seen,
+        ) = _run_strategies(strategies)
 
     if not p:
         _update_resolver_runtime_state(
@@ -678,7 +761,11 @@ def resolve_streams_ytdlp(url: str):
         raise HTTPException(status_code=400, detail="yt-dlp failed: empty process response")
     if p.returncode != 0 or not (p.stdout or "").strip():
         err = err or (p.stderr or "").strip()
-        outcome_category = _categorize_resolver_error(err)
+        outcome_category = (
+            "provider_challenge"
+            if provider == "rumble" and rumble_challenge_seen
+            else _categorize_resolver_error(err)
+        )
         _update_resolver_runtime_state(
             provider=provider,
             effective_format=selected_format,
@@ -698,6 +785,21 @@ def resolve_streams_ytdlp(url: str):
                     "Configure RELAYTV_YTDLP_COOKIES (cookies.txt) or enable a working Invidious server. "
                     f"Details: {err[:900]}"
                 ),
+            )
+        if provider == "rumble" and rumble_challenge_seen:
+            if _rumble_impersonation_unavailable(err):
+                reason = (
+                    "browser impersonation is unavailable in this RelayTV runtime; "
+                    "install yt-dlp with its curl-cffi extra"
+                )
+            else:
+                reason = (
+                    "Rumble's HTTP challenge continued with browser impersonation; "
+                    "fresh cookies from the same network may be required"
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=f"yt-dlp failed: {reason}. Details: {err[:900]}",
             )
         raise HTTPException(status_code=400, detail=f"yt-dlp failed: {err[:1200]}")
 
@@ -900,7 +1002,12 @@ def title_from_ytdlp(url: str) -> str | None:
     Fast title lookup using yt-dlp metadata (no download).
     """
     u = normalize_shared_url(url)
-    p = run([*build_ytdlp_base_args(), "--print", "%(title)s", u], check=False, timeout=20)
+    p, _selected_args, _challenged = _run_ytdlp_provider_command(
+        u,
+        build_ytdlp_base_args(),
+        ["--print", "%(title)s"],
+        timeout=20,
+    )
     if p.returncode != 0:
         return None
     t = (p.stdout or "").strip()
@@ -950,9 +1057,13 @@ def ytdlp_info(url: str) -> dict | None:
     if cached and (now - cached[0]) < _YTDLP_INFO_TTL_SEC:
         return cached[1]
 
-    cmd = [*build_ytdlp_base_args(), "--skip-download", "-J", u]
     try:
-        p = run(cmd, check=False, timeout=20)
+        p, _selected_args, _challenged = _run_ytdlp_provider_command(
+            u,
+            build_ytdlp_base_args(),
+            ["--skip-download", "-J"],
+            timeout=20,
+        )
         if p.returncode != 0:
             return None
         data = json.loads((p.stdout or "").strip() or "{}")
