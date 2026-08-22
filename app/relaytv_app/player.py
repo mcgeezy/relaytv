@@ -3798,6 +3798,11 @@ def _resolved_playback_source(
     result: object,
 ) -> tuple[str, str | None, str | None, str | None]:
     stream, audio = result
+    live_status = str(getattr(result, "live_status", "") or "").strip().lower()
+    if live_status:
+        item["live_status"] = live_status
+    if live_status in ("is_live", "live"):
+        item["is_live"] = True
     try:
         available_at = float(getattr(result, "available_at", 0.0) or 0.0)
     except (TypeError, ValueError):
@@ -4968,8 +4973,10 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         local_candidate = str(item.get("_local_stream_path") or "").strip()
         if local_candidate and os.path.exists(local_candidate):
             trusted_local_stream = local_candidate
-    item_is_live = _provider_item_is_live_stream(item, raw, provider)
-    force_resolve_provider = provider in _providers_forced_to_resolve() and (not item_is_live)
+    # Resolver-only providers must preflight live pages too. The resolver is
+    # where provider transport fallbacks are selected; a live result returns
+    # the page URL with those winning options preserved for mpv's yt-dlp hook.
+    force_resolve_provider = provider in _providers_forced_to_resolve()
     prefetched = _fresh_prefetched_stream(item)
     should_resolve = use_resolver and (not trusted_local_stream) and (
         not prefer_mpv_ytdl
@@ -5174,7 +5181,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         "thumbnail": item.get("thumbnail"),
         "thumbnail_local": item.get("thumbnail_local"),
         "channel": item.get("channel"),
-        **({"is_live": True} if item_is_live else {}),
+        **({"is_live": True} if _item_looks_like_live_stream(item) else {}),
         **({"live_status": item.get("live_status")} if item.get("live_status") else {}),
         **({"http_headers": http_headers} if http_headers else {}),
         **({"history_id": item.get("history_id")} if item.get("history_id") else {}),

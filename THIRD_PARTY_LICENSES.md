@@ -25,6 +25,7 @@ RelayTV uses Python packages including, but not limited to:
 - `python-multipart`
 - `uvicorn`
 - `yt-dlp`
+- `curl-cffi`
 - `zeroconf`
 - `qrcode`
 - `PySide6` when the Qt runtime bundle is installed

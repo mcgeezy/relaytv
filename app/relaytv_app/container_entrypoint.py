@@ -355,7 +355,9 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
         cmd = [sys.executable, "-m", "pip", "install", "--user", "--upgrade", "--no-cache-dir"]
         if pre:
             cmd.append("--pre")
-        cmd.append("yt-dlp")
+        # Keep the browser impersonation transport alongside yt-dlp across
+        # persisted updates; Rumble's Cloudflare challenge requires it.
+        cmd.append("yt-dlp[default,curl-cffi]")
         try:
             proc = subprocess.run(
                 cmd, check=False, capture_output=True, text=True, timeout=timeout_sec, env=env

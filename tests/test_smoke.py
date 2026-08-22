@@ -440,6 +440,17 @@ def test_image_bundles_pinned_deno_js_runtime() -> None:
     assert "RELAYTV_INSTALL_DENO=1" in install_doc
 
 
+def test_rumble_browser_impersonation_dependency_is_bundled_and_declared() -> None:
+    dockerfile = (ROOT_DIR / 'app/Dockerfile').read_text()
+    pyproject = (ROOT_DIR / 'pyproject.toml').read_text()
+    notices = (ROOT_DIR / 'THIRD_PARTY_LICENSES.md').read_text()
+
+    requirement = 'yt-dlp[default,curl-cffi]'
+    assert requirement in dockerfile
+    assert requirement in pyproject
+    assert '`curl-cffi`' in notices
+
+
 def test_compose_device_passthrough_lives_in_generated_override() -> None:
     # A device mapped in the base compose that the host lacks makes compose
     # refuse to create the container, and overrides can add devices but never
@@ -4487,7 +4498,9 @@ def test_resolved_media_wait_ignores_expired_or_invalid_availability(
     assert slept == []
 
 
-def test_resolver_non_youtube_keeps_plain_url_output(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolver_rumble_reads_live_status_with_stream_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _patch_resolver_ytdlp_env(
         monkeypatch,
         'https://cdn.example/rumble-video.mp4\n',
@@ -4497,8 +4510,162 @@ def test_resolver_non_youtube_keeps_plain_url_output(monkeypatch: pytest.MonkeyP
 
     assert stream == 'https://cdn.example/rumble-video.mp4'
     assert audio is None
-    assert '-g' in calls[0]
-    assert '--print' not in calls[0]
+    assert '--impersonate' not in calls[0]
+    assert '--print' in calls[0]
+    assert 'live_status' in calls[0]
+    assert '-g' not in calls[0]
+
+
+def test_rumble_http_403_retries_once_and_preserves_live_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = 'https://rumble.com/v1abcd-live-video.html'
+    calls: list[list[str]] = []
+    responses = [
+        subprocess.CompletedProcess(
+            [],
+            1,
+            '',
+            'ERROR: Unable to download JSON metadata: HTTP Error 403: Forbidden',
+        ),
+        subprocess.CompletedProcess(
+            [],
+            0,
+            'https://cdn.example/live.m3u8\nis_live\n',
+            '',
+        ),
+    ]
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr(
+        'relaytv_app.video_profile.get_profile',
+        lambda: {'display_cap_height': 1080, 'av1_allowed': False},
+    )
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return responses.pop(0)
+
+    monkeypatch.setattr(resolver, 'run', fake_run)
+
+    result = resolver.resolve_streams_ytdlp(url)
+
+    assert len(calls) == 2
+    assert '--impersonate' not in calls[0]
+    assert calls[1][calls[1].index('--impersonate') + 1] == 'chrome'
+    assert result.stream == url
+    assert result.transport == 'mpv_ytdl'
+    assert result.live_status == 'is_live'
+    assert result.ytdl_raw_options.endswith('impersonate=chrome')
+    assert '--impersonate' in result.ytdlp_args
+
+
+def test_rumble_non_403_failure_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr('relaytv_app.video_profile.get_profile', lambda: {})
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(
+        resolver,
+        'run',
+        lambda cmd, **kwargs: calls.append(list(cmd))
+        or subprocess.CompletedProcess(cmd, 1, '', 'ERROR: This video is private'),
+    )
+
+    with pytest.raises(resolver.HTTPException, match='This video is private'):
+        resolver.resolve_streams_ytdlp('https://rumble.com/v1abcd-private.html')
+
+    assert len(calls) == 1
+
+
+def test_rumble_operator_impersonation_is_not_duplicated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setenv('YTDLP_ARGS', '--impersonate safari')
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr('relaytv_app.video_profile.get_profile', lambda: {})
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(
+        resolver,
+        'run',
+        lambda cmd, **kwargs: calls.append(list(cmd))
+        or subprocess.CompletedProcess(cmd, 1, '', 'HTTP Error 403: Forbidden'),
+    )
+
+    with pytest.raises(resolver.HTTPException):
+        resolver.resolve_streams_ytdlp('https://rumble.com/v1abcd-blocked.html')
+
+    assert len(calls) == 1
+    assert calls[0].count('--impersonate') == 1
+    assert calls[0][calls[0].index('--impersonate') + 1] == 'safari'
+
+
+@pytest.mark.parametrize(
+    ('lookup', 'success_stdout', 'expected'),
+    [
+        ('title', 'Recovered title\n', 'Recovered title'),
+        (
+            'info',
+            '{"title": "Recovered metadata", "live_status": "not_live"}',
+            'Recovered metadata',
+        ),
+    ],
+)
+def test_rumble_metadata_lookups_share_http_403_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    lookup: str,
+    success_stdout: str,
+    expected: str,
+) -> None:
+    url = f'https://rumble.com/v1abcd-{lookup}.html'
+    calls: list[list[str]] = []
+    responses = [
+        subprocess.CompletedProcess([], 1, '', 'HTTP Error 403: Forbidden'),
+        subprocess.CompletedProcess([], 0, success_stdout, ''),
+    ]
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(
+        resolver,
+        'run',
+        lambda cmd, **kwargs: calls.append(list(cmd)) or responses.pop(0),
+    )
+    resolver._YTDLP_INFO_CACHE.pop(url, None)
+
+    if lookup == 'title':
+        value = resolver.title_from_ytdlp(url)
+    else:
+        info = resolver.ytdlp_info(url)
+        value = info.get('title') if info else None
+
+    assert value == expected
+    assert len(calls) == 2
+    assert '--impersonate' not in calls[0]
+    assert '--impersonate' in calls[1]
+
+
+def test_rumble_missing_impersonation_support_is_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        subprocess.CompletedProcess([], 1, '', 'HTTP Error 403: Forbidden'),
+        subprocess.CompletedProcess(
+            [],
+            1,
+            '',
+            'ERROR: Impersonate target "chrome" is not available',
+        ),
+    ]
+    monkeypatch.setattr('relaytv_app.state.get_settings', lambda: {})
+    monkeypatch.setattr('relaytv_app.video_profile.get_profile', lambda: {})
+    monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(resolver, 'run', lambda cmd, **kwargs: responses.pop(0))
+
+    with pytest.raises(resolver.HTTPException, match='curl-cffi'):
+        resolver.resolve_streams_ytdlp('https://rumble.com/v1abcd-blocked.html')
+
+    runtime = resolver.get_resolver_runtime_state()
+    assert runtime['last_outcome_category'] == 'provider_challenge'
 
 
 def test_playback_start_watchdog_aborts_stream_that_never_starts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4709,12 +4876,30 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
     assert events[-1] == 'start'
 
 
+@pytest.mark.parametrize(
+    ('provider_name', 'url', 'raw_options'),
+    [
+        (
+            'youtube',
+            'https://youtube.com/watch?v=live1',
+            'cookies=/data/cookies.txt,js-runtimes=deno',
+        ),
+        (
+            'rumble',
+            'https://rumble.com/v1abcd-live.html',
+            'impersonate=chrome',
+        ),
+    ],
+)
 def test_play_item_forwards_live_ytdl_handoff_without_caching_page_url(
     monkeypatch: pytest.MonkeyPatch,
+    provider_name: str,
+    url: str,
+    raw_options: str,
 ) -> None:
-    url = 'https://youtube.com/watch?v=live1'
     load_calls: list[dict[str, object]] = []
     start_calls: list[dict[str, object]] = []
+    resolve_calls: list[str] = []
 
     monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
     monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
@@ -4756,17 +4941,17 @@ def test_play_item_forwards_live_ytdl_handoff_without_caching_page_url(
     monkeypatch.setattr(
         player,
         'resolve_streams',
-        lambda requested_url: resolver.ResolvedStreams(
+        lambda requested_url: resolve_calls.append(requested_url) or resolver.ResolvedStreams(
             stream=requested_url,
             transport='mpv_ytdl',
             ytdl_format='best',
-            ytdl_raw_options='cookies=/data/cookies.txt,js-runtimes=deno',
+            ytdl_raw_options=raw_options,
             live_status='is_live',
         ),
     )
 
     now = player.play_item(
-        {'url': url, 'title': 'Live stream', 'provider': 'youtube'},
+        {'url': url, 'title': 'Live stream', 'provider': provider_name, 'is_live': True},
         use_resolver=True,
         cec=False,
         clear_queue=False,
@@ -4778,11 +4963,13 @@ def test_play_item_forwards_live_ytdl_handoff_without_caching_page_url(
         'audio': None,
         'start_pos': None,
         'ytdl_format_override': 'best',
-        'ytdl_raw_options_override': 'cookies=/data/cookies.txt,js-runtimes=deno',
+        'ytdl_raw_options_override': raw_options,
     }
+    assert resolve_calls == [url]
     assert load_calls == [expected_handoff]
     assert start_calls == [expected_handoff]
     assert now['stream'] == url
+    assert now['is_live'] is True
     assert '_resolved_stream' not in now
 
 
@@ -5875,6 +6062,7 @@ def test_nightly_channel_passes_pre_and_stable_does_not(monkeypatch, tmp_path) -
         container_entrypoint.run_yt_dlp_update(env, force=True)
         assert pip_calls, channel
         assert ("--pre" in pip_calls[0]) is expect_pre, channel
+        assert pip_calls[0][-1] == "yt-dlp[default,curl-cffi]"
 
 
 def test_a_failed_nightly_falls_back_to_stable(monkeypatch, tmp_path) -> None:
