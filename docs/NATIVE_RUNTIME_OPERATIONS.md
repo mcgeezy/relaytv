@@ -205,6 +205,12 @@ curl -sS http://127.0.0.1:8787/status | jq '{
 }'
 ```
 
+The browser-side X11 toast overlay prefers the versioned
+`/x11/overlay/ws` channel and falls back to `/x11/overlay/events` when a proxy
+or older network path blocks WebSocket. `/x11/overlay/client_state` remains the
+authoritative client delivery-health signal; playback visibility continues to
+use its independent HTTP sampler.
+
 The supervisor repairs:
 
 - idle Qt shell process missing or stale after the display becomes ready

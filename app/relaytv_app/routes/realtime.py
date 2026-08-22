@@ -25,3 +25,10 @@ async def ui_websocket(websocket: WebSocket) -> None:
     from . import _ui_websocket_session
 
     await _ui_websocket_session(websocket)
+
+
+@router.websocket("/x11/overlay/ws")
+async def x11_overlay_websocket(websocket: WebSocket) -> None:
+    from . import _x11_overlay_websocket_session
+
+    await _x11_overlay_websocket_session(websocket)

@@ -146,6 +146,7 @@ EXPECTED_ROUTES = {
     ("GET", "/x11/overlay", "x11_overlay_page"),
     ("POST", "/x11/overlay/client_state", "x11_overlay_client_state"),
     ("GET", "/x11/overlay/events", "x11_overlay_events"),
+    ("WEBSOCKET", "/x11/overlay/ws", "x11_overlay_websocket"),
 }
 
 EXPECTED_ALIAS_GROUPS = {

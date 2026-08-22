@@ -346,3 +346,44 @@ def test_ui_websocket_rejects_application_messages(realtime_client) -> None:
         with pytest.raises(WebSocketDisconnect) as exc_info:
             websocket.receive_json()
     assert exc_info.value.code == 1008
+
+
+def test_overlay_websocket_negotiates_and_receives_toast(realtime_client) -> None:
+    with realtime_client.websocket_connect(
+        "/x11/overlay/ws",
+        subprotocols=["relaytv.realtime.v1"],
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        hello = websocket.receive_json()
+        assert hello["event"] == "hello"
+        assert hello["sequence"] == 0
+        assert websocket.accepted_subprotocol == "relaytv.realtime.v1"
+
+        realtime_hub.publish(OVERLAY_CHANNEL, "toast", {"type": "toast", "text": "Ready"})
+        toast = websocket.receive_json()
+        assert toast["event"] == "toast"
+        assert toast["data"] == {"type": "toast", "text": "Ready"}
+
+    assert realtime_hub.subscriber_count(OVERLAY_CHANNEL, transport="websocket") == 0
+
+
+def test_overlay_websocket_rejects_foreign_browser_origin(realtime_client) -> None:
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with realtime_client.websocket_connect(
+            "/x11/overlay/ws",
+            subprotocols=["relaytv.realtime.v1"],
+            headers={"origin": "https://evil.example"},
+        ):
+            pass
+    assert exc_info.value.code == 1008
+
+
+def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_client) -> None:
+    response = realtime_client.get("/x11/overlay")
+
+    assert response.status_code == 200
+    assert "new WebSocket" in response.text
+    assert "new EventSource" in response.text
+    assert "/realtime/capabilities" in response.text
+    assert "/x11/overlay/ws" in response.text
+    assert "/x11/overlay/events" in response.text

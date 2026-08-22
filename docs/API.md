@@ -600,13 +600,18 @@ Notification/runtime introspection:
 Advanced X11 overlay runtime endpoints:
 
 - `GET /x11/overlay`
+- `WEBSOCKET /x11/overlay/ws`
+  - preferred versioned toast stream; requires `relaytv.realtime.v1`
 - `GET /x11/overlay/events`
-  - Server-Sent Events stream for X11 overlay clients
+  - compatible Server-Sent Events fallback for X11 overlay clients
 - `POST /x11/overlay/client_state`
   - body: `{"state", "reason"?, "client_event"?, "client_reason"?, "active_toasts"?}`
 - `GET /x11/host_urls`
 
-These X11 overlay endpoints remain active for overlay/runtime diagnostics and browser-side overlay clients. They are not the primary native Qt control surface.
+The embedded overlay automatically selects WebSocket, then SSE. Playback-state
+visibility polling remains separate, and client delivery telemetry continues
+through `/x11/overlay/client_state`. These X11 endpoints are not the primary
+native Qt control surface.
 
 ## Runtime status and diagnostics
 

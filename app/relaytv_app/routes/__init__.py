@@ -954,6 +954,105 @@ async def _x11_overlay_sse() -> object:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+async def _x11_overlay_websocket_session(websocket: WebSocket) -> None:
+    if SUBPROTOCOL not in _websocket_requested_subprotocols(websocket):
+        await websocket.close(code=1002, reason="unsupported realtime protocol")
+        return
+    if not websocket_origin_allowed(
+        origin=websocket.headers.get("origin"),
+        host=websocket.headers.get("host"),
+        websocket_scheme=str(websocket.scope.get("scheme") or "ws"),
+    ):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
+
+    await websocket.accept(subprotocol=SUBPROTOCOL)
+    subscription = realtime_hub.subscribe(
+        OVERLAY_CHANNEL,
+        transport="websocket",
+        maxsize=50,
+    )
+    try:
+        if hasattr(state, "update_overlay_delivery_state"):
+            state.update_overlay_delivery_state(
+                "connected",
+                "subscriber_connected",
+                client_event="subscriber",
+                client_reason="subscriber_connected",
+            )
+    except Exception:
+        pass
+
+    receive_task: asyncio.Task | None = None
+    event_task: asyncio.Task | None = None
+    try:
+        hello = RealtimeEvent.create(
+            "hello",
+            0,
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "heartbeat_sec": HEARTBEAT_SEC,
+                "replay": False,
+            },
+        )
+        await websocket.send_json(hello.envelope())
+        receive_task = asyncio.create_task(websocket.receive())
+        event_task = asyncio.create_task(subscription.get())
+        while True:
+            done, _pending = await asyncio.wait(
+                {receive_task, event_task},
+                timeout=float(HEARTBEAT_SEC),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if receive_task in done:
+                incoming = receive_task.result()
+                if incoming.get("type") == "websocket.disconnect":
+                    break
+                await websocket.close(code=1008, reason="read-only realtime channel")
+                break
+            if event_task in done:
+                event = event_task.result()
+                await websocket.send_json(event.envelope())
+                while True:
+                    try:
+                        event = subscription.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    await websocket.send_json(event.envelope())
+                event_task = asyncio.create_task(subscription.get())
+                continue
+            ping = RealtimeEvent.create(
+                "ping",
+                realtime_hub.current_sequence(OVERLAY_CHANNEL),
+                {"type": "ping", "ts": time.time()},
+            )
+            await websocket.send_json(ping.envelope())
+    except (WebSocketDisconnect, RealtimeSubscriptionClosed):
+        pass
+    finally:
+        subscription.close()
+        for task in (receive_task, event_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (receive_task, event_task) if task is not None),
+            return_exceptions=True,
+        )
+        try:
+            if (
+                hasattr(state, "update_overlay_delivery_state")
+                and realtime_hub.subscriber_count(OVERLAY_CHANNEL) <= 0
+            ):
+                state.update_overlay_delivery_state(
+                    "disconnected",
+                    "subscriber_gone",
+                    client_event="subscriber",
+                    client_reason="subscriber_gone",
+                )
+        except Exception:
+            pass
+
+
 def _ui_event_push(event_name: str, event: dict) -> None:
     """Push a lightweight UI event to any connected /ui SSE clients."""
     realtime_hub.publish(UI_CHANNEL, event_name, event)
@@ -1882,7 +1981,13 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     const iconMap = {share:"↗",check:"✓",warn:"!",camera:"📷",play:"▶",info:"i"};
     const overlayAllowToastImages = __OVERLAY_ALLOW_IMAGES__;
     let _wasPlaying = true;
-    let _overlayEventSource = null;
+    let _overlayRealtimeTransport = null;
+    let _overlayRealtimeGeneration = 0;
+    let _overlayRealtimeConnecting = false;
+    let _overlayRealtimeCapabilities = null;
+    let _overlayRealtimeRetryTimer = 0;
+    let _overlayRealtimeFailures = 0;
+    let _overlayWsBlockedUntil = 0;
     let _overlayLastEventTs = Date.now();
     let _overlayReportedState = '';
     const overlayToastMetrics = [
@@ -2115,36 +2220,146 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       }catch(_e){}
     }
 
-    function connectEvents(){
-      try{ _overlayEventSource?.close(); }catch(_e){}
-      reportOverlayState('retrying', 'connect_start', 'sse', 'connect_start', true);
-      const es = new EventSource('/x11/overlay/events');
-      _overlayEventSource = es;
+    async function loadOverlayRealtimeCapabilities(){
+      if(_overlayRealtimeCapabilities) return _overlayRealtimeCapabilities;
+      try{
+        const ctrl = new AbortController();
+        const timeout = setTimeout(()=>ctrl.abort(), 2500);
+        const response = await fetch('/realtime/capabilities', {cache:'no-store', signal:ctrl.signal});
+        clearTimeout(timeout);
+        if(!response.ok) throw new Error(`capabilities ${response.status}`);
+        const payload = await response.json();
+        if(Number(payload?.protocol_version) !== 1) throw new Error('unsupported protocol');
+        _overlayRealtimeCapabilities = payload;
+      }catch(_e){
+        _overlayRealtimeCapabilities = {
+          protocol_version:0,
+          websocket:{enabled:false},
+          sse:{enabled:true, overlay:'/x11/overlay/events'},
+        };
+      }
+      return _overlayRealtimeCapabilities;
+    }
+
+    function dispatchOverlayRealtime(msg, kind){
+      if(!msg || typeof msg !== 'object') return;
       _overlayLastEventTs = Date.now();
+      _overlayRealtimeFailures = 0;
+      const event = String(msg.type || '').trim();
+      reportOverlayState(
+        'connected',
+        'stream_connected',
+        kind,
+        event === 'ping' ? 'stream_ping' : (event || 'stream_event'),
+        true
+      );
+      if(event === 'toast') addToast(msg);
+    }
+
+    function scheduleOverlayRealtimeRetry(){
+      if(_overlayRealtimeRetryTimer) return;
+      _overlayRealtimeFailures += 1;
+      const exponent = Math.min(5, Math.max(0, _overlayRealtimeFailures - 1));
+      const base = Math.min(30000, 1000 * (2 ** exponent));
+      const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+      _overlayRealtimeRetryTimer = setTimeout(()=>{
+        _overlayRealtimeRetryTimer = 0;
+        connectEvents();
+      }, delay);
+    }
+
+    function retireOverlayRealtime(active, reason, failed=false){
+      if(_overlayRealtimeTransport !== active || active.generation !== _overlayRealtimeGeneration) return;
+      _overlayRealtimeTransport = null;
+      _overlayRealtimeGeneration += 1;
+      try{ active.handle.close(); }catch(_e){}
+      if(active.kind === 'websocket' && failed) _overlayWsBlockedUntil = Date.now() + 60000;
+      reportOverlayState('retrying', reason, active.kind, reason, true);
+      scheduleOverlayRealtimeRetry();
+    }
+
+    function openOverlaySse(capabilities, generation){
+      if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+      const path = String(capabilities?.sse?.overlay || '/x11/overlay/events');
+      let es = null;
+      try{ es = new EventSource(path); }catch(_e){ scheduleOverlayRealtimeRetry(); return; }
+      const active = {kind:'sse', handle:es, generation};
+      _overlayRealtimeTransport = active;
       es.onmessage = (ev)=>{
-        _overlayLastEventTs = Date.now();
-        try{
-          const msg=JSON.parse(ev.data || '{}');
-          reportOverlayState('connected', 'stream_connected', 'sse', msg.type === 'ping' ? 'stream_ping' : (msg.type || 'stream_event'), true);
-          if(msg.type==='toast') addToast(msg);
-        }catch(_e){}
+        if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+        try{ dispatchOverlayRealtime(JSON.parse(ev.data || '{}'), 'sse'); }catch(_e){}
       };
-      es.onerror = ()=>{
-        reportOverlayState('retrying', 'eventsource_error', 'sse', 'eventsource_error', true);
-        try{es.close();}catch(_e){}
-        if(_overlayEventSource === es) _overlayEventSource = null;
-        setTimeout(connectEvents, 1200);
+      es.onerror = ()=>retireOverlayRealtime(active, 'eventsource_error', true);
+    }
+
+    function openOverlayWebSocket(capabilities, generation){
+      if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+      const path = String(capabilities?.websocket?.overlay || '/x11/overlay/ws');
+      const url = new URL(path, window.location.href);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      let socket = null;
+      try{ socket = new WebSocket(url.toString(), 'relaytv.realtime.v1'); }
+      catch(_e){
+        _overlayWsBlockedUntil = Date.now() + 60000;
+        openOverlaySse(capabilities, generation);
+        return;
+      }
+      const active = {kind:'websocket', handle:socket, generation, proved:false};
+      _overlayRealtimeTransport = active;
+      socket.onmessage = (ev)=>{
+        if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+        let envelope = null;
+        try{ envelope = JSON.parse(ev.data || '{}'); }catch(_e){ return; }
+        if(Number(envelope?.version) !== 1 || typeof envelope?.event !== 'string') return;
+        if(!active.proved && envelope.event !== 'hello'){
+          retireOverlayRealtime(active, 'websocket_protocol_error', true);
+          return;
+        }
+        active.proved = true;
+        const payload = (envelope.data && typeof envelope.data === 'object') ? envelope.data : {};
+        if(!payload.type) payload.type = envelope.event;
+        dispatchOverlayRealtime(payload, 'websocket');
       };
+      socket.onerror = ()=>{};
+      socket.onclose = ()=>retireOverlayRealtime(active, 'websocket_closed', !active.proved);
+    }
+
+    async function connectEvents(){
+      if(_overlayRealtimeTransport || _overlayRealtimeConnecting) return;
+      const generation = ++_overlayRealtimeGeneration;
+      _overlayRealtimeConnecting = true;
+      reportOverlayState('retrying', 'connect_start', 'realtime', 'connect_start', true);
+      try{
+        const capabilities = await loadOverlayRealtimeCapabilities();
+        if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+        const websocketReady = (
+          capabilities?.websocket?.enabled === true
+          && typeof window.WebSocket === 'function'
+          && Date.now() >= _overlayWsBlockedUntil
+        );
+        if(websocketReady) openOverlayWebSocket(capabilities, generation);
+        else openOverlaySse(capabilities, generation);
+      }catch(_e){
+        scheduleOverlayRealtimeRetry();
+      }finally{
+        if(generation === _overlayRealtimeGeneration) _overlayRealtimeConnecting = false;
+      }
     }
     connectEvents();
     setInterval(()=>{
-      if(!_overlayEventSource) return;
+      const active = _overlayRealtimeTransport;
+      if(!active) return;
       if((Date.now() - _overlayLastEventTs) < 30000) return;
-      reportOverlayState('stale', 'stream_stale', 'sse', 'stream_stale', true);
-      try{ _overlayEventSource.close(); }catch(_e){}
-      _overlayEventSource = null;
-      connectEvents();
+      reportOverlayState('stale', 'stream_stale', active.kind, 'stream_stale', true);
+      retireOverlayRealtime(active, 'stream_stale', active.kind === 'websocket');
     }, 10000);
+    setInterval(()=>{
+      const active = _overlayRealtimeTransport;
+      if(!active || active.kind !== 'sse') return;
+      if(_overlayRealtimeCapabilities?.websocket?.enabled !== true) return;
+      if(Date.now() < _overlayWsBlockedUntil) return;
+      retireOverlayRealtime(active, 'websocket_reprobe', false);
+    }, 300000);
   </script>
 </body>
 </html>"""

@@ -1,6 +1,6 @@
 # Realtime Connectivity Roadmap
 
-Status: M4 complete; X11 overlay migration next
+Status: M5 complete; cross-repository verification next
 Primary branch: `feat/realtime-connectivity`  
 Repositories: `relaytv`, `relaytv-ha`, `relaytv-android`
 
@@ -274,7 +274,7 @@ commits. A milestone is complete only after its listed tests pass.
 | M2 | `relaytv` | `/ui/ws`, shared sampler, and browser automatic selection | Complete |
 | M3 | `relaytv-ha` | WS/SSE/poll coordinator and `local_push` metadata | Complete |
 | M4 | `relaytv-android` | Native media-service WS/SSE/poll client | Complete |
-| M5 | `relaytv` | X11 overlay WebSocket transport | Planned |
+| M5 | `relaytv` | X11 overlay WebSocket transport | Complete |
 | M6 | all | Cross-version soak, documentation, and rollout decision | Planned |
 
 ## Verification Plan
@@ -373,3 +373,4 @@ server milestone is ready to ship; do not add one during planning alone.
 | 2026-08-22 | M2 | Added the read-only UI WebSocket, shared snapshot sampler, protocol/origin enforcement, capability activation, and browser WS-to-SSE-to-poll selection. |
 | 2026-08-22 | M3 | Added Home Assistant capability discovery, owned WS/SSE/poll selection, sequence and generation guards, atomic reconfiguration, `local_push` metadata, and lifecycle/fallback tests. |
 | 2026-08-22 | M4 | Added Android native WebSocket/SSE selection, adaptive polling fallback, streaming-client ownership, generation-safe server/network switching, retained snapshots, and MockWebServer coverage. |
+| 2026-08-22 | M5 | Added the versioned X11 overlay WebSocket, origin/subprotocol enforcement, browser WS-to-SSE selection, stale-stream recovery, telemetry continuity, and route/client tests. |
