@@ -43,6 +43,7 @@ logger = get_logger("player")
 _NATURAL_IDLE_RESET_UNTIL = 0.0
 _NATURAL_IDLE_ENSURE_TIMER: threading.Timer | None = None
 _HISTORY_PROGRESS_LAST_PERSIST: dict[str, float] = {}
+_QT_SHELL_RUNTIME_CONTROL_LOCK = threading.Lock()
 
 
 def _idle_dashboard_enabled() -> bool:
@@ -2092,8 +2093,8 @@ def _qt_shell_runtime_load_stream(stream_url: str, audio_url: str | None = None,
     pos = _normalize_start_pos(start_pos)
     if pos is not None:
         payload["start_pos"] = pos
-    return _qt_shell_runtime_finalize_control_result(
-        _qt_shell_runtime_write_control(payload),
+    return _qt_shell_runtime_submit_control(
+        payload,
         timeout_sec=max(1.5, _qt_shell_runtime_control_wait_sec()),
     )
 
@@ -2127,8 +2128,8 @@ def qt_shell_runtime_overlay_toast(
         payload["link_text"] = str(link_text)
     if isinstance(style, dict) and style:
         payload["style"] = dict(style)
-    return _qt_shell_runtime_finalize_control_result(
-        _qt_shell_runtime_write_control(payload),
+    return _qt_shell_runtime_submit_control(
+        payload,
         timeout_sec=max(1.0, _qt_shell_runtime_control_wait_sec()),
     )
 
@@ -2265,6 +2266,24 @@ def _qt_shell_runtime_finalize_control_result(result: dict[str, Any], *, timeout
         "ack_reason": str(ack.get("reason") or "control_failed"),
         "detail": str(telemetry.get("last_control_error") or "qt runtime control ack unavailable"),
     }
+
+
+def _qt_shell_runtime_submit_control(payload: dict[str, Any], *, timeout_sec: float | None = None) -> dict[str, Any]:
+    """Publish one single-slot Qt control request and retain its ack slot."""
+    with _QT_SHELL_RUNTIME_CONTROL_LOCK:
+        return _qt_shell_runtime_finalize_control_result(
+            _qt_shell_runtime_write_control(payload),
+            timeout_sec=timeout_sec,
+        )
+
+
+def _qt_shell_runtime_submit_command(cmd_list: list, *, timeout_sec: float | None = None) -> dict[str, Any]:
+    """Serialize an mpv-shaped command through the Qt control mailbox."""
+    with _QT_SHELL_RUNTIME_CONTROL_LOCK:
+        return _qt_shell_runtime_finalize_control_result(
+            _qt_shell_runtime_command(cmd_list),
+            timeout_sec=timeout_sec,
+        )
 
 
 def _qt_runtime_active(*, require_active_session: bool = True) -> bool:
@@ -3335,17 +3354,17 @@ def mpv_command(cmd_list: list):
     ):
         runtime_timeout = _qt_shell_runtime_pause_wait_sec()
     if runtime_cmd_allowed:
-        return _qt_shell_runtime_finalize_control_result(_qt_shell_runtime_command(cmd_list), timeout_sec=runtime_timeout)
+        return _qt_shell_runtime_submit_command(cmd_list, timeout_sec=runtime_timeout)
     try:
         result = _mpv_ipc_request({"command": cmd_list})
     except Exception:
         if runtime_cmd_allowed:
-            return _qt_shell_runtime_finalize_control_result(_qt_shell_runtime_command(cmd_list), timeout_sec=runtime_timeout)
+            return _qt_shell_runtime_submit_command(cmd_list, timeout_sec=runtime_timeout)
         raise
     if isinstance(result, dict) and result.get("error") == "success":
         return result
     if runtime_cmd_allowed:
-        return _qt_shell_runtime_finalize_control_result(_qt_shell_runtime_command(cmd_list), timeout_sec=runtime_timeout)
+        return _qt_shell_runtime_submit_command(cmd_list, timeout_sec=runtime_timeout)
     return result
 
 
