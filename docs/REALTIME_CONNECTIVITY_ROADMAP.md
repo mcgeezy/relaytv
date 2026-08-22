@@ -342,9 +342,9 @@ git diff --check
 
 | Repository | Branch commit | Verified gate |
 | --- | --- | --- |
-| `relaytv` | `5262dc4` plus M6 compatibility tests | `ruff check app tests`; full pytest; UI and generated-overlay JavaScript syntax checks |
-| `relaytv-ha` | `1b0bca6` | ruff; 38 pytest tests, including legacy `404`, fallback, ownership, and reconfigure ordering |
-| `relaytv-android` | `ac40c7b` | clean debug APK assembly; Android lint; 8 unit/MockWebServer tests |
+| `relaytv` | through `44a3c8a` | ruff; 660 pytest tests; UI and generated-overlay JavaScript syntax checks |
+| `relaytv-ha` | `1b0bca6`, `297b551` | ruff; 38 pytest tests, including legacy `404`, fallback, ownership, and reconfigure ordering |
+| `relaytv-android` | `ac40c7b`, `473c420` | clean debug APK assembly; Android lint; 8 unit/MockWebServer tests |
 
 The automated matrix proves new-client/legacy-server selection and preserves
 the existing SSE wire framing for legacy clients. The remaining M6 work is a
