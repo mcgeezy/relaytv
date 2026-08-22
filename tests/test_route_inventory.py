@@ -107,6 +107,7 @@ EXPECTED_ROUTES = {
     ("GET", "/pwa/{asset_path:path}", "pwa_static_asset"),
     ("GET", "/qr/connect.svg", "qr_connect_svg"),
     ("GET", "/queue", "queue"),
+    ("GET", "/realtime/capabilities", "realtime_capabilities"),
     ("POST", "/queue/add", "enqueue"),
     ("POST", "/queue/dedupe", "queue_dedupe"),
     ("POST", "/queue/handoff", "queue_handoff"),

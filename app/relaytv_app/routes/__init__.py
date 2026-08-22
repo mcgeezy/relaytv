@@ -121,6 +121,7 @@ from .playback import (
 from .playback import router as playback_router
 from .postlive import router as postlive_router
 from .queue import router as queue_router
+from .realtime import router as realtime_router
 from .settings import (
     SettingsReq as SettingsReq,
     YouTubeCookiesUploadReq as YouTubeCookiesUploadReq,
@@ -152,6 +153,7 @@ router.include_router(peers_router)
 router.include_router(playback_router)
 router.include_router(postlive_router)
 router.include_router(queue_router)
+router.include_router(realtime_router)
 router.include_router(settings_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)

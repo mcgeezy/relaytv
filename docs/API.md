@@ -87,6 +87,10 @@ server {
 ## UI and utility endpoints
 
 - `GET /ui`: main web UI HTML
+- `GET /realtime/capabilities`
+  - uncached discovery document for the versioned realtime protocol
+  - clients select only transports whose `enabled` field is true
+  - a `404` identifies a legacy server and clients should use SSE or polling
 - `GET /ui/events`
   - Server-Sent Events stream for the main web UI
 - `GET /static/ui/{asset_name}`: static CSS/JavaScript used by `/ui`
