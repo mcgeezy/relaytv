@@ -388,3 +388,4 @@ server milestone is ready to ship; do not add one during planning alone.
 | 2026-08-22 | M4 | Added Android native WebSocket/SSE selection, adaptive polling fallback, streaming-client ownership, generation-safe server/network switching, retained snapshots, and MockWebServer coverage. |
 | 2026-08-22 | M5 | Added the versioned X11 overlay WebSocket, origin/subprotocol enforcement, browser WS-to-SSE selection, stale-stream recovery, telemetry continuity, and route/client tests. |
 | 2026-08-22 | M6 automated | Verified server, Home Assistant, and Android gates; pinned legacy capability/SSE compatibility; added proxy, privacy, operations, release-checklist, and release-highlight documentation. Physical-device and deployed-proxy soak remains. |
+| 2026-08-22 | M6 hardening | Reset client sequence baselines after a versioned hello, pairing reconnect refresh with clean handling when a restarted server begins a new process-local sequence. |

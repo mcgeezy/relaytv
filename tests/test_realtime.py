@@ -389,6 +389,13 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
     assert "/x11/overlay/events" in response.text
 
 
+def test_browser_resets_process_local_sequence_on_reconnect_hello(realtime_client) -> None:
+    source = realtime_client.get("/static/ui/app.js")
+
+    assert source.status_code == 200
+    assert "if (name === 'hello') __uiLastSequence = 0;" in source.text
+
+
 def test_sse_adapters_preserve_legacy_wire_framing() -> None:
     class ConnectedRequest:
         async def is_disconnected(self) -> bool:

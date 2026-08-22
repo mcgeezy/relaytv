@@ -1408,6 +1408,7 @@ function _dispatchUiRealtimeEvent(eventName, payload, sequence){
   const name = String(eventName || '').trim();
   if (!name) return;
   _uiEventMarkAlive();
+  if (name === 'hello') __uiLastSequence = 0;
   const nextSequence = Number(sequence || 0);
   if (nextSequence > 0) {
     if (__uiLastSequence > 0 && nextSequence > (__uiLastSequence + 1)) {
