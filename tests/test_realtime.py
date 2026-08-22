@@ -3,7 +3,10 @@ import asyncio
 
 from fastapi.testclient import TestClient
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
+from relaytv_app import upload_store
+from relaytv_app import routes
 from relaytv_app.main import create_app
 from relaytv_app.realtime import (
     OVERLAY_CHANNEL,
@@ -12,8 +15,16 @@ from relaytv_app.realtime import (
     RealtimeEvent,
     RealtimeSubscriptionClosed,
     realtime_capabilities_payload,
+    realtime_hub,
     websocket_origin_allowed,
 )
+
+
+@pytest.fixture
+def realtime_client(monkeypatch):
+    monkeypatch.setattr(upload_store, "cleanup_uploads", lambda _settings: None)
+    with TestClient(create_app(testing=True)) as client:
+        yield client
 
 
 def test_realtime_capabilities_select_only_available_transport() -> None:
@@ -45,7 +56,7 @@ def test_realtime_capabilities_route_is_open_and_not_cached(monkeypatch) -> None
     response = client.get("/realtime/capabilities")
 
     assert response.status_code == 200
-    assert response.json()["preferred_transport"] == "sse"
+    assert response.json()["preferred_transport"] == "websocket"
     assert response.headers["cache-control"] == "no-store"
     assert "operator-secret" not in response.text
 
@@ -202,3 +213,136 @@ def test_realtime_hub_tracks_transport_counts_and_closes_waiters() -> None:
             await ui.get()
 
     asyncio.run(scenario())
+
+
+def test_realtime_hub_replays_shared_snapshots_only_while_channel_is_active() -> None:
+    async def scenario() -> None:
+        hub = RealtimeHub()
+        first = hub.subscribe(UI_CHANNEL, transport="sse", maxsize=10, replay_latest=True)
+        hub.publish(UI_CHANNEL, "playback", {"position": 10})
+        hub.publish(UI_CHANNEL, "status", {"state": "playing"})
+        await asyncio.sleep(0)
+
+        second = hub.subscribe(UI_CHANNEL, transport="websocket", maxsize=10, replay_latest=True)
+        await asyncio.sleep(0)
+        assert second.get_nowait().data == {"position": 10}
+        assert second.get_nowait().data == {"state": "playing"}
+
+        first.close()
+        second.close()
+        third = hub.subscribe(UI_CHANNEL, transport="sse", maxsize=10, replay_latest=True)
+        await asyncio.sleep(0)
+        with pytest.raises(asyncio.QueueEmpty):
+            third.get_nowait()
+        third.close()
+
+    asyncio.run(scenario())
+
+
+def test_ui_snapshot_sampler_computes_once_for_multiple_subscribers(monkeypatch) -> None:
+    calls = {"fast": 0, "status": 0}
+
+    def fast_snapshot():
+        calls["fast"] += 1
+        return {"playing": True, "has_now_playing": True, "queue_length": 0, "position": 1}
+
+    def full_snapshot():
+        calls["status"] += 1
+        return {"playing": True, "state": "playing", "queue": []}
+
+    monkeypatch.setattr(routes, "_playback_state_fast_snapshot", fast_snapshot)
+    monkeypatch.setattr(routes, "_status_payload", full_snapshot)
+
+    async def scenario() -> None:
+        first = realtime_hub.subscribe(UI_CHANNEL, transport="sse", maxsize=10)
+        second = realtime_hub.subscribe(UI_CHANNEL, transport="websocket", maxsize=10)
+        stop_event = asyncio.Event()
+        task = asyncio.create_task(routes._ui_snapshot_sampler(stop_event))
+        try:
+            first_events = {
+                (await asyncio.wait_for(first.get(), timeout=1)).event,
+                (await asyncio.wait_for(first.get(), timeout=1)).event,
+            }
+            second_events = {
+                (await asyncio.wait_for(second.get(), timeout=1)).event,
+                (await asyncio.wait_for(second.get(), timeout=1)).event,
+            }
+            assert first_events == {"playback", "status"}
+            assert second_events == {"playback", "status"}
+        finally:
+            stop_event.set()
+            await task
+            first.close()
+            second.close()
+
+    asyncio.run(scenario())
+    assert calls == {"fast": 1, "status": 1}
+
+
+def test_ui_websocket_negotiates_protocol_and_receives_published_event(realtime_client) -> None:
+    with realtime_client.websocket_connect(
+        "/ui/ws",
+        subprotocols=["relaytv.realtime.v1"],
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        hello = websocket.receive_json()
+        assert hello["version"] == 1
+        assert hello["event"] == "hello"
+        assert hello["sequence"] == 0
+        assert hello["data"] == {
+            "protocol_version": 1,
+            "heartbeat_sec": 5,
+            "replay": False,
+        }
+        assert websocket.accepted_subprotocol == "relaytv.realtime.v1"
+
+        realtime_hub.publish(UI_CHANNEL, "queue", {"queue_length": 3})
+        while True:
+            event = websocket.receive_json()
+            if event["event"] == "queue":
+                break
+        assert event["data"] == {"queue_length": 3}
+
+
+def test_ui_websocket_accepts_originless_native_client(realtime_client) -> None:
+    with realtime_client.websocket_connect(
+        "/ui/ws",
+        subprotocols=["relaytv.realtime.v1"],
+    ) as websocket:
+        assert websocket.receive_json()["event"] == "hello"
+
+
+@pytest.mark.parametrize(
+    ("subprotocols", "headers", "close_code"),
+    [
+        ([], {"origin": "http://testserver"}, 1002),
+        (["relaytv.realtime.v1"], {"origin": "https://evil.example"}, 1008),
+    ],
+)
+def test_ui_websocket_rejects_unsupported_protocol_or_foreign_origin(
+    realtime_client,
+    subprotocols: list[str],
+    headers: dict[str, str],
+    close_code: int,
+) -> None:
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with realtime_client.websocket_connect(
+            "/ui/ws",
+            subprotocols=subprotocols,
+            headers=headers,
+        ):
+            pass
+    assert exc_info.value.code == close_code
+
+
+def test_ui_websocket_rejects_application_messages(realtime_client) -> None:
+    with realtime_client.websocket_connect(
+        "/ui/ws",
+        subprotocols=["relaytv.realtime.v1"],
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        assert websocket.receive_json()["event"] == "hello"
+        websocket.send_json({"command": "pause"})
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+    assert exc_info.value.code == 1008

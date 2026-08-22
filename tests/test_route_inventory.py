@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, APIWebSocketRoute
 
 from relaytv_app.main import create_app
 
@@ -139,6 +139,7 @@ EXPECTED_ROUTES = {
     ("GET", "/tv/status", "tv_status"),
     ("GET", "/ui", "ui"),
     ("GET", "/ui/events", "ui_events"),
+    ("WEBSOCKET", "/ui/ws", "ui_websocket"),
     ("POST", "/v1/queue/add", "enqueue"),
     ("POST", "/volume", "volume"),
     ("GET", "/x11/host_urls", "x11_host_urls"),
@@ -177,6 +178,9 @@ def _collect_api_routes(routes, prefix: str = "") -> set[tuple[str, str, str]]:
         if isinstance(route, APIRoute):
             for method in sorted(route.methods or []):
                 out.add((method, prefix + route.path, route.name))
+            continue
+        if isinstance(route, APIWebSocketRoute):
+            out.add(("WEBSOCKET", prefix + route.path, route.name))
             continue
         included = getattr(route, "original_router", None)
         if included is not None:

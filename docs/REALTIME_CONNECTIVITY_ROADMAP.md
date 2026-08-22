@@ -1,6 +1,6 @@
 # Realtime Connectivity Roadmap
 
-Status: M1 complete; M2 next
+Status: M2 complete; companion-client milestones next
 Primary branch: `feat/realtime-connectivity`  
 Repositories: `relaytv`, `relaytv-ha`, `relaytv-android`
 
@@ -271,7 +271,7 @@ commits. A milestone is complete only after its listed tests pass.
 | --- | --- | --- | --- |
 | M0 | `relaytv` | Protocol, capabilities, security contract, and test fixtures | Complete |
 | M1 | `relaytv` | Thread-safe hub and SSE adapters; no client behavior change | Complete |
-| M2 | `relaytv` | `/ui/ws`, shared sampler, and browser automatic selection | Planned |
+| M2 | `relaytv` | `/ui/ws`, shared sampler, and browser automatic selection | Complete |
 | M3 | `relaytv-ha` | WS/SSE/poll coordinator and `local_push` metadata | Planned |
 | M4 | `relaytv-android` | Native media-service WS/SSE/poll client | Planned |
 | M5 | `relaytv` | X11 overlay WebSocket transport | Planned |
@@ -370,3 +370,4 @@ server milestone is ready to ship; do not add one during planning alone.
 | 2026-08-22 | Planning | Cross-repository design recorded; implementation not started. |
 | 2026-08-22 | M0 | Added versioned protocol primitives, truthful capability discovery, origin policy, public-route coverage, and focused tests. |
 | 2026-08-22 | M1 | Added thread-safe loop handoff, bounded/coalescing subscriptions, transport metrics, and SSE adapters over the shared hub. |
+| 2026-08-22 | M2 | Added the read-only UI WebSocket, shared snapshot sampler, protocol/origin enforcement, capability activation, and browser WS-to-SSE-to-poll selection. |

@@ -169,6 +169,7 @@ class RealtimeHub:
         self._lock = threading.RLock()
         self._subscriptions: dict[int, RealtimeSubscription] = {}
         self._sequences: dict[str, int] = {}
+        self._latest_snapshots: dict[str, dict[str, RealtimeEvent]] = {}
         self._ids = itertools.count(1)
 
     def subscribe(
@@ -177,6 +178,7 @@ class RealtimeHub:
         *,
         transport: str,
         maxsize: int,
+        replay_latest: bool = False,
     ) -> RealtimeSubscription:
         name = str(channel or "").strip()
         transport_name = str(transport or "").strip()
@@ -184,6 +186,9 @@ class RealtimeHub:
             raise ValueError("realtime channel and transport are required")
         loop = asyncio.get_running_loop()
         with self._lock:
+            existing_channel_subscribers = any(
+                item.channel == name for item in self._subscriptions.values()
+            )
             subscription = RealtimeSubscription(
                 hub=self,
                 subscription_id=next(self._ids),
@@ -193,7 +198,17 @@ class RealtimeHub:
                 maxsize=maxsize,
             )
             self._subscriptions[subscription.subscription_id] = subscription
-            return subscription
+            retained = (
+                sorted(
+                    self._latest_snapshots.get(name, {}).values(),
+                    key=lambda item: item.sequence,
+                )
+                if replay_latest and existing_channel_subscribers
+                else []
+            )
+        for event in retained:
+            subscription.schedule(event)
+        return subscription
 
     def unsubscribe(self, subscription: RealtimeSubscription) -> None:
         with self._lock:
@@ -201,6 +216,10 @@ class RealtimeHub:
             if existing is not subscription:
                 return
             self._subscriptions.pop(subscription.subscription_id, None)
+            if not any(
+                item.channel == subscription.channel for item in self._subscriptions.values()
+            ):
+                self._latest_snapshots.pop(subscription.channel, None)
         try:
             running_loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -223,12 +242,18 @@ class RealtimeHub:
             sequence = self._sequences.get(name, 0) + 1
             self._sequences[name] = sequence
             message = RealtimeEvent.create(event, sequence, data)
+            if message.event in _COALESCED_EVENTS:
+                self._latest_snapshots.setdefault(name, {})[message.event] = message
             targets = [
                 subscription
                 for subscription in self._subscriptions.values()
                 if subscription.channel == name
             ]
         return sum(1 for subscription in targets if subscription.schedule(message))
+
+    def current_sequence(self, channel: str) -> int:
+        with self._lock:
+            return self._sequences.get(channel, 0)
 
     def subscriber_count(self, channel: str, *, transport: str | None = None) -> int:
         with self._lock:

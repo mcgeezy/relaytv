@@ -2,7 +2,7 @@
 
 Base URL (default): `http://<host>:8787`
 
-RelayTV serves its HTTP API from the root path. Most endpoints return JSON. HTML, SVG, image, and SSE endpoints are called out explicitly below.
+RelayTV serves its HTTP API from the root path. Most endpoints return JSON. HTML, SVG, image, SSE, and WebSocket endpoints are called out explicitly below.
 
 This file is the active endpoint reference for the native Qt runtime. Historical compat-only endpoints are removed from the active tree and are not documented here.
 
@@ -77,6 +77,10 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8787;
         proxy_set_header Host $host;
+        # Required for WebSocket realtime delivery:
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         # Required for /ui/events (Server-Sent Events):
         proxy_buffering off;
         proxy_read_timeout 1h;
@@ -91,8 +95,12 @@ server {
   - uncached discovery document for the versioned realtime protocol
   - clients select only transports whose `enabled` field is true
   - a `404` identifies a legacy server and clients should use SSE or polling
+- `WEBSOCKET /ui/ws`
+  - preferred versioned live-state channel for the browser UI and native clients
+  - requires the `relaytv.realtime.v1` WebSocket subprotocol
+  - server-to-client only; playback commands remain authenticated HTTP writes
 - `GET /ui/events`
-  - Server-Sent Events stream for the main web UI
+  - compatible Server-Sent Events fallback for the main web UI and companion clients
 - `GET /static/ui/{asset_name}`: static CSS/JavaScript used by `/ui`
 - `GET /idle`: idle dashboard HTML
 - `GET /`: redirects to `/ui`
@@ -132,13 +140,16 @@ Selected SVG/asset helpers also exist for the UI:
 - `GET /pwa/{asset_path:path}`
 - `GET /favicon.ico`
 
-`GET /ui/events` is the stable browser-state push path for the native UI. It is not a durable event log and does not support replay cursors or sequence resumption. The contract is:
+`WEBSOCKET /ui/ws` is the preferred browser-state push path. `GET /ui/events`
+preserves the compatible SSE payload contract for older or WebSocket-blocked
+clients. Neither transport is a durable event log or supports replay cursors.
+The contract is:
 
 - snapshot events remain authoritative
 - hint events trigger targeted refresh/render work
 - clients should reconnect on disconnect and keep `/status` as bootstrap/fallback
 
-Current `/ui/events` event types:
+Current UI realtime event types:
 
 - `hello`
   - initial connection confirmation
@@ -157,6 +168,24 @@ Current `/ui/events` event types:
   - currently emitted for connect, disconnect, register, catalog cache clear, play, and queue-only Jellyfin actions
 
 Clients should treat `status` as the authoritative full-state refresh, use `playback` for fast-path UI updates, and treat `queue` / `jellyfin` as immediate refresh hints rather than a standalone source of truth.
+
+WebSocket messages use this envelope:
+
+```json
+{
+  "version": 1,
+  "event": "playback",
+  "sequence": 42,
+  "timestamp": 1787420000.0,
+  "data": {}
+}
+```
+
+Clients request the `relaytv.realtime.v1` subprotocol, refresh `/status` after
+reconnect or a sequence gap, and ignore sequence equality on application-level
+`ping` messages. Browser handshakes must be same-origin. Origin-less native
+clients are accepted because this channel exposes the same open read data as
+`GET /status`; native clients may still send their configured bearer header.
 
 ## IPTV catalog and playback
 
@@ -732,7 +761,8 @@ Native Jellyfin browse/detail endpoints:
 
 - Queue/history/session/settings persistence lives under `/data`.
 - Playback/state endpoints are server-authoritative; the web UI should not invent state locally.
-- `/ui/events` is the preferred hot-state delivery path for the browser UI, but `/status` remains the supported reconnect/bootstrap fallback.
+- `/ui/ws` is the preferred hot-state delivery path; `/ui/events` and then
+  `/status` remain the supported compatibility and reconnect fallbacks.
 - Some control endpoints return `400` for invalid user actions such as empty queue or no resumable session.
 - Some playback-dependent endpoints return `409` when active playback is required and unavailable, for example `/snapshot`.
 - Existing aliases remain active where noted for backward compatibility.

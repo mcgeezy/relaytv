@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
     StreamingResponse,
     HTMLResponse,
@@ -24,7 +24,17 @@ from .. import config, discovery_mdns, playback_service, player, public_media, r
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
-from ..realtime import OVERLAY_CHANNEL, UI_CHANNEL, realtime_hub
+from ..realtime import (
+    HEARTBEAT_SEC,
+    PROTOCOL_VERSION,
+    SUBPROTOCOL,
+    OVERLAY_CHANNEL,
+    UI_CHANNEL,
+    RealtimeEvent,
+    RealtimeSubscriptionClosed,
+    realtime_hub,
+    websocket_origin_allowed,
+)
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
@@ -3221,14 +3231,14 @@ def status():
 
 
 async def _ui_events_sse(request: Request) -> object:
-    subscription = realtime_hub.subscribe(UI_CHANNEL, transport="sse", maxsize=100)
+    subscription = realtime_hub.subscribe(
+        UI_CHANNEL,
+        transport="sse",
+        maxsize=100,
+        replay_latest=True,
+    )
 
     async def gen():
-        last_fast_json = ""
-        last_status_json = ""
-        last_has_now_playing = None
-        last_queue_length = None
-        last_full_ts = 0.0
         last_emit_ts = 0.0
 
         try:
@@ -3241,7 +3251,7 @@ async def _ui_events_sse(request: Request) -> object:
                     break
 
                 try:
-                    message = await asyncio.wait_for(subscription.get(), timeout=0.75)
+                    message = await asyncio.wait_for(subscription.get(), timeout=5.0)
                     payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
                     yield f"event: {message.event}\ndata: {payload}\n\n"
                     last_emit_ts = time.time()
@@ -3255,34 +3265,6 @@ async def _ui_events_sse(request: Request) -> object:
                         last_emit_ts = time.time()
                 except asyncio.TimeoutError:
                     pass
-
-                now_ts = time.time()
-                fast = _playback_state_fast_snapshot()
-                fast_json = _json.dumps(fast, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
-                queue_length = int(fast.get("queue_length") or 0)
-                has_now_playing = bool(fast.get("has_now_playing"))
-                force_full = (
-                    (last_queue_length is None)
-                    or (queue_length != last_queue_length)
-                    or (has_now_playing != last_has_now_playing)
-                    or ((now_ts - last_full_ts) >= 5.0)
-                )
-
-                if fast_json != last_fast_json:
-                    last_fast_json = fast_json
-                    yield f"event: playback\ndata: {fast_json}\n\n"
-                    last_emit_ts = now_ts
-
-                if force_full:
-                    full = _status_payload()
-                    full_json = _json.dumps(full, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
-                    if full_json != last_status_json:
-                        last_status_json = full_json
-                        yield f"event: status\ndata: {full_json}\n\n"
-                        last_emit_ts = time.time()
-                    last_full_ts = time.time()
-                    last_queue_length = queue_length
-                    last_has_now_playing = has_now_playing
 
                 # Idle ping cadence must stay well inside the client's health
                 # window (app.js _uiEventHealthy) or a quiet stream reads as dead.
@@ -3298,6 +3280,182 @@ async def _ui_events_sse(request: Request) -> object:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+_UI_SAMPLER_TASK: asyncio.Task | None = None
+_UI_SAMPLER_STOP: asyncio.Event | None = None
+
+
+async def _ui_snapshot_sampler(stop_event: asyncio.Event) -> None:
+    last_fast_json = ""
+    last_status_json = ""
+    last_has_now_playing = None
+    last_queue_length = None
+    last_full_ts = 0.0
+
+    async def _wait(delay: float) -> None:
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass
+
+    while not stop_event.is_set():
+        if realtime_hub.subscriber_count(UI_CHANNEL) <= 0:
+            last_fast_json = ""
+            last_status_json = ""
+            last_has_now_playing = None
+            last_queue_length = None
+            last_full_ts = 0.0
+            await _wait(0.25)
+            continue
+
+        try:
+            now_ts = time.monotonic()
+            fast = await asyncio.to_thread(_playback_state_fast_snapshot)
+            fast_json = _json.dumps(
+                fast,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            queue_length = int(fast.get("queue_length") or 0)
+            has_now_playing = bool(fast.get("has_now_playing"))
+            force_full = (
+                last_queue_length is None
+                or queue_length != last_queue_length
+                or has_now_playing != last_has_now_playing
+                or (now_ts - last_full_ts) >= 5.0
+            )
+
+            if fast_json != last_fast_json:
+                last_fast_json = fast_json
+                realtime_hub.publish(UI_CHANNEL, "playback", fast)
+
+            if force_full:
+                full = await asyncio.to_thread(_status_payload)
+                full_json = _json.dumps(
+                    full,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if full_json != last_status_json:
+                    last_status_json = full_json
+                    realtime_hub.publish(UI_CHANNEL, "status", full)
+                last_full_ts = time.monotonic()
+                last_queue_length = queue_length
+                last_has_now_playing = has_now_playing
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("ui_snapshot_sampler_failed", exc_info=True)
+        await _wait(0.75)
+
+
+async def start_realtime_runtime() -> None:
+    global _UI_SAMPLER_STOP, _UI_SAMPLER_TASK
+    if _UI_SAMPLER_TASK is not None and not _UI_SAMPLER_TASK.done():
+        return
+    _UI_SAMPLER_STOP = asyncio.Event()
+    _UI_SAMPLER_TASK = asyncio.create_task(
+        _ui_snapshot_sampler(_UI_SAMPLER_STOP),
+        name="relaytv-ui-snapshot-sampler",
+    )
+
+
+async def stop_realtime_runtime() -> None:
+    global _UI_SAMPLER_STOP, _UI_SAMPLER_TASK
+    task = _UI_SAMPLER_TASK
+    stop_event = _UI_SAMPLER_STOP
+    _UI_SAMPLER_TASK = None
+    _UI_SAMPLER_STOP = None
+    if stop_event is not None:
+        stop_event.set()
+    if task is not None:
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def _websocket_requested_subprotocols(websocket: WebSocket) -> set[str]:
+    raw = str(websocket.headers.get("sec-websocket-protocol") or "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+async def _ui_websocket_session(websocket: WebSocket) -> None:
+    if SUBPROTOCOL not in _websocket_requested_subprotocols(websocket):
+        await websocket.close(code=1002, reason="unsupported realtime protocol")
+        return
+    if not websocket_origin_allowed(
+        origin=websocket.headers.get("origin"),
+        host=websocket.headers.get("host"),
+        websocket_scheme=str(websocket.scope.get("scheme") or "ws"),
+    ):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
+
+    await websocket.accept(subprotocol=SUBPROTOCOL)
+    subscription = realtime_hub.subscribe(
+        UI_CHANNEL,
+        transport="websocket",
+        maxsize=100,
+        replay_latest=True,
+    )
+    receive_task: asyncio.Task | None = None
+    event_task: asyncio.Task | None = None
+    try:
+        hello = RealtimeEvent.create(
+            "hello",
+            0,
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "heartbeat_sec": HEARTBEAT_SEC,
+                "replay": False,
+            },
+        )
+        await websocket.send_json(hello.envelope())
+        receive_task = asyncio.create_task(websocket.receive())
+        event_task = asyncio.create_task(subscription.get())
+
+        while True:
+            done, _pending = await asyncio.wait(
+                {receive_task, event_task},
+                timeout=float(HEARTBEAT_SEC),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if receive_task in done:
+                incoming = receive_task.result()
+                if incoming.get("type") == "websocket.disconnect":
+                    break
+                await websocket.close(code=1008, reason="read-only realtime channel")
+                break
+            if event_task in done:
+                event = event_task.result()
+                await websocket.send_json(event.envelope())
+                while True:
+                    try:
+                        event = subscription.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    await websocket.send_json(event.envelope())
+                event_task = asyncio.create_task(subscription.get())
+                continue
+
+            ping = RealtimeEvent.create(
+                "ping",
+                realtime_hub.current_sequence(UI_CHANNEL),
+                {"type": "ping", "ts": time.time()},
+            )
+            await websocket.send_json(ping.envelope())
+    except (WebSocketDisconnect, RealtimeSubscriptionClosed):
+        pass
+    finally:
+        subscription.close()
+        for task in (receive_task, event_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (receive_task, event_task) if task is not None),
+            return_exceptions=True,
+        )
 
 
 @router.get("/ui/events")
