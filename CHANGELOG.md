@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.2](https://github.com/mcgeezy/relaytv/compare/v0.9.1...v0.9.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* retry Rumble with browser impersonation ([#62](https://github.com/mcgeezy/relaytv/issues/62)) ([a9fbc83](https://github.com/mcgeezy/relaytv/commit/a9fbc8355d673493f58eb9140df38217eba17e81))
+
+
+### Documentation
+
+* record the control socket and the missing MPV_* knobs ([#60](https://github.com/mcgeezy/relaytv/issues/60)) ([db4d1c3](https://github.com/mcgeezy/relaytv/commit/db4d1c3f236877b09af1cf195e42da0f738d3635))
+
 ## [0.9.1](https://github.com/mcgeezy/relaytv/compare/v0.9.0...v0.9.1) (2026-08-20)
 
 
