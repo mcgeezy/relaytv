@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from relaytv_app.config import runtime_config
 from relaytv_app.integrations import seerr_service
-from relaytv_app.integrations.seerr_client import SeerrError
+from relaytv_app.integrations.seerr_client import SeerrBinaryResponse, SeerrError
 from relaytv_app.main import create_app
 
 
@@ -85,3 +85,85 @@ def test_seerr_test_route_preserves_safe_timeout_status(monkeypatch) -> None:
 
     assert response.status_code == 504
     assert response.json()["detail"]["code"] == "seerr_timeout"
+
+
+def test_seerr_read_routes_delegate_bounded_semantic_inputs(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        seerr_service,
+        "discover",
+        lambda section, page: calls.append(("discover", section, page)) or {"results": []},
+    )
+    monkeypatch.setattr(
+        seerr_service,
+        "search",
+        lambda query, page: calls.append(("search", query, page)) or {"results": []},
+    )
+    monkeypatch.setattr(
+        seerr_service,
+        "item_detail",
+        lambda media_type, media_id: calls.append(("item", media_type, media_id))
+        or {"media_id": media_id},
+    )
+    monkeypatch.setattr(
+        seerr_service,
+        "list_requests",
+        lambda **kwargs: calls.append(("requests", kwargs)) or {"results": []},
+    )
+    client = TestClient(create_app(testing=True))
+
+    assert client.get("/seerr/discover?section=movies&page=2").status_code == 200
+    assert client.get("/seerr/search?query=arrival&page=3").status_code == 200
+    assert client.get("/seerr/item/movie/329865").status_code == 200
+    assert client.get("/seerr/requests?take=25&skip=50&filter=pending").status_code == 200
+
+    assert calls == [
+        ("discover", "movies", 2),
+        ("search", "arrival", 3),
+        ("item", "movie", 329865),
+        ("requests", {"take": 25, "skip": 50, "status_filter": "pending"}),
+    ]
+
+
+def test_seerr_image_route_preserves_only_cache_validators(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seerr_service,
+        "image",
+        lambda size, path: SeerrBinaryResponse(
+            content=b"jpeg",
+            content_type="image/jpeg",
+            cache_control="public, max-age=7200",
+            etag='"abc"',
+            last_modified="Wed, 21 Oct 2015 07:28:00 GMT",
+        ),
+    )
+
+    response = TestClient(create_app(testing=True)).get("/seerr/image/w342/poster.jpg")
+
+    assert response.status_code == 200
+    assert response.content == b"jpeg"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "public, max-age=7200"
+    assert response.headers["etag"] == '"abc"'
+    assert "set-cookie" not in response.headers
+
+
+def test_seerr_read_error_contract_is_sanitized(monkeypatch) -> None:
+    def _fail(*args, **kwargs):
+        raise SeerrError(
+            "seerr_invalid_request",
+            "Unknown Seerr discovery section",
+            status_code=400,
+        )
+
+    monkeypatch.setattr(seerr_service, "discover", _fail)
+
+    response = TestClient(create_app(testing=True)).get("/seerr/discover?section=admin")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": {
+            "code": "seerr_invalid_request",
+            "message": "Unknown Seerr discovery section",
+        }
+    }

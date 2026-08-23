@@ -1,6 +1,6 @@
 # Seerr Integration Roadmap
 
-Status: M0-M1 complete; M2 normalized read API next
+Status: M0-M2 complete; M3 browser and settings UX next
 
 Primary branch: `feat/seerr-integration`
 
@@ -329,7 +329,7 @@ quality gate before declaring the branch ready.
 | --- | --- | --- |
 | M0 | API/security review and implementation roadmap | Complete |
 | M1 | Immutable client/config model, secret-safe settings, status/test routes | Complete |
-| M2 | Normalized discover/search/detail/request-read API | Pending |
+| M2 | Normalized discover/search/detail/request-read API | Complete |
 | M3 | Responsive Seerr browser shell and settings UX | Pending |
 | M4 | Explicitly gated shared request creation and TV season selection | Pending |
 | M5 | Validated Seerr-to-Jellyfin play/queue bridge | Pending |
@@ -346,6 +346,15 @@ quality gate before declaring the branch ready.
   environment-inventory coverage. No background lifecycle or mutable response
   cache was introduced, so a response remains confined to the configuration
   snapshot that initiated it.
+- **M2 — 2026-08-23:** Added bounded, allowlisted discovery, search, movie/TV
+  detail, request-list, and image routes. The product service now maps media
+  and request enums into stable RelayTV values, omits people and raw upstream
+  objects, bounds text and pagination, and keeps playback explicitly
+  unavailable until M5 validates the Jellyfin bridge. Images traverse only
+  Seerr's TMDB proxy at fixed sizes with a validated single-file path; RelayTV
+  forwards the image body and useful cache validators without exposing the API
+  key, cookies, or arbitrary upstream headers. Added client, service, route,
+  validation, sanitization, image-proxy, and public-route-inventory coverage.
 
 ## Verification Plan
 

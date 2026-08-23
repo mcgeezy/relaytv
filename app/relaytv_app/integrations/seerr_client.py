@@ -14,6 +14,7 @@ from ..config import SettingsSnapshot, runtime_config
 
 DEFAULT_TIMEOUT_SEC = 5.0
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 
 class SeerrError(RuntimeError):
@@ -32,6 +33,15 @@ class SeerrError(RuntimeError):
         self.message = str(message)
         self.status_code = int(status_code)
         self.upstream_status = upstream_status
+
+
+@dataclass(frozen=True, slots=True)
+class SeerrBinaryResponse:
+    content: bytes
+    content_type: str
+    cache_control: str
+    etag: str
+    last_modified: str
 
 
 def normalize_server_url(value: object) -> str:
@@ -174,6 +184,68 @@ class SeerrClient:
         body: dict[str, object] | None = None,
         auth: bool = True,
     ) -> dict | list:
+        raw, _headers = self._request(
+            method,
+            path,
+            query=query,
+            body=body,
+            auth=auth,
+            accept="application/json",
+            max_bytes=MAX_RESPONSE_BYTES,
+            api_path=True,
+        )
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise SeerrError(
+                "seerr_invalid_response",
+                "Seerr returned an invalid JSON response",
+                status_code=502,
+            ) from None
+        if not isinstance(parsed, (dict, list)):
+            raise SeerrError(
+                "seerr_invalid_response",
+                "Seerr returned an unexpected response shape",
+                status_code=502,
+            )
+        return parsed
+
+    def get_binary(
+        self,
+        path: str,
+        *,
+        query: dict[str, object] | None = None,
+        auth: bool = True,
+    ) -> SeerrBinaryResponse:
+        raw, headers = self._request(
+            "GET",
+            path,
+            query=query,
+            auth=auth,
+            accept="image/*",
+            max_bytes=MAX_IMAGE_BYTES,
+            api_path=False,
+        )
+        return SeerrBinaryResponse(
+            content=raw,
+            content_type=str(headers.get("Content-Type") or "").split(";", 1)[0].strip(),
+            cache_control=str(headers.get("Cache-Control") or "").strip(),
+            etag=str(headers.get("ETag") or "").strip(),
+            last_modified=str(headers.get("Last-Modified") or "").strip(),
+        )
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, object] | None = None,
+        body: dict[str, object] | None = None,
+        auth: bool = True,
+        accept: str,
+        max_bytes: int,
+        api_path: bool,
+    ) -> tuple[bytes, object]:
         if not self.config.server_url:
             raise SeerrError(
                 "seerr_not_configured",
@@ -189,7 +261,8 @@ class SeerrClient:
         route = str(path or "").strip()
         if not route.startswith("/") or route.startswith("//"):
             raise ValueError("Seerr client paths must be absolute API paths")
-        url = f"{self.config.api_base_url}{route}"
+        base_url = self.config.api_base_url if api_path else self.config.server_url
+        url = f"{base_url}{route}"
         if query:
             params = {
                 str(key): str(value).lower() if isinstance(value, bool) else str(value)
@@ -200,30 +273,31 @@ class SeerrClient:
                 url = f"{url}?{urllib.parse.urlencode(params)}"
 
         payload = None
-        headers = {
-            "Accept": "application/json",
+        request_headers = {
+            "Accept": accept,
             "User-Agent": "RelayTV Seerr Integration",
         }
         if auth:
-            headers["X-Api-Key"] = self.config.api_key
+            request_headers["X-Api-Key"] = self.config.api_key
         if body is not None:
             payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            request_headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
             url,
             data=payload,
-            headers=headers,
+            headers=request_headers,
             method=str(method or "GET").upper(),
         )
         try:
             with self._opener.open(request, timeout=self.timeout_sec) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
+                raw = response.read(max_bytes + 1)
+                if len(raw) > max_bytes:
                     raise SeerrError(
                         "seerr_response_too_large",
                         "Seerr returned an unexpectedly large response",
                         status_code=502,
                     )
+                headers = getattr(response, "headers", {})
         except SeerrError:
             raise
         except urllib.error.HTTPError as exc:
@@ -240,21 +314,7 @@ class SeerrClient:
                 "Seerr could not be reached",
                 status_code=502,
             ) from None
-        try:
-            parsed = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise SeerrError(
-                "seerr_invalid_response",
-                "Seerr returned an invalid JSON response",
-                status_code=502,
-            ) from None
-        if not isinstance(parsed, (dict, list)):
-            raise SeerrError(
-                "seerr_invalid_response",
-                "Seerr returned an unexpected response shape",
-                status_code=502,
-            )
-        return parsed
+        return raw, headers
 
 
 def _http_error(status: int) -> SeerrError:

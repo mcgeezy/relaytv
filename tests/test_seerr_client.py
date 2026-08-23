@@ -12,6 +12,8 @@ from relaytv_app.integrations import seerr_client
 
 
 class _Response(io.BytesIO):
+    headers = email.message.Message()
+
     def __enter__(self):
         return self
 
@@ -120,3 +122,32 @@ def test_upstream_auth_error_is_sanitized() -> None:
 
     assert exc_info.value.code == "seerr_auth_failed"
     assert "super-secret" not in str(exc_info.value)
+
+
+def test_binary_request_uses_server_image_proxy_and_captures_safe_metadata() -> None:
+    class _BinaryOpener:
+        def __init__(self):
+            self.request = None
+
+        def open(self, request, timeout):
+            self.request = request
+            response = _Response(b"jpeg")
+            response.headers = email.message.Message()
+            response.headers["Content-Type"] = "image/jpeg"
+            response.headers["Cache-Control"] = "public, max-age=60"
+            response.headers["ETag"] = '"abc"'
+            return response
+
+    opener = _BinaryOpener()
+    client = seerr_client.SeerrClient(_config(), opener=opener)
+
+    response = client.get_binary("/imageproxy/tmdb/w342/poster.jpg", auth=False)
+
+    assert opener.request.full_url == (
+        "https://seerr.example/base/imageproxy/tmdb/w342/poster.jpg"
+    )
+    assert opener.request.get_header("X-api-key") is None
+    assert response.content == b"jpeg"
+    assert response.content_type == "image/jpeg"
+    assert response.cache_control == "public, max-age=60"
+    assert response.etag == '"abc"'
