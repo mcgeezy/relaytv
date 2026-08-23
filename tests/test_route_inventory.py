@@ -124,6 +124,7 @@ EXPECTED_ROUTES = {
     ("GET", "/seerr/image/{size}/{image_path:path}", "seerr_image"),
     ("GET", "/seerr/item/{media_type}/{media_id}", "seerr_item_detail"),
     ("GET", "/seerr/requests", "seerr_requests"),
+    ("POST", "/seerr/requests", "seerr_request_create"),
     ("GET", "/seerr/search", "seerr_search"),
     ("POST", "/seek", "seek"),
     ("POST", "/seek_abs", "seek_abs"),

@@ -110,6 +110,13 @@ def _normalize_jellyfin_server_type(v: object) -> str:
     return "jellyfin"
 
 
+def _normalize_seerr_request_mode(v: object) -> str:
+    mode = str(v or "").strip().lower()
+    if mode in {"disabled", "shared_admin", "caller_session"}:
+        return mode
+    return "disabled"
+
+
 def _normalize_invidious_base(v: object) -> str:
     s = str(v or "").strip()
     if not s:
@@ -1001,6 +1008,14 @@ def _default_settings() -> dict:
         "seerr_shared_requests_enabled": _env_bool(
             "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
         ),
+        "seerr_request_mode": _normalize_seerr_request_mode(
+            os.getenv("RELAYTV_SEERR_REQUEST_MODE")
+            or (
+                "shared_admin"
+                if _env_bool("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False)
+                else "disabled"
+            )
+        ),
         "seerr_request_user_id": _normalize_optional_positive_int(
             os.getenv("RELAYTV_SEERR_REQUEST_USER_ID")
         ),
@@ -1013,6 +1028,12 @@ def load_settings() -> None:
     data = _load_json(path, {})
     if isinstance(data, dict):
         defaults.update({k: v for k, v in data.items() if v is not None})
+        if "seerr_request_mode" not in data:
+            defaults["seerr_request_mode"] = (
+                "shared_admin"
+                if bool(defaults.get("seerr_shared_requests_enabled"))
+                else "disabled"
+            )
     defaults["ytdlp_format"] = _normalize_ytdlp_format(defaults.get("ytdlp_format"))
     defaults["quality_mode"] = _normalize_quality_mode(defaults.get("quality_mode"))
     defaults["quality_cap"] = _normalize_quality_cap(defaults.get("quality_cap"))
@@ -1034,6 +1055,12 @@ def load_settings() -> None:
     defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
     defaults["seerr_shared_requests_enabled"] = bool(
         defaults.get("seerr_shared_requests_enabled")
+    )
+    defaults["seerr_request_mode"] = _normalize_seerr_request_mode(
+        defaults.get("seerr_request_mode")
+    )
+    defaults["seerr_shared_requests_enabled"] = (
+        defaults["seerr_request_mode"] == "shared_admin"
     )
     defaults["seerr_request_user_id"] = _normalize_optional_positive_int(
         defaults.get("seerr_request_user_id")
@@ -1093,6 +1120,7 @@ def update_settings(patch: dict) -> dict:
         "seerr_server_url",
         "seerr_api_key",
         "seerr_shared_requests_enabled",
+        "seerr_request_mode",
         "seerr_request_user_id",
     }
     clean = {k: v for k, v in (patch or {}).items() if k in allowed}
@@ -1144,6 +1172,17 @@ def update_settings(patch: dict) -> dict:
     if "seerr_shared_requests_enabled" in clean:
         clean["seerr_shared_requests_enabled"] = bool(
             clean.get("seerr_shared_requests_enabled")
+        )
+        if "seerr_request_mode" not in clean:
+            clean["seerr_request_mode"] = (
+                "shared_admin" if clean["seerr_shared_requests_enabled"] else "disabled"
+            )
+    if "seerr_request_mode" in clean:
+        clean["seerr_request_mode"] = _normalize_seerr_request_mode(
+            clean.get("seerr_request_mode")
+        )
+        clean["seerr_shared_requests_enabled"] = (
+            clean["seerr_request_mode"] == "shared_admin"
         )
     if "seerr_request_user_id" in clean:
         clean["seerr_request_user_id"] = _normalize_optional_positive_int(

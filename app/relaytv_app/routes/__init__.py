@@ -4229,11 +4229,16 @@ def ui():
           </div>
           <div id="setSeerrApiKeyState" class="hint"></div>
         </div>
-        <div class="toggleRow">
-          <div class="toggleCopy"><div class="toggleTitle">Allow shared requests</div><div class="toggleHint">Requests use Seerr's administrator API identity and may auto-approve regardless of the attributed user's normal policy.</div></div>
-          <label class="toggleSwitch" for="setSeerrSharedRequests" title="Allow shared Seerr requests"><input type="checkbox" id="setSeerrSharedRequests" /><span class="toggleTrack" aria-hidden="true"></span></label>
-        </div>
         <div class="fieldRow">
+          <label class="fieldLbl" for="setSeerrRequestMode">Request identity</label>
+          <select id="setSeerrRequestMode" class="input">
+            <option value="disabled">Requests disabled</option>
+            <option value="shared_admin">Shared administrator API</option>
+            <option value="caller_session">Caller-specific sign-in</option>
+          </select>
+          <div id="setSeerrRequestModeHint" class="hint">Choose exactly which Seerr identity is allowed to create requests.</div>
+        </div>
+        <div id="setSeerrRequestUserRow" class="fieldRow hidden">
           <label class="fieldLbl" for="setSeerrRequestUser">Shared request attribution</label>
           <select id="setSeerrRequestUser" class="input"><option value="">API identity (default)</option></select>
           <div class="hint">Changes attribution only; the administrator API identity still controls permissions and auto-approval.</div>

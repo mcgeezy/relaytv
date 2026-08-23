@@ -182,3 +182,38 @@ def test_seerr_users_route_returns_sanitized_selector_records(monkeypatch) -> No
     assert response.json() == {
         "users": [{"id": 3, "display_name": "Alex", "username": "alex"}]
     }
+
+
+def test_seerr_request_route_rejects_administrator_fields(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        seerr_service,
+        "create_request",
+        lambda **kwargs: calls.append(kwargs) or {"created": True},
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/seerr/requests",
+        json={
+            "media_type": "tv",
+            "media_id": 44,
+            "seasons": [1, 2],
+            "is_4k": False,
+            "user_id": 999,
+            "ignore_quota": True,
+            "root_folder": "/unsafe",
+        },
+    )
+
+    assert response.status_code == 422
+    assert calls == []
+
+    response = TestClient(create_app(testing=True)).post(
+        "/seerr/requests",
+        json={"media_type": "tv", "media_id": 44, "seasons": [1, 2], "is_4k": False},
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {"media_type": "tv", "media_id": 44, "seasons": [1, 2], "is_4k": False}
+    ]

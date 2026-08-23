@@ -4,6 +4,8 @@
 let __seerrVisible = false;
 let __seerrEnabled = false;
 let __seerrConfigured = false;
+let __seerrRequestMode = 'disabled';
+let __seerrCallerConnected = false;
 let __seerrSection = 'trending';
 let __seerrQuery = '';
 let __seerrPage = 1;
@@ -56,6 +58,8 @@ function updateSeerrStatus(status){
   const value = status && typeof status === 'object' ? status : {};
   __seerrEnabled = !!value.enabled;
   __seerrConfigured = !!value.configured;
+  __seerrRequestMode = ['disabled','shared_admin','caller_session'].includes(value.request_mode) ? value.request_mode : 'disabled';
+  __seerrCallerConnected = !!value.caller_connected;
   _seerrSetLaunchVisible(__seerrEnabled);
   const connection = document.getElementById('seerrConnection');
   const title = document.getElementById('seerrTitle');
@@ -247,9 +251,60 @@ function _seerrRenderDetail(item){
     item.seasons.filter(season => Number(season.season_number) > 0).forEach(season => { const pill = document.createElement('span'); pill.className = 'seerrPill'; pill.textContent = `${String(season.name || `Season ${season.season_number}`)} · ${Number(season.episode_count || 0)} episodes`; seasons.appendChild(pill); });
     body.appendChild(seasons);
   }
-  const action = document.createElement('span'); action.className = 'seerrDisabledAction';
-  action.textContent = item.playback_available ? 'Playback arrives with the validated library bridge' : (__seerrConfigured ? 'Request actions are not enabled yet' : 'Complete Seerr setup in Settings');
-  body.appendChild(action); detail.append(hero, body);
+  body.appendChild(_seerrRequestControls(item));
+  detail.append(hero, body);
+}
+
+function _seerrRequestControls(item){
+  const controls = document.createElement('div');
+  controls.className = 'seerrRequestControls';
+  if (__seerrRequestMode === 'disabled') {
+    const disabled = document.createElement('span'); disabled.className = 'seerrDisabledAction'; disabled.textContent = 'Requests are disabled by the operator'; controls.appendChild(disabled); return controls;
+  }
+  if (__seerrRequestMode === 'caller_session' && !__seerrCallerConnected) {
+    const connect = document.createElement('button'); connect.type = 'button'; connect.className = 'seerrRequestBtn'; connect.textContent = 'Connect Seerr account'; connect.onclick = () => window.relaytvSeerr.startQuickConnect(); controls.appendChild(connect); return controls;
+  }
+  const status = document.createElement('div'); status.className = 'seerrRequestResult'; status.setAttribute('role','status');
+  if (item.media_type === 'movie') {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'seerrRequestBtn'; button.textContent = 'Request movie'; button.onclick = () => _seerrSubmitRequest(item, null, button, status); controls.append(button, status); return controls;
+  }
+  const seasons = (Array.isArray(item.seasons) ? item.seasons : []).filter(season => Number(season.season_number) >= 0);
+  if (seasons.length) {
+    const choices = document.createElement('div'); choices.className = 'seerrSeasonChoices';
+    seasons.forEach(season => {
+      const label = document.createElement('label'); label.className = 'seerrSeasonChoice';
+      const input = document.createElement('input'); input.type = 'checkbox'; input.value = String(Number(season.season_number));
+      const text = document.createElement('span'); text.textContent = String(season.name || `Season ${season.season_number}`);
+      label.append(input, text); choices.appendChild(label);
+    });
+    controls.appendChild(choices);
+  }
+  const actions = document.createElement('div'); actions.className = 'seerrRequestButtons';
+  const selected = document.createElement('button'); selected.type = 'button'; selected.className = 'seerrRequestBtn'; selected.textContent = 'Request selected seasons'; selected.onclick = () => {
+    const values = Array.from(controls.querySelectorAll('.seerrSeasonChoice input:checked')).map(input => Number(input.value));
+    if (!values.length) { status.textContent = 'Select at least one season.'; status.classList.add('err'); return; }
+    _seerrSubmitRequest(item, values, selected, status);
+  };
+  const all = document.createElement('button'); all.type = 'button'; all.className = 'seerrRequestBtn secondary'; all.textContent = 'Request all seasons'; all.onclick = () => _seerrSubmitRequest(item, 'all', all, status);
+  actions.append(selected, all); controls.append(actions, status); return controls;
+}
+
+async function _seerrSubmitRequest(item, seasons, button, status){
+  button.disabled = true; status.classList.remove('err','ok'); status.textContent = 'Sending request…';
+  try {
+    const response = await fetch('/seerr/requests', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({media_type:item.media_type, media_id:item.media_id, seasons, is_4k:false})});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(_seerrErrorMessage(body, response.status));
+    status.classList.add('ok');
+    status.textContent = body.created === false ? 'Nothing new to request.' : 'Request sent to Seerr.';
+    loadSeerrBrowse({append:false});
+  } catch (error) {
+    status.classList.add('err'); status.textContent = error && error.message ? error.message : 'Request failed.'; button.disabled = false;
+  }
+}
+
+function startSeerrQuickConnect(){
+  _seerrSetStatus('Caller-specific sign-in is being added in the next milestone.', true);
 }
 
 async function openSeerrDetail(mediaType, mediaId, fallbackTitle){
@@ -338,4 +393,5 @@ window.relaytvSeerr = {
   closeDetail: closeSeerrDetail,
   refreshStatus: refreshSeerrStatus,
   updateStatus: updateSeerrStatus,
+  startQuickConnect: startSeerrQuickConnect,
 };

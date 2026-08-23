@@ -73,6 +73,17 @@ def create_app(*, testing: bool = False) -> FastAPI:
             "1" if bool(s.get("seerr_shared_requests_enabled")) else "0",
         )
         runtime_config.set_value(
+            "RELAYTV_SEERR_REQUEST_MODE",
+            str(
+                s.get("seerr_request_mode")
+                or (
+                    "shared_admin"
+                    if bool(s.get("seerr_shared_requests_enabled"))
+                    else "disabled"
+                )
+            ).strip(),
+        )
+        runtime_config.set_value(
             "RELAYTV_SEERR_REQUEST_USER_ID",
             str(s.get("seerr_request_user_id") or "").strip(),
         )

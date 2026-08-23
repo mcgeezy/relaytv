@@ -176,14 +176,15 @@ def test_settings_apply_syncs_seerr_config(quiet_settings_apply) -> None:
         seerr_enabled=True,
         seerr_server_url=" https://seerr.example/api/v1 ",
         seerr_api_key=" secret-key ",
-        seerr_shared_requests_enabled=False,
+        seerr_request_mode="shared_admin",
         seerr_request_user_id=7,
     )
 
     assert _cfg("RELAYTV_SEERR_ENABLED") == "1"
     assert _cfg("RELAYTV_SEERR_SERVER_URL") == "https://seerr.example"
     assert _cfg("RELAYTV_SEERR_API_KEY") == "secret-key"
-    assert _cfg("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED") == "0"
+    assert _cfg("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED") == "1"
+    assert _cfg("RELAYTV_SEERR_REQUEST_MODE") == "shared_admin"
     assert _cfg("RELAYTV_SEERR_REQUEST_USER_ID") == "7"
 
 

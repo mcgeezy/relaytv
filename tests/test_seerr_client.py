@@ -60,6 +60,7 @@ def test_config_snapshot_is_immutable_and_normalized() -> None:
         "RELAYTV_SEERR_SERVER_URL": "https://seerr.example/api/v1",
         "RELAYTV_SEERR_API_KEY": " secret ",
         "RELAYTV_SEERR_REQUEST_USER_ID": "9",
+        "RELAYTV_SEERR_REQUEST_MODE": "caller_session",
     }
     config = seerr_client.SeerrConfig.from_snapshot(SettingsSnapshot(source))
     source["RELAYTV_SEERR_SERVER_URL"] = "https://replacement.example"
@@ -67,6 +68,8 @@ def test_config_snapshot_is_immutable_and_normalized() -> None:
     assert config.server_url == "https://seerr.example"
     assert config.api_key == "secret"
     assert config.request_user_id == 9
+    assert config.request_mode == "caller_session"
+    assert config.configured is True
 
 
 def test_client_keeps_api_key_in_header_and_out_of_url() -> None:

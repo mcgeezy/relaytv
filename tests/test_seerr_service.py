@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from relaytv_app.integrations import seerr_service
-from relaytv_app.integrations.seerr_client import SeerrBinaryResponse
+from relaytv_app.integrations.seerr_client import SeerrBinaryResponse, SeerrJsonResponse
 
 
 class _Config:
@@ -11,6 +11,7 @@ class _Config:
     api_key = "secret"
     shared_requests_enabled = False
     request_user_id = None
+    request_mode = "disabled"
 
 
 def _install_client(monkeypatch, responses: dict[str, object], *, config=None):
@@ -252,3 +253,107 @@ def test_user_selector_records_are_sanitized(monkeypatch) -> None:
     assert result == [{"id": 7, "display_name": "Living Room", "username": "mark"}]
     assert "private@example.com" not in str(result)
     assert "never-return-this" not in str(result)
+
+
+def test_shared_admin_request_uses_only_configured_attribution(monkeypatch) -> None:
+    calls = []
+
+    class _SharedConfig(_Config):
+        shared_requests_enabled = True
+        request_mode = "shared_admin"
+        request_user_id = 17
+
+    config = _SharedConfig()
+
+    class _Client:
+        def __init__(self, current_config):
+            assert current_config is config
+
+        def request_json_response(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return SeerrJsonResponse(
+                data={
+                    "id": 91,
+                    "status": 2,
+                    "is4k": False,
+                    "media": {"mediaType": "tv", "tmdbId": 44, "status": 2},
+                },
+                status=201,
+            )
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+
+    result = seerr_service.create_request(
+        media_type="tv", media_id=44, seasons=[1, 2, 2], is_4k=False
+    )
+
+    assert calls == [
+        (
+            "POST",
+            "/request",
+            {
+                "body": {
+                    "mediaType": "tv",
+                    "mediaId": 44,
+                    "is4k": False,
+                    "seasons": [1, 2],
+                    "userId": 17,
+                }
+            },
+        )
+    ]
+    assert result == {
+        "created": True,
+        "request": {
+            "request_id": 91,
+            "status": "approved",
+            "media_type": "tv",
+            "media_id": 44,
+            "media_status": "pending",
+            "is_4k": False,
+        },
+    }
+
+
+def test_request_creation_is_rejected_when_policy_is_disabled(monkeypatch) -> None:
+    _install_client(monkeypatch, {})
+
+    try:
+        seerr_service.create_request(
+            media_type="movie", media_id=11, seasons=None, is_4k=False
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", "") == "seerr_requests_disabled"
+        assert getattr(exc, "status_code", None) == 403
+    else:
+        raise AssertionError("disabled request policy should reject writes")
+
+
+def test_no_requestable_seasons_is_a_successful_semantic_result(monkeypatch) -> None:
+    class _SharedConfig(_Config):
+        shared_requests_enabled = True
+        request_mode = "shared_admin"
+
+    config = _SharedConfig()
+
+    class _Client:
+        def __init__(self, current_config):
+            assert current_config is config
+
+        def request_json_response(self, method, path, **kwargs):
+            return SeerrJsonResponse(data={"status": 202}, status=202)
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+
+    result = seerr_service.create_request(
+        media_type="tv", media_id=44, seasons="all", is_4k=False
+    )
+
+    assert result == {
+        "created": False,
+        "reason": "no_requestable_seasons",
+        "media_type": "tv",
+        "media_id": 44,
+    }

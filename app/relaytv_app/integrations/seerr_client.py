@@ -44,6 +44,12 @@ class SeerrBinaryResponse:
     last_modified: str
 
 
+@dataclass(frozen=True, slots=True)
+class SeerrJsonResponse:
+    data: dict | list
+    status: int
+
+
 def normalize_server_url(value: object) -> str:
     """Return a canonical Seerr base URL without an accidental API suffix."""
     raw = str(value or "").strip()
@@ -94,6 +100,7 @@ class SeerrConfig:
     api_key: str
     shared_requests_enabled: bool
     request_user_id: int | None
+    request_mode: str = "disabled"
     configuration_error: str = ""
 
     @classmethod
@@ -105,16 +112,22 @@ class SeerrConfig:
         except ValueError as exc:
             server_url = ""
             configuration_error = str(exc)
+        request_mode = str(snapshot.raw("RELAYTV_SEERR_REQUEST_MODE") or "").strip().lower()
+        if request_mode not in {"disabled", "shared_admin", "caller_session"}:
+            request_mode = (
+                "shared_admin"
+                if snapshot.flag("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False)
+                else "disabled"
+            )
         return cls(
             enabled=snapshot.flag("RELAYTV_SEERR_ENABLED", False),
             server_url=server_url,
             api_key=snapshot.text("RELAYTV_SEERR_API_KEY"),
-            shared_requests_enabled=snapshot.flag(
-                "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
-            ),
+            shared_requests_enabled=request_mode == "shared_admin",
             request_user_id=_optional_positive_int(
                 snapshot.raw("RELAYTV_SEERR_REQUEST_USER_ID")
             ),
+            request_mode=request_mode,
             configuration_error=configuration_error,
         )
 
@@ -124,6 +137,8 @@ class SeerrConfig:
 
     @property
     def configured(self) -> bool:
+        if self.request_mode == "caller_session":
+            return bool(self.server_url)
         return bool(self.server_url and self.api_key)
 
     @property
@@ -184,7 +199,24 @@ class SeerrClient:
         body: dict[str, object] | None = None,
         auth: bool = True,
     ) -> dict | list:
-        raw, _headers = self._request(
+        return self.request_json_response(
+            method,
+            path,
+            query=query,
+            body=body,
+            auth=auth,
+        ).data
+
+    def request_json_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, object] | None = None,
+        body: dict[str, object] | None = None,
+        auth: bool = True,
+    ) -> SeerrJsonResponse:
+        raw, _headers, status = self._request(
             method,
             path,
             query=query,
@@ -208,7 +240,7 @@ class SeerrClient:
                 "Seerr returned an unexpected response shape",
                 status_code=502,
             )
-        return parsed
+        return SeerrJsonResponse(data=parsed, status=status)
 
     def get_binary(
         self,
@@ -217,7 +249,7 @@ class SeerrClient:
         query: dict[str, object] | None = None,
         auth: bool = True,
     ) -> SeerrBinaryResponse:
-        raw, headers = self._request(
+        raw, headers, _status = self._request(
             "GET",
             path,
             query=query,
@@ -245,7 +277,7 @@ class SeerrClient:
         accept: str,
         max_bytes: int,
         api_path: bool,
-    ) -> tuple[bytes, object]:
+    ) -> tuple[bytes, object, int]:
         if not self.config.server_url:
             raise SeerrError(
                 "seerr_not_configured",
@@ -298,6 +330,7 @@ class SeerrClient:
                         status_code=502,
                     )
                 headers = getattr(response, "headers", {})
+                status = int(getattr(response, "status", 200) or 200)
         except SeerrError:
             raise
         except urllib.error.HTTPError as exc:
@@ -314,7 +347,7 @@ class SeerrClient:
                 "Seerr could not be reached",
                 status_code=502,
             ) from None
-        return raw, headers
+        return raw, headers, status
 
 
 def _http_error(status: int) -> SeerrError:

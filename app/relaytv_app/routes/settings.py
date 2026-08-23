@@ -57,6 +57,7 @@ class SettingsReq(BaseModel):
     seerr_api_key: str | None = None
     seerr_api_key_clear: bool = False
     seerr_shared_requests_enabled: bool | None = None
+    seerr_request_mode: str | None = None
     seerr_request_user_id: int | None = None
     apply_now: bool = False
 
@@ -90,6 +91,11 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["seerr_shared_requests_enabled"] = bool(
         out.get("seerr_shared_requests_enabled", False)
     )
+    request_mode = str(out.get("seerr_request_mode") or "").strip().lower()
+    if request_mode not in {"disabled", "shared_admin", "caller_session"}:
+        request_mode = "shared_admin" if out["seerr_shared_requests_enabled"] else "disabled"
+    out["seerr_request_mode"] = request_mode
+    out["seerr_shared_requests_enabled"] = request_mode == "shared_admin"
     return out
 
 
@@ -234,6 +240,18 @@ def update_settings(req: SettingsReq):
         user_id = patch.get("seerr_request_user_id")
         if user_id is not None and int(user_id) <= 0:
             raise HTTPException(status_code=400, detail="Seerr request user must be positive")
+    if "seerr_request_mode" in requested_keys:
+        request_mode = str(patch.get("seerr_request_mode") or "").strip().lower()
+        if request_mode not in {"disabled", "shared_admin", "caller_session"}:
+            raise HTTPException(status_code=400, detail="Invalid Seerr request identity mode")
+        patch["seerr_request_mode"] = request_mode
+        patch["seerr_shared_requests_enabled"] = request_mode == "shared_admin"
+        requested_keys.add("seerr_shared_requests_enabled")
+    elif "seerr_shared_requests_enabled" in requested_keys:
+        patch["seerr_request_mode"] = (
+            "shared_admin" if bool(patch.get("seerr_shared_requests_enabled")) else "disabled"
+        )
+        requested_keys.add("seerr_request_mode")
     candidate_invidious_base = _normalize_invidious_base(
         patch.get("youtube_invidious_base", (existing or {}).get("youtube_invidious_base", ""))
     )
@@ -335,6 +353,11 @@ def update_settings(req: SettingsReq):
             "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED",
             "1" if bool(updated.get("seerr_shared_requests_enabled")) else "0",
         )
+    if "seerr_request_mode" in requested_keys:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_REQUEST_MODE",
+            str(updated.get("seerr_request_mode") or "disabled").strip(),
+        )
     if "seerr_request_user_id" in requested_keys:
         runtime_config.set_value(
             "RELAYTV_SEERR_REQUEST_USER_ID",
@@ -372,6 +395,7 @@ def update_settings(req: SettingsReq):
                     "seerr_server_url",
                     "seerr_api_key",
                     "seerr_shared_requests_enabled",
+                    "seerr_request_mode",
                     "seerr_request_user_id",
                 }
             )

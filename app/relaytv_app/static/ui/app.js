@@ -2248,6 +2248,21 @@ function defaultJellyfinServerUrl(){
   return 'http://127.0.0.1:8096';
 }
 
+function syncSeerrRequestModeUi(){
+  const mode = String(document.getElementById('setSeerrRequestMode')?.value || 'disabled');
+  const hint = document.getElementById('setSeerrRequestModeHint');
+  const userRow = document.getElementById('setSeerrRequestUserRow');
+  if (userRow) userRow.classList.toggle('hidden', mode !== 'shared_admin');
+  if (!hint) return;
+  if (mode === 'shared_admin') {
+    hint.textContent = "Uses Seerr's administrator API identity and may auto-approve regardless of the attributed user's normal policy.";
+  } else if (mode === 'caller_session') {
+    hint.textContent = 'Each browser must connect through Jellyfin Quick Connect; Seerr applies that caller’s permissions, quotas, and approval policy.';
+  } else {
+    hint.textContent = 'Browsing remains available, but RelayTV will not create Seerr requests.';
+  }
+}
+
 async function loadSettingsUi(){
   const [devRes, setRes, tvRes, jfRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
@@ -2304,7 +2319,7 @@ async function loadSettingsUi(){
   const seerrApiKey = document.getElementById('setSeerrApiKey');
   const seerrClearApiKey = document.getElementById('setSeerrClearApiKey');
   const seerrApiKeyState = document.getElementById('setSeerrApiKeyState');
-  const seerrSharedRequests = document.getElementById('setSeerrSharedRequests');
+  const seerrRequestMode = document.getElementById('setSeerrRequestMode');
   const seerrRequestUser = document.getElementById('setSeerrRequestUser');
   const seerrDiag = document.getElementById('setSeerrDiag');
 
@@ -2393,7 +2408,8 @@ async function loadSettingsUi(){
     seerrApiKeyState.textContent = configured ? 'API key is stored.' : 'No API key stored.';
     seerrApiKeyState.setAttribute('data-configured', configured ? '1' : '0');
   }
-  if (seerrSharedRequests) seerrSharedRequests.checked = !!cur.seerr_shared_requests_enabled;
+  if (seerrRequestMode) seerrRequestMode.value = String(cur.seerr_request_mode || (cur.seerr_shared_requests_enabled ? 'shared_admin' : 'disabled'));
+  syncSeerrRequestModeUi();
   if (seerrRequestUser) {
     seerrRequestUser.replaceChildren();
     const defaultOption = document.createElement('option');
@@ -2562,10 +2578,13 @@ function bindSettingsUi(){
   const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
   const seerrTestBtn = document.getElementById('setSeerrTestBtn');
   const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
+  const seerrRequestMode = document.getElementById('setSeerrRequestMode');
   const ytUploadBtn = document.getElementById('setYtCookiesUploadBtn');
   const ytClearBtn = document.getElementById('setYtCookiesClearBtn');
   const ytCookiesFile = document.getElementById('setYtCookiesFile');
   const ytCookiesState = document.getElementById('setYtCookiesState');
+
+  if (seerrRequestMode) seerrRequestMode.onchange = syncSeerrRequestModeUi;
 
   function setYtCookiesStatus(text, cls){
     if (!ytCookiesState) return;
@@ -2729,14 +2748,14 @@ function bindSettingsUi(){
     const apiKey = String(document.getElementById('setSeerrApiKey')?.value || '').trim();
     const clearKey = !!document.getElementById('setSeerrClearApiKey')?.checked;
     const keyConfigured = document.getElementById('setSeerrApiKeyState')?.getAttribute('data-configured') === '1';
-    const sharedRequests = !!document.getElementById('setSeerrSharedRequests')?.checked;
+    const requestMode = String(document.getElementById('setSeerrRequestMode')?.value || 'disabled');
     const requestUserRaw = String(document.getElementById('setSeerrRequestUser')?.value || '').trim();
     if (enabled && !serverUrl) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr server URL is required.'; } return false; }
     if (enabled && !apiKey && (!keyConfigured || clearKey)) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr API key is required.'; } return false; }
     const payload = {
       seerr_enabled: enabled,
       seerr_server_url: serverUrl,
-      seerr_shared_requests_enabled: sharedRequests,
+      seerr_request_mode: requestMode,
       seerr_request_user_id: requestUserRaw ? Number(requestUserRaw) : null,
       apply_now: true,
     };
@@ -2839,7 +2858,7 @@ function bindSettingsUi(){
     const seerrApiKey = String(document.getElementById('setSeerrApiKey')?.value || '').trim();
     const seerrClearApiKey = !!document.getElementById('setSeerrClearApiKey')?.checked;
     const seerrApiKeyConfigured = document.getElementById('setSeerrApiKeyState')?.getAttribute('data-configured') === '1';
-    const seerrSharedRequests = !!document.getElementById('setSeerrSharedRequests')?.checked;
+    const seerrRequestMode = String(document.getElementById('setSeerrRequestMode')?.value || 'disabled');
     const seerrRequestUserRaw = String(document.getElementById('setSeerrRequestUser')?.value || '').trim();
     const typedCity = weatherCityInput?.value || '';
     if (typedCity.trim() && typedCity.trim() !== WEATHER_LOCATION_STATE.location_name) {
@@ -2895,7 +2914,7 @@ function bindSettingsUi(){
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
       seerr_enabled: seerrEnabled,
       seerr_server_url: seerrServerUrl,
-      seerr_shared_requests_enabled: seerrSharedRequests,
+      seerr_request_mode: seerrRequestMode,
       seerr_request_user_id: seerrRequestUserRaw ? Number(seerrRequestUserRaw) : null,
       apply_now: true
     };

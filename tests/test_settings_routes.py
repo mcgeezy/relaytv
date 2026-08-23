@@ -101,6 +101,32 @@ def test_seerr_settings_normalize_url_and_reject_credentials(monkeypatch) -> Non
     assert rejected.status_code == 400
 
 
+def test_seerr_request_mode_is_explicit_and_legacy_toggle_migrates(monkeypatch) -> None:
+    current: dict[str, object] = {}
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    client = TestClient(create_app(testing=True))
+
+    caller = client.post("/settings", json={"seerr_request_mode": "caller_session"})
+    assert caller.status_code == 200
+    assert current["seerr_request_mode"] == "caller_session"
+    assert current["seerr_shared_requests_enabled"] is False
+    assert runtime_config.snapshot().raw("RELAYTV_SEERR_REQUEST_MODE") == "caller_session"
+
+    legacy = client.post("/settings", json={"seerr_shared_requests_enabled": True})
+    assert legacy.status_code == 200
+    assert current["seerr_request_mode"] == "shared_admin"
+
+    invalid = client.post("/settings", json={"seerr_request_mode": "automatic"})
+    assert invalid.status_code == 400
+
+
 def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:
     from relaytv_app import state
 

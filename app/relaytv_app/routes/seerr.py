@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response
+from pydantic import BaseModel, ConfigDict
 
 from ..integrations import seerr_service
 from ..integrations.seerr_client import SeerrError
 
 router = APIRouter()
+
+
+class SeerrRequestCreateReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_type: str
+    media_id: int
+    seasons: list[int] | str | None = None
+    is_4k: bool = False
 
 
 def _http_error(exc: SeerrError) -> HTTPException:
@@ -58,6 +68,19 @@ def seerr_item_detail(media_type: str, media_id: int):
 def seerr_requests(take: int = 20, skip: int = 0, filter: str = "all"):
     try:
         return seerr_service.list_requests(take=take, skip=skip, status_filter=filter)
+    except SeerrError as exc:
+        raise _http_error(exc) from None
+
+
+@router.post("/seerr/requests")
+def seerr_request_create(req: SeerrRequestCreateReq):
+    try:
+        return seerr_service.create_request(
+            media_type=req.media_type,
+            media_id=req.media_id,
+            seasons=req.seasons,
+            is_4k=req.is_4k,
+        )
     except SeerrError as exc:
         raise _http_error(exc) from None
 

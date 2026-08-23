@@ -86,6 +86,11 @@ def test_write_without_token_rejected(monkeypatch) -> None:
     assert response.status_code == 401
     assert response.json() == {"detail": "api token required"}
     assert response.headers.get("www-authenticate") == "Bearer"
+    seerr = client.post(
+        "/seerr/requests",
+        json={"media_type": "movie", "media_id": 11},
+    )
+    assert seerr.status_code == 401
 
 
 def test_write_with_wrong_token_rejected(monkeypatch) -> None:

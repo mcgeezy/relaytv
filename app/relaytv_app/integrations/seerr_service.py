@@ -60,6 +60,9 @@ _IMAGE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
 
 
 def _config_status(config: SeerrConfig) -> dict[str, object]:
+    request_mode = str(getattr(config, "request_mode", "") or "").strip()
+    if request_mode not in {"disabled", "shared_admin", "caller_session"}:
+        request_mode = "shared_admin" if config.shared_requests_enabled else "disabled"
     return {
         "enabled": config.enabled,
         "configured": config.configured,
@@ -69,8 +72,9 @@ def _config_status(config: SeerrConfig) -> dict[str, object]:
         "application_title": "Seerr",
         "media_server_type": "unknown",
         "auth_mode": "shared_api_key" if config.api_key else "none",
+        "request_mode": request_mode,
         "shared_requests_enabled": config.shared_requests_enabled,
-        "writes_allowed": bool(config.configured and config.shared_requests_enabled),
+        "writes_allowed": bool(config.configured and request_mode == "shared_admin"),
         "request_user_id": config.request_user_id,
     }
 
@@ -240,6 +244,67 @@ def list_users() -> list[dict[str, object]]:
     return users
 
 
+def create_request(
+    *,
+    media_type: str,
+    media_id: int,
+    seasons: list[int] | str | None,
+    is_4k: bool,
+) -> dict[str, object]:
+    kind = _media_type(media_type)
+    tmdb_id = _bounded_int(media_id, name="media_id", minimum=1, maximum=2_147_483_647)
+    config, client = _client_with_config()
+    if config.request_mode == "disabled":
+        raise SeerrError(
+            "seerr_requests_disabled",
+            "Seerr requests are disabled",
+            status_code=403,
+        )
+    if config.request_mode == "caller_session":
+        raise SeerrError(
+            "seerr_session_required",
+            "Connect your Seerr account before requesting media",
+            status_code=401,
+        )
+    request_body: dict[str, object] = {
+        "mediaType": kind,
+        "mediaId": tmdb_id,
+        "is4k": bool(is_4k),
+    }
+    if kind == "tv":
+        request_body["seasons"] = _normalize_requested_seasons(seasons)
+    elif seasons not in (None, [], ""):
+        raise _invalid("Seasons can only be selected for TV requests")
+    if config.request_user_id is not None:
+        request_body["userId"] = config.request_user_id
+    response = client.request_json_response("POST", "/request", body=request_body)
+    if response.status == 202:
+        return {
+            "created": False,
+            "reason": "no_requestable_seasons",
+            "media_type": kind,
+            "media_id": tmdb_id,
+        }
+    if not isinstance(response.data, dict):
+        raise _invalid_upstream()
+    media = response.data.get("media") if isinstance(response.data.get("media"), dict) else {}
+    return {
+        "created": True,
+        "request": {
+            "request_id": _safe_int(response.data.get("id")),
+            "status": _REQUEST_STATUSES.get(
+                _safe_int(response.data.get("status")), "unknown"
+            ),
+            "media_type": _media_type_or_none(media.get("mediaType")) or kind,
+            "media_id": _safe_int(media.get("tmdbId")) or tmdb_id,
+            "media_status": _MEDIA_STATUSES.get(
+                _safe_int(media.get("status")), "unknown"
+            ),
+            "is_4k": bool(response.data.get("is4k")),
+        },
+    }
+
+
 def image(size: str, image_path: str) -> SeerrBinaryResponse:
     selected_size = str(size or "").strip().lower()
     selected_path = str(image_path or "").strip().lstrip("/")
@@ -396,6 +461,19 @@ def _runtime(payload: dict, kind: str) -> int:
     if not isinstance(values, list):
         return 0
     return next((number for value in values if (number := _safe_int(value)) > 0), 0)
+
+
+def _normalize_requested_seasons(value: list[int] | str | None) -> list[int] | str:
+    if value is None or value == "all":
+        return "all"
+    if not isinstance(value, list) or not value or len(value) > 100:
+        raise _invalid("Select between 1 and 100 TV seasons, or all seasons")
+    seasons = []
+    for raw in value:
+        number = _bounded_int(raw, name="season", minimum=0, maximum=10_000)
+        if number not in seasons:
+            seasons.append(number)
+    return seasons
 
 
 def _image_url(value: object, size: str) -> str:

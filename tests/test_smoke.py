@@ -99,8 +99,10 @@ def test_ui_smoke() -> None:
     assert 'id="setSeerrEnabled"' in response.text
     assert 'id="setSeerrApiKey"' in response.text
     assert 'id="setSeerrClearApiKey"' in response.text
-    assert 'id="setSeerrSharedRequests"' in response.text
-    assert 'administrator API identity and may auto-approve' in response.text
+    assert 'id="setSeerrRequestMode"' in response.text
+    assert '<option value="shared_admin">Shared administrator API</option>' in response.text
+    assert '<option value="caller_session">Caller-specific sign-in</option>' in response.text
+    assert 'administrator API identity and may auto-approve' in js
     assert 'function _seerrAbortBrowse' in seerr_js
     assert 'new AbortController()' in seerr_js
     assert 'const __SEERR_REQUEST_POLL_MS = 30000;' in seerr_js

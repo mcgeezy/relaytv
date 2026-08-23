@@ -1,6 +1,6 @@
 # Seerr Integration Roadmap
 
-Status: M0-M3 complete; M4 shared request creation awaits operator confirmation
+Status: M0-M4 complete; M6 caller-specific sessions in progress
 
 Primary branch: `feat/seerr-integration`
 
@@ -90,10 +90,10 @@ inside RelayTV and is attached only as an `X-Api-Key` header to the configured
 Seerr origin.
 
 This mode supports the complete read experience. Writes are deliberately
-gated by a separate `seerr_shared_requests_enabled` setting that defaults to
-`false`. When enabled, the UI must say that requests use Seerr's administrator
-API identity and may auto-approve regardless of the attributed user's normal
-permissions.
+gated by an explicit `seerr_request_mode` selection that defaults to
+`disabled`. `shared_admin` says that requests use Seerr's administrator API
+identity and may auto-approve regardless of the attributed user's normal
+permissions; `caller_session` never falls back to the administrator identity.
 
 An optional operator-selected `seerr_request_user_id` may set request
 attribution. It is selected from sanitized user records and is never accepted
@@ -132,8 +132,13 @@ Persist the following settings using the existing settings bus and atomic
 - `seerr_enabled: bool` — default `false`
 - `seerr_server_url: str` — origin/base URL, without credentials
 - `seerr_api_key: str` — secret; write-only through `/settings`
-- `seerr_shared_requests_enabled: bool` — default `false`
+- `seerr_request_mode: str` — `disabled`, `shared_admin`, or `caller_session`;
+  default `disabled`
 - `seerr_request_user_id: int | null` — optional shared-mode attribution
+
+The former `seerr_shared_requests_enabled` value is retained only as a
+compatibility migration input and mirror. Existing `true` values migrate to
+`shared_admin`; existing `false` values migrate to `disabled`.
 
 Operator environment defaults:
 
@@ -141,6 +146,7 @@ Operator environment defaults:
 - `RELAYTV_SEERR_SERVER_URL`
 - `RELAYTV_SEERR_API_KEY`
 - `RELAYTV_SEERR_SHARED_REQUESTS_ENABLED`
+- `RELAYTV_SEERR_REQUEST_MODE`
 - `RELAYTV_SEERR_REQUEST_USER_ID`
 
 `GET /settings` returns an empty `seerr_api_key`, plus
@@ -332,7 +338,7 @@ quality gate before declaring the branch ready.
 | M1 | Immutable client/config model, secret-safe settings, status/test routes | Complete |
 | M2 | Normalized discover/search/detail/request-read API | Complete |
 | M3 | Responsive Seerr browser shell and settings UX | Complete |
-| M4 | Explicitly gated shared request creation and TV season selection | Pending |
+| M4 | Explicitly gated shared request creation and TV season selection | Complete |
 | M5 | Validated Seerr-to-Jellyfin play/queue bridge | Pending |
 | M6 | Caller-specific Quick Connect sessions (follow-up permitted) | Pending |
 | M7 | Compatibility, security, field soak, operator/API docs, rollout decision | Pending |
@@ -367,6 +373,14 @@ quality gate before declaring the branch ready.
   layout, detail navigation, retired-search rejection, request state, overflow,
   and nested-interactive controls. The local environment lacks the Playwright
   package, so the script is syntax-checked and retained for deployment smoke.
+- **M4 — 2026-08-23:** Replaced the ambiguous shared-write boolean with an
+  explicit `disabled` / `shared_admin` / `caller_session` request identity
+  policy and a backward-compatible migration for the former toggle. Added the
+  tightly modeled request route, shared-admin attribution from operator
+  settings only, movie and selected/all-season UI actions, semantic handling
+  for no requestable seasons, rejection of advanced administrator fields, and
+  API-token coverage. Caller mode currently fails closed until M6 establishes
+  a per-browser session; it never falls back to the administrator API key.
 
 ## Verification Plan
 
