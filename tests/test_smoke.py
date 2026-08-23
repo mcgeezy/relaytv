@@ -49,6 +49,7 @@ def test_ui_smoke() -> None:
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
+    realtime_policy_response = client.get('/static/ui/realtime_transport.js')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
@@ -60,7 +61,13 @@ def test_ui_smoke() -> None:
     assert 'text/html' in response.headers['content-type']
     assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
+    realtime_policy_tag = re.search(
+        r'<script src="/static/ui/realtime_transport\.js\?v=\d+" defer></script>',
+        response.text,
+    )
+    assert realtime_policy_tag
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
+    assert realtime_policy_tag.start() < response.text.index('<script src="/static/ui/app.js')
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/iptv\.js\?v=\d+" defer></script>', response.text)
@@ -73,6 +80,9 @@ def test_ui_smoke() -> None:
     assert jellyfin_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
     assert iptv_js_response.status_code == 200
+    assert realtime_policy_response.status_code == 200
+    assert 'javascript' in realtime_policy_response.headers['content-type']
+    assert 'createPolicy' in realtime_policy_response.text
     assert 'text/css' in jellyfin_css_response.headers['content-type']
     jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200

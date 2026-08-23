@@ -1976,6 +1976,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
 
   <div class="toasts top-left" id="toasts"></div>
 
+  <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__"></script>
   <script>
     const $ = (id)=>document.getElementById(id);
     const iconMap = {share:"↗",check:"✓",warn:"!",camera:"📷",play:"▶",info:"i"};
@@ -1987,9 +1988,17 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     let _overlayRealtimeCapabilities = null;
     let _overlayRealtimeRetryTimer = 0;
     let _overlayRealtimeFailures = 0;
-    let _overlayWsBlockedUntil = 0;
     let _overlayLastEventTs = Date.now();
     let _overlayReportedState = '';
+    const _overlayRealtimePolicy = RelayTVRealtime.createPolicy({
+      fallbackCapabilities:{
+        protocol_version:0,
+        websocket:{enabled:false},
+        sse:{enabled:true, overlay:'/x11/overlay/events'},
+      },
+      capabilityTtlMs:300000,
+      websocketCooldownMs:60000,
+    });
     const overlayToastMetrics = [
       ['--toast-width', 430],
       ['--toast-gap', 11],
@@ -2220,24 +2229,30 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       }catch(_e){}
     }
 
-    async function loadOverlayRealtimeCapabilities(){
-      if(_overlayRealtimeCapabilities) return _overlayRealtimeCapabilities;
-      try{
+    async function loadOverlayRealtimeCapabilities(options){
+      const settings = (options && typeof options === 'object') ? options : {};
+      _overlayRealtimeCapabilities = await _overlayRealtimePolicy.discover(async()=>{
         const ctrl = new AbortController();
         const timeout = setTimeout(()=>ctrl.abort(), 2500);
-        const response = await fetch('/realtime/capabilities', {cache:'no-store', signal:ctrl.signal});
-        clearTimeout(timeout);
-        if(!response.ok) throw new Error(`capabilities ${response.status}`);
-        const payload = await response.json();
-        if(Number(payload?.protocol_version) !== 1) throw new Error('unsupported protocol');
-        _overlayRealtimeCapabilities = payload;
-      }catch(_e){
-        _overlayRealtimeCapabilities = {
-          protocol_version:0,
-          websocket:{enabled:false},
-          sse:{enabled:true, overlay:'/x11/overlay/events'},
-        };
-      }
+        try{
+          const response = await fetch('/realtime/capabilities', {cache:'no-store', signal:ctrl.signal});
+          if(!response.ok){
+            const error = new Error(`capabilities ${response.status}`);
+            error.status = response.status;
+            error.legacy = response.status === 404;
+            throw error;
+          }
+          const payload = await response.json();
+          if(Number(payload?.protocol_version) !== 1){
+            const error = new Error('unsupported protocol');
+            error.cacheFallback = true;
+            throw error;
+          }
+          return payload;
+        }finally{
+          clearTimeout(timeout);
+        }
+      }, {force:settings.force === true});
       return _overlayRealtimeCapabilities;
     }
 
@@ -2268,20 +2283,14 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       }, delay);
     }
 
-    function retireOverlayRealtime(active, reason, failed=false){
+    function retireOverlayRealtime(active, reason, policyReason=reason){
       if(_overlayRealtimeTransport !== active || active.generation !== _overlayRealtimeGeneration) return;
       _overlayRealtimeTransport = null;
       _overlayRealtimeGeneration += 1;
       try{ active.handle.close(); }catch(_e){}
-      if(active.kind === 'websocket' && failed) _overlayWsBlockedUntil = Date.now() + 60000;
+      _overlayRealtimePolicy.retire(active.kind, policyReason, active.websocketAttempt);
       reportOverlayState('retrying', reason, active.kind, reason, true);
       scheduleOverlayRealtimeRetry();
-    }
-
-    function overlayWebSocketStabilityMs(capabilities){
-      const advertised = Number(capabilities?.heartbeat_sec);
-      const heartbeatSec = Number.isFinite(advertised) && advertised > 0 ? advertised : 5;
-      return heartbeatSec * 2 * 1000;
     }
 
     function openOverlaySse(capabilities, generation){
@@ -2295,7 +2304,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
         try{ dispatchOverlayRealtime(JSON.parse(ev.data || '{}'), 'sse'); }catch(_e){}
       };
-      es.onerror = ()=>retireOverlayRealtime(active, 'eventsource_error', true);
+      es.onerror = ()=>retireOverlayRealtime(active, 'eventsource_error', 'error');
     }
 
     function openOverlayWebSocket(capabilities, generation){
@@ -2306,7 +2315,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       let socket = null;
       try{ socket = new WebSocket(url.toString(), 'relaytv.realtime.v1'); }
       catch(_e){
-        _overlayWsBlockedUntil = Date.now() + 60000;
+        _overlayRealtimePolicy.retire('websocket', 'open_error', null);
         openOverlaySse(capabilities, generation);
         return;
       }
@@ -2314,9 +2323,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         kind:'websocket',
         handle:socket,
         generation,
-        proved:false,
-        stable:false,
-        stableAfterTs:0,
+        websocketAttempt:_overlayRealtimePolicy.createWebSocketAttempt(capabilities),
       };
       _overlayRealtimeTransport = active;
       socket.onmessage = (ev)=>{
@@ -2324,31 +2331,19 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         let envelope = null;
         try{ envelope = JSON.parse(ev.data || '{}'); }
         catch(_e){
-          retireOverlayRealtime(active, 'websocket_protocol_error', true);
+          retireOverlayRealtime(active, 'websocket_protocol_error', 'protocol_error');
           return;
         }
-        if(Number(envelope?.version) !== 1 || typeof envelope?.event !== 'string'){
-          retireOverlayRealtime(active, 'websocket_protocol_error', true);
+        const accepted = _overlayRealtimePolicy.acceptWebSocketEnvelope(active.websocketAttempt, envelope);
+        if(!accepted){
+          retireOverlayRealtime(active, 'websocket_protocol_error', 'protocol_error');
           return;
         }
-        const payload = (envelope.data && typeof envelope.data === 'object') ? envelope.data : {};
-        if(!active.proved){
-          if(envelope.event !== 'hello' || Number(payload.protocol_version) !== 1){
-            retireOverlayRealtime(active, 'websocket_protocol_error', true);
-            return;
-          }
-          active.proved = true;
-          active.stableAfterTs = Date.now() + overlayWebSocketStabilityMs(capabilities);
-        }
-        if(active.proved && Date.now() >= active.stableAfterTs) active.stable = true;
-        if(!payload.type) payload.type = envelope.event;
-        dispatchOverlayRealtime(payload, 'websocket');
+        if(!accepted.payload.type) accepted.payload.type = accepted.event;
+        dispatchOverlayRealtime(accepted.payload, 'websocket');
       };
       socket.onerror = ()=>{};
-      socket.onclose = ()=>{
-        const failed = !active.stable;
-        retireOverlayRealtime(active, 'websocket_closed', failed);
-      };
+      socket.onclose = ()=>retireOverlayRealtime(active, 'websocket_closed', 'closed');
     }
 
     async function connectEvents(){
@@ -2359,12 +2354,10 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       try{
         const capabilities = await loadOverlayRealtimeCapabilities();
         if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
-        const websocketReady = (
-          capabilities?.websocket?.enabled === true
-          && typeof window.WebSocket === 'function'
-          && Date.now() >= _overlayWsBlockedUntil
-        );
-        if(websocketReady) openOverlayWebSocket(capabilities, generation);
+        const selected = _overlayRealtimePolicy.select(capabilities, {
+          websocketAvailable:typeof window.WebSocket === 'function',
+        });
+        if(selected === 'websocket') openOverlayWebSocket(capabilities, generation);
         else openOverlaySse(capabilities, generation);
       }catch(_e){
         scheduleOverlayRealtimeRetry();
@@ -2378,14 +2371,19 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       if(!active) return;
       if((Date.now() - _overlayLastEventTs) < 30000) return;
       reportOverlayState('stale', 'stream_stale', active.kind, 'stream_stale', true);
-      retireOverlayRealtime(active, 'stream_stale', active.kind === 'websocket');
+      retireOverlayRealtime(active, 'stream_stale', 'stale');
     }, 10000);
-    setInterval(()=>{
+    setInterval(async()=>{
       const active = _overlayRealtimeTransport;
       if(!active || active.kind !== 'sse') return;
-      if(_overlayRealtimeCapabilities?.websocket?.enabled !== true) return;
-      if(Date.now() < _overlayWsBlockedUntil) return;
-      retireOverlayRealtime(active, 'websocket_reprobe', false);
+      const generation = active.generation;
+      const capabilities = await loadOverlayRealtimeCapabilities({force:true});
+      if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+      const selected = _overlayRealtimePolicy.select(capabilities, {
+        websocketAvailable:typeof window.WebSocket === 'function',
+      });
+      if(selected !== 'websocket') return;
+      retireOverlayRealtime(active, 'websocket_reprobe', 'upgrade');
     }, 300000);
   </script>
 </body>
@@ -2778,6 +2776,7 @@ def x11_overlay_page():
     html = html.replace("__OVERLAY_DEBUG_BG__", _overlay_debug_bg_css())
     html = html.replace("__OVERLAY_ALLOW_IMAGES__", "true" if _overlay_allow_images() else "false")
     html = html.replace("__IDLE_CACHE_BUSTER__", str(int(time.time() * 1000)))
+    html = html.replace("__UI_ASSET_V__", _ui_asset_version())
     return HTMLResponse(
         html,
         headers={
@@ -4220,6 +4219,7 @@ def ui():
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
+  <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
@@ -4562,7 +4562,17 @@ def ui():
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "jellyfin.css", "iptv.css", "peers.css", "app.js", "jellyfin.js", "iptv.js", "peers.js"):
+    for name in (
+        "app.css",
+        "jellyfin.css",
+        "iptv.css",
+        "peers.css",
+        "realtime_transport.js",
+        "app.js",
+        "jellyfin.js",
+        "iptv.js",
+        "peers.js",
+    ):
         path = _resolve_static_asset("ui", name)
         try:
             if path:

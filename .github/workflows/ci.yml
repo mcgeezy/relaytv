@@ -16,8 +16,21 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
       - run: pip install -e '.[dev]'
       - run: ruff check app tests
+      - run: node --check app/relaytv_app/static/ui/realtime_transport.js
+      - run: node --check app/relaytv_app/static/ui/app.js
+      - name: Check generated X11 overlay JavaScript
+        run: >-
+          PYTHONPATH=app python3 -c
+          "import re; from relaytv_app.routes import x11_overlay_page;
+          print(re.findall(r'<script>(.*?)</script>',
+          x11_overlay_page().body.decode(), re.S)[0])"
+          | node --check -
+      - run: node --test tests/js/*.test.js
       - run: pytest -q
 
   docker-image:

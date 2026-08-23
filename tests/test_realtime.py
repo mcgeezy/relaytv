@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import asyncio
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
 import pytest
@@ -383,15 +384,15 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
     response = realtime_client.get("/x11/overlay")
 
     assert response.status_code == 200
+    assert re.search(r'<script src="/static/ui/realtime_transport\.js\?v=\d+"></script>', response.text)
+    assert "RelayTVRealtime.createPolicy" in response.text
     assert "new WebSocket" in response.text
     assert "new EventSource" in response.text
     assert "/realtime/capabilities" in response.text
     assert "/x11/overlay/ws" in response.text
     assert "/x11/overlay/events" in response.text
-    assert "envelope.event !== 'hello' || Number(payload.protocol_version) !== 1" in response.text
-    assert "active.stableAfterTs = Date.now() + overlayWebSocketStabilityMs(capabilities);" in response.text
-    assert "Date.now() >= active.stableAfterTs" in response.text
-    assert "const failed = !active.stable;" in response.text
+    assert "retireOverlayRealtime(active, 'stream_stale', 'stale')" in response.text
+    assert "loadOverlayRealtimeCapabilities({force:true})" in response.text
 
 
 def test_browser_resets_process_local_sequence_on_reconnect_hello(realtime_client) -> None:
@@ -401,15 +402,12 @@ def test_browser_resets_process_local_sequence_on_reconnect_hello(realtime_clien
     assert "if (name === 'hello') __uiLastSequence = 0;" in source.text
 
 
-def test_browser_requires_versioned_hello_and_stable_websocket(realtime_client) -> None:
+def test_browser_delegates_stale_and_reprobe_policy(realtime_client) -> None:
     source = realtime_client.get("/static/ui/app.js")
 
     assert source.status_code == 200
-    assert "envelope.event !== 'hello' || Number(payload.protocol_version) !== 1" in source.text
-    assert "return heartbeatSec * 2 * 1000;" in source.text
-    assert "active.stableAfterTs = Date.now() + _uiWebSocketStabilityMs(capabilities);" in source.text
-    assert "Date.now() >= active.stableAfterTs" in source.text
-    assert "const failed = !active.stable;" in source.text
+    assert "_closeUiEventStream('stale')" in source.text
+    assert "_loadUiRealtimeCapabilities({force:true})" in source.text
 
 
 def test_nginx_tls_example_forwards_scheme_to_trusted_uvicorn() -> None:
