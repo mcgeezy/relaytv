@@ -31,6 +31,7 @@ EXPECTED_ROUTES = {
     ("GET", "/integrations/iptv/status", "iptv_status"),
     ("GET", "/integrations/seerr/status", "seerr_integration_status"),
     ("POST", "/integrations/seerr/test", "seerr_integration_test"),
+    ("GET", "/integrations/seerr/users", "seerr_integration_users"),
     ("POST", "/integrations/jellyfin/catalog/cache_clear", "jellyfin_catalog_cache_clear"),
     ("POST", "/integrations/jellyfin/command", "jellyfin_integration_command"),
     ("POST", "/integrations/jellyfin/connect", "jellyfin_integration_connect"),

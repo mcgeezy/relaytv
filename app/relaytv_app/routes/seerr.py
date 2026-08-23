@@ -62,6 +62,14 @@ def seerr_requests(take: int = 20, skip: int = 0, filter: str = "all"):
         raise _http_error(exc) from None
 
 
+@router.get("/integrations/seerr/users")
+def seerr_integration_users():
+    try:
+        return {"users": seerr_service.list_users()}
+    except SeerrError as exc:
+        raise _http_error(exc) from None
+
+
 @router.get("/seerr/image/{size}/{image_path:path}")
 def seerr_image(size: str, image_path: str):
     try:

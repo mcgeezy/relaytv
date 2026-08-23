@@ -167,3 +167,18 @@ def test_seerr_read_error_contract_is_sanitized(monkeypatch) -> None:
             "message": "Unknown Seerr discovery section",
         }
     }
+
+
+def test_seerr_users_route_returns_sanitized_selector_records(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seerr_service,
+        "list_users",
+        lambda: [{"id": 3, "display_name": "Alex", "username": "alex"}],
+    )
+
+    response = TestClient(create_app(testing=True)).get("/integrations/seerr/users")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "users": [{"id": 3, "display_name": "Alex", "username": "alex"}]
+    }

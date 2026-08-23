@@ -583,6 +583,14 @@ function _uiPushLayer(){
 }
 
 function _uiCloseTopLayerFromNav(){
+  if (window.relaytvSeerr && window.relaytvSeerr.isDetailOpen()) {
+    window.relaytvSeerr.closeDetail({fromNav:true});
+    return true;
+  }
+  if (window.relaytvSeerr && window.relaytvSeerr.isOpen()) {
+    window.relaytvSeerr.close({fromNav:true, force:true});
+    return true;
+  }
   if (_jfIsDetailOpen()) {
     _jfCloseDetailPanel({fromNav:true});
     return true;
@@ -2241,16 +2249,20 @@ function defaultJellyfinServerUrl(){
 }
 
 async function loadSettingsUi(){
-  const [devRes, setRes, tvRes, jfRes] = await Promise.all([
+  const [devRes, setRes, tvRes, jfRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
     fetch('/settings'),
     fetch('/tv/status').catch(() => null),
-    fetch('/integrations/jellyfin/status').catch(() => null)
+    fetch('/integrations/jellyfin/status').catch(() => null),
+    fetch('/integrations/seerr/status').catch(() => null),
+    fetch('/integrations/seerr/users').catch(() => null)
   ]);
   const dev = await devRes.json();
   const cur = await setRes.json();
   const tvStatus = (tvRes && tvRes.ok) ? await tvRes.json() : null;
   const jfStatus = (jfRes && jfRes.ok) ? await jfRes.json() : null;
+  const seerrStatus = (seerrRes && seerrRes.ok) ? await seerrRes.json() : null;
+  const seerrUsers = (seerrUsersRes && seerrUsersRes.ok) ? await seerrUsersRes.json() : null;
   const deviceName = document.getElementById('setDeviceName');
   const audioDev = document.getElementById('setAudioDev');
   const qual = document.getElementById('setQuality');
@@ -2287,6 +2299,14 @@ async function loadSettingsUi(){
   const jfPlaybackMode = document.getElementById('setJfPlaybackMode');
   const jfSyncDiag = document.getElementById('setJfSyncDiag');
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
+  const seerrEnabled = document.getElementById('setSeerrEnabled');
+  const seerrServerUrl = document.getElementById('setSeerrServerUrl');
+  const seerrApiKey = document.getElementById('setSeerrApiKey');
+  const seerrClearApiKey = document.getElementById('setSeerrClearApiKey');
+  const seerrApiKeyState = document.getElementById('setSeerrApiKeyState');
+  const seerrSharedRequests = document.getElementById('setSeerrSharedRequests');
+  const seerrRequestUser = document.getElementById('setSeerrRequestUser');
+  const seerrDiag = document.getElementById('setSeerrDiag');
 
   if (deviceName) deviceName.value = (cur.device_name || 'RelayTV');
   if (iptvEnabled) iptvEnabled.checked = !!cur.iptv_enabled;
@@ -2364,6 +2384,53 @@ async function loadSettingsUi(){
     jfCacheClearMsg.classList.remove('ok', 'err');
     jfCacheClearMsg.textContent = '';
   }
+  if (seerrEnabled) seerrEnabled.checked = !!cur.seerr_enabled;
+  if (seerrServerUrl) seerrServerUrl.value = String(cur.seerr_server_url || '');
+  if (seerrApiKey) seerrApiKey.value = '';
+  if (seerrClearApiKey) seerrClearApiKey.checked = false;
+  if (seerrApiKeyState) {
+    const configured = !!cur.seerr_api_key_configured;
+    seerrApiKeyState.textContent = configured ? 'API key is stored.' : 'No API key stored.';
+    seerrApiKeyState.setAttribute('data-configured', configured ? '1' : '0');
+  }
+  if (seerrSharedRequests) seerrSharedRequests.checked = !!cur.seerr_shared_requests_enabled;
+  if (seerrRequestUser) {
+    seerrRequestUser.replaceChildren();
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'API identity (default)';
+    seerrRequestUser.appendChild(defaultOption);
+    const users = seerrUsers && Array.isArray(seerrUsers.users) ? seerrUsers.users : [];
+    users.forEach(user => {
+      const id = Number(user && user.id);
+      if (!Number.isInteger(id) || id <= 0) return;
+      const option = document.createElement('option');
+      option.value = String(id);
+      const display = String(user.display_name || user.username || `User ${id}`);
+      const username = String(user.username || '');
+      option.textContent = username && username !== display ? `${display} (${username})` : display;
+      seerrRequestUser.appendChild(option);
+    });
+    seerrRequestUser.value = cur.seerr_request_user_id ? String(cur.seerr_request_user_id) : '';
+  }
+  const seerrBadge = document.getElementById('setSeerrStatus');
+  if (seerrBadge) {
+    const enabled = seerrStatus ? !!seerrStatus.enabled : !!cur.seerr_enabled;
+    const reachable = !!(enabled && seerrStatus && seerrStatus.reachable);
+    seerrBadge.textContent = enabled ? (reachable ? 'Connected' : 'Down') : 'Disabled';
+    seerrBadge.classList.remove('up', 'down', 'warn', 'unknown');
+    seerrBadge.classList.add(enabled ? (reachable ? 'up' : 'down') : 'unknown');
+  }
+  if (seerrDiag) {
+    if (!seerrStatus) seerrDiag.textContent = 'Status unavailable.';
+    else seerrDiag.textContent = [
+      seerrStatus.application_title || 'Seerr',
+      seerrStatus.version ? `v${seerrStatus.version}` : '',
+      seerrStatus.media_server_type || '',
+      seerrStatus.auth_mode === 'shared_api_key' ? 'server API key' : 'not authenticated',
+    ].filter(Boolean).join(' · ');
+  }
+  if (window.relaytvSeerr) window.relaytvSeerr.updateStatus(seerrStatus || {enabled:!!cur.seerr_enabled, configured:!!cur.seerr_api_key_configured});
 
   if (audioDev){
     audioDev.innerHTML = '';
@@ -2492,6 +2559,9 @@ function bindSettingsUi(){
   const jfApplyMsg = document.getElementById('setJfApplyResult');
   const jfCacheClearBtn = document.getElementById('setJfCacheClearBtn');
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
+  const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
+  const seerrTestBtn = document.getElementById('setSeerrTestBtn');
+  const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
   const ytUploadBtn = document.getElementById('setYtCookiesUploadBtn');
   const ytClearBtn = document.getElementById('setYtCookiesClearBtn');
   const ytCookiesFile = document.getElementById('setYtCookiesFile');
@@ -2652,6 +2722,56 @@ function bindSettingsUi(){
 
   if (jfApplyBtn) jfApplyBtn.onclick = applyJellyfinOnly;
 
+  async function applySeerrOnly(testAfterApply){
+    if (seerrApplyMsg) { seerrApplyMsg.classList.remove('ok', 'err'); seerrApplyMsg.textContent = ''; }
+    const enabled = !!document.getElementById('setSeerrEnabled')?.checked;
+    const serverUrl = String(document.getElementById('setSeerrServerUrl')?.value || '').trim();
+    const apiKey = String(document.getElementById('setSeerrApiKey')?.value || '').trim();
+    const clearKey = !!document.getElementById('setSeerrClearApiKey')?.checked;
+    const keyConfigured = document.getElementById('setSeerrApiKeyState')?.getAttribute('data-configured') === '1';
+    const sharedRequests = !!document.getElementById('setSeerrSharedRequests')?.checked;
+    const requestUserRaw = String(document.getElementById('setSeerrRequestUser')?.value || '').trim();
+    if (enabled && !serverUrl) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr server URL is required.'; } return false; }
+    if (enabled && !apiKey && (!keyConfigured || clearKey)) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr API key is required.'; } return false; }
+    const payload = {
+      seerr_enabled: enabled,
+      seerr_server_url: serverUrl,
+      seerr_shared_requests_enabled: sharedRequests,
+      seerr_request_user_id: requestUserRaw ? Number(requestUserRaw) : null,
+      apply_now: true,
+    };
+    if (apiKey) payload.seerr_api_key = apiKey;
+    if (clearKey) payload.seerr_api_key_clear = true;
+    if (seerrApplyBtn) seerrApplyBtn.disabled = true;
+    if (seerrTestBtn) seerrTestBtn.disabled = true;
+    try {
+      const response = await fetch('/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(_seerrErrorMessage(body, response.status));
+      let message = enabled ? 'Seerr settings applied.' : 'Seerr disabled.';
+      if (testAfterApply && enabled) {
+        const testResponse = await fetch('/integrations/seerr/test', {method:'POST'});
+        const testBody = await testResponse.json().catch(() => ({}));
+        if (!testResponse.ok) throw new Error(_seerrErrorMessage(testBody, testResponse.status));
+        const identity = testBody.identity || {};
+        message = `Connected${identity.display_name || identity.username ? ` as ${identity.display_name || identity.username}` : ''}.`;
+      }
+      await loadSettingsUi();
+      if (seerrApplyMsg) { seerrApplyMsg.classList.add('ok'); seerrApplyMsg.textContent = message; }
+      if (window.relaytvSeerr) window.relaytvSeerr.refreshStatus();
+      return true;
+    } catch (error) {
+      if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = error && error.message ? error.message : 'Seerr apply failed.'; }
+      return false;
+    } finally {
+      if (seerrApplyBtn) seerrApplyBtn.disabled = false;
+      if (seerrTestBtn) seerrTestBtn.disabled = false;
+    }
+  }
+
+  if (seerrApplyBtn) seerrApplyBtn.onclick = () => applySeerrOnly(false);
+  if (seerrTestBtn) seerrTestBtn.onclick = () => applySeerrOnly(true);
+
   async function clearJellyfinCatalogCache(){
     if (jfCacheClearMsg) {
       jfCacheClearMsg.classList.remove('ok', 'err');
@@ -2714,6 +2834,13 @@ function bindSettingsUi(){
     const jfAudioLang = (document.getElementById('setJfAudioLang')?.value || '').trim().toLowerCase();
     const jfSubLang = (document.getElementById('setJfSubLang')?.value || '').trim().toLowerCase();
     const jfPlaybackMode = (document.getElementById('setJfPlaybackMode')?.value || 'auto').trim().toLowerCase();
+    const seerrEnabled = !!document.getElementById('setSeerrEnabled')?.checked;
+    const seerrServerUrl = String(document.getElementById('setSeerrServerUrl')?.value || '').trim();
+    const seerrApiKey = String(document.getElementById('setSeerrApiKey')?.value || '').trim();
+    const seerrClearApiKey = !!document.getElementById('setSeerrClearApiKey')?.checked;
+    const seerrApiKeyConfigured = document.getElementById('setSeerrApiKeyState')?.getAttribute('data-configured') === '1';
+    const seerrSharedRequests = !!document.getElementById('setSeerrSharedRequests')?.checked;
+    const seerrRequestUserRaw = String(document.getElementById('setSeerrRequestUser')?.value || '').trim();
     const typedCity = weatherCityInput?.value || '';
     if (typedCity.trim() && typedCity.trim() !== WEATHER_LOCATION_STATE.location_name) {
       const found = await geocodeWeatherCity(typedCity);
@@ -2730,6 +2857,8 @@ function bindSettingsUi(){
       if (!jfUser) { alert(`${jfBrandName()} username is required.`); return; }
       if (!jfPass && !jfPwConfigured) { alert(`${jfBrandName()} password is required.`); return; }
     }
+    if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
+    if (seerrEnabled && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required.'); return; }
 
     const payload = {
       device_name: deviceName || 'RelayTV',
@@ -2764,6 +2893,10 @@ function bindSettingsUi(){
       jellyfin_audio_lang: jfAudioLang,
       jellyfin_sub_lang: jfSubLang,
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
+      seerr_enabled: seerrEnabled,
+      seerr_server_url: seerrServerUrl,
+      seerr_shared_requests_enabled: seerrSharedRequests,
+      seerr_request_user_id: seerrRequestUserRaw ? Number(seerrRequestUserRaw) : null,
       apply_now: true
     };
     const tvControl = {
@@ -2777,6 +2910,8 @@ function bindSettingsUi(){
       if (tvBaseline[key] !== undefined && value !== tvBaseline[key]) payload[key] = value;
     });
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
+    if (seerrApiKey) payload.seerr_api_key = seerrApiKey;
+    if (seerrClearApiKey) payload.seerr_api_key_clear = true;
     const r = await fetch('/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     if (!r.ok) {
       alert('Failed to save settings');
@@ -2855,6 +2990,7 @@ window.addEventListener('DOMContentLoaded', () => {
   bindNowSubtitleUi();
   bindSettingsUi();
   bindAddUrlUi();
+  bindSeerrUi();
   bindJellyfinUi();
   _jfSetShellVisible(false);
   _jfSetActiveTab('dashboard', {refresh:false});

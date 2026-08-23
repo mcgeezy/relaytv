@@ -1,6 +1,6 @@
 # Seerr Integration Roadmap
 
-Status: M0-M2 complete; M3 browser and settings UX next
+Status: M0-M3 complete; M4 shared request creation awaits operator confirmation
 
 Primary branch: `feat/seerr-integration`
 
@@ -165,6 +165,7 @@ The initial route surface should be small and semantic:
 ```text
 GET  /integrations/seerr/status
 POST /integrations/seerr/test
+GET  /integrations/seerr/users
 
 GET  /seerr/discover
 GET  /seerr/search
@@ -330,7 +331,7 @@ quality gate before declaring the branch ready.
 | M0 | API/security review and implementation roadmap | Complete |
 | M1 | Immutable client/config model, secret-safe settings, status/test routes | Complete |
 | M2 | Normalized discover/search/detail/request-read API | Complete |
-| M3 | Responsive Seerr browser shell and settings UX | Pending |
+| M3 | Responsive Seerr browser shell and settings UX | Complete |
 | M4 | Explicitly gated shared request creation and TV season selection | Pending |
 | M5 | Validated Seerr-to-Jellyfin play/queue bridge | Pending |
 | M6 | Caller-specific Quick Connect sessions (follow-up permitted) | Pending |
@@ -355,6 +356,17 @@ quality gate before declaring the branch ready.
   forwards the image body and useful cache validators without exposing the API
   key, cookies, or arbitrary upstream headers. Added client, service, route,
   validation, sanitization, image-proxy, and public-route-inventory coverage.
+- **M3 — 2026-08-23:** Added a responsive native Seerr shell for trending,
+  movie, series, search, detail, and recent-request browsing, plus a settings
+  section for enablement, write-only API-key replacement/clear, connection
+  testing, shared-request warning, and sanitized attribution selection. Browser
+  requests are bounded, abortable, and generation-checked; search is debounced,
+  request polling runs only in the visible Requests view, and upstream strings
+  are assigned through DOM text nodes rather than raw HTML. Added a sanitized
+  user-selector endpoint and a Playwright smoke scenario covering phone/desktop
+  layout, detail navigation, retired-search rejection, request state, overflow,
+  and nested-interactive controls. The local environment lacks the Playwright
+  package, so the script is syntax-checked and retained for deployment smoke.
 
 ## Verification Plan
 

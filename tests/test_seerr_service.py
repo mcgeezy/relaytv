@@ -226,3 +226,29 @@ def test_image_uses_only_allowlisted_tmdb_proxy_path(monkeypatch) -> None:
             assert getattr(exc, "status_code", None) == 400
         else:
             raise AssertionError(f"unsafe image path should fail: {unsafe}")
+
+
+def test_user_selector_records_are_sanitized(monkeypatch) -> None:
+    _install_client(
+        monkeypatch,
+        {
+            "/user": {
+                "results": [
+                    {
+                        "id": 7,
+                        "displayName": "Living Room",
+                        "username": "mark",
+                        "email": "private@example.com",
+                        "permissions": 2,
+                        "jellyfinToken": "never-return-this",
+                    }
+                ]
+            }
+        },
+    )
+
+    result = seerr_service.list_users()
+
+    assert result == [{"id": 7, "display_name": "Living Room", "username": "mark"}]
+    assert "private@example.com" not in str(result)
+    assert "never-return-this" not in str(result)

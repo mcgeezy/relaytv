@@ -336,6 +336,8 @@ def ui_static_asset(asset_name: str):
         "jellyfin.js",
         "iptv.css",
         "iptv.js",
+        "seerr.css",
+        "seerr.js",
         "peers.css",
         "peers.js",
     }:

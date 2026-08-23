@@ -52,8 +52,11 @@ def test_ui_smoke() -> None:
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
     iptv_js_response = client.get('/static/ui/iptv.js')
+    seerr_css_response = client.get('/static/ui/seerr.css')
+    seerr_js_response = client.get('/static/ui/seerr.js')
     jellyfin_playwright = (ROOT_DIR / 'scripts' / 'jellyfin-ui-smoke.js').read_text(encoding='utf-8')
     iptv_playwright = (ROOT_DIR / 'scripts' / 'iptv-ui-smoke.js').read_text(encoding='utf-8')
+    seerr_playwright = (ROOT_DIR / 'scripts' / 'seerr-ui-smoke.js').read_text(encoding='utf-8')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
@@ -63,6 +66,8 @@ def test_ui_smoke() -> None:
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/iptv\.js\?v=\d+" defer></script>', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/seerr\.css\?v=\d+" />', response.text)
+    assert re.search(r'<script src="/static/ui/seerr\.js\?v=\d+" defer></script>', response.text)
     assert response.headers.get('cache-control') == 'no-cache'
     assert 'window.RELAYTV_IDLE_PANEL_CATALOG = ' in response.text
     assert '<style>' not in response.text
@@ -72,6 +77,8 @@ def test_ui_smoke() -> None:
     assert jellyfin_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
     assert iptv_js_response.status_code == 200
+    assert seerr_css_response.status_code == 200
+    assert seerr_js_response.status_code == 200
     assert 'text/css' in jellyfin_css_response.headers['content-type']
     jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200
@@ -80,11 +87,30 @@ def test_ui_smoke() -> None:
     assert jellyfin_js_response.status_code == 200
     assert 'javascript' in jellyfin_js_response.headers['content-type']
     jellyfin_js = jellyfin_js_response.text
+    seerr_js = seerr_js_response.text
     assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
     assert 'id="jellyfinShell"' in response.text
+    assert 'id="seerrOpenBtn"' in response.text
+    assert 'id="seerrShell"' in response.text
+    assert 'id="seerrSearchInput"' in response.text
+    assert 'id="setSeerrEnabled"' in response.text
+    assert 'id="setSeerrApiKey"' in response.text
+    assert 'id="setSeerrClearApiKey"' in response.text
+    assert 'id="setSeerrSharedRequests"' in response.text
+    assert 'administrator API identity and may auto-approve' in response.text
+    assert 'function _seerrAbortBrowse' in seerr_js
+    assert 'new AbortController()' in seerr_js
+    assert 'const __SEERR_REQUEST_POLL_MS = 30000;' in seerr_js
+    assert "document.visibilityState !== 'visible'" in seerr_js
+    assert "image.loading = 'lazy';" in seerr_js
+    assert 'innerHTML' not in seerr_js
+    assert 'X-Api-Key' not in seerr_js
+    assert "chromium.connect(wsEndpoint)" in seerr_playwright
+    assert "query === 'retired'" in seerr_playwright
+    assert 'nestedInteractive' in seerr_playwright
     assert 'id="jfSearchInput"' in response.text
     assert 'id="nowLangBtn"' in response.text
     assert 'id="nowSubLangBtn"' in response.text

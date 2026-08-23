@@ -216,6 +216,30 @@ def list_requests(
     }
 
 
+def list_users() -> list[dict[str, object]]:
+    payload = _client().get(
+        "/user",
+        query={"take": 100, "skip": 0, "sort": "displayname", "sortDirection": "asc"},
+    )
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        raise _invalid_upstream()
+    users = []
+    for raw in payload["results"]:
+        if not isinstance(raw, dict):
+            continue
+        user_id = _safe_int(raw.get("id"))
+        if user_id <= 0:
+            continue
+        users.append(
+            {
+                "id": user_id,
+                "display_name": _text(raw.get("displayName"), limit=150),
+                "username": _text(raw.get("username"), limit=150),
+            }
+        )
+    return users
+
+
 def image(size: str, image_path: str) -> SeerrBinaryResponse:
     selected_size = str(size or "").strip().lower()
     selected_path = str(image_path or "").strip().lstrip("/")
