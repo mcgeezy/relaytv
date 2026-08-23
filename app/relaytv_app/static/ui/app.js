@@ -323,7 +323,7 @@ const __uiRealtimePolicy = window.RelayTVRealtime.createPolicy({
   capabilityTtlMs:300000,
   websocketCooldownMs:60000,
 });
-let __uiLastSequence = 0;
+const __uiRealtimeSequence = window.RelayTVRealtime.createSequenceTracker();
 let __remoteVolumeKnownValue = null;
 
 function _mergePlaybackStateIntoStatus(base, fast){
@@ -1412,14 +1412,9 @@ function _dispatchUiRealtimeEvent(eventName, payload, sequence){
   const name = String(eventName || '').trim();
   if (!name) return;
   _uiEventMarkAlive();
-  if (name === 'hello') __uiLastSequence = 0;
-  const nextSequence = Number(sequence || 0);
-  if (nextSequence > 0) {
-    if (__uiLastSequence > 0 && nextSequence > (__uiLastSequence + 1)) {
-      refresh().catch(() => {});
-    }
-    __uiLastSequence = Math.max(__uiLastSequence, nextSequence);
-  }
+  const sequenceDecision = __uiRealtimeSequence.accept(name, sequence);
+  if (sequenceDecision.gap) refresh().catch(() => {});
+  if (!sequenceDecision.apply) return;
   if (name === 'hello') {
     if (!__lastStatus) refresh().catch(() => {});
   } else if (name === 'ping') {

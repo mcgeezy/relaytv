@@ -2,7 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {createPolicy} = require('../../app/relaytv_app/static/ui/realtime_transport.js');
+const {
+  createPolicy,
+  createSequenceTracker,
+} = require('../../app/relaytv_app/static/ui/realtime_transport.js');
 
 function fixture(){
   let nowMs = 0;
@@ -160,4 +163,30 @@ test('an established websocket close remains eligible for websocket reconnect', 
 
   assert.equal(state.policy.retire('websocket', 'closed', attempt).failed, false);
   assert.equal(state.policy.select(state.websocketCapabilities), 'websocket');
+});
+
+test('application sequence tracking rejects stale state and reports forward gaps', ()=>{
+  const tracker = createSequenceTracker();
+
+  assert.deepEqual(tracker.accept('playback', 1), {
+    apply:true,
+    gap:false,
+    lastSequence:1,
+  });
+  assert.equal(tracker.accept('playback', 1).apply, false);
+  assert.equal(tracker.accept('ping', 1).apply, true, 'heartbeat equality is allowed');
+  assert.deepEqual(tracker.accept('ping', 3), {
+    apply:true,
+    gap:true,
+    lastSequence:1,
+  });
+  assert.deepEqual(tracker.accept('status', 3), {
+    apply:true,
+    gap:true,
+    lastSequence:3,
+  });
+  assert.equal(tracker.accept('queue', 2).apply, false);
+
+  assert.equal(tracker.accept('hello', 0).lastSequence, 0);
+  assert.equal(tracker.accept('playback', 1).apply, true);
 });

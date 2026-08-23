@@ -152,5 +152,34 @@
     };
   }
 
-  return {createPolicy};
+  function createSequenceTracker(){
+    let lastSequence = 0;
+
+    function accept(eventName, sequence){
+      const name = String(eventName || '').trim();
+      if(name === 'hello') lastSequence = 0;
+      const nextSequence = Number(sequence || 0);
+      if(!(nextSequence > 0)) return {apply:true, gap:false, lastSequence};
+
+      // Heartbeats may repeat the most recent application sequence. They
+      // prove liveness but carry no application state to apply.
+      if(name === 'ping'){
+        const gap = lastSequence > 0 && nextSequence > (lastSequence + 1);
+        return {apply:true, gap, lastSequence};
+      }
+      if(lastSequence > 0 && nextSequence <= lastSequence){
+        return {apply:false, gap:false, lastSequence};
+      }
+      const gap = lastSequence > 0 && nextSequence > (lastSequence + 1);
+      lastSequence = nextSequence;
+      return {apply:true, gap, lastSequence};
+    }
+
+    return {
+      accept,
+      state(){ return {lastSequence}; },
+    };
+  }
+
+  return {createPolicy, createSequenceTracker};
 });

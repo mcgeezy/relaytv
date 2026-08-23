@@ -110,10 +110,9 @@ class RealtimeSubscription:
         if event.event in _COALESCED_EVENTS:
             for index in range(len(self._items) - 1, -1, -1):
                 if self._items[index].event == event.event:
-                    self._items[index] = event
+                    del self._items[index]
                     self.coalesced += 1
-                    self._available.set()
-                    return
+                    break
         if len(self._items) >= self.maxsize:
             self._items.popleft()
             self.dropped += 1
@@ -206,8 +205,10 @@ class RealtimeHub:
                 if replay_latest and existing_channel_subscribers
                 else []
             )
-        for event in retained:
-            subscription.schedule(event)
+            # Schedule retained snapshots before a concurrent publisher can
+            # allocate and hand off a newer channel sequence.
+            for event in retained:
+                subscription.schedule(event)
         return subscription
 
     def unsubscribe(self, subscription: RealtimeSubscription) -> None:
@@ -249,7 +250,11 @@ class RealtimeHub:
                 for subscription in self._subscriptions.values()
                 if subscription.channel == name
             ]
-        return sum(1 for subscription in targets if subscription.schedule(message))
+            # Keep the event-loop handoff in the same critical section as
+            # sequence allocation. Otherwise concurrent publishers can
+            # schedule sequence N+1 before sequence N after releasing the
+            # hub lock.
+            return sum(1 for subscription in targets if subscription.schedule(message))
 
     def current_sequence(self, channel: str) -> int:
         with self._lock:

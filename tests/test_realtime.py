@@ -2,6 +2,7 @@
 import asyncio
 from pathlib import Path
 import re
+import threading
 
 from fastapi.testclient import TestClient
 import pytest
@@ -15,6 +16,7 @@ from relaytv_app.realtime import (
     UI_CHANNEL,
     RealtimeHub,
     RealtimeEvent,
+    RealtimeSubscription,
     RealtimeSubscriptionClosed,
     realtime_capabilities_payload,
     realtime_hub,
@@ -162,22 +164,120 @@ def test_realtime_hub_copies_payload_before_late_delivery() -> None:
     asyncio.run(scenario())
 
 
-def test_realtime_hub_coalesces_pending_snapshots() -> None:
+def test_realtime_hub_coalesces_snapshots_without_reordering_other_events() -> None:
     async def scenario() -> None:
         hub = RealtimeHub()
         subscription = hub.subscribe(UI_CHANNEL, transport="websocket", maxsize=10)
 
         hub.publish(UI_CHANNEL, "playback", {"position": 1})
-        hub.publish(UI_CHANNEL, "playback", {"position": 2})
+        hub.publish(UI_CHANNEL, "queue", {"queue_length": 2})
+        hub.publish(UI_CHANNEL, "playback", {"position": 3})
         await asyncio.sleep(0)
 
-        message = subscription.get_nowait()
-        assert message.sequence == 2
-        assert message.data == {"position": 2}
+        queue_message = subscription.get_nowait()
+        playback_message = subscription.get_nowait()
+        assert (queue_message.sequence, queue_message.event) == (2, "queue")
+        assert queue_message.data == {"queue_length": 2}
+        assert (playback_message.sequence, playback_message.event) == (3, "playback")
+        assert playback_message.data == {"position": 3}
         with pytest.raises(asyncio.QueueEmpty):
             subscription.get_nowait()
         assert subscription.coalesced == 1
         subscription.close()
+
+    asyncio.run(scenario())
+
+
+def test_realtime_hub_serializes_cross_thread_sequence_handoff() -> None:
+    async def scenario() -> None:
+        hub = RealtimeHub()
+        subscription = hub.subscribe(UI_CHANNEL, transport="websocket", maxsize=10)
+        original_schedule = subscription.schedule
+        first_waiting = threading.Event()
+        release_first = threading.Event()
+        second_scheduled = threading.Event()
+
+        def controlled_schedule(event: RealtimeEvent) -> bool:
+            if event.sequence == 1:
+                first_waiting.set()
+                assert release_first.wait(timeout=2)
+            elif event.sequence == 2:
+                second_scheduled.set()
+            return original_schedule(event)
+
+        subscription.schedule = controlled_schedule  # type: ignore[method-assign]
+        first = asyncio.create_task(
+            asyncio.to_thread(hub.publish, UI_CHANNEL, "queue", {"value": 1})
+        )
+        assert await asyncio.to_thread(first_waiting.wait, 2)
+        second = asyncio.create_task(
+            asyncio.to_thread(hub.publish, UI_CHANNEL, "jellyfin", {"value": 2})
+        )
+
+        # Under the ordering lock, the second publisher cannot hand off its
+        # event while the first handoff is paused.
+        assert not await asyncio.to_thread(second_scheduled.wait, 0.1)
+        release_first.set()
+        await asyncio.gather(first, second)
+        await asyncio.sleep(0)
+
+        messages = [subscription.get_nowait(), subscription.get_nowait()]
+        assert [(item.sequence, item.event) for item in messages] == [
+            (1, "queue"),
+            (2, "jellyfin"),
+        ]
+        subscription.close()
+
+    asyncio.run(scenario())
+
+
+def test_realtime_hub_schedules_replay_before_concurrent_publication(monkeypatch) -> None:
+    async def scenario() -> None:
+        hub = RealtimeHub()
+        keeper = hub.subscribe(UI_CHANNEL, transport="sse", maxsize=10)
+        hub.publish(UI_CHANNEL, "playback", {"position": 1})
+        await asyncio.sleep(0)
+
+        original_schedule = RealtimeSubscription.schedule
+        replay_waiting = threading.Event()
+        release_replay = threading.Event()
+
+        def controlled_schedule(self, event: RealtimeEvent) -> bool:
+            if self is not keeper and event.sequence == 1:
+                replay_waiting.set()
+                timer = threading.Timer(0.2, release_replay.set)
+                timer.start()
+                try:
+                    assert release_replay.wait(timeout=2)
+                finally:
+                    timer.cancel()
+            return original_schedule(self, event)
+
+        monkeypatch.setattr(RealtimeSubscription, "schedule", controlled_schedule)
+
+        def publish_after_replay_starts() -> None:
+            assert replay_waiting.wait(timeout=2)
+            hub.publish(UI_CHANNEL, "queue", {"queue_length": 2})
+
+        publisher = threading.Thread(target=publish_after_replay_starts)
+        publisher.start()
+        replayed = hub.subscribe(
+            UI_CHANNEL,
+            transport="websocket",
+            maxsize=10,
+            replay_latest=True,
+        )
+        publisher.join(timeout=2)
+        assert not publisher.is_alive()
+        await asyncio.sleep(0)
+
+        messages = [replayed.get_nowait(), replayed.get_nowait()]
+        assert [(item.sequence, item.event) for item in messages] == [
+            (1, "playback"),
+            (2, "queue"),
+        ]
+        keeper.close()
+        replayed.close()
 
     asyncio.run(scenario())
 
@@ -395,11 +495,12 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
     assert "loadOverlayRealtimeCapabilities({force:true})" in response.text
 
 
-def test_browser_resets_process_local_sequence_on_reconnect_hello(realtime_client) -> None:
+def test_browser_delegates_application_sequence_handling(realtime_client) -> None:
     source = realtime_client.get("/static/ui/app.js")
 
     assert source.status_code == 200
-    assert "if (name === 'hello') __uiLastSequence = 0;" in source.text
+    assert "RelayTVRealtime.createSequenceTracker()" in source.text
+    assert "__uiRealtimeSequence.accept(name, sequence)" in source.text
 
 
 def test_browser_delegates_stale_and_reprobe_policy(realtime_client) -> None:

@@ -188,13 +188,16 @@ WebSocket messages use this envelope:
 }
 ```
 
-Clients request the `relaytv.realtime.v1` subprotocol, refresh `/status` after
-reconnect or a sequence gap, and ignore sequence equality on application-level
-`ping` messages. Browser handshakes must be same-origin. Origin-less native
-clients are accepted because this channel exposes the same open read data as
-`GET /status`; native clients may still send their configured bearer header.
-Bearer credentials must be sent in the `Authorization` header and must never
-be placed in a WebSocket URL or query string.
+Clients request the `relaytv.realtime.v1` subprotocol and refresh `/status`
+after reconnect or a sequence gap. Application events are delivered in
+increasing sequence order; clients should discard a duplicate or older
+application event. A `ping` may repeat or observe the latest sequence without
+advancing the client's last applied application sequence. Browser handshakes
+must be same-origin. Origin-less native clients are accepted because this
+channel exposes the same open read data as `GET /status`; native clients may
+still send their configured bearer header. Bearer credentials must be sent in
+the `Authorization` header and must never be placed in a WebSocket URL or query
+string.
 
 ## IPTV catalog and playback
 
