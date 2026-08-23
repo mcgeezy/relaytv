@@ -39,6 +39,23 @@ read_env_value() {
   fi
 }
 
+resolve_delegate_qpa() {
+  local mode="$1"
+  local configured=""
+  case "$mode" in
+    wayland-native)
+      configured="${QT_QPA_PLATFORM:-}"
+      if [[ -z "$configured" ]]; then
+        configured="$(read_env_value QT_QPA_PLATFORM | tr -d '\r[:space:]' || true)"
+      fi
+      printf "%s" "${configured:-wayland}"
+      ;;
+    x11-native|x11-compat|headless)
+      printf "xcb"
+      ;;
+  esac
+}
+
 configured_runtime_profile() {
   printf "native_qt"
 }
@@ -170,11 +187,12 @@ run_compose_up() {
   local mode="$3"
   local native_playback="$4"
   local env_args=()
-  local uid runtime_dir wayland_display_name display_name
+  local uid runtime_dir wayland_display_name display_name delegate_qpa
   uid="$(compose_target_uid)"
   runtime_dir="$(resolve_runtime_dir "$uid")"
   wayland_display_name="$(resolve_wayland_display_name "$runtime_dir")"
   display_name="$(resolve_display_name)"
+  delegate_qpa="$(resolve_delegate_qpa "$mode")"
   if [[ "$mode" == "wayland-native" ]]; then
     env_args+=(
       DISPLAY="$display_name"
@@ -182,7 +200,7 @@ run_compose_up() {
       WAYLAND_DISPLAY="$wayland_display_name"
       XDG_SESSION_TYPE=wayland
       RELAYTV_MODE=wayland
-      QT_QPA_PLATFORM=wayland
+      QT_QPA_PLATFORM="$delegate_qpa"
     )
   elif [[ "$mode" == "x11-native" || "$mode" == "x11-compat" ]]; then
     env_args+=(
@@ -1225,4 +1243,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
