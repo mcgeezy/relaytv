@@ -1,7 +1,7 @@
 # Realtime Connectivity Roadmap
 
-Status: M6 automated verification complete; field soak pending
-Primary branch: `feat/realtime-connectivity`  
+Status: Server release candidate ready after deployed soak
+Primary branch: `feat/realtime-connectivity`
 Repositories: `relaytv`, `relaytv-ha`, `relaytv-android`
 
 ## Objective
@@ -275,7 +275,7 @@ commits. A milestone is complete only after its listed tests pass.
 | M3 | `relaytv-ha` | WS/SSE/poll coordinator and `local_push` metadata | Complete |
 | M4 | `relaytv-android` | Native media-service WS/SSE/poll client | Complete |
 | M5 | `relaytv` | X11 overlay WebSocket transport | Complete |
-| M6 | all | Cross-version soak, documentation, and rollout decision | In progress — field soak pending |
+| M6 | all | Cross-version soak, documentation, and rollout decision | Complete for server release; companion releases retain their own validation gates |
 
 ## Verification Plan
 
@@ -342,14 +342,18 @@ git diff --check
 
 | Repository | Branch commit | Verified gate |
 | --- | --- | --- |
-| `relaytv` | through `44a3c8a` | ruff; 660 pytest tests; UI and generated-overlay JavaScript syntax checks |
+| `relaytv` | through `c4a1f39` | ruff; 664 pytest tests; UI and generated-overlay JavaScript syntax checks; native-ready amd64 and arm64 images |
 | `relaytv-ha` | `1b0bca6`, `297b551` | ruff; 38 pytest tests, including legacy `404`, fallback, ownership, and reconfigure ordering |
 | `relaytv-android` | `ac40c7b`, `473c420` | clean debug APK assembly; Android lint; 8 unit/MockWebServer tests |
 
 The automated matrix proves new-client/legacy-server selection and preserves
-the existing SSE wire framing for legacy clients. The remaining M6 work is a
-deployed direct/proxy and physical-device soak; it is intentionally not marked
-complete by unit or build results alone.
+the existing SSE wire framing for legacy clients. The server candidate was also
+soaked on an amd64 NUC and arm64 Raspberry Pi from the same application tree.
+Browser, X11 overlay, and Home Assistant clients selected WebSocket; playback
+controls and reconnects remained healthy; and the Pi's supported XWayland idle
+surface remained visible after container recreation. Physical Android-device
+validation remains a gate for the Android companion release, not for shipping
+the backward-compatible server endpoint.
 
 ## Rollout and Deprecation Gates
 
@@ -373,8 +377,8 @@ the shared hub indefinitely is an acceptable outcome.
 The WebSocket preference and shared realtime core are user-visible reliability
 and efficiency features, so server and companion PRs should use `feat:` titles.
 PR descriptions must include user impact, operator/proxy changes, compatibility,
-tests, and `Breaking changes: None`. Evaluate a release highlight when the
-server milestone is ready to ship; do not add one during planning alone.
+tests, and `Breaking changes: None`. The server feature warrants the
+`docs/release-highlights/0.10.0.md` lead-in included on this branch.
 
 ## Milestone Log
 
@@ -391,3 +395,4 @@ server milestone is ready to ship; do not add one during planning alone.
 | 2026-08-22 | M6 hardening | Reset client sequence baselines after a versioned hello, pairing reconnect refresh with clean handling when a restarted server begins a new process-local sequence. |
 | 2026-08-22 | M6 control hardening | Serialized each single-slot Qt runtime command through acknowledgement, preventing overlapping HA volume writes or other producers from replacing an in-flight command or its acknowledgement. |
 | 2026-08-22 | M6 Pi display hardening | Preserved the installer-selected Qt delegate when `host-ops --wayland-native` recreates a container, preventing Raspberry Pi's supported XWayland bridge from being silently replaced by a black direct-Wayland idle surface. |
+| 2026-08-22 | M6 deployed soak | Soaked the same application tree on an amd64 NUC and arm64 Raspberry Pi; verified native readiness, browser and overlay WebSockets, Home Assistant control and reconnect behavior, playback, and a visible Pi idle surface. Approved the backward-compatible server release while leaving physical Android validation to its companion release. |
