@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
     StreamingResponse,
     HTMLResponse,
@@ -24,6 +24,17 @@ from .. import config, discovery_mdns, playback_service, player, public_media, r
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
+from ..realtime import (
+    HEARTBEAT_SEC,
+    PROTOCOL_VERSION,
+    SUBPROTOCOL,
+    OVERLAY_CHANNEL,
+    UI_CHANNEL,
+    RealtimeEvent,
+    RealtimeSubscriptionClosed,
+    realtime_hub,
+    websocket_origin_allowed,
+)
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
@@ -121,6 +132,7 @@ from .playback import (
 from .playback import router as playback_router
 from .postlive import router as postlive_router
 from .queue import router as queue_router
+from .realtime import router as realtime_router
 from .settings import (
     SettingsReq as SettingsReq,
     YouTubeCookiesUploadReq as YouTubeCookiesUploadReq,
@@ -152,6 +164,7 @@ router.include_router(peers_router)
 router.include_router(playback_router)
 router.include_router(postlive_router)
 router.include_router(queue_router)
+router.include_router(realtime_router)
 router.include_router(settings_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)
@@ -456,10 +469,7 @@ def _notification_capabilities() -> dict:
     strategy = _notification_strategy()
     available, reason = _notifications_available()
     visual_runtime_mode = _visual_runtime_mode()
-    try:
-        subscribers = len(_X11_OVERLAY_SUBS)
-    except Exception:
-        subscribers = 0
+    subscribers = realtime_hub.subscriber_count(OVERLAY_CHANNEL)
     overlay_info = state.get_overlay_delivery_state_info() if hasattr(state, "get_overlay_delivery_state_info") else {}
     if hasattr(state, "update_overlay_delivery_state"):
         overlay_state = str(overlay_info.get("overlay_delivery_state") or "")
@@ -870,15 +880,12 @@ def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
 
 
 # =========================
-# X11 Overlay notification hub (SSE)
+# Realtime event publication and SSE compatibility adapters
 # =========================
-
-_X11_OVERLAY_SUBS: set[asyncio.Queue] = set()
-_UI_EVENT_SUBS: set[asyncio.Queue] = set()
 
 def _x11_overlay_push(event: dict) -> None:
     """Push a toast/overlay event to any connected X11 overlay clients."""
-    if not _X11_OVERLAY_SUBS:
+    if realtime_hub.subscriber_count(OVERLAY_CHANNEL) <= 0:
         try:
             if hasattr(state, "update_overlay_delivery_state"):
                 state.update_overlay_delivery_state(
@@ -900,23 +907,11 @@ def _x11_overlay_push(event: dict) -> None:
             )
     except Exception:
         pass
-    payload = _json.dumps(event, separators=(",", ":"), ensure_ascii=False)
-    dead: list[asyncio.Queue] = []
-    for q in list(_X11_OVERLAY_SUBS):
-        try:
-            q.put_nowait(payload)
-        except Exception:
-            dead.append(q)
-    for q in dead:
-        try:
-            _X11_OVERLAY_SUBS.discard(q)
-        except Exception:
-            pass
+    realtime_hub.publish(OVERLAY_CHANNEL, str(event.get("type") or "toast"), event)
 
 async def _x11_overlay_sse() -> object:
     """Server-Sent Events stream for X11 overlay."""
-    q: asyncio.Queue[str] = asyncio.Queue(maxsize=50)
-    _X11_OVERLAY_SUBS.add(q)
+    subscription = realtime_hub.subscribe(OVERLAY_CHANNEL, transport="sse", maxsize=50)
     try:
         if hasattr(state, "update_overlay_delivery_state"):
             state.update_overlay_delivery_state(
@@ -927,26 +922,26 @@ async def _x11_overlay_sse() -> object:
             )
     except Exception:
         pass
-    # Send a hello so the client can confirm connectivity.
-    try:
-        q.put_nowait(_json.dumps({"type": "hello", "ts": time.time()}))
-    except Exception:
-        pass
-
     async def gen():
         try:
+            hello = _json.dumps({"type": "hello", "ts": time.time()})
+            yield f"data: {hello}\n\n"
             while True:
                 try:
-                    msg = await asyncio.wait_for(q.get(), timeout=15.0)
-                    yield f"data: {msg}\n\n"
+                    message = await asyncio.wait_for(subscription.get(), timeout=15.0)
+                    payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
                 except asyncio.TimeoutError:
                     yield f"data: {_json.dumps({'type': 'ping', 'ts': time.time()}, separators=(',', ':'))}\n\n"
         except asyncio.CancelledError:
             raise
         finally:
-            _X11_OVERLAY_SUBS.discard(q)
+            subscription.close()
             try:
-                if hasattr(state, "update_overlay_delivery_state") and not _X11_OVERLAY_SUBS:
+                if (
+                    hasattr(state, "update_overlay_delivery_state")
+                    and realtime_hub.subscriber_count(OVERLAY_CHANNEL) <= 0
+                ):
                     state.update_overlay_delivery_state(
                         "disconnected",
                         "subscriber_gone",
@@ -959,22 +954,108 @@ async def _x11_overlay_sse() -> object:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-def _ui_event_push(event_name: str, event: dict) -> None:
-    """Push a lightweight UI event to any connected /ui SSE clients."""
-    if not _UI_EVENT_SUBS:
+async def _x11_overlay_websocket_session(websocket: WebSocket) -> None:
+    if SUBPROTOCOL not in _websocket_requested_subprotocols(websocket):
+        await websocket.close(code=1002, reason="unsupported realtime protocol")
         return
-    payload = _json.dumps(event, separators=(",", ":"), ensure_ascii=False)
-    dead: list[asyncio.Queue] = []
-    for q in list(_UI_EVENT_SUBS):
+    if not websocket_origin_allowed(
+        origin=websocket.headers.get("origin"),
+        host=websocket.headers.get("host"),
+        websocket_scheme=str(websocket.scope.get("scheme") or "ws"),
+    ):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
+
+    await websocket.accept(subprotocol=SUBPROTOCOL)
+    subscription = realtime_hub.subscribe(
+        OVERLAY_CHANNEL,
+        transport="websocket",
+        maxsize=50,
+    )
+    try:
+        if hasattr(state, "update_overlay_delivery_state"):
+            state.update_overlay_delivery_state(
+                "connected",
+                "subscriber_connected",
+                client_event="subscriber",
+                client_reason="subscriber_connected",
+            )
+    except Exception:
+        pass
+
+    receive_task: asyncio.Task | None = None
+    event_task: asyncio.Task | None = None
+    try:
+        hello = RealtimeEvent.create(
+            "hello",
+            0,
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "heartbeat_sec": HEARTBEAT_SEC,
+                "replay": False,
+            },
+        )
+        await websocket.send_json(hello.envelope())
+        receive_task = asyncio.create_task(websocket.receive())
+        event_task = asyncio.create_task(subscription.get())
+        while True:
+            done, _pending = await asyncio.wait(
+                {receive_task, event_task},
+                timeout=float(HEARTBEAT_SEC),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if receive_task in done:
+                incoming = receive_task.result()
+                if incoming.get("type") == "websocket.disconnect":
+                    break
+                await websocket.close(code=1008, reason="read-only realtime channel")
+                break
+            if event_task in done:
+                event = event_task.result()
+                await websocket.send_json(event.envelope())
+                while True:
+                    try:
+                        event = subscription.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    await websocket.send_json(event.envelope())
+                event_task = asyncio.create_task(subscription.get())
+                continue
+            ping = RealtimeEvent.create(
+                "ping",
+                realtime_hub.current_sequence(OVERLAY_CHANNEL),
+                {"type": "ping", "ts": time.time()},
+            )
+            await websocket.send_json(ping.envelope())
+    except (WebSocketDisconnect, RealtimeSubscriptionClosed):
+        pass
+    finally:
+        subscription.close()
+        for task in (receive_task, event_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (receive_task, event_task) if task is not None),
+            return_exceptions=True,
+        )
         try:
-            q.put_nowait((event_name, payload))
-        except Exception:
-            dead.append(q)
-    for q in dead:
-        try:
-            _UI_EVENT_SUBS.discard(q)
+            if (
+                hasattr(state, "update_overlay_delivery_state")
+                and realtime_hub.subscriber_count(OVERLAY_CHANNEL) <= 0
+            ):
+                state.update_overlay_delivery_state(
+                    "disconnected",
+                    "subscriber_gone",
+                    client_event="subscriber",
+                    client_reason="subscriber_gone",
+                )
         except Exception:
             pass
+
+
+def _ui_event_push(event_name: str, event: dict) -> None:
+    """Push a lightweight UI event to any connected /ui SSE clients."""
+    realtime_hub.publish(UI_CHANNEL, event_name, event)
 
 
 def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_length: int | None = None, source: str = "api") -> None:
@@ -1895,14 +1976,29 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
 
   <div class="toasts top-left" id="toasts"></div>
 
+  <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__"></script>
   <script>
     const $ = (id)=>document.getElementById(id);
     const iconMap = {share:"↗",check:"✓",warn:"!",camera:"📷",play:"▶",info:"i"};
     const overlayAllowToastImages = __OVERLAY_ALLOW_IMAGES__;
     let _wasPlaying = true;
-    let _overlayEventSource = null;
+    let _overlayRealtimeTransport = null;
+    let _overlayRealtimeGeneration = 0;
+    let _overlayRealtimeConnecting = false;
+    let _overlayRealtimeCapabilities = null;
+    let _overlayRealtimeRetryTimer = 0;
+    let _overlayRealtimeFailures = 0;
     let _overlayLastEventTs = Date.now();
     let _overlayReportedState = '';
+    const _overlayRealtimePolicy = RelayTVRealtime.createPolicy({
+      fallbackCapabilities:{
+        protocol_version:0,
+        websocket:{enabled:false},
+        sse:{enabled:true, overlay:'/x11/overlay/events'},
+      },
+      capabilityTtlMs:300000,
+      websocketCooldownMs:60000,
+    });
     const overlayToastMetrics = [
       ['--toast-width', 430],
       ['--toast-gap', 11],
@@ -2133,36 +2229,162 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       }catch(_e){}
     }
 
-    function connectEvents(){
-      try{ _overlayEventSource?.close(); }catch(_e){}
-      reportOverlayState('retrying', 'connect_start', 'sse', 'connect_start', true);
-      const es = new EventSource('/x11/overlay/events');
-      _overlayEventSource = es;
-      _overlayLastEventTs = Date.now();
-      es.onmessage = (ev)=>{
-        _overlayLastEventTs = Date.now();
+    async function loadOverlayRealtimeCapabilities(options){
+      const settings = (options && typeof options === 'object') ? options : {};
+      _overlayRealtimeCapabilities = await _overlayRealtimePolicy.discover(async()=>{
+        const ctrl = new AbortController();
+        const timeout = setTimeout(()=>ctrl.abort(), 2500);
         try{
-          const msg=JSON.parse(ev.data || '{}');
-          reportOverlayState('connected', 'stream_connected', 'sse', msg.type === 'ping' ? 'stream_ping' : (msg.type || 'stream_event'), true);
-          if(msg.type==='toast') addToast(msg);
-        }catch(_e){}
+          const response = await fetch('/realtime/capabilities', {cache:'no-store', signal:ctrl.signal});
+          if(!response.ok){
+            const error = new Error(`capabilities ${response.status}`);
+            error.status = response.status;
+            error.legacy = response.status === 404;
+            throw error;
+          }
+          const payload = await response.json();
+          if(Number(payload?.protocol_version) !== 1){
+            const error = new Error('unsupported protocol');
+            error.cacheFallback = true;
+            throw error;
+          }
+          return payload;
+        }finally{
+          clearTimeout(timeout);
+        }
+      }, {force:settings.force === true});
+      return _overlayRealtimeCapabilities;
+    }
+
+    function dispatchOverlayRealtime(msg, kind){
+      if(!msg || typeof msg !== 'object') return;
+      _overlayLastEventTs = Date.now();
+      _overlayRealtimeFailures = 0;
+      const event = String(msg.type || '').trim();
+      reportOverlayState(
+        'connected',
+        'stream_connected',
+        kind,
+        event === 'ping' ? 'stream_ping' : (event || 'stream_event'),
+        true
+      );
+      if(event === 'toast') addToast(msg);
+    }
+
+    function scheduleOverlayRealtimeRetry(){
+      if(_overlayRealtimeRetryTimer) return;
+      _overlayRealtimeFailures += 1;
+      const exponent = Math.min(5, Math.max(0, _overlayRealtimeFailures - 1));
+      const base = Math.min(30000, 1000 * (2 ** exponent));
+      const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+      _overlayRealtimeRetryTimer = setTimeout(()=>{
+        _overlayRealtimeRetryTimer = 0;
+        connectEvents();
+      }, delay);
+    }
+
+    function retireOverlayRealtime(active, reason, policyReason=reason){
+      if(_overlayRealtimeTransport !== active || active.generation !== _overlayRealtimeGeneration) return;
+      _overlayRealtimeTransport = null;
+      _overlayRealtimeGeneration += 1;
+      try{ active.handle.close(); }catch(_e){}
+      _overlayRealtimePolicy.retire(active.kind, policyReason, active.websocketAttempt);
+      reportOverlayState('retrying', reason, active.kind, reason, true);
+      scheduleOverlayRealtimeRetry();
+    }
+
+    function openOverlaySse(capabilities, generation){
+      if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+      const path = String(capabilities?.sse?.overlay || '/x11/overlay/events');
+      let es = null;
+      try{ es = new EventSource(path); }catch(_e){ scheduleOverlayRealtimeRetry(); return; }
+      const active = {kind:'sse', handle:es, generation};
+      _overlayRealtimeTransport = active;
+      es.onmessage = (ev)=>{
+        if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+        try{ dispatchOverlayRealtime(JSON.parse(ev.data || '{}'), 'sse'); }catch(_e){}
       };
-      es.onerror = ()=>{
-        reportOverlayState('retrying', 'eventsource_error', 'sse', 'eventsource_error', true);
-        try{es.close();}catch(_e){}
-        if(_overlayEventSource === es) _overlayEventSource = null;
-        setTimeout(connectEvents, 1200);
+      es.onerror = ()=>retireOverlayRealtime(active, 'eventsource_error', 'error');
+    }
+
+    function openOverlayWebSocket(capabilities, generation){
+      if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+      const path = String(capabilities?.websocket?.overlay || '/x11/overlay/ws');
+      const url = new URL(path, window.location.href);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      let socket = null;
+      try{ socket = new WebSocket(url.toString(), 'relaytv.realtime.v1'); }
+      catch(_e){
+        _overlayRealtimePolicy.retire('websocket', 'open_error', null);
+        openOverlaySse(capabilities, generation);
+        return;
+      }
+      const active = {
+        kind:'websocket',
+        handle:socket,
+        generation,
+        websocketAttempt:_overlayRealtimePolicy.createWebSocketAttempt(capabilities),
       };
+      _overlayRealtimeTransport = active;
+      socket.onmessage = (ev)=>{
+        if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+        let envelope = null;
+        try{ envelope = JSON.parse(ev.data || '{}'); }
+        catch(_e){
+          retireOverlayRealtime(active, 'websocket_protocol_error', 'protocol_error');
+          return;
+        }
+        const accepted = _overlayRealtimePolicy.acceptWebSocketEnvelope(active.websocketAttempt, envelope);
+        if(!accepted){
+          retireOverlayRealtime(active, 'websocket_protocol_error', 'protocol_error');
+          return;
+        }
+        if(!accepted.payload.type) accepted.payload.type = accepted.event;
+        dispatchOverlayRealtime(accepted.payload, 'websocket');
+      };
+      socket.onerror = ()=>{};
+      socket.onclose = ()=>retireOverlayRealtime(active, 'websocket_closed', 'closed');
+    }
+
+    async function connectEvents(){
+      if(_overlayRealtimeTransport || _overlayRealtimeConnecting) return;
+      const generation = ++_overlayRealtimeGeneration;
+      _overlayRealtimeConnecting = true;
+      reportOverlayState('retrying', 'connect_start', 'realtime', 'connect_start', true);
+      try{
+        const capabilities = await loadOverlayRealtimeCapabilities();
+        if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+        const selected = _overlayRealtimePolicy.select(capabilities, {
+          websocketAvailable:typeof window.WebSocket === 'function',
+        });
+        if(selected === 'websocket') openOverlayWebSocket(capabilities, generation);
+        else openOverlaySse(capabilities, generation);
+      }catch(_e){
+        scheduleOverlayRealtimeRetry();
+      }finally{
+        if(generation === _overlayRealtimeGeneration) _overlayRealtimeConnecting = false;
+      }
     }
     connectEvents();
     setInterval(()=>{
-      if(!_overlayEventSource) return;
+      const active = _overlayRealtimeTransport;
+      if(!active) return;
       if((Date.now() - _overlayLastEventTs) < 30000) return;
-      reportOverlayState('stale', 'stream_stale', 'sse', 'stream_stale', true);
-      try{ _overlayEventSource.close(); }catch(_e){}
-      _overlayEventSource = null;
-      connectEvents();
+      reportOverlayState('stale', 'stream_stale', active.kind, 'stream_stale', true);
+      retireOverlayRealtime(active, 'stream_stale', 'stale');
     }, 10000);
+    setInterval(async()=>{
+      const active = _overlayRealtimeTransport;
+      if(!active || active.kind !== 'sse') return;
+      const generation = active.generation;
+      const capabilities = await loadOverlayRealtimeCapabilities({force:true});
+      if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+      const selected = _overlayRealtimePolicy.select(capabilities, {
+        websocketAvailable:typeof window.WebSocket === 'function',
+      });
+      if(selected !== 'websocket') return;
+      retireOverlayRealtime(active, 'websocket_reprobe', 'upgrade');
+    }, 300000);
   </script>
 </body>
 </html>"""
@@ -2494,7 +2716,7 @@ def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         try:
-            if len(_X11_OVERLAY_SUBS) > 0:
+            if realtime_hub.subscriber_count(OVERLAY_CHANNEL) > 0:
                 return
         except Exception:
             pass
@@ -2554,6 +2776,7 @@ def x11_overlay_page():
     html = html.replace("__OVERLAY_DEBUG_BG__", _overlay_debug_bg_css())
     html = html.replace("__OVERLAY_ALLOW_IMAGES__", "true" if _overlay_allow_images() else "false")
     html = html.replace("__IDLE_CACHE_BUSTER__", str(int(time.time() * 1000)))
+    html = html.replace("__UI_ASSET_V__", _ui_asset_version())
     return HTMLResponse(
         html,
         headers={
@@ -3249,15 +3472,14 @@ def status():
 
 
 async def _ui_events_sse(request: Request) -> object:
-    q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _UI_EVENT_SUBS.add(q)
+    subscription = realtime_hub.subscribe(
+        UI_CHANNEL,
+        transport="sse",
+        maxsize=100,
+        replay_latest=True,
+    )
 
     async def gen():
-        last_fast_json = ""
-        last_status_json = ""
-        last_has_now_playing = None
-        last_queue_length = None
-        last_full_ts = 0.0
         last_emit_ts = 0.0
 
         try:
@@ -3270,46 +3492,20 @@ async def _ui_events_sse(request: Request) -> object:
                     break
 
                 try:
-                    event_name, payload = await asyncio.wait_for(q.get(), timeout=0.75)
-                    yield f"event: {event_name}\ndata: {payload}\n\n"
+                    message = await asyncio.wait_for(subscription.get(), timeout=5.0)
+                    payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                    yield f"event: {message.event}\ndata: {payload}\n\n"
                     last_emit_ts = time.time()
                     while True:
                         try:
-                            event_name, payload = q.get_nowait()
+                            message = subscription.get_nowait()
                         except asyncio.QueueEmpty:
                             break
-                        yield f"event: {event_name}\ndata: {payload}\n\n"
+                        payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                        yield f"event: {message.event}\ndata: {payload}\n\n"
                         last_emit_ts = time.time()
                 except asyncio.TimeoutError:
                     pass
-
-                now_ts = time.time()
-                fast = _playback_state_fast_snapshot()
-                fast_json = _json.dumps(fast, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
-                queue_length = int(fast.get("queue_length") or 0)
-                has_now_playing = bool(fast.get("has_now_playing"))
-                force_full = (
-                    (last_queue_length is None)
-                    or (queue_length != last_queue_length)
-                    or (has_now_playing != last_has_now_playing)
-                    or ((now_ts - last_full_ts) >= 5.0)
-                )
-
-                if fast_json != last_fast_json:
-                    last_fast_json = fast_json
-                    yield f"event: playback\ndata: {fast_json}\n\n"
-                    last_emit_ts = now_ts
-
-                if force_full:
-                    full = _status_payload()
-                    full_json = _json.dumps(full, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
-                    if full_json != last_status_json:
-                        last_status_json = full_json
-                        yield f"event: status\ndata: {full_json}\n\n"
-                        last_emit_ts = time.time()
-                    last_full_ts = time.time()
-                    last_queue_length = queue_length
-                    last_has_now_playing = has_now_playing
 
                 # Idle ping cadence must stay well inside the client's health
                 # window (app.js _uiEventHealthy) or a quiet stream reads as dead.
@@ -3318,13 +3514,189 @@ async def _ui_events_sse(request: Request) -> object:
                     yield f"event: ping\ndata: {ping}\n\n"
                     last_emit_ts = time.time()
         finally:
-            _UI_EVENT_SUBS.discard(q)
+            subscription.close()
 
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+_UI_SAMPLER_TASK: asyncio.Task | None = None
+_UI_SAMPLER_STOP: asyncio.Event | None = None
+
+
+async def _ui_snapshot_sampler(stop_event: asyncio.Event) -> None:
+    last_fast_json = ""
+    last_status_json = ""
+    last_has_now_playing = None
+    last_queue_length = None
+    last_full_ts = 0.0
+
+    async def _wait(delay: float) -> None:
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass
+
+    while not stop_event.is_set():
+        if realtime_hub.subscriber_count(UI_CHANNEL) <= 0:
+            last_fast_json = ""
+            last_status_json = ""
+            last_has_now_playing = None
+            last_queue_length = None
+            last_full_ts = 0.0
+            await _wait(0.25)
+            continue
+
+        try:
+            now_ts = time.monotonic()
+            fast = await asyncio.to_thread(_playback_state_fast_snapshot)
+            fast_json = _json.dumps(
+                fast,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            queue_length = int(fast.get("queue_length") or 0)
+            has_now_playing = bool(fast.get("has_now_playing"))
+            force_full = (
+                last_queue_length is None
+                or queue_length != last_queue_length
+                or has_now_playing != last_has_now_playing
+                or (now_ts - last_full_ts) >= 5.0
+            )
+
+            if fast_json != last_fast_json:
+                last_fast_json = fast_json
+                realtime_hub.publish(UI_CHANNEL, "playback", fast)
+
+            if force_full:
+                full = await asyncio.to_thread(_status_payload)
+                full_json = _json.dumps(
+                    full,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if full_json != last_status_json:
+                    last_status_json = full_json
+                    realtime_hub.publish(UI_CHANNEL, "status", full)
+                last_full_ts = time.monotonic()
+                last_queue_length = queue_length
+                last_has_now_playing = has_now_playing
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("ui_snapshot_sampler_failed", exc_info=True)
+        await _wait(0.75)
+
+
+async def start_realtime_runtime() -> None:
+    global _UI_SAMPLER_STOP, _UI_SAMPLER_TASK
+    if _UI_SAMPLER_TASK is not None and not _UI_SAMPLER_TASK.done():
+        return
+    _UI_SAMPLER_STOP = asyncio.Event()
+    _UI_SAMPLER_TASK = asyncio.create_task(
+        _ui_snapshot_sampler(_UI_SAMPLER_STOP),
+        name="relaytv-ui-snapshot-sampler",
+    )
+
+
+async def stop_realtime_runtime() -> None:
+    global _UI_SAMPLER_STOP, _UI_SAMPLER_TASK
+    task = _UI_SAMPLER_TASK
+    stop_event = _UI_SAMPLER_STOP
+    _UI_SAMPLER_TASK = None
+    _UI_SAMPLER_STOP = None
+    if stop_event is not None:
+        stop_event.set()
+    if task is not None:
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def _websocket_requested_subprotocols(websocket: WebSocket) -> set[str]:
+    raw = str(websocket.headers.get("sec-websocket-protocol") or "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+async def _ui_websocket_session(websocket: WebSocket) -> None:
+    if SUBPROTOCOL not in _websocket_requested_subprotocols(websocket):
+        await websocket.close(code=1002, reason="unsupported realtime protocol")
+        return
+    if not websocket_origin_allowed(
+        origin=websocket.headers.get("origin"),
+        host=websocket.headers.get("host"),
+        websocket_scheme=str(websocket.scope.get("scheme") or "ws"),
+    ):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
+
+    await websocket.accept(subprotocol=SUBPROTOCOL)
+    subscription = realtime_hub.subscribe(
+        UI_CHANNEL,
+        transport="websocket",
+        maxsize=100,
+        replay_latest=True,
+    )
+    receive_task: asyncio.Task | None = None
+    event_task: asyncio.Task | None = None
+    try:
+        hello = RealtimeEvent.create(
+            "hello",
+            0,
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "heartbeat_sec": HEARTBEAT_SEC,
+                "replay": False,
+            },
+        )
+        await websocket.send_json(hello.envelope())
+        receive_task = asyncio.create_task(websocket.receive())
+        event_task = asyncio.create_task(subscription.get())
+
+        while True:
+            done, _pending = await asyncio.wait(
+                {receive_task, event_task},
+                timeout=float(HEARTBEAT_SEC),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if receive_task in done:
+                incoming = receive_task.result()
+                if incoming.get("type") == "websocket.disconnect":
+                    break
+                await websocket.close(code=1008, reason="read-only realtime channel")
+                break
+            if event_task in done:
+                event = event_task.result()
+                await websocket.send_json(event.envelope())
+                while True:
+                    try:
+                        event = subscription.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    await websocket.send_json(event.envelope())
+                event_task = asyncio.create_task(subscription.get())
+                continue
+
+            ping = RealtimeEvent.create(
+                "ping",
+                realtime_hub.current_sequence(UI_CHANNEL),
+                {"type": "ping", "ts": time.time()},
+            )
+            await websocket.send_json(ping.envelope())
+    except (WebSocketDisconnect, RealtimeSubscriptionClosed):
+        pass
+    finally:
+        subscription.close()
+        for task in (receive_task, event_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (receive_task, event_task) if task is not None),
+            return_exceptions=True,
+        )
 
 
 @router.get("/ui/events")
@@ -3847,6 +4219,7 @@ def ui():
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
+  <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
@@ -4189,7 +4562,17 @@ def ui():
 
 def _ui_asset_version() -> str:
     stamp = 0
-    for name in ("app.css", "jellyfin.css", "iptv.css", "peers.css", "app.js", "jellyfin.js", "iptv.js", "peers.js"):
+    for name in (
+        "app.css",
+        "jellyfin.css",
+        "iptv.css",
+        "peers.css",
+        "realtime_transport.js",
+        "app.js",
+        "jellyfin.js",
+        "iptv.js",
+        "peers.js",
+    ):
         path = _resolve_static_asset("ui", name)
         try:
             if path:

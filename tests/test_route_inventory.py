@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, APIWebSocketRoute
 
 from relaytv_app.main import create_app
 
@@ -107,6 +107,7 @@ EXPECTED_ROUTES = {
     ("GET", "/pwa/{asset_path:path}", "pwa_static_asset"),
     ("GET", "/qr/connect.svg", "qr_connect_svg"),
     ("GET", "/queue", "queue"),
+    ("GET", "/realtime/capabilities", "realtime_capabilities"),
     ("POST", "/queue/add", "enqueue"),
     ("POST", "/queue/dedupe", "queue_dedupe"),
     ("POST", "/queue/handoff", "queue_handoff"),
@@ -138,12 +139,14 @@ EXPECTED_ROUTES = {
     ("GET", "/tv/status", "tv_status"),
     ("GET", "/ui", "ui"),
     ("GET", "/ui/events", "ui_events"),
+    ("WEBSOCKET", "/ui/ws", "ui_websocket"),
     ("POST", "/v1/queue/add", "enqueue"),
     ("POST", "/volume", "volume"),
     ("GET", "/x11/host_urls", "x11_host_urls"),
     ("GET", "/x11/overlay", "x11_overlay_page"),
     ("POST", "/x11/overlay/client_state", "x11_overlay_client_state"),
     ("GET", "/x11/overlay/events", "x11_overlay_events"),
+    ("WEBSOCKET", "/x11/overlay/ws", "x11_overlay_websocket"),
 }
 
 EXPECTED_ALIAS_GROUPS = {
@@ -176,6 +179,9 @@ def _collect_api_routes(routes, prefix: str = "") -> set[tuple[str, str, str]]:
         if isinstance(route, APIRoute):
             for method in sorted(route.methods or []):
                 out.add((method, prefix + route.path, route.name))
+            continue
+        if isinstance(route, APIWebSocketRoute):
+            out.add(("WEBSOCKET", prefix + route.path, route.name))
             continue
         included = getattr(route, "original_router", None)
         if included is not None:

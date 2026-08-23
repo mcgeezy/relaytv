@@ -59,6 +59,53 @@ def _run_host_installer(
     )
 
 
+def _resolve_host_ops_delegate_qpa(
+    tmp_path: Path,
+    *,
+    env_file_qpa: str | None = None,
+    process_qpa: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    host_ops = scripts_dir / "host-ops.sh"
+    shutil.copy2(ROOT_DIR / "scripts" / "host-ops.sh", host_ops)
+    if env_file_qpa is not None:
+        (tmp_path / ".env").write_text(f"QT_QPA_PLATFORM={env_file_qpa}\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("QT_QPA_PLATFORM", None)
+    if process_qpa is not None:
+        env["QT_QPA_PLATFORM"] = process_qpa
+    return subprocess.run(
+        ["bash", "-c", 'source "$1"; resolve_delegate_qpa wayland-native', "host-ops-test", str(host_ops)],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_wayland_host_ops_preserves_installed_qpa_delegate(tmp_path: Path) -> None:
+    result = _resolve_host_ops_delegate_qpa(tmp_path, env_file_qpa="xcb")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "xcb"
+
+
+def test_wayland_host_ops_allows_explicit_qpa_override(tmp_path: Path) -> None:
+    result = _resolve_host_ops_delegate_qpa(tmp_path, env_file_qpa="xcb", process_qpa="wayland")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "wayland"
+
+
+def test_wayland_host_ops_defaults_to_direct_wayland_without_a_pin(tmp_path: Path) -> None:
+    result = _resolve_host_ops_delegate_qpa(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "wayland"
+
+
 def _mock_command_path(tmp_path: Path, *, arch: str = "x86_64") -> Path:
     command_dir = tmp_path / "commands"
     command_dir.mkdir()

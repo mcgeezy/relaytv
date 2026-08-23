@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import tomllib
 
 import pytest
@@ -48,6 +49,7 @@ def test_ui_smoke() -> None:
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
+    realtime_policy_response = client.get('/static/ui/realtime_transport.js')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
@@ -59,7 +61,13 @@ def test_ui_smoke() -> None:
     assert 'text/html' in response.headers['content-type']
     assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
+    realtime_policy_tag = re.search(
+        r'<script src="/static/ui/realtime_transport\.js\?v=\d+" defer></script>',
+        response.text,
+    )
+    assert realtime_policy_tag
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
+    assert realtime_policy_tag.start() < response.text.index('<script src="/static/ui/app.js')
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/iptv\.js\?v=\d+" defer></script>', response.text)
@@ -72,6 +80,9 @@ def test_ui_smoke() -> None:
     assert jellyfin_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
     assert iptv_js_response.status_code == 200
+    assert realtime_policy_response.status_code == 200
+    assert 'javascript' in realtime_policy_response.headers['content-type']
+    assert 'createPolicy' in realtime_policy_response.text
     assert 'text/css' in jellyfin_css_response.headers['content-type']
     jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200
@@ -5347,6 +5358,63 @@ def test_qt_runtime_seek_uses_extended_ack_wait(monkeypatch: pytest.MonkeyPatch)
 
     assert result['error'] == 'success'
     assert captured == [3.5]
+
+
+def test_qt_runtime_serializes_the_control_file_until_ack(monkeypatch: pytest.MonkeyPatch) -> None:
+    first_waiting_for_ack = threading.Event()
+    release_first_ack = threading.Event()
+    second_command_published = threading.Event()
+    command_calls: list[list[object]] = []
+    results: list[dict[str, object]] = []
+    errors: list[BaseException] = []
+
+    monkeypatch.setattr(player, '_qt_shell_runtime_accepts_mpv_commands', lambda: True)
+    monkeypatch.setattr(player, '_qt_shell_runtime_preferred', lambda: True)
+
+    def fake_command(cmd: list[object]) -> dict[str, object]:
+        command_calls.append(list(cmd))
+        request_id = f'control-{len(command_calls)}'
+        if request_id == 'control-2':
+            second_command_published.set()
+        return {'error': 'success', 'request_id': request_id}
+
+    def fake_finalize(result: dict[str, object], *, timeout_sec=None) -> dict[str, object]:
+        if result['request_id'] == 'control-1':
+            first_waiting_for_ack.set()
+            if not release_first_ack.wait(2.0):
+                raise TimeoutError('test did not release first acknowledgement')
+        return {**result, 'ack_observed': True, 'ack_reason': 'control_acknowledged'}
+
+    def send_volume(value: int) -> None:
+        try:
+            results.append(player.mpv_command(['set_property', 'volume', value]))
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(player, '_qt_shell_runtime_command', fake_command)
+    monkeypatch.setattr(player, '_qt_shell_runtime_finalize_control_result', fake_finalize)
+
+    first = threading.Thread(target=send_volume, args=(20,))
+    second = threading.Thread(target=send_volume, args=(80,))
+    first.start()
+    assert first_waiting_for_ack.wait(1.0)
+    second.start()
+    try:
+        assert not second_command_published.wait(0.2)
+        assert command_calls == [['set_property', 'volume', 20]]
+    finally:
+        release_first_ack.set()
+        first.join(2.0)
+        second.join(2.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert command_calls == [
+        ['set_property', 'volume', 20],
+        ['set_property', 'volume', 80],
+    ]
+    assert [result['request_id'] for result in results] == ['control-1', 'control-2']
 
 
 def test_pause_timeout_is_tolerated_when_runtime_alive(monkeypatch: pytest.MonkeyPatch) -> None:

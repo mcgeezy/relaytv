@@ -22,7 +22,7 @@ from .player import (
 from .x11_overlay import start_overlay as start_x11_overlay, stop_overlay as stop_x11_overlay
 from . import api_auth
 from .config import runtime_config
-from .routes import router
+from .routes import router, start_realtime_runtime, stop_realtime_runtime
 from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
 from .integrations import iptv_service, jellyfin_receiver
@@ -83,6 +83,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         postlive_relay.sweep_spool_root()
         if not testing:
             video_profile.warm_profile()
+        await start_realtime_runtime()
         workers_enabled = not (
             testing or os.getenv("RELAYTV_DISABLE_WORKERS", "0").strip() in ("1", "true", "yes", "on")
         )
@@ -107,6 +108,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         try:
             yield
         finally:
+            await stop_realtime_runtime()
             jellyfin_receiver.stop()
             iptv_service.stop_worker()
             discovery_mdns.stop()
