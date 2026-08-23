@@ -146,6 +146,16 @@ def _normalize_idle_qr_size(v: object, default: int = 168) -> int:
     return out
 
 
+def _normalize_optional_positive_int(value: object) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
 def _ensure_state_dir() -> None:
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
@@ -985,6 +995,15 @@ def _default_settings() -> dict:
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
         "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
         "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
+        "seerr_enabled": _env_bool("RELAYTV_SEERR_ENABLED", False),
+        "seerr_server_url": (os.getenv("RELAYTV_SEERR_SERVER_URL") or "").strip(),
+        "seerr_api_key": (os.getenv("RELAYTV_SEERR_API_KEY") or "").strip(),
+        "seerr_shared_requests_enabled": _env_bool(
+            "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
+        ),
+        "seerr_request_user_id": _normalize_optional_positive_int(
+            os.getenv("RELAYTV_SEERR_REQUEST_USER_ID")
+        ),
     }
 
 def load_settings() -> None:
@@ -1010,6 +1029,15 @@ def load_settings() -> None:
     defaults["uploads"] = _normalize_upload_settings(defaults.get("uploads"))
     defaults["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(defaults.get("jellyfin_playback_mode"))
     defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(defaults.get("jellyfin_server_type"))
+    defaults["seerr_enabled"] = bool(defaults.get("seerr_enabled"))
+    defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
+    defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
+    defaults["seerr_shared_requests_enabled"] = bool(
+        defaults.get("seerr_shared_requests_enabled")
+    )
+    defaults["seerr_request_user_id"] = _normalize_optional_positive_int(
+        defaults.get("seerr_request_user_id")
+    )
     with SETTINGS_LOCK:
         SETTINGS = defaults
 
@@ -1061,6 +1089,11 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_playback_mode",
         "jellyfin_server_type",
         "iptv_enabled",
+        "seerr_enabled",
+        "seerr_server_url",
+        "seerr_api_key",
+        "seerr_shared_requests_enabled",
+        "seerr_request_user_id",
     }
     clean = {k: v for k, v in (patch or {}).items() if k in allowed}
     if "device_name" in clean:
@@ -1102,6 +1135,20 @@ def update_settings(patch: dict) -> dict:
         clean["jellyfin_enabled"] = bool(clean.get("jellyfin_enabled"))
     if "iptv_enabled" in clean:
         clean["iptv_enabled"] = bool(clean.get("iptv_enabled"))
+    if "seerr_enabled" in clean:
+        clean["seerr_enabled"] = bool(clean.get("seerr_enabled"))
+    if "seerr_server_url" in clean:
+        clean["seerr_server_url"] = str(clean.get("seerr_server_url") or "").strip()
+    if "seerr_api_key" in clean:
+        clean["seerr_api_key"] = str(clean.get("seerr_api_key") or "").strip()
+    if "seerr_shared_requests_enabled" in clean:
+        clean["seerr_shared_requests_enabled"] = bool(
+            clean.get("seerr_shared_requests_enabled")
+        )
+    if "seerr_request_user_id" in clean:
+        clean["seerr_request_user_id"] = _normalize_optional_positive_int(
+            clean.get("seerr_request_user_id")
+        )
     if "jellyfin_auth_enabled" in clean:
         clean["jellyfin_auth_enabled"] = bool(clean.get("jellyfin_auth_enabled"))
     if "jellyfin_server_url" in clean:

@@ -61,6 +61,21 @@ def create_app(*, testing: bool = False) -> FastAPI:
         runtime_config.set_value("RELAYTV_JELLYFIN_SUB_LANG", str(s.get("jellyfin_sub_lang") or "").strip().lower())
         runtime_config.set_value("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(s.get("jellyfin_playback_mode") or "auto").strip().lower())
         runtime_config.set_value("RELAYTV_IPTV_ENABLED", "1" if bool(s.get("iptv_enabled")) else "0")
+        runtime_config.set_value("RELAYTV_SEERR_ENABLED", "1" if bool(s.get("seerr_enabled")) else "0")
+        runtime_config.set_value(
+            "RELAYTV_SEERR_SERVER_URL", str(s.get("seerr_server_url") or "").strip()
+        )
+        runtime_config.set_value(
+            "RELAYTV_SEERR_API_KEY", str(s.get("seerr_api_key") or "").strip()
+        )
+        runtime_config.set_value(
+            "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED",
+            "1" if bool(s.get("seerr_shared_requests_enabled")) else "0",
+        )
+        runtime_config.set_value(
+            "RELAYTV_SEERR_REQUEST_USER_ID",
+            str(s.get("seerr_request_user_id") or "").strip(),
+        )
         uploads = s.get("uploads") if isinstance(s.get("uploads"), dict) else {}
         runtime_config.set_value("RELAYTV_UPLOAD_MAX_SIZE_GB", str(uploads.get("max_size_gb") or 5.0))
         runtime_config.set_value("RELAYTV_UPLOAD_RETENTION_HOURS", str(uploads.get("retention_hours") or 24))

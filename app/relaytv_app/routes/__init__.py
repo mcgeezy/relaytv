@@ -130,6 +130,7 @@ from .settings import (
     update_settings as update_settings,
     upload_youtube_cookies as upload_youtube_cookies,
 )
+from .seerr import router as seerr_router
 from .snapshots import router as snapshots_router
 from .status import router as status_router
 from .ui import router as ui_router
@@ -153,6 +154,7 @@ router.include_router(playback_router)
 router.include_router(postlive_router)
 router.include_router(queue_router)
 router.include_router(settings_router)
+router.include_router(seerr_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)
 router.include_router(ui_router)

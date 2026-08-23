@@ -1,6 +1,6 @@
 # Seerr Integration Roadmap
 
-Status: M0 planning complete; implementation not started
+Status: M0-M1 complete; M2 normalized read API next
 
 Primary branch: `feat/seerr-integration`
 
@@ -328,13 +328,24 @@ quality gate before declaring the branch ready.
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
 | M0 | API/security review and implementation roadmap | Complete |
-| M1 | Immutable client/config model, secret-safe settings, status/test routes | Pending |
+| M1 | Immutable client/config model, secret-safe settings, status/test routes | Complete |
 | M2 | Normalized discover/search/detail/request-read API | Pending |
 | M3 | Responsive Seerr browser shell and settings UX | Pending |
 | M4 | Explicitly gated shared request creation and TV season selection | Pending |
 | M5 | Validated Seerr-to-Jellyfin play/queue bridge | Pending |
 | M6 | Caller-specific Quick Connect sessions (follow-up permitted) | Pending |
 | M7 | Compatibility, security, field soak, operator/API docs, rollout decision | Pending |
+
+### Milestone log
+
+- **M1 — 2026-08-23:** Added immutable runtime configuration snapshots, a
+  bounded secret-safe HTTP client with cross-origin redirect rejection,
+  normalized/sanitized upstream failures, write-only API-key settings with an
+  explicit clear action, live settings-bus application, and Seerr status/test
+  routes. Added client, route, settings, startup-sync, route-inventory, and
+  environment-inventory coverage. No background lifecycle or mutable response
+  cache was introduced, so a response remains confined to the configuration
+  snapshot that initiated it.
 
 ## Verification Plan
 

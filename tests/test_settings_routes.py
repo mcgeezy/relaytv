@@ -16,6 +16,7 @@ def test_get_settings_route_sanitizes_secret_values(monkeypatch, tmp_path) -> No
         lambda: {
             "jellyfin_password": "secret",
             "jellyfin_api_key": "api-secret",
+            "seerr_api_key": "seerr-secret",
             "youtube_cookies_path": str(cookies_path),
             "youtube_use_invidious": 1,
             "youtube_invidious_base": " https://invidious.example ",
@@ -31,12 +32,73 @@ def test_get_settings_route_sanitizes_secret_values(monkeypatch, tmp_path) -> No
     assert body["jellyfin_password"] == ""
     assert body["jellyfin_api_key"] == ""
     assert body["jellyfin_password_configured"] is True
+    assert body["seerr_api_key"] == ""
+    assert body["seerr_api_key_configured"] is True
     assert body["youtube_cookies_path"] == ""
     assert body["youtube_cookies_configured"] is True
     assert body["youtube_use_invidious"] is True
     assert body["youtube_invidious_base"] == "https://invidious.example"
     assert body["idle_dashboard_enabled"] is False
     assert body["idle_notifications_enabled"] is True
+
+
+def test_seerr_api_key_is_write_only_and_requires_explicit_clear(monkeypatch) -> None:
+    current = {
+        "seerr_enabled": True,
+        "seerr_server_url": "https://seerr.example",
+        "seerr_api_key": "existing-secret",
+    }
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    client = TestClient(create_app(testing=True))
+
+    preserved = client.post("/settings", json={"seerr_api_key": ""})
+    assert preserved.status_code == 200
+    assert current["seerr_api_key"] == "existing-secret"
+    assert preserved.json()["settings"]["seerr_api_key"] == ""
+    assert preserved.json()["settings"]["seerr_api_key_configured"] is True
+
+    cleared = client.post("/settings", json={"seerr_api_key_clear": True})
+    assert cleared.status_code == 200
+    assert current["seerr_api_key"] == ""
+    assert cleared.json()["settings"]["seerr_api_key_configured"] is False
+
+
+def test_seerr_settings_normalize_url_and_reject_credentials(monkeypatch) -> None:
+    current: dict[str, object] = {}
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    client = TestClient(create_app(testing=True))
+
+    saved = client.post(
+        "/settings",
+        json={
+            "seerr_enabled": True,
+            "seerr_server_url": " HTTPS://Seerr.Example/base/api/v1/ ",
+            "seerr_api_key": "new-secret",
+        },
+    )
+    assert saved.status_code == 200
+    assert current["seerr_server_url"] == "https://seerr.example/base"
+    assert runtime_config.snapshot().raw("RELAYTV_SEERR_API_KEY") == "new-secret"
+
+    rejected = client.post(
+        "/settings",
+        json={"seerr_server_url": "https://admin:secret@seerr.example"},
+    )
+    assert rejected.status_code == 400
 
 
 def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:
