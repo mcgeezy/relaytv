@@ -2278,6 +2278,12 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       scheduleOverlayRealtimeRetry();
     }
 
+    function overlayWebSocketStabilityMs(capabilities){
+      const advertised = Number(capabilities?.heartbeat_sec);
+      const heartbeatSec = Number.isFinite(advertised) && advertised > 0 ? advertised : 5;
+      return heartbeatSec * 2 * 1000;
+    }
+
     function openOverlaySse(capabilities, generation){
       if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
       const path = String(capabilities?.sse?.overlay || '/x11/overlay/events');
@@ -2304,24 +2310,45 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         openOverlaySse(capabilities, generation);
         return;
       }
-      const active = {kind:'websocket', handle:socket, generation, proved:false};
+      const active = {
+        kind:'websocket',
+        handle:socket,
+        generation,
+        proved:false,
+        stable:false,
+        stableAfterTs:0,
+      };
       _overlayRealtimeTransport = active;
       socket.onmessage = (ev)=>{
         if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
         let envelope = null;
-        try{ envelope = JSON.parse(ev.data || '{}'); }catch(_e){ return; }
-        if(Number(envelope?.version) !== 1 || typeof envelope?.event !== 'string') return;
-        if(!active.proved && envelope.event !== 'hello'){
+        try{ envelope = JSON.parse(ev.data || '{}'); }
+        catch(_e){
           retireOverlayRealtime(active, 'websocket_protocol_error', true);
           return;
         }
-        active.proved = true;
+        if(Number(envelope?.version) !== 1 || typeof envelope?.event !== 'string'){
+          retireOverlayRealtime(active, 'websocket_protocol_error', true);
+          return;
+        }
         const payload = (envelope.data && typeof envelope.data === 'object') ? envelope.data : {};
+        if(!active.proved){
+          if(envelope.event !== 'hello' || Number(payload.protocol_version) !== 1){
+            retireOverlayRealtime(active, 'websocket_protocol_error', true);
+            return;
+          }
+          active.proved = true;
+          active.stableAfterTs = Date.now() + overlayWebSocketStabilityMs(capabilities);
+        }
+        if(active.proved && Date.now() >= active.stableAfterTs) active.stable = true;
         if(!payload.type) payload.type = envelope.event;
         dispatchOverlayRealtime(payload, 'websocket');
       };
       socket.onerror = ()=>{};
-      socket.onclose = ()=>retireOverlayRealtime(active, 'websocket_closed', !active.proved);
+      socket.onclose = ()=>{
+        const failed = !active.stable;
+        retireOverlayRealtime(active, 'websocket_closed', failed);
+      };
     }
 
     async function connectEvents(){

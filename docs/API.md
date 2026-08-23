@@ -77,6 +77,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8787;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
         # Required for WebSocket realtime delivery:
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -87,6 +88,12 @@ server {
     }
 }
 ```
+
+RelayTV's stock Uvicorn process trusts forwarded headers from loopback, which
+matches the example above. If the reverse proxy reaches RelayTV from another
+source address, trust only that proxy address with Uvicorn's
+`--forwarded-allow-ips` option; forwarded scheme headers from untrusted clients
+must not control the WebSocket origin check.
 
 ## UI and utility endpoints
 

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import asyncio
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
@@ -387,6 +388,10 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
     assert "/realtime/capabilities" in response.text
     assert "/x11/overlay/ws" in response.text
     assert "/x11/overlay/events" in response.text
+    assert "envelope.event !== 'hello' || Number(payload.protocol_version) !== 1" in response.text
+    assert "active.stableAfterTs = Date.now() + overlayWebSocketStabilityMs(capabilities);" in response.text
+    assert "Date.now() >= active.stableAfterTs" in response.text
+    assert "const failed = !active.stable;" in response.text
 
 
 def test_browser_resets_process_local_sequence_on_reconnect_hello(realtime_client) -> None:
@@ -394,6 +399,24 @@ def test_browser_resets_process_local_sequence_on_reconnect_hello(realtime_clien
 
     assert source.status_code == 200
     assert "if (name === 'hello') __uiLastSequence = 0;" in source.text
+
+
+def test_browser_requires_versioned_hello_and_stable_websocket(realtime_client) -> None:
+    source = realtime_client.get("/static/ui/app.js")
+
+    assert source.status_code == 200
+    assert "envelope.event !== 'hello' || Number(payload.protocol_version) !== 1" in source.text
+    assert "return heartbeatSec * 2 * 1000;" in source.text
+    assert "active.stableAfterTs = Date.now() + _uiWebSocketStabilityMs(capabilities);" in source.text
+    assert "Date.now() >= active.stableAfterTs" in source.text
+    assert "const failed = !active.stable;" in source.text
+
+
+def test_nginx_tls_example_forwards_scheme_to_trusted_uvicorn() -> None:
+    api_doc = (Path(__file__).resolve().parents[1] / "docs" / "API.md").read_text(encoding="utf-8")
+
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in api_doc
+    assert "`--forwarded-allow-ips`" in api_doc
 
 
 def test_sse_adapters_preserve_legacy_wire_framing() -> None:

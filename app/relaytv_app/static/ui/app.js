@@ -1443,6 +1443,12 @@ function _retireUiRealtimeTransport(active, opts){
   _scheduleUiEventReconnect();
 }
 
+function _uiWebSocketStabilityMs(capabilities){
+  const advertised = Number(capabilities?.heartbeat_sec);
+  const heartbeatSec = Number.isFinite(advertised) && advertised > 0 ? advertised : 5;
+  return heartbeatSec * 2 * 1000;
+}
+
 function _openUiSseTransport(capabilities, generation){
   if (generation !== __uiEventGeneration || __uiEventSource) return;
   const path = String(capabilities?.sse?.ui || '/ui/events');
@@ -1478,20 +1484,44 @@ function _openUiWebSocketTransport(capabilities, generation){
     _openUiSseTransport(capabilities, generation);
     return;
   }
-  const active = {kind:'websocket', handle:socket, generation, proved:false};
+  const active = {
+    kind:'websocket',
+    handle:socket,
+    generation,
+    proved:false,
+    stable:false,
+    stableAfterTs:0,
+  };
   __uiEventSource = active;
   window.__relaytvRealtimeTransport = 'websocket';
   socket.onmessage = (ev) => {
     if (__uiEventSource !== active || generation !== __uiEventGeneration) return;
     let envelope = null;
-    try { envelope = JSON.parse(ev.data || '{}'); } catch (_e) { return; }
-    if (!envelope || Number(envelope.version) !== 1 || typeof envelope.event !== 'string') return;
-    active.proved = true;
-    _dispatchUiRealtimeEvent(envelope.event, envelope.data || {}, envelope.sequence);
+    try { envelope = JSON.parse(ev.data || '{}'); }
+    catch (_e) {
+      _retireUiRealtimeTransport(active, {failed:true});
+      return;
+    }
+    if (!envelope || Number(envelope.version) !== 1 || typeof envelope.event !== 'string') {
+      _retireUiRealtimeTransport(active, {failed:true});
+      return;
+    }
+    const payload = (envelope.data && typeof envelope.data === 'object') ? envelope.data : {};
+    if (!active.proved) {
+      if (envelope.event !== 'hello' || Number(payload.protocol_version) !== 1) {
+        _retireUiRealtimeTransport(active, {failed:true});
+        return;
+      }
+      active.proved = true;
+      active.stableAfterTs = Date.now() + _uiWebSocketStabilityMs(capabilities);
+    }
+    if (active.proved && Date.now() >= active.stableAfterTs) active.stable = true;
+    _dispatchUiRealtimeEvent(envelope.event, payload, envelope.sequence);
   };
   socket.onerror = () => {};
   socket.onclose = () => {
-    _retireUiRealtimeTransport(active, {failed:!active.proved});
+    const failed = !active.stable;
+    _retireUiRealtimeTransport(active, {failed});
   };
 }
 

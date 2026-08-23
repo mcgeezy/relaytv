@@ -196,14 +196,18 @@ All clients implement the same logical policy:
 1. Bootstrap from `/status` when a full state snapshot is required.
 2. Load `/realtime/capabilities` once per server/network generation.
 3. Connect the advertised WebSocket and require the versioned `hello`.
-4. On unsupported protocol or repeated handshake failure, activate SSE.
-5. On SSE failure, activate the existing adaptive polling behavior.
-6. Periodically re-evaluate a better transport after a cooldown or immediately
+4. Keep browser and overlay sockets on probation until they deliver another
+   valid frame after two advertised heartbeat intervals; downgrade a socket
+   that closes during probation so a proxy that only passes the handshake does
+   not prevent SSE fallback.
+5. On unsupported protocol or an unstable handshake, activate SSE.
+6. On SSE failure, activate the existing adaptive polling behavior.
+7. Periodically re-evaluate a better transport after a cooldown or immediately
    after an explicit network/visibility recovery signal.
-7. Keep exactly one push transport active.
-8. Give every connection attempt a generation number. Retired callbacks may
+8. Keep exactly one push transport active.
+9. Give every connection attempt a generation number. Retired callbacks may
    close their own resources but may not publish state or schedule reconnects.
-9. Refresh `/status` after reconnect, sequence gap, or transport downgrade.
+10. Refresh `/status` after reconnect, sequence gap, or transport downgrade.
 
 Backoff uses exponential delay with jitter and a bounded maximum. Capability
 responses that explicitly omit WebSocket suppress futile probes until the
@@ -342,7 +346,7 @@ git diff --check
 
 | Repository | Branch commit | Verified gate |
 | --- | --- | --- |
-| `relaytv` | through `c4a1f39` | ruff; 664 pytest tests; UI and generated-overlay JavaScript syntax checks; native-ready amd64 and arm64 images |
+| `relaytv` | current release candidate | ruff; 666 pytest tests; UI and generated-overlay JavaScript syntax checks; native-ready amd64 and arm64 images |
 | `relaytv-ha` | `1b0bca6`, `297b551` | ruff; 38 pytest tests, including legacy `404`, fallback, ownership, and reconfigure ordering |
 | `relaytv-android` | `ac40c7b`, `473c420` | clean debug APK assembly; Android lint; 8 unit/MockWebServer tests |
 
@@ -396,3 +400,4 @@ tests, and `Breaking changes: None`. The server feature warrants the
 | 2026-08-22 | M6 control hardening | Serialized each single-slot Qt runtime command through acknowledgement, preventing overlapping HA volume writes or other producers from replacing an in-flight command or its acknowledgement. |
 | 2026-08-22 | M6 Pi display hardening | Preserved the installer-selected Qt delegate when `host-ops --wayland-native` recreates a container, preventing Raspberry Pi's supported XWayland bridge from being silently replaced by a black direct-Wayland idle surface. |
 | 2026-08-22 | M6 deployed soak | Soaked the same application tree on an amd64 NUC and arm64 Raspberry Pi; verified native readiness, browser and overlay WebSockets, Home Assistant control and reconnect behavior, playback, and a visible Pi idle surface. Approved the backward-compatible server release while leaving physical Android validation to its companion release. |
+| 2026-08-22 | M6 proxy and fallback hardening | Forwarded the public scheme in the nginx TLS example and documented scoped Uvicorn proxy trust. Required browser and overlay WebSockets to negotiate the versioned hello and prove continued delivery beyond two heartbeat intervals before a close can avoid SSE fallback. |
