@@ -13,6 +13,7 @@ from .seerr_client import (
     SeerrConfig,
     SeerrError,
 )
+from . import seerr_sessions
 
 logger = get_logger("seerr")
 
@@ -60,9 +61,7 @@ _IMAGE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
 
 
 def _config_status(config: SeerrConfig) -> dict[str, object]:
-    request_mode = str(getattr(config, "request_mode", "") or "").strip()
-    if request_mode not in {"disabled", "shared_admin", "caller_session"}:
-        request_mode = "shared_admin" if config.shared_requests_enabled else "disabled"
+    request_mode = _request_mode(config)
     return {
         "enabled": config.enabled,
         "configured": config.configured,
@@ -71,7 +70,11 @@ def _config_status(config: SeerrConfig) -> dict[str, object]:
         "version": "",
         "application_title": "Seerr",
         "media_server_type": "unknown",
-        "auth_mode": "shared_api_key" if config.api_key else "none",
+        "auth_mode": (
+            "caller_session"
+            if request_mode == "caller_session"
+            else ("shared_api_key" if config.api_key else "none")
+        ),
         "request_mode": request_mode,
         "shared_requests_enabled": config.shared_requests_enabled,
         "writes_allowed": bool(config.configured and request_mode == "shared_admin"),
@@ -79,9 +82,22 @@ def _config_status(config: SeerrConfig) -> dict[str, object]:
     }
 
 
-def integration_status(*, probe: bool = True) -> dict[str, object]:
+def integration_status(
+    *, probe: bool = True, session_id: str | None = None
+) -> dict[str, object]:
     config = SeerrConfig.current()
     out = _config_status(config)
+    caller = seerr_sessions.status(session_id)
+    out["caller_connected"] = bool(caller.get("connected"))
+    out["writes_allowed"] = bool(
+        config.configured
+        and (
+            out["request_mode"] == "shared_admin"
+            or (out["request_mode"] == "caller_session" and caller.get("connected"))
+        )
+    )
+    if caller.get("identity"):
+        out["caller_identity"] = caller["identity"]
     if config.configuration_error:
         out["error"] = {
             "code": "seerr_invalid_configuration",
@@ -92,7 +108,12 @@ def integration_status(*, probe: bool = True) -> dict[str, object]:
         return out
     started = time.monotonic()
     try:
-        out.update(_probe(config))
+        if _request_mode(config) == "caller_session":
+            session = seerr_sessions.resolve(session_id)
+            client = SeerrClient(config, session_cookie=session.cookie) if session else None
+            out.update(_probe(config, client=client, public_only=session is None))
+        else:
+            out.update(_probe(config))
         logger.info(
             "seerr_status operation=status host=%s latency_ms=%d result=ok",
             _safe_host(config.server_url),
@@ -100,6 +121,11 @@ def integration_status(*, probe: bool = True) -> dict[str, object]:
         )
         return out
     except SeerrError as exc:
+        if exc.code == "seerr_session_expired":
+            seerr_sessions.retire(session_id)
+            out["caller_connected"] = False
+            out["writes_allowed"] = False
+            out.pop("caller_identity", None)
         out["error"] = {"code": exc.code, "message": exc.message}
         logger.warning(
             "seerr_status operation=status host=%s latency_ms=%d result=%s",
@@ -128,6 +154,10 @@ def test_connection() -> dict[str, object]:
         )
     status = _config_status(config)
     client = SeerrClient(config)
+    if _request_mode(config) == "caller_session":
+        status.update(_probe(config, client=client, public_only=True))
+        status["ok"] = True
+        return status
     status.update(_probe(config, client=client))
     identity = client.get("/auth/me")
     if not isinstance(identity, dict):
@@ -145,28 +175,32 @@ def test_connection() -> dict[str, object]:
     return status
 
 
-def discover(section: str, page: int) -> dict[str, object]:
+def discover(section: str, page: int, *, session_id: str | None = None) -> dict[str, object]:
     path = _DISCOVER_PATHS.get(str(section or "").strip().lower())
     if path is None:
         raise _invalid("Unknown Seerr discovery section")
     page_number = _bounded_int(page, name="page", minimum=1, maximum=500)
-    payload = _client().get(path, query={"page": page_number})
+    payload = _client(session_id=session_id).get(path, query={"page": page_number})
     return _normalize_media_page(payload, fallback_page=page_number)
 
 
-def search(query: str, page: int) -> dict[str, object]:
+def search(query: str, page: int, *, session_id: str | None = None) -> dict[str, object]:
     text = str(query or "").strip()
     if not text or len(text) > 200:
         raise _invalid("Search query must contain between 1 and 200 characters")
     page_number = _bounded_int(page, name="page", minimum=1, maximum=500)
-    payload = _client().get("/search", query={"query": text, "page": page_number})
+    payload = _client(session_id=session_id).get(
+        "/search", query={"query": text, "page": page_number}
+    )
     return _normalize_media_page(payload, fallback_page=page_number)
 
 
-def item_detail(media_type: str, media_id: int) -> dict[str, object]:
+def item_detail(
+    media_type: str, media_id: int, *, session_id: str | None = None
+) -> dict[str, object]:
     kind = _media_type(media_type)
     tmdb_id = _bounded_int(media_id, name="media_id", minimum=1, maximum=2_147_483_647)
-    payload = _client().get(f"/{kind}/{tmdb_id}")
+    payload = _client(session_id=session_id).get(f"/{kind}/{tmdb_id}")
     if not isinstance(payload, dict):
         raise _invalid_upstream()
     item = _normalize_media(payload, fallback_type=kind)
@@ -186,13 +220,14 @@ def list_requests(
     take: int,
     skip: int,
     status_filter: str,
+    session_id: str | None = None,
 ) -> dict[str, object]:
     take_number = _bounded_int(take, name="take", minimum=1, maximum=100)
     skip_number = _bounded_int(skip, name="skip", minimum=0, maximum=100_000)
     selected_filter = str(status_filter or "all").strip().lower()
     if selected_filter not in _REQUEST_FILTERS:
         raise _invalid("Unknown Seerr request filter")
-    config, client = _client_with_config()
+    config, client = _client_with_config(session_id=session_id)
     query: dict[str, object] = {
         "take": take_number,
         "skip": skip_number,
@@ -250,21 +285,17 @@ def create_request(
     media_id: int,
     seasons: list[int] | str | None,
     is_4k: bool,
+    session_id: str | None = None,
 ) -> dict[str, object]:
     kind = _media_type(media_type)
     tmdb_id = _bounded_int(media_id, name="media_id", minimum=1, maximum=2_147_483_647)
-    config, client = _client_with_config()
-    if config.request_mode == "disabled":
+    config, client = _client_with_config(session_id=session_id)
+    request_mode = _request_mode(config)
+    if request_mode == "disabled":
         raise SeerrError(
             "seerr_requests_disabled",
             "Seerr requests are disabled",
             status_code=403,
-        )
-    if config.request_mode == "caller_session":
-        raise SeerrError(
-            "seerr_session_required",
-            "Connect your Seerr account before requesting media",
-            status_code=401,
         )
     request_body: dict[str, object] = {
         "mediaType": kind,
@@ -275,7 +306,7 @@ def create_request(
         request_body["seasons"] = _normalize_requested_seasons(seasons)
     elif seasons not in (None, [], ""):
         raise _invalid("Seasons can only be selected for TV requests")
-    if config.request_user_id is not None:
+    if request_mode == "shared_admin" and config.request_user_id is not None:
         request_body["userId"] = config.request_user_id
     response = client.request_json_response("POST", "/request", body=request_body)
     if response.status == 202:
@@ -310,7 +341,8 @@ def image(size: str, image_path: str) -> SeerrBinaryResponse:
     selected_path = str(image_path or "").strip().lstrip("/")
     if selected_size not in _IMAGE_SIZES or not _IMAGE_PATH_RE.fullmatch(selected_path):
         raise _invalid("Invalid Seerr image path or size")
-    response = _client().get_binary(
+    config = _base_config()
+    response = SeerrClient(config).get_binary(
         f"/imageproxy/tmdb/{selected_size}/{urllib.parse.quote(selected_path, safe='')}",
         auth=False,
     )
@@ -323,11 +355,11 @@ def image(size: str, image_path: str) -> SeerrBinaryResponse:
     return response
 
 
-def _client() -> SeerrClient:
-    return _client_with_config()[1]
+def _client(*, session_id: str | None = None) -> SeerrClient:
+    return _client_with_config(session_id=session_id)[1]
 
 
-def _client_with_config() -> tuple[SeerrConfig, SeerrClient]:
+def _base_config() -> SeerrConfig:
     config = SeerrConfig.current()
     if not config.enabled:
         raise SeerrError("seerr_disabled", "Seerr integration is disabled", status_code=503)
@@ -338,12 +370,40 @@ def _client_with_config() -> tuple[SeerrConfig, SeerrClient]:
             status_code=400,
         )
     if not config.configured:
+        requirement = (
+            "Seerr server URL is required"
+            if _request_mode(config) == "caller_session"
+            else "Seerr server URL and API key are required"
+        )
         raise SeerrError(
             "seerr_not_configured",
-            "Seerr server URL and API key are required",
+            requirement,
             status_code=503,
         )
+    return config
+
+
+def _client_with_config(
+    *, session_id: str | None = None
+) -> tuple[SeerrConfig, SeerrClient]:
+    config = _base_config()
+    if _request_mode(config) == "caller_session":
+        session = seerr_sessions.resolve(session_id)
+        if session is None:
+            raise SeerrError(
+                "seerr_session_required",
+                "Connect your Seerr account to continue",
+                status_code=401,
+            )
+        return config, SeerrClient(config, session_cookie=session.cookie)
     return config, SeerrClient(config)
+
+
+def _request_mode(config: SeerrConfig) -> str:
+    request_mode = str(getattr(config, "request_mode", "") or "").strip()
+    if request_mode in {"disabled", "shared_admin", "caller_session"}:
+        return request_mode
+    return "shared_admin" if config.shared_requests_enabled else "disabled"
 
 
 def _normalize_media_page(payload: object, *, fallback_page: int) -> dict[str, object]:
@@ -537,25 +597,43 @@ def _invalid_upstream() -> SeerrError:
     )
 
 
-def _probe(config: SeerrConfig, *, client: SeerrClient | None = None) -> dict[str, object]:
+def _probe(
+    config: SeerrConfig,
+    *,
+    client: SeerrClient | None = None,
+    public_only: bool = False,
+) -> dict[str, object]:
     active_client = client or SeerrClient(config)
     status = active_client.get("/status", query={"checkUpdateAvailable": False}, auth=False)
-    settings = active_client.get("/settings/main")
-    if not isinstance(status, dict) or not isinstance(settings, dict):
+    if not isinstance(status, dict):
         raise SeerrError(
             "seerr_invalid_response",
             "Seerr returned an unexpected response shape",
             status_code=502,
         )
-    return {
+    out = {
         "reachable": True,
         "version": str(status.get("version") or "").strip(),
-        "application_title": str(settings.get("applicationTitle") or "Seerr").strip()
-        or "Seerr",
-        "media_server_type": _MEDIA_SERVER_TYPES.get(
-            _safe_int(settings.get("mediaServerType")), "unknown"
-        ),
     }
+    if public_only:
+        return out
+    settings = active_client.get("/settings/main")
+    if not isinstance(settings, dict):
+        raise SeerrError(
+            "seerr_invalid_response",
+            "Seerr returned an unexpected response shape",
+            status_code=502,
+        )
+    out.update(
+        {
+            "application_title": str(settings.get("applicationTitle") or "Seerr").strip()
+            or "Seerr",
+            "media_server_type": _MEDIA_SERVER_TYPES.get(
+                _safe_int(settings.get("mediaServerType")), "unknown"
+            ),
+        }
+    )
+    return out
 
 
 def _safe_int(value: object) -> int:

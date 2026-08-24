@@ -96,6 +96,8 @@ def test_ui_smoke() -> None:
     assert 'id="seerrOpenBtn"' in response.text
     assert 'id="seerrShell"' in response.text
     assert 'id="seerrSearchInput"' in response.text
+    assert 'id="seerrConnectBackdrop"' in response.text
+    assert 'id="seerrConnectCode"' in response.text
     assert 'id="setSeerrEnabled"' in response.text
     assert 'id="setSeerrApiKey"' in response.text
     assert 'id="setSeerrClearApiKey"' in response.text
@@ -110,6 +112,8 @@ def test_ui_smoke() -> None:
     assert "image.loading = 'lazy';" in seerr_js
     assert 'innerHTML' not in seerr_js
     assert 'X-Api-Key' not in seerr_js
+    assert '/integrations/seerr/session/quick-connect' in seerr_js
+    assert 'secret' not in seerr_js.lower()
     assert "chromium.connect(wsEndpoint)" in seerr_playwright
     assert "query === 'retired'" in seerr_playwright
     assert 'nestedInteractive' in seerr_playwright

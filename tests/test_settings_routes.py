@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 
 from relaytv_app import routes
+from relaytv_app.routes import settings as settings_routes
 from relaytv_app.main import create_app
 from relaytv_app.config import runtime_config
 
@@ -125,6 +126,33 @@ def test_seerr_request_mode_is_explicit_and_legacy_toggle_migrates(monkeypatch) 
 
     invalid = client.post("/settings", json={"seerr_request_mode": "automatic"})
     assert invalid.status_code == 400
+
+
+def test_seerr_identity_change_retires_sessions_but_noop_does_not(monkeypatch) -> None:
+    current: dict[str, object] = {
+        "seerr_enabled": True,
+        "seerr_server_url": "https://seerr.example",
+        "seerr_request_mode": "caller_session",
+    }
+    retired = []
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(
+        settings_routes.seerr_sessions, "retire_all", lambda: retired.append(True)
+    )
+    client = TestClient(create_app(testing=True))
+
+    assert client.post("/settings", json={"seerr_request_mode": "caller_session"}).status_code == 200
+    assert retired == []
+
+    assert client.post("/settings", json={"seerr_server_url": "https://new.example"}).status_code == 200
+    assert retired == [True]
 
 
 def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from .. import player, state, upload_store, ytdlp_update
 from ..config import runtime_config
 from ..debug import get_logger
-from ..integrations import jellyfin_receiver
+from ..integrations import jellyfin_receiver, seerr_sessions
 from ..integrations.seerr_client import normalize_server_url
 
 
@@ -262,6 +262,18 @@ def update_settings(req: SettingsReq):
         raise HTTPException(status_code=400, detail="YouTube Invidious server is required when Invidious mode is enabled")
 
     updated = state.update_settings(patch) if hasattr(state, "update_settings") else patch
+    previous_seerr_identity = (
+        bool((existing or {}).get("seerr_enabled")),
+        str((existing or {}).get("seerr_server_url") or "").strip(),
+        str((existing or {}).get("seerr_request_mode") or "disabled").strip(),
+    )
+    updated_seerr_identity = (
+        bool(updated.get("seerr_enabled")),
+        str(updated.get("seerr_server_url") or "").strip(),
+        str(updated.get("seerr_request_mode") or "disabled").strip(),
+    )
+    if previous_seerr_identity != updated_seerr_identity:
+        seerr_sessions.retire_all()
     if "quality_mode" in requested_keys and updated.get("quality_mode") is not None:
         runtime_config.set_value("RELAYTV_QUALITY_MODE", str(updated.get("quality_mode") or "").strip())
     if "quality_cap" in requested_keys and updated.get("quality_cap") is not None:

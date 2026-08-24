@@ -2251,8 +2251,15 @@ function defaultJellyfinServerUrl(){
 function syncSeerrRequestModeUi(){
   const mode = String(document.getElementById('setSeerrRequestMode')?.value || 'disabled');
   const hint = document.getElementById('setSeerrRequestModeHint');
+  const keyState = document.getElementById('setSeerrApiKeyState');
   const userRow = document.getElementById('setSeerrRequestUserRow');
   if (userRow) userRow.classList.toggle('hidden', mode !== 'shared_admin');
+  if (keyState) {
+    const configured = keyState.getAttribute('data-configured') === '1';
+    keyState.textContent = mode === 'caller_session'
+      ? `API key is not used in caller-specific mode${configured ? '; the stored key is retained.' : '.'}`
+      : (configured ? 'API key is stored.' : 'No API key stored.');
+  }
   if (!hint) return;
   if (mode === 'shared_admin') {
     hint.textContent = "Uses Seerr's administrator API identity and may auto-approve regardless of the attributed user's normal policy.";
@@ -2751,7 +2758,7 @@ function bindSettingsUi(){
     const requestMode = String(document.getElementById('setSeerrRequestMode')?.value || 'disabled');
     const requestUserRaw = String(document.getElementById('setSeerrRequestUser')?.value || '').trim();
     if (enabled && !serverUrl) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr server URL is required.'; } return false; }
-    if (enabled && !apiKey && (!keyConfigured || clearKey)) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr API key is required.'; } return false; }
+    if (enabled && requestMode !== 'caller_session' && !apiKey && (!keyConfigured || clearKey)) { if (seerrApplyMsg) { seerrApplyMsg.classList.add('err'); seerrApplyMsg.textContent = 'Seerr API key is required for shared browsing.'; } return false; }
     const payload = {
       seerr_enabled: enabled,
       seerr_server_url: serverUrl,
@@ -2877,7 +2884,7 @@ function bindSettingsUi(){
       if (!jfPass && !jfPwConfigured) { alert(`${jfBrandName()} password is required.`); return; }
     }
     if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
-    if (seerrEnabled && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required.'); return; }
+    if (seerrEnabled && seerrRequestMode !== 'caller_session' && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required for shared browsing.'); return; }
 
     const payload = {
       device_name: deviceName || 'RelayTV',

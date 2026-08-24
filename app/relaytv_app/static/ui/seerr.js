@@ -17,6 +17,10 @@ let __seerrRequestSerial = 0;
 let __seerrSearchTimer = 0;
 let __seerrLastFocus = null;
 let __seerrRequestPoll = 0;
+let __seerrQuickFlowId = '';
+let __seerrQuickPollTimer = 0;
+let __seerrQuickBusy = false;
+let __seerrQuickSerial = 0;
 const __SEERR_REQUEST_POLL_MS = 30000;
 const __SEERR_TIMEOUT_MS = 12000;
 
@@ -66,9 +70,18 @@ function updateSeerrStatus(status){
   if (title) title.textContent = String(value.application_title || 'Seerr');
   if (connection) {
     const ready = __seerrEnabled && __seerrConfigured && !!value.reachable;
+    connection.classList.toggle('account', __seerrRequestMode === 'caller_session');
     connection.classList.toggle('up', ready);
     connection.classList.toggle('down', __seerrEnabled && !ready);
-    connection.textContent = !__seerrEnabled ? 'Disabled' : (ready ? `Connected${value.version ? ` · ${value.version}` : ''}` : (__seerrConfigured ? 'Unavailable' : 'Setup required'));
+    if (__seerrRequestMode === 'caller_session') {
+      const identity = value.caller_identity || {};
+      const name = String(identity.display_name || identity.username || 'Caller');
+      connection.textContent = __seerrCallerConnected ? `${name} · Sign out` : 'Connect account';
+      connection.title = __seerrCallerConnected ? 'Sign out of this browser’s Seerr session' : 'Connect this browser to Seerr';
+    } else {
+      connection.textContent = !__seerrEnabled ? 'Disabled' : (ready ? `Connected${value.version ? ` · ${value.version}` : ''}` : (__seerrConfigured ? 'Unavailable' : 'Setup required'));
+      connection.title = '';
+    }
   }
   return value;
 }
@@ -303,8 +316,86 @@ async function _seerrSubmitRequest(item, seasons, button, status){
   }
 }
 
-function startSeerrQuickConnect(){
-  _seerrSetStatus('Caller-specific sign-in is being added in the next milestone.', true);
+function _seerrShowConnect(show){
+  const backdrop = document.getElementById('seerrConnectBackdrop');
+  if (!backdrop) return;
+  backdrop.classList.toggle('hidden', !show);
+  backdrop.setAttribute('aria-hidden', show ? 'false' : 'true');
+  if (show) document.getElementById('seerrConnectClose')?.focus();
+}
+
+function _seerrStopQuickPoll(){
+  if (__seerrQuickPollTimer) clearTimeout(__seerrQuickPollTimer);
+  __seerrQuickPollTimer = 0; __seerrQuickBusy = false; __seerrQuickSerial += 1;
+}
+
+function closeSeerrQuickConnect(){
+  _seerrStopQuickPoll(); __seerrQuickFlowId = ''; _seerrShowConnect(false);
+}
+
+async function startSeerrQuickConnect(){
+  if (__seerrRequestMode !== 'caller_session') return;
+  _seerrStopQuickPoll(); __seerrQuickFlowId = '';
+  const serial = __seerrQuickSerial;
+  const code = document.getElementById('seerrConnectCode');
+  const status = document.getElementById('seerrConnectStatus');
+  const retry = document.getElementById('seerrConnectRetry');
+  if (code) code.textContent = '······';
+  if (status) { status.classList.remove('err','ok'); status.textContent = 'Starting Quick Connect…'; }
+  if (retry) retry.classList.add('hidden');
+  _seerrShowConnect(true);
+  try {
+    const response = await fetch('/integrations/seerr/session/quick-connect', {method:'POST'});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(_seerrErrorMessage(body, response.status));
+    if (serial !== __seerrQuickSerial || !__seerrVisible) return;
+    __seerrQuickFlowId = String(body.flow_id || '');
+    if (!__seerrQuickFlowId) throw new Error('Seerr did not start Quick Connect.');
+    if (code) code.textContent = String(body.code || '');
+    if (status) status.textContent = 'Waiting for approval in Jellyfin…';
+    __seerrQuickPollTimer = setTimeout(_seerrPollQuickConnect, 1200);
+  } catch (error) {
+    if (status) { status.classList.add('err'); status.textContent = error && error.message ? error.message : 'Quick Connect failed.'; }
+    if (retry) retry.classList.remove('hidden');
+  }
+}
+
+async function _seerrPollQuickConnect(){
+  if (!__seerrQuickFlowId || __seerrQuickBusy || !__seerrVisible) return;
+  const flowId = __seerrQuickFlowId;
+  __seerrQuickBusy = true;
+  const status = document.getElementById('seerrConnectStatus');
+  const retry = document.getElementById('seerrConnectRetry');
+  try {
+    const response = await fetch('/integrations/seerr/session/quick-connect/complete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({flow_id:flowId})});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(_seerrErrorMessage(body, response.status));
+    if (flowId !== __seerrQuickFlowId || !__seerrVisible) return;
+    if (!body.connected) {
+      __seerrQuickBusy = false;
+      __seerrQuickPollTimer = setTimeout(_seerrPollQuickConnect, 2000);
+      return;
+    }
+    if (status) { status.classList.add('ok'); status.textContent = 'Connected. Loading Seerr…'; }
+    __seerrQuickFlowId = '';
+    await refreshSeerrStatus();
+    setTimeout(() => { _seerrShowConnect(false); _seerrCloseDetailNow(); loadSeerrBrowse({append:false}); }, 450);
+  } catch (error) {
+    __seerrQuickFlowId = '';
+    if (status) { status.classList.add('err'); status.textContent = error && error.message ? error.message : 'Quick Connect failed.'; }
+    if (retry) retry.classList.remove('hidden');
+  } finally {
+    __seerrQuickBusy = false;
+  }
+}
+
+async function _seerrAccountAction(){
+  if (__seerrRequestMode !== 'caller_session') return;
+  if (!__seerrCallerConnected) { startSeerrQuickConnect(); return; }
+  if (!window.confirm('Sign out of Seerr on this browser?')) return;
+  try { await fetch('/integrations/seerr/session/logout', {method:'POST'}); } catch (_e) {}
+  await refreshSeerrStatus();
+  __seerrItems = []; _seerrRender(); _seerrSetStatus('Connect your Seerr account to browse.', false);
 }
 
 async function openSeerrDetail(mediaType, mediaId, fallbackTitle){
@@ -328,7 +419,7 @@ async function openSeerrDetail(mediaType, mediaId, fallbackTitle){
   }
 }
 
-function openSeerrShell(){
+async function openSeerrShell(){
   if (!__seerrEnabled || __seerrVisible) return;
   __seerrLastFocus = document.activeElement;
   __seerrVisible = true;
@@ -336,9 +427,13 @@ function openSeerrShell(){
   if (shell) { shell.classList.remove('hidden'); shell.setAttribute('aria-hidden', 'false'); }
   document.body.classList.add('seerrNoScroll');
   _uiPushLayer();
-  refreshSeerrStatus();
-  _seerrSelectSection(__seerrSection);
-  document.getElementById('seerrBackBtn')?.focus();
+  await refreshSeerrStatus();
+  if (__seerrRequestMode === 'caller_session' && !__seerrCallerConnected) {
+    startSeerrQuickConnect();
+  } else {
+    _seerrSelectSection(__seerrSection);
+    document.getElementById('seerrBackBtn')?.focus();
+  }
 }
 
 function closeSeerrShell(options){
@@ -349,6 +444,7 @@ function closeSeerrShell(options){
     return;
   }
   __seerrVisible = false;
+  closeSeerrQuickConnect();
   _seerrAbortBrowse(); _seerrCloseDetailNow();
   const shell = document.getElementById('seerrShell');
   if (shell) { shell.classList.add('hidden'); shell.setAttribute('aria-hidden', 'true'); }
@@ -363,6 +459,9 @@ function bindSeerrUi(){
   document.getElementById('seerrBackBtn')?.addEventListener('click', () => closeSeerrShell());
   document.getElementById('seerrMoreBtn')?.addEventListener('click', () => loadSeerrBrowse({append:true}));
   document.getElementById('seerrDetailBackdrop')?.addEventListener('click', () => closeSeerrDetail());
+  document.getElementById('seerrConnection')?.addEventListener('click', _seerrAccountAction);
+  document.getElementById('seerrConnectClose')?.addEventListener('click', closeSeerrQuickConnect);
+  document.getElementById('seerrConnectRetry')?.addEventListener('click', startSeerrQuickConnect);
   document.querySelectorAll('.seerrTab').forEach(button => button.addEventListener('click', () => _seerrSelectSection(button.dataset.seerrSection)));
   document.getElementById('seerrRequestFilter')?.addEventListener('change', () => loadSeerrBrowse({append:false}));
   document.getElementById('seerrSearchInput')?.addEventListener('input', event => {
@@ -372,7 +471,9 @@ function bindSeerrUi(){
   });
   window.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || !__seerrVisible) return;
-    if (window.relaytvSeerr.isDetailOpen()) closeSeerrDetail(); else closeSeerrShell();
+    if (!document.getElementById('seerrConnectBackdrop')?.classList.contains('hidden')) closeSeerrQuickConnect();
+    else if (window.relaytvSeerr.isDetailOpen()) closeSeerrDetail();
+    else closeSeerrShell();
     event.preventDefault();
   });
   document.addEventListener('visibilitychange', () => {

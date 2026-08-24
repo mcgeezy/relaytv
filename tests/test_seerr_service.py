@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
-from relaytv_app.integrations import seerr_service
-from relaytv_app.integrations.seerr_client import SeerrBinaryResponse, SeerrJsonResponse
+import pytest
+
+from relaytv_app.integrations import seerr_service, seerr_sessions
+from relaytv_app.integrations.seerr_client import (
+    SeerrBinaryResponse,
+    SeerrError,
+    SeerrJsonResponse,
+)
 
 
 class _Config:
@@ -357,3 +363,132 @@ def test_no_requestable_seasons_is_a_successful_semantic_result(monkeypatch) -> 
         "media_type": "tv",
         "media_id": 44,
     }
+
+
+def test_caller_request_uses_session_cookie_without_admin_attribution(monkeypatch) -> None:
+    calls = []
+
+    class _CallerConfig(_Config):
+        api_key = "administrator-secret"
+        request_mode = "caller_session"
+        request_user_id = 17
+
+    config = _CallerConfig()
+    session = seerr_sessions.CallerSession(
+        cookie="connect.sid=caller-secret",
+        server_url=config.server_url,
+        identity={"id": 9, "display_name": "Caller", "username": "caller"},
+        expires_at=999999,
+    )
+
+    class _Client:
+        def __init__(self, current_config, **kwargs):
+            calls.append(("client", kwargs))
+
+        def request_json_response(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return SeerrJsonResponse(
+                data={
+                    "id": 92,
+                    "status": 1,
+                    "media": {"mediaType": "movie", "tmdbId": 11, "status": 2},
+                },
+                status=201,
+            )
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+    monkeypatch.setattr(seerr_service.seerr_sessions, "resolve", lambda session_id: session)
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+
+    result = seerr_service.create_request(
+        media_type="movie",
+        media_id=11,
+        seasons=None,
+        is_4k=False,
+        session_id="opaque",
+    )
+
+    assert calls[0] == ("client", {"session_cookie": "connect.sid=caller-secret"})
+    assert calls[1][2]["body"] == {
+        "mediaType": "movie",
+        "mediaId": 11,
+        "is4k": False,
+    }
+    assert result["created"] is True
+
+
+def test_caller_mode_without_session_never_falls_back_to_admin_key(monkeypatch) -> None:
+    class _CallerConfig(_Config):
+        api_key = "administrator-secret"
+        request_mode = "caller_session"
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: _CallerConfig())
+    monkeypatch.setattr(
+        seerr_service.seerr_sessions, "resolve", lambda session_id: None
+    )
+    monkeypatch.setattr(
+        seerr_service,
+        "SeerrClient",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("administrator client must not be constructed")
+        ),
+    )
+
+    with pytest.raises(SeerrError) as exc_info:
+        seerr_service.discover("trending", 1, session_id="missing")
+
+    assert exc_info.value.code == "seerr_session_required"
+    assert exc_info.value.status_code == 401
+
+
+def test_expired_caller_status_retires_session_and_disables_writes(monkeypatch) -> None:
+    class _CallerConfig(_Config):
+        api_key = ""
+        request_mode = "caller_session"
+
+    config = _CallerConfig()
+    session = seerr_sessions.CallerSession(
+        cookie="connect.sid=expired",
+        server_url=config.server_url,
+        identity={"id": 9, "display_name": "Caller", "username": "caller"},
+        expires_at=999999,
+    )
+    retired = []
+
+    class _Client:
+        def __init__(self, current_config, **kwargs):
+            assert current_config is config
+            assert kwargs == {"session_cookie": "connect.sid=expired"}
+
+        def get(self, path, **kwargs):
+            if path == "/status":
+                return {"version": "3.4.1"}
+            raise SeerrError(
+                "seerr_session_expired",
+                "Your Seerr session has expired; connect again",
+                status_code=401,
+            )
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+    monkeypatch.setattr(
+        seerr_service.seerr_sessions,
+        "status",
+        lambda session_id: {"connected": True, "identity": session.identity},
+    )
+    monkeypatch.setattr(
+        seerr_service.seerr_sessions, "resolve", lambda session_id: session
+    )
+    monkeypatch.setattr(
+        seerr_service.seerr_sessions,
+        "retire",
+        lambda session_id: retired.append(session_id),
+    )
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+
+    result = seerr_service.integration_status(session_id="opaque")
+
+    assert result["caller_connected"] is False
+    assert result["writes_allowed"] is False
+    assert "caller_identity" not in result
+    assert result["error"]["code"] == "seerr_session_expired"
+    assert retired == ["opaque"]

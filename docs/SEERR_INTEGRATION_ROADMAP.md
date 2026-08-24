@@ -1,6 +1,6 @@
 # Seerr Integration Roadmap
 
-Status: M0-M4 complete; M6 caller-specific sessions in progress
+Status: M0-M4 and M6 complete; M5 playback bridge pending
 
 Primary branch: `feat/seerr-integration`
 
@@ -102,8 +102,8 @@ enforce that user's quota or approval policy.
 
 ### Stage 2: caller-specific sessions
 
-Add this after the server-level experience is stable. It remains in scope for
-the roadmap even if delivered in a follow-up PR.
+This stage builds on the server-level browser while replacing its identity for
+all allowlisted calls when the operator selects caller-specific mode.
 
 Use Seerr's Jellyfin Quick Connect flow instead of collecting or persisting a
 Jellyfin password:
@@ -120,7 +120,8 @@ Jellyfin password:
 
 Caller sessions become the preferred write path and correctly defer quotas,
 permissions, request visibility, and auto-approval to Seerr. The global API key
-remains available for health checks and the explicitly enabled shared mode.
+remains available for browsing, health checks, and requests only in the
+explicitly selected shared mode.
 No upstream session secret is persisted, returned in JSON, logged, or sent to a
 different configured Seerr origin.
 
@@ -172,6 +173,10 @@ The initial route surface should be small and semantic:
 GET  /integrations/seerr/status
 POST /integrations/seerr/test
 GET  /integrations/seerr/users
+POST /integrations/seerr/session/quick-connect
+POST /integrations/seerr/session/quick-connect/complete
+GET  /integrations/seerr/session
+POST /integrations/seerr/session/logout
 
 GET  /seerr/discover
 GET  /seerr/search
@@ -300,9 +305,10 @@ The settings modal includes:
 
 - enable toggle
 - Seerr server URL
-- write-only API key with configured/clear state
+- write-only API key with configured/clear state (optional in caller mode)
 - `Test connection` action
-- shared request toggle with an administrator/auto-approval warning
+- explicit disabled, shared-administrator, or caller-specific request identity
+- an administrator/auto-approval warning for shared mode
 - optional sanitized request-attribution user selector
 - connection/version/auth-mode status
 
@@ -340,7 +346,7 @@ quality gate before declaring the branch ready.
 | M3 | Responsive Seerr browser shell and settings UX | Complete |
 | M4 | Explicitly gated shared request creation and TV season selection | Complete |
 | M5 | Validated Seerr-to-Jellyfin play/queue bridge | Pending |
-| M6 | Caller-specific Quick Connect sessions (follow-up permitted) | Pending |
+| M6 | Caller-specific Quick Connect sessions | Complete |
 | M7 | Compatibility, security, field soak, operator/API docs, rollout decision | Pending |
 
 ### Milestone log
@@ -379,8 +385,20 @@ quality gate before declaring the branch ready.
   tightly modeled request route, shared-admin attribution from operator
   settings only, movie and selected/all-season UI actions, semantic handling
   for no requestable seasons, rejection of advanced administrator fields, and
-  API-token coverage. Caller mode currently fails closed until M6 establishes
-  a per-browser session; it never falls back to the administrator API key.
+  API-token coverage. At the M4 boundary caller mode failed closed pending M6;
+  it never fell back to the administrator API key.
+- **M6 — 2026-08-23:** Added Jellyfin Quick Connect for caller-specific mode.
+  RelayTV now keeps each upstream flow secret and authenticated Seerr cookie
+  in a bounded, memory-only store and gives the browser only an opaque,
+  HTTP-only, same-site RelayTV session cookie. Sessions are isolated per
+  browser, fixed to 12 hours, retired on logout, upstream rejection, Seerr
+  server/mode changes, and shutdown, and deliberately require reconnecting
+  after a RelayTV restart. All allowlisted browse and request operations use
+  the caller's upstream session in this mode, so Seerr enforces that user's
+  visibility, permissions, quotas, and approval policy; the administrator API
+  key is neither required nor used as fallback. Added focused transport,
+  service, route, session-lifecycle, API-token, settings-retirement, static UI,
+  and Quick Connect browser-smoke coverage.
 
 ## Verification Plan
 
@@ -449,11 +467,11 @@ git diff --check
 - Before merge, replace this roadmap with durable additions to `API.md`,
   `ARCHITECTURE.md`, an operator runbook, and (if warranted) a release highlight.
 
-## Inputs Needed Before M4/M6
+## Decisions Recorded for M4/M6
 
-No input is required to implement M1-M3 safely. Before enabling request writes,
-confirm whether this deployment intentionally wants shared API-key requests to
-auto-approve. Before M6, choose the caller-session lifetime and whether a
-browser should remain signed in across a RelayTV process restart; the
-recommended first implementation is memory-only and requires Quick Connect
-again after restart.
+Operators choose an explicit request identity. Shared-administrator mode may
+auto-approve and should be enabled deliberately. Caller-specific mode uses a
+12-hour, memory-only session and requires Jellyfin Quick Connect again after a
+RelayTV restart. Durable browser sessions remain a possible follow-up only if
+field use demonstrates that the convenience outweighs persistent credential
+storage and key-management complexity.

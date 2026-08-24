@@ -2,7 +2,7 @@
 from fastapi.testclient import TestClient
 
 from relaytv_app.config import runtime_config
-from relaytv_app.integrations import seerr_service
+from relaytv_app.integrations import seerr_service, seerr_sessions
 from relaytv_app.integrations.seerr_client import SeerrBinaryResponse, SeerrError
 from relaytv_app.main import create_app
 
@@ -92,17 +92,23 @@ def test_seerr_read_routes_delegate_bounded_semantic_inputs(monkeypatch) -> None
     monkeypatch.setattr(
         seerr_service,
         "discover",
-        lambda section, page: calls.append(("discover", section, page)) or {"results": []},
+        lambda section, page, **kwargs: calls.append(
+            ("discover", section, page, kwargs)
+        )
+        or {"results": []},
     )
     monkeypatch.setattr(
         seerr_service,
         "search",
-        lambda query, page: calls.append(("search", query, page)) or {"results": []},
+        lambda query, page, **kwargs: calls.append(("search", query, page, kwargs))
+        or {"results": []},
     )
     monkeypatch.setattr(
         seerr_service,
         "item_detail",
-        lambda media_type, media_id: calls.append(("item", media_type, media_id))
+        lambda media_type, media_id, **kwargs: calls.append(
+            ("item", media_type, media_id, kwargs)
+        )
         or {"media_id": media_id},
     )
     monkeypatch.setattr(
@@ -118,10 +124,13 @@ def test_seerr_read_routes_delegate_bounded_semantic_inputs(monkeypatch) -> None
     assert client.get("/seerr/requests?take=25&skip=50&filter=pending").status_code == 200
 
     assert calls == [
-        ("discover", "movies", 2),
-        ("search", "arrival", 3),
-        ("item", "movie", 329865),
-        ("requests", {"take": 25, "skip": 50, "status_filter": "pending"}),
+        ("discover", "movies", 2, {"session_id": ""}),
+        ("search", "arrival", 3, {"session_id": ""}),
+        ("item", "movie", 329865, {"session_id": ""}),
+        (
+            "requests",
+            {"take": 25, "skip": 50, "status_filter": "pending", "session_id": ""},
+        ),
     ]
 
 
@@ -215,5 +224,69 @@ def test_seerr_request_route_rejects_administrator_fields(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert calls == [
-        {"media_type": "tv", "media_id": 44, "seasons": [1, 2], "is_4k": False}
+        {
+            "media_type": "tv",
+            "media_id": 44,
+            "seasons": [1, 2],
+            "is_4k": False,
+            "session_id": "",
+        }
     ]
+
+
+def test_quick_connect_sets_only_opaque_relaytv_cookie(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seerr_sessions,
+        "initiate",
+        lambda: {"flow_id": "F" * 43, "code": "123456", "expires_in": 600},
+    )
+    monkeypatch.setattr(
+        seerr_sessions,
+        "complete",
+        lambda flow_id: (
+            "S" * 43,
+            {
+                "connected": True,
+                "identity": {"id": 7, "display_name": "Alex", "username": "alex"},
+            },
+        ),
+    )
+    client = TestClient(create_app(testing=True))
+
+    started = client.post("/integrations/seerr/session/quick-connect")
+    completed = client.post(
+        "/integrations/seerr/session/quick-connect/complete",
+        json={"flow_id": started.json()["flow_id"]},
+    )
+
+    assert completed.status_code == 200
+    cookie = completed.headers["set-cookie"]
+    assert cookie.startswith("relaytv_seerr_session=" + "S" * 43)
+    assert "HttpOnly" in cookie
+    assert "SameSite=strict" in cookie
+    assert "upstream" not in cookie
+
+
+def test_caller_session_status_and_logout_use_browser_cookie(monkeypatch) -> None:
+    observed = []
+    monkeypatch.setattr(
+        seerr_sessions,
+        "status",
+        lambda session_id: observed.append(("status", session_id))
+        or {"connected": bool(session_id)},
+    )
+    monkeypatch.setattr(
+        seerr_sessions,
+        "retire",
+        lambda session_id: observed.append(("retire", session_id)),
+    )
+    client = TestClient(create_app(testing=True))
+    client.cookies.set(seerr_sessions.COOKIE_NAME, "S" * 43)
+
+    status = client.get("/integrations/seerr/session")
+    logout = client.post("/integrations/seerr/session/logout")
+
+    assert status.json() == {"connected": True}
+    assert logout.json() == {"connected": False}
+    assert observed == [("status", "S" * 43), ("retire", "S" * 43)]
+    assert "Max-Age=0" in logout.headers["set-cookie"]

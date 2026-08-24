@@ -3854,7 +3854,7 @@ def ui():
         <header class="seerrShellHead">
           <button id="seerrBackBtn" class="seerrBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>
           <div class="seerrIdentity"><span class="seerrMark" aria-hidden="true">✦</span><div><small>Discover and request</small><strong id="seerrTitle">Seerr</strong></div></div>
-          <div id="seerrConnection" class="seerrConnection" role="status" aria-live="polite">Checking…</div>
+          <button id="seerrConnection" class="seerrConnection" type="button" aria-live="polite">Checking…</button>
         </header>
         <div class="seerrWorkspace">
           <nav class="seerrTabs" role="tablist" aria-label="Seerr sections">
@@ -3877,6 +3877,16 @@ def ui():
         </div>
         <div id="seerrDetailBackdrop" class="seerrDetailBackdrop hidden" aria-hidden="true"></div>
         <aside id="seerrDetail" class="seerrDetail hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="seerrDetailTitle"></aside>
+        <div id="seerrConnectBackdrop" class="seerrConnectBackdrop hidden" aria-hidden="true">
+          <section id="seerrConnectDialog" class="seerrConnectDialog" role="dialog" aria-modal="true" aria-labelledby="seerrConnectTitle">
+            <button id="seerrConnectClose" class="seerrDetailClose" type="button" aria-label="Close Quick Connect">✕</button>
+            <h2 id="seerrConnectTitle">Connect your Seerr account</h2>
+            <p>Open Jellyfin’s Quick Connect screen and enter this code:</p>
+            <div id="seerrConnectCode" class="seerrConnectCode" aria-live="polite">······</div>
+            <div id="seerrConnectStatus" class="seerrRequestResult" role="status" aria-live="polite"></div>
+            <button id="seerrConnectRetry" class="seerrRequestBtn hidden" type="button">Start again</button>
+          </section>
+        </div>
       </div>
     </div>
   </div>
@@ -4218,7 +4228,7 @@ def ui():
         <div class="fieldRow">
           <label class="fieldLbl" for="setSeerrServerUrl">Seerr server</label>
           <input id="setSeerrServerUrl" class="input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://10.0.55.2:5055" />
-          <div class="hint">Use the Seerr base URL. RelayTV keeps the API key server-side.</div>
+          <div class="hint">Use the Seerr base URL. An API key is required only for shared browsing and administrator requests.</div>
         </div>
         <div class="fieldRow">
           <label class="fieldLbl" for="setSeerrApiKey">API key</label>

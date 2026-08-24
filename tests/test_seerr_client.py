@@ -72,6 +72,22 @@ def test_config_snapshot_is_immutable_and_normalized() -> None:
     assert config.configured is True
 
 
+def test_caller_mode_requires_only_server_url() -> None:
+    config = seerr_client.SeerrConfig.from_snapshot(
+        SettingsSnapshot(
+            {
+                "RELAYTV_SEERR_ENABLED": "1",
+                "RELAYTV_SEERR_SERVER_URL": "https://seerr.example",
+                "RELAYTV_SEERR_API_KEY": "",
+                "RELAYTV_SEERR_REQUEST_MODE": "caller_session",
+            }
+        )
+    )
+
+    assert config.configured is True
+    assert config.api_key == ""
+
+
 def test_client_keeps_api_key_in_header_and_out_of_url() -> None:
     opener = _RecordingOpener({"version": "3.4.1"})
     client = seerr_client.SeerrClient(_config(), opener=opener)
@@ -154,3 +170,42 @@ def test_binary_request_uses_server_image_proxy_and_captures_safe_metadata() -> 
     assert response.content_type == "image/jpeg"
     assert response.cache_control == "public, max-age=60"
     assert response.etag == '"abc"'
+
+
+def test_caller_session_cookie_replaces_api_key_authentication() -> None:
+    opener = _RecordingOpener({"id": 7})
+    client = seerr_client.SeerrClient(
+        _config(api_key="administrator-secret"),
+        opener=opener,
+        session_cookie="connect.sid=caller-secret",
+    )
+
+    client.get("/auth/me")
+
+    request = opener.requests[0]
+    assert request.get_header("Cookie") == "connect.sid=caller-secret"
+    assert request.get_header("X-api-key") is None
+
+
+def test_caller_session_unauthorized_is_not_reported_as_api_key_failure() -> None:
+    class _FailingOpener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                401,
+                "expired",
+                email.message.Message(),
+                io.BytesIO(),
+            )
+
+    client = seerr_client.SeerrClient(
+        _config(api_key=""),
+        opener=_FailingOpener(),
+        session_cookie="connect.sid=expired",
+    )
+
+    with pytest.raises(seerr_client.SeerrError) as exc_info:
+        client.get("/auth/me")
+
+    assert exc_info.value.code == "seerr_session_expired"
+    assert exc_info.value.status_code == 401

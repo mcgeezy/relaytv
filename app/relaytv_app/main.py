@@ -25,7 +25,7 @@ from .config import runtime_config
 from .routes import router
 from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
-from .integrations import iptv_service, jellyfin_receiver
+from .integrations import iptv_service, jellyfin_receiver, seerr_sessions
 from . import discovery_mdns
 from . import postlive_relay
 from . import video_profile
@@ -133,6 +133,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         try:
             yield
         finally:
+            seerr_sessions.retire_all()
             jellyfin_receiver.stop()
             iptv_service.stop_worker()
             discovery_mdns.stop()

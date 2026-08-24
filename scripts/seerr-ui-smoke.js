@@ -31,9 +31,15 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
   const context = await browser.newContext({viewport:scenario.viewport, colorScheme:scenario.colorScheme});
   const page = await context.newPage();
   const errors = [];
+  let callerConnected = false;
   page.on('pageerror', error => errors.push(`page: ${error.message}`));
   page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
-  await page.route('**/integrations/seerr/status', route => route.fulfill({json:{enabled:true, configured:true, reachable:true, version:'3.4.1', application_title:'Smoke Seerr'}}));
+  await page.route('**/integrations/seerr/status', route => route.fulfill({json:{enabled:true, configured:true, reachable:true, version:'3.4.1', application_title:'Smoke Seerr', request_mode:scenario.caller ? 'caller_session' : 'shared_admin', caller_connected:callerConnected, caller_identity:callerConnected ? {id:7,display_name:'Smoke Caller',username:'smoke'} : undefined}}));
+  await page.route('**/integrations/seerr/session/quick-connect', route => route.fulfill({json:{flow_id:'opaque-flow',code:'123456',expires_in:600}}));
+  await page.route('**/integrations/seerr/session/quick-connect/complete', route => {
+    callerConnected = true;
+    return route.fulfill({json:{connected:true,pending:false,identity:{id:7,display_name:'Smoke Caller',username:'smoke'},expires_in:43200}});
+  });
   await page.route('**/seerr/discover**', route => route.fulfill({json:{page:1, total_pages:1, total_results:2, results:[media(10,'movie','Smoke Movie'),media(20,'tv','Smoke Series')]}}));
   await page.route('**/seerr/search**', async route => {
     const query = new URL(route.request().url()).searchParams.get('query') || '';
@@ -47,6 +53,11 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.locator('#seerrOpenBtn').waitFor({state:'visible', timeout:15000});
     await page.locator('#seerrOpenBtn').click();
     await page.locator('#seerrShell:not(.hidden)').waitFor();
+    if (scenario.caller) {
+      await page.waitForFunction(() => document.querySelector('#seerrConnectCode')?.textContent === '123456');
+      await page.waitForFunction(() => document.querySelector('#seerrConnectBackdrop')?.classList.contains('hidden'), null, {timeout:10000});
+      check((await page.locator('#seerrConnection').textContent()).includes('Smoke Caller'), `${scenario.name}: caller identity missing after Quick Connect`);
+    }
     await page.waitForFunction(() => document.querySelectorAll('.seerrCard').length === 2);
     check((await page.locator('.seerrCardTitle').allTextContents()).join(',') === 'Smoke Movie,Smoke Series', `${scenario.name}: discovery cards mismatch`);
 
@@ -88,8 +99,8 @@ async function main() {
   const browser = await browserFor(wsEndpoint);
   try {
     const scenarios = [
-      {name:'phone-dark', viewport:{width:390,height:844}, colorScheme:'dark'},
-      {name:'desktop-light', viewport:{width:1440,height:1000}, colorScheme:'light'},
+      {name:'phone-dark', viewport:{width:390,height:844}, colorScheme:'dark', caller:true},
+      {name:'desktop-light', viewport:{width:1440,height:1000}, colorScheme:'light', caller:false},
     ];
     const results = [];
     for (const scenario of scenarios) results.push(await runScenario(browser, baseUrl, scenario, screenshotDir));

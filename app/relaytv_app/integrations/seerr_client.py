@@ -48,6 +48,7 @@ class SeerrBinaryResponse:
 class SeerrJsonResponse:
     data: dict | list
     status: int
+    set_cookies: tuple[str, ...] = ()
 
 
 def normalize_server_url(value: object) -> str:
@@ -182,10 +183,15 @@ class SeerrClient:
         *,
         timeout_sec: float = DEFAULT_TIMEOUT_SEC,
         opener: Any = None,
+        session_cookie: str = "",
     ) -> None:
         self.config = config
         self.timeout_sec = max(0.25, min(30.0, float(timeout_sec)))
         self._opener = opener or _OPENER
+        cookie = str(session_cookie or "").strip()
+        if "\r" in cookie or "\n" in cookie:
+            raise ValueError("Invalid Seerr session cookie")
+        self._session_cookie = cookie
 
     def get(self, path: str, *, query: dict[str, object] | None = None, auth: bool = True):
         return self.request_json("GET", path, query=query, auth=auth)
@@ -240,7 +246,9 @@ class SeerrClient:
                 "Seerr returned an unexpected response shape",
                 status_code=502,
             )
-        return SeerrJsonResponse(data=parsed, status=status)
+        get_all = getattr(_headers, "get_all", None)
+        set_cookies = tuple(str(value) for value in (get_all("Set-Cookie") or [])) if get_all else ()
+        return SeerrJsonResponse(data=parsed, status=status, set_cookies=set_cookies)
 
     def get_binary(
         self,
@@ -284,7 +292,7 @@ class SeerrClient:
                 "Seerr server URL is not configured",
                 status_code=503,
             )
-        if auth and not self.config.api_key:
+        if auth and not (self._session_cookie or self.config.api_key):
             raise SeerrError(
                 "seerr_not_configured",
                 "Seerr API key is not configured",
@@ -309,7 +317,9 @@ class SeerrClient:
             "Accept": accept,
             "User-Agent": "RelayTV Seerr Integration",
         }
-        if auth:
+        if auth and self._session_cookie:
+            request_headers["Cookie"] = self._session_cookie
+        elif auth:
             request_headers["X-Api-Key"] = self.config.api_key
         if body is not None:
             payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -334,7 +344,9 @@ class SeerrClient:
         except SeerrError:
             raise
         except urllib.error.HTTPError as exc:
-            raise _http_error(int(exc.code)) from None
+            raise _http_error(
+                int(exc.code), session_auth=bool(auth and self._session_cookie)
+            ) from None
         except (TimeoutError, socket.timeout):
             raise SeerrError(
                 "seerr_timeout",
@@ -350,8 +362,15 @@ class SeerrClient:
         return raw, headers, status
 
 
-def _http_error(status: int) -> SeerrError:
+def _http_error(status: int, *, session_auth: bool = False) -> SeerrError:
     if status == 401:
+        if session_auth:
+            return SeerrError(
+                "seerr_session_expired",
+                "Your Seerr session has expired; connect again",
+                status_code=401,
+                upstream_status=status,
+            )
         return SeerrError(
             "seerr_auth_failed",
             "Seerr rejected the configured API key",
