@@ -10,7 +10,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ..config import SettingsSnapshot, runtime_config
+from ..config import (
+    SettingsSnapshot,
+    normalize_optional_positive_int,
+    normalize_seerr_request_mode,
+    runtime_config,
+)
 
 DEFAULT_TIMEOUT_SEC = 5.0
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -83,17 +88,6 @@ def normalize_server_url(value: object) -> str:
     return urllib.parse.urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
 
 
-def _optional_positive_int(value: str | None) -> int | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        number = int(text)
-    except ValueError:
-        return None
-    return number if number > 0 else None
-
-
 @dataclass(frozen=True, slots=True)
 class SeerrConfig:
     enabled: bool
@@ -113,19 +107,18 @@ class SeerrConfig:
         except ValueError as exc:
             server_url = ""
             configuration_error = str(exc)
-        request_mode = str(snapshot.raw("RELAYTV_SEERR_REQUEST_MODE") or "").strip().lower()
-        if request_mode not in {"disabled", "shared_admin", "caller_session"}:
-            request_mode = (
-                "shared_admin"
-                if snapshot.flag("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False)
-                else "disabled"
-            )
+        request_mode = normalize_seerr_request_mode(
+            snapshot.raw("RELAYTV_SEERR_REQUEST_MODE"),
+            shared_requests_enabled=snapshot.flag(
+                "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
+            ),
+        )
         return cls(
             enabled=snapshot.flag("RELAYTV_SEERR_ENABLED", False),
             server_url=server_url,
             api_key=snapshot.text("RELAYTV_SEERR_API_KEY"),
             shared_requests_enabled=request_mode == "shared_admin",
-            request_user_id=_optional_positive_int(
+            request_user_id=normalize_optional_positive_int(
                 snapshot.raw("RELAYTV_SEERR_REQUEST_USER_ID")
             ),
             request_mode=request_mode,

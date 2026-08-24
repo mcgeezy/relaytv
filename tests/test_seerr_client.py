@@ -7,6 +7,7 @@ import urllib.request
 
 import pytest
 
+from relaytv_app import config as app_config, state
 from relaytv_app.config import SettingsSnapshot
 from relaytv_app.integrations import seerr_client
 
@@ -70,6 +71,49 @@ def test_config_snapshot_is_immutable_and_normalized() -> None:
     assert config.request_user_id == 9
     assert config.request_mode == "caller_session"
     assert config.configured is True
+
+
+@pytest.mark.parametrize(
+    ("request_mode", "shared_enabled", "expected_mode"),
+    [
+        (None, False, "disabled"),
+        (None, True, "shared_admin"),
+        ("garbage", True, "shared_admin"),
+        ("caller_session", True, "caller_session"),
+        ("disabled", True, "disabled"),
+    ],
+)
+def test_seerr_env_defaults_and_live_config_share_request_mode_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+    request_mode: str | None,
+    shared_enabled: bool,
+    expected_mode: str,
+) -> None:
+    monkeypatch.setenv("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", "1" if shared_enabled else "0")
+    if request_mode is None:
+        monkeypatch.delenv("RELAYTV_SEERR_REQUEST_MODE", raising=False)
+    else:
+        monkeypatch.setenv("RELAYTV_SEERR_REQUEST_MODE", request_mode)
+
+    defaults = app_config.seerr_settings_from_env()
+    persisted_defaults = state._default_settings()
+    live = seerr_client.SeerrConfig.from_snapshot(
+        SettingsSnapshot(
+            {
+                "RELAYTV_SEERR_REQUEST_MODE": request_mode or "",
+                "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED": (
+                    "1" if shared_enabled else "0"
+                ),
+            }
+        )
+    )
+
+    assert defaults["seerr_request_mode"] == expected_mode
+    assert persisted_defaults["seerr_request_mode"] == expected_mode
+    assert live.request_mode == expected_mode
+    assert defaults["seerr_shared_requests_enabled"] is (
+        expected_mode == "shared_admin"
+    )
 
 
 def test_caller_mode_requires_only_server_url() -> None:

@@ -47,7 +47,7 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     if (query === 'retired') await new Promise(resolve => setTimeout(resolve, 700));
     await route.fulfill({json:{page:1, total_pages:1, total_results:1, results:[media(query === 'retired' ? 31 : 32,'movie',query === 'retired' ? 'Retired Result' : 'Current Result')]}});
   });
-  await page.route('**/seerr/item/**', route => route.fulfill({json:{...media(10,'movie','Smoke Movie'), runtime_minutes:112, genres:[{id:18,name:'Drama'}], tagline:'A safe detail', seasons:[], playback_available:true, playback:{provider:'jellyfin',media_type:'movie',media_id:10}}}));
+  await page.route('**/seerr/item/**', route => route.fulfill({json:{...media(10,'movie','Smoke Movie'), request:{request_id:8,status:'pending',is_4k:false}, runtime_minutes:112, genres:[{id:18,name:'Drama'}], tagline:'A safe detail', seasons:[], playback_available:true, playback:{provider:'jellyfin',media_type:'movie',media_id:10}}}));
   await page.route('**/seerr/playback', async route => {
     playbackCommands.push((await route.request().postDataJSON()).command);
     await route.fulfill({json:{ok:true,media_type:'movie',media_id:10,command:playbackCommands.at(-1),queued:false,suppressed:false}});
@@ -69,6 +69,8 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.locator('.seerrCard').first().click();
     await page.waitForFunction(() => document.querySelector('#seerrDetailTitle')?.textContent === 'Smoke Movie');
     check((await page.locator('.seerrDetailOverview').textContent()) === 'Smoke Movie overview', `${scenario.name}: detail mismatch`);
+    check((await page.locator('.seerrExistingRequest').textContent()) === 'Request pending in Seerr', `${scenario.name}: existing request state missing`);
+    check((await page.getByRole('button', {name:'Request movie'}).count()) === 0, `${scenario.name}: duplicate movie request action visible`);
     await page.locator('.seerrPlaybackBtn').click();
     await page.waitForFunction(() => document.querySelector('.seerrRequestResult')?.textContent === 'Playback started on RelayTV.');
     check(playbackCommands.join(',') === 'play_now', `${scenario.name}: validated playback action mismatch`);
@@ -82,6 +84,12 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.waitForFunction(() => document.querySelector('.seerrCardTitle')?.textContent === 'Current Result');
     await page.waitForTimeout(500);
     check((await page.locator('.seerrCardTitle').textContent()) === 'Current Result', `${scenario.name}: retired search replaced current results`);
+
+    await search.fill('will-be-cancelled');
+    await page.locator('.seerrTab[data-seerr-section="movies"]').click();
+    await page.waitForTimeout(500);
+    check((await page.locator('.seerrCardTitle').allTextContents()).join(',') === 'Smoke Movie,Smoke Series', `${scenario.name}: pending search replaced selected section`);
+    check(await page.locator('.seerrTab[data-seerr-section="movies"]').evaluate(node => node.classList.contains('active')), `${scenario.name}: movies tab not selected`);
 
     await page.locator('.seerrTab[data-seerr-section="requests"]').click();
     await page.waitForFunction(() => document.querySelector('.seerrState')?.textContent === 'pending');

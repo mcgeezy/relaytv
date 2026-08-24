@@ -21,7 +21,7 @@ from .player import (
 )
 from .x11_overlay import start_overlay as start_x11_overlay, stop_overlay as stop_x11_overlay
 from . import api_auth
-from .config import runtime_config
+from .config import normalize_seerr_request_mode, runtime_config
 from .routes import router, start_realtime_runtime, stop_realtime_runtime
 from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
@@ -74,14 +74,10 @@ def create_app(*, testing: bool = False) -> FastAPI:
         )
         runtime_config.set_value(
             "RELAYTV_SEERR_REQUEST_MODE",
-            str(
-                s.get("seerr_request_mode")
-                or (
-                    "shared_admin"
-                    if bool(s.get("seerr_shared_requests_enabled"))
-                    else "disabled"
-                )
-            ).strip(),
+            normalize_seerr_request_mode(
+                s.get("seerr_request_mode"),
+                shared_requests_enabled=bool(s.get("seerr_shared_requests_enabled")),
+            ),
         )
         runtime_config.set_value(
             "RELAYTV_SEERR_REQUEST_USER_ID",

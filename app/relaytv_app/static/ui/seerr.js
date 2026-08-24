@@ -100,6 +100,11 @@ function _seerrAbortBrowse(){
   __seerrBrowseController = null;
 }
 
+function _seerrCancelPendingSearch(){
+  if (__seerrSearchTimer) clearTimeout(__seerrSearchTimer);
+  __seerrSearchTimer = 0;
+}
+
 function _seerrCard(item){
   const button = document.createElement('button');
   button.type = 'button';
@@ -203,6 +208,7 @@ async function loadSeerrBrowse(options){
 }
 
 function _seerrSelectSection(section){
+  _seerrCancelPendingSearch();
   __seerrSection = ['trending','movies','tv','requests'].includes(section) ? section : 'trending';
   __seerrQuery = '';
   const search = document.getElementById('seerrSearchInput');
@@ -268,6 +274,26 @@ function _seerrRenderDetail(item){
   detail.append(hero, body);
 }
 
+function _seerrExistingMovieRequestState(item){
+  if (!item || item.media_type !== 'movie') return '';
+  const requestStatus = String(item.request && item.request.status || '').trim().toLowerCase();
+  if (requestStatus === 'declined' || requestStatus === 'failed') return '';
+  const requestLabels = {
+    pending: 'Request pending in Seerr',
+    approved: 'Request approved in Seerr',
+    completed: 'Request completed in Seerr',
+  };
+  if (requestStatus) return requestLabels[requestStatus] || 'Request already exists in Seerr';
+  const mediaStatus = String(item.media_status || '').trim().toLowerCase();
+  const mediaLabels = {
+    pending: 'Request pending in Seerr',
+    processing: 'Request processing in Seerr',
+    partially_available: 'Partially available in Seerr',
+    available: 'Available in Seerr',
+  };
+  return mediaLabels[mediaStatus] || '';
+}
+
 function _seerrRequestControls(item){
   const controls = document.createElement('div');
   controls.className = 'seerrRequestControls';
@@ -285,6 +311,10 @@ function _seerrRequestControls(item){
     const connect = document.createElement('button'); connect.type = 'button'; connect.className = 'seerrRequestBtn'; connect.textContent = 'Connect Seerr account'; connect.onclick = () => window.relaytvSeerr.startQuickConnect(); controls.append(connect, status); return controls;
   }
   if (item.media_type === 'movie') {
+    const existingRequest = _seerrExistingMovieRequestState(item);
+    if (existingRequest) {
+      const existing = document.createElement('span'); existing.className = 'seerrExistingRequest'; existing.textContent = existingRequest; controls.append(existing, status); return controls;
+    }
     const button = document.createElement('button'); button.type = 'button'; button.className = 'seerrRequestBtn'; button.textContent = 'Request movie'; button.onclick = () => _seerrSubmitRequest(item, null, button, status); controls.append(button, status); return controls;
   }
   const seasons = (Array.isArray(item.seasons) ? item.seasons : []).filter(season => Number(season.season_number) >= 0);
@@ -465,6 +495,7 @@ function closeSeerrShell(options){
     return;
   }
   __seerrVisible = false;
+  _seerrCancelPendingSearch();
   closeSeerrQuickConnect();
   _seerrAbortBrowse(); _seerrCloseDetailNow();
   const shell = document.getElementById('seerrShell');
@@ -486,9 +517,9 @@ function bindSeerrUi(){
   document.querySelectorAll('.seerrTab').forEach(button => button.addEventListener('click', () => _seerrSelectSection(button.dataset.seerrSection)));
   document.getElementById('seerrRequestFilter')?.addEventListener('change', () => loadSeerrBrowse({append:false}));
   document.getElementById('seerrSearchInput')?.addEventListener('input', event => {
-    if (__seerrSearchTimer) clearTimeout(__seerrSearchTimer);
+    _seerrCancelPendingSearch();
     const query = String(event.target.value || '').trim();
-    __seerrSearchTimer = setTimeout(() => { __seerrQuery = query; loadSeerrBrowse({append:false}); }, 350);
+    __seerrSearchTimer = setTimeout(() => { __seerrSearchTimer = 0; __seerrQuery = query; loadSeerrBrowse({append:false}); }, 350);
   });
   window.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || !__seerrVisible) return;

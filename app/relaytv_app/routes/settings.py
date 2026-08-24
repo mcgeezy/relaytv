@@ -6,7 +6,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import player, state, upload_store, ytdlp_update
-from ..config import runtime_config
+from ..config import (
+    SEERR_REQUEST_MODES,
+    normalize_seerr_request_mode,
+    runtime_config,
+)
 from ..debug import get_logger
 from ..integrations import jellyfin_receiver, seerr_sessions
 from ..integrations.seerr_client import normalize_server_url
@@ -91,9 +95,10 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["seerr_shared_requests_enabled"] = bool(
         out.get("seerr_shared_requests_enabled", False)
     )
-    request_mode = str(out.get("seerr_request_mode") or "").strip().lower()
-    if request_mode not in {"disabled", "shared_admin", "caller_session"}:
-        request_mode = "shared_admin" if out["seerr_shared_requests_enabled"] else "disabled"
+    request_mode = normalize_seerr_request_mode(
+        out.get("seerr_request_mode"),
+        shared_requests_enabled=out["seerr_shared_requests_enabled"],
+    )
     out["seerr_request_mode"] = request_mode
     out["seerr_shared_requests_enabled"] = request_mode == "shared_admin"
     return out
@@ -242,7 +247,7 @@ def update_settings(req: SettingsReq):
             raise HTTPException(status_code=400, detail="Seerr request user must be positive")
     if "seerr_request_mode" in requested_keys:
         request_mode = str(patch.get("seerr_request_mode") or "").strip().lower()
-        if request_mode not in {"disabled", "shared_admin", "caller_session"}:
+        if request_mode not in SEERR_REQUEST_MODES:
             raise HTTPException(status_code=400, detail="Invalid Seerr request identity mode")
         patch["seerr_request_mode"] = request_mode
         patch["seerr_shared_requests_enabled"] = request_mode == "shared_admin"

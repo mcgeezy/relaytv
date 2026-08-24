@@ -6,7 +6,12 @@ import time
 import re
 import platform
 import tempfile
-from .config import env_bool as _env_bool
+from .config import (
+    env_bool as _env_bool,
+    normalize_optional_positive_int as _normalize_optional_positive_int,
+    normalize_seerr_request_mode as _normalize_seerr_request_mode,
+    seerr_settings_from_env,
+)
 from .resolver import provider_from_url
 from .debug import get_logger
 
@@ -110,13 +115,6 @@ def _normalize_jellyfin_server_type(v: object) -> str:
     return "jellyfin"
 
 
-def _normalize_seerr_request_mode(v: object) -> str:
-    mode = str(v or "").strip().lower()
-    if mode in {"disabled", "shared_admin", "caller_session"}:
-        return mode
-    return "disabled"
-
-
 def _normalize_invidious_base(v: object) -> str:
     s = str(v or "").strip()
     if not s:
@@ -151,16 +149,6 @@ def _normalize_idle_qr_size(v: object, default: int = 168) -> int:
     if out > 280:
         return 280
     return out
-
-
-def _normalize_optional_positive_int(value: object) -> int | None:
-    if value is None or str(value).strip() == "":
-        return None
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
 
 
 def _ensure_state_dir() -> None:
@@ -955,6 +943,7 @@ def _default_settings() -> dict:
         device_name = device_name[:80].strip() or "RelayTV"
     quality_mode = _normalize_quality_mode(os.getenv("RELAYTV_QUALITY_MODE"))
     quality_cap = _normalize_quality_cap(os.getenv("RELAYTV_QUALITY_CAP"))
+    seerr_defaults = seerr_settings_from_env()
     return {
         "device_name": device_name,
         "video_mode": (os.getenv("RELAYTV_VIDEO_MODE", "auto") or "auto").strip().lower(),
@@ -1002,23 +991,7 @@ def _default_settings() -> dict:
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
         "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
         "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
-        "seerr_enabled": _env_bool("RELAYTV_SEERR_ENABLED", False),
-        "seerr_server_url": (os.getenv("RELAYTV_SEERR_SERVER_URL") or "").strip(),
-        "seerr_api_key": (os.getenv("RELAYTV_SEERR_API_KEY") or "").strip(),
-        "seerr_shared_requests_enabled": _env_bool(
-            "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
-        ),
-        "seerr_request_mode": _normalize_seerr_request_mode(
-            os.getenv("RELAYTV_SEERR_REQUEST_MODE")
-            or (
-                "shared_admin"
-                if _env_bool("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False)
-                else "disabled"
-            )
-        ),
-        "seerr_request_user_id": _normalize_optional_positive_int(
-            os.getenv("RELAYTV_SEERR_REQUEST_USER_ID")
-        ),
+        **seerr_defaults,
     }
 
 def load_settings() -> None:
@@ -1057,7 +1030,8 @@ def load_settings() -> None:
         defaults.get("seerr_shared_requests_enabled")
     )
     defaults["seerr_request_mode"] = _normalize_seerr_request_mode(
-        defaults.get("seerr_request_mode")
+        defaults.get("seerr_request_mode"),
+        shared_requests_enabled=defaults["seerr_shared_requests_enabled"],
     )
     defaults["seerr_shared_requests_enabled"] = (
         defaults["seerr_request_mode"] == "shared_admin"
@@ -1179,7 +1153,8 @@ def update_settings(patch: dict) -> dict:
             )
     if "seerr_request_mode" in clean:
         clean["seerr_request_mode"] = _normalize_seerr_request_mode(
-            clean.get("seerr_request_mode")
+            clean.get("seerr_request_mode"),
+            shared_requests_enabled=bool(clean.get("seerr_shared_requests_enabled")),
         )
         clean["seerr_shared_requests_enabled"] = (
             clean["seerr_request_mode"] == "shared_admin"
