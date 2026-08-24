@@ -11,6 +11,8 @@ release branch.
   open follow-ups
 - `JELLYFIN_OPERATIONS.md`: Jellyfin/Emby runtime config, verification,
   troubleshooting
+- `SEERR_OPERATIONS.md`: Seerr setup, request identity, Quick Connect,
+  validated Jellyfin playback, verification, and troubleshooting
 - `IPTV_OPERATIONS.md`: M3U sources, free-provider discovery, favorites,
   availability, credential handling, and troubleshooting
 - `DEVICE_SYNC_OPERATIONS.md`: sending a queue or the running playback to
