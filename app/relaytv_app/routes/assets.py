@@ -332,6 +332,7 @@ def ui_static_asset(asset_name: str):
     if safe_name != asset_name or safe_name not in {
         "app.css",
         "app.js",
+        "realtime_transport.js",
         "jellyfin.css",
         "jellyfin.js",
         "iptv.css",

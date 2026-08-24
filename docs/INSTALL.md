@@ -172,6 +172,22 @@ for the token on first use. Leave it unset (the default) for the fully open
 trusted-LAN behavior. See `API.md` ("Optional API token") for details and
 reverse-proxy examples.
 
+### Reverse proxies and realtime updates
+
+The browser UI and companion clients prefer RelayTV's read-only WebSocket
+state channel and automatically fall back to Server-Sent Events and then HTTP
+polling when the network path cannot sustain it. A reverse proxy should forward
+the public `Host` and `X-Forwarded-Proto`, permit HTTP/1.1 WebSocket Upgrade and
+Connection headers, disable buffering for the SSE fallback, and use a long
+read timeout. The forwarded public scheme is required for same-origin browser
+validation when TLS terminates at the proxy.
+
+Use the complete nginx and Caddy examples in [API.md](API.md#network-trust-model).
+RelayTV's stock Uvicorn process trusts forwarded headers from loopback. If a
+proxy connects from another address, scope Uvicorn's
+`--forwarded-allow-ips` setting to that proxy rather than trusting arbitrary
+clients.
+
 ## Docker Build Bundles
 
 The default container build is now lean and native-Qt-first. Optional feature bundles are build-time opt-ins exposed through `docker-compose.yml` args and `.env`:

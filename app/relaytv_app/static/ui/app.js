@@ -304,10 +304,26 @@ function fmtTime(s){
 
 let __lastStatus = null;
 let __lastStatusFullFetchTs = 0;
+// Active realtime transport wrapper: {kind, handle, generation}.
 let __uiEventSource = null;
 let __uiEventSourceLastTs = 0;
 let __uiEventSourceBornTs = 0;
 let __uiEventReconnectTimer = 0;
+let __uiEventGeneration = 0;
+let __uiEventConnectInFlight = false;
+let __uiEventFailureCount = 0;
+let __uiRealtimeCapabilities = null;
+const __uiRealtimePolicy = window.RelayTVRealtime.createPolicy({
+  fallbackCapabilities:{
+    protocol_version:0,
+    preferred_transport:'sse',
+    websocket:{enabled:false},
+    sse:{enabled:true, ui:'/ui/events'},
+  },
+  capabilityTtlMs:300000,
+  websocketCooldownMs:60000,
+});
+const __uiRealtimeSequence = window.RelayTVRealtime.createSequenceTracker();
 let __remoteVolumeKnownValue = null;
 
 function _mergePlaybackStateIntoStatus(base, fast){
@@ -369,6 +385,7 @@ async function _fetchFullStatus(){
 
 function _uiEventMarkAlive(){
   __uiEventSourceLastTs = Date.now();
+  __uiEventFailureCount = 0;
   _connSignal(true);
 }
 
@@ -381,10 +398,13 @@ function _uiEventHealthy(){
     && ((Date.now() - __uiEventSourceLastTs) < 12000));
 }
 
-function _closeUiEventStream(){
-  const es = __uiEventSource;
+function _closeUiEventStream(reason='closed_by_client'){
+  const active = __uiEventSource;
   __uiEventSource = null;
-  if (es) { try { es.close(); } catch (_e) {} }
+  __uiEventGeneration += 1;
+  __uiEventConnectInFlight = false;
+  if (active) __uiRealtimePolicy.retire(active.kind, reason, active.websocketAttempt);
+  if (active && active.handle) { try { active.handle.close(); } catch (_e) {} }
 }
 
 // Reconnect on staleness, not just on a null handle: connections killed by
@@ -398,7 +418,7 @@ function _ensureUiEventStream(){
     // this grace never suppresses the fallback poll.
     if ((Date.now() - __uiEventSourceBornTs) < 12000) return;
   }
-  _closeUiEventStream();
+  _closeUiEventStream('stale');
   connectUiEventStream();
 }
 
@@ -430,10 +450,14 @@ function _connSignal(ok, opts){
 
 function _scheduleUiEventReconnect(){
   if (__uiEventReconnectTimer) return;
+  __uiEventFailureCount += 1;
+  const exponent = Math.min(5, Math.max(0, __uiEventFailureCount - 1));
+  const baseDelay = Math.min(30000, 1000 * (2 ** exponent));
+  const delay = Math.round(baseDelay * (0.75 + (Math.random() * 0.5)));
   __uiEventReconnectTimer = window.setTimeout(() => {
     __uiEventReconnectTimer = 0;
     connectUiEventStream();
-  }, 2000);
+  }, delay);
 }
 
 function _parseUiEventPayload(ev){
@@ -1040,6 +1064,7 @@ let __nowIdleSinceTs = 0;
 let __nowIdleSettleTimer = 0;
 let __nowLastShownNp = null;
 const __UI_EVENT_RECONNECT_MS = 5000;
+const __UI_TRANSPORT_UPGRADE_MS = 300000;
 
 function renderStatus(st) {
   if (!st) return;
@@ -1370,49 +1395,150 @@ function _applyUiJellyfinEvent(payload){
   }
 }
 
-function connectUiEventStream(){
-  if (__uiEventSource) return;
+async function _loadUiRealtimeCapabilities(options){
+  const settings = (options && typeof options === 'object') ? options : {};
+  __uiRealtimeCapabilities = await __uiRealtimePolicy.discover(async()=>{
+      const response = await _fetchWithTimeout('/realtime/capabilities', {cache:'no-store'}, 2500);
+      if (!response.ok) {
+        const error = new Error(`realtime capabilities ${response.status}`);
+        error.status = response.status;
+        error.legacy = response.status === 404;
+        throw error;
+      }
+      const payload = await response.json();
+      if (!payload || Number(payload.protocol_version) !== 1) {
+        const error = new Error('unsupported realtime protocol');
+        error.cacheFallback = true;
+        throw error;
+      }
+      return payload;
+  }, {force:settings.force === true});
+  return __uiRealtimeCapabilities;
+}
+
+function _dispatchUiRealtimeEvent(eventName, payload, sequence){
+  const name = String(eventName || '').trim();
+  if (!name) return;
+  _uiEventMarkAlive();
+  const sequenceDecision = __uiRealtimeSequence.accept(name, sequence);
+  if (sequenceDecision.gap) refresh().catch(() => {});
+  if (!sequenceDecision.apply) return;
+  if (name === 'hello') {
+    if (!__lastStatus) refresh().catch(() => {});
+  } else if (name === 'ping') {
+    return;
+  } else if (name === 'playback') {
+    _applyUiPlaybackEvent(payload);
+  } else if (name === 'status') {
+    _applyUiStatusEvent(payload);
+  } else if (name === 'queue') {
+    _applyUiQueueEvent(payload);
+  } else if (name === 'jellyfin') {
+    _applyUiJellyfinEvent(payload);
+  }
+}
+
+function _retireUiRealtimeTransport(active, opts){
+  if (__uiEventSource !== active || active.generation !== __uiEventGeneration) return;
+  const options = (opts && typeof opts === 'object') ? opts : {};
+  __uiEventSource = null;
+  __uiEventGeneration += 1;
+  try { active.handle.close(); } catch (_e) {}
+  __uiRealtimePolicy.retire(
+    active.kind,
+    String(options.reason || 'closed'),
+    active.websocketAttempt,
+  );
+  _scheduleUiEventReconnect();
+}
+
+function _openUiSseTransport(capabilities, generation){
+  if (generation !== __uiEventGeneration || __uiEventSource) return;
+  const path = String(capabilities?.sse?.ui || '/ui/events');
   let es = null;
   try {
-    es = new EventSource('/ui/events');
+    es = new EventSource(path);
   } catch (_e) {
     _scheduleUiEventReconnect();
     return;
   }
-  __uiEventSource = es;
-  // Record birth only — never the health clock. The stream hasn't proven
-  // itself until a real event (hello/ping) arrives; stamping health here
-  // would let a silent reconnect loop read as healthy forever.
-  __uiEventSourceBornTs = Date.now();
+  const active = {kind:'sse', handle:es, generation};
+  __uiEventSource = active;
+  window.__relaytvRealtimeTransport = 'sse';
+  ['hello', 'ping', 'playback', 'status', 'queue', 'jellyfin'].forEach((name) => {
+    es.addEventListener(name, (ev) => {
+      if (__uiEventSource !== active || generation !== __uiEventGeneration) return;
+      _dispatchUiRealtimeEvent(name, _parseUiEventPayload(ev), 0);
+    });
+  });
+  es.onerror = () => _retireUiRealtimeTransport(active, {reason:'error'});
+}
 
-  es.addEventListener('hello', (ev) => {
-    _uiEventMarkAlive();
-    const payload = _parseUiEventPayload(ev);
-    if (payload && payload.type === 'hello' && !__lastStatus) {
-      refresh().catch(() => {});
-    }
-  });
-  es.addEventListener('ping', () => {
-    _uiEventMarkAlive();
-  });
-  es.addEventListener('playback', (ev) => {
-    _applyUiPlaybackEvent(_parseUiEventPayload(ev));
-  });
-  es.addEventListener('status', (ev) => {
-    _applyUiStatusEvent(_parseUiEventPayload(ev));
-  });
-  es.addEventListener('queue', (ev) => {
-    _applyUiQueueEvent(_parseUiEventPayload(ev));
-  });
-  es.addEventListener('jellyfin', (ev) => {
-    _applyUiJellyfinEvent(_parseUiEventPayload(ev));
-  });
-  es.onerror = () => {
-    if (__uiEventSource !== es) return;
-    try { es.close(); } catch (_e) {}
-    __uiEventSource = null;
-    _scheduleUiEventReconnect();
+function _openUiWebSocketTransport(capabilities, generation){
+  if (generation !== __uiEventGeneration || __uiEventSource) return;
+  const configuredPath = String(capabilities?.websocket?.ui || '/ui/ws');
+  const socketUrl = new URL(configuredPath, window.location.href);
+  socketUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let socket = null;
+  try {
+    socket = new WebSocket(socketUrl.toString(), 'relaytv.realtime.v1');
+  } catch (_e) {
+    __uiRealtimePolicy.retire('websocket', 'open_error', null);
+    _openUiSseTransport(capabilities, generation);
+    return;
+  }
+  const active = {
+    kind:'websocket',
+    handle:socket,
+    generation,
+    websocketAttempt:__uiRealtimePolicy.createWebSocketAttempt(capabilities),
   };
+  __uiEventSource = active;
+  window.__relaytvRealtimeTransport = 'websocket';
+  socket.onmessage = (ev) => {
+    if (__uiEventSource !== active || generation !== __uiEventGeneration) return;
+    let envelope = null;
+    try { envelope = JSON.parse(ev.data || '{}'); }
+    catch (_e) {
+      _retireUiRealtimeTransport(active, {reason:'protocol_error'});
+      return;
+    }
+    const accepted = __uiRealtimePolicy.acceptWebSocketEnvelope(active.websocketAttempt, envelope);
+    if (!accepted) {
+      _retireUiRealtimeTransport(active, {reason:'protocol_error'});
+      return;
+    }
+    _dispatchUiRealtimeEvent(accepted.event, accepted.payload, accepted.sequence);
+  };
+  socket.onerror = () => {};
+  socket.onclose = () => _retireUiRealtimeTransport(active, {reason:'closed'});
+}
+
+async function _connectUiRealtimeGeneration(generation){
+  const capabilities = await _loadUiRealtimeCapabilities();
+  if (generation !== __uiEventGeneration || __uiEventSource) return;
+  const selected = __uiRealtimePolicy.select(capabilities, {
+    websocketAvailable:typeof window.WebSocket === 'function',
+  });
+  if (selected === 'websocket') {
+    _openUiWebSocketTransport(capabilities, generation);
+  } else {
+    _openUiSseTransport(capabilities, generation);
+  }
+}
+
+function connectUiEventStream(){
+  if (__uiEventSource || __uiEventConnectInFlight) return;
+  const generation = ++__uiEventGeneration;
+  __uiEventConnectInFlight = true;
+  // Birth is only a connection grace clock. Health starts with a real message.
+  __uiEventSourceBornTs = Date.now();
+  __uiEventSourceLastTs = 0;
+  _connectUiRealtimeGeneration(generation)
+    .catch(() => _scheduleUiEventReconnect())
+    .finally(() => {
+      if (generation === __uiEventGeneration) __uiEventConnectInFlight = false;
+    });
 }
 
 // --- History modal (hidden by default)
@@ -3043,6 +3169,20 @@ window.addEventListener('DOMContentLoaded', () => {
   setInterval(() => {
     _ensureUiEventStream();
   }, __UI_EVENT_RECONNECT_MS);
+  setInterval(async() => {
+    const active = __uiEventSource;
+    if (!active || active.kind !== 'sse') return;
+    if (document.visibilityState !== 'visible') return;
+    const generation = active.generation;
+    const capabilities = await _loadUiRealtimeCapabilities({force:true});
+    if (__uiEventSource !== active || generation !== __uiEventGeneration) return;
+    const selected = __uiRealtimePolicy.select(capabilities, {
+      websocketAvailable:typeof window.WebSocket === 'function',
+    });
+    if (selected !== 'websocket') return;
+    _closeUiEventStream('upgrade');
+    connectUiEventStream();
+  }, __UI_TRANSPORT_UPGRADE_MS);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     if (!__jfUiVisible) return;

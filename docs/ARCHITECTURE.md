@@ -37,6 +37,12 @@ milestone logs live in git history.
   `device_id` (persisted outside `settings.json` so it survives a settings
   reset), display name, LAN address, and the identity payload advertised to
   peers and over mDNS.
+- `app/relaytv_app/realtime.py`: versioned realtime protocol primitives and the
+  process-local publication hub. Producers publish transport-neutral events;
+  the hub performs thread-to-event-loop handoff, bounded delivery, snapshot
+  coalescing, and subscriber accounting. Route adapters own SSE/WebSocket wire
+  framing, while playback and integration product behavior stay in their
+  established services.
 - `app/relaytv_app/discovery_mdns.py`: mDNS advertising and browsing for
   RelayTV devices. Browser callbacks only enqueue names; a worker thread
   resolves them and re-resolves known services on an interval, because
@@ -112,6 +118,24 @@ RelayTV assumes a trusted LAN by default. Write endpoints
 returned by `/settings`, never logged). Reads — health, status, assets,
 UI — stay open. See `app/relaytv_app/api_auth.py` and
 `tests/test_api_auth.py` for the contract.
+
+## Realtime Compatibility Boundary
+
+The versioned WebSocket routes are read-only notification channels. Playback,
+queue, settings, and integration commands remain HTTP writes behind the API
+trust boundary above; adding commands to a socket requires a separate
+authenticated protocol design. Native clients may send bearer credentials in
+an `Authorization` header, but credentials must never appear in WebSocket URLs
+or query strings.
+
+`GET /realtime/capabilities` is the transport-negotiation boundary. A `404`
+identifies a server that predates capability discovery, so companion clients
+must retain their legacy SSE and HTTP-polling paths. The compatible
+`/ui/events` and `/x11/overlay/events` SSE routes have no scheduled removal.
+Reconsider removal only after supported Home Assistant and Android releases no
+longer need them, browser and proxy fallback telemetry is stable, and minimum
+versions plus migration paths are documented. Retaining the thin SSE adapters
+indefinitely is preferable to breaking slowly updated companion installations.
 
 ## Open Follow-Ups
 

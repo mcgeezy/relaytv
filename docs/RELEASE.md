@@ -121,6 +121,33 @@ Repository administrators must allow GitHub Actions to create pull requests for
 the Release Please workflow. The workflow uses the built-in `GITHUB_TOKEN` with
 repository write permissions.
 
+## Realtime Compatibility Gate
+
+When a release changes realtime delivery, reverse-proxy handling, public state
+payloads, or companion-client selection, retain the following smoke matrix in
+addition to automated tests:
+
+1. Confirm `/realtime/capabilities` advertises only implemented transports and
+   a direct browser negotiates `relaytv.realtime.v1` on `/ui/ws`.
+2. Confirm browser WebSocket delivery through a TLS-terminating proxy that
+   forwards `Host`, `X-Forwarded-Proto`, Upgrade, and Connection headers.
+3. Block WebSocket and confirm the browser, X11 overlay, Home Assistant, and
+   Android clients select their SSE fallback; block both push transports and
+   confirm supported clients retain `/status` polling.
+4. Exercise a new server with an old browser cache and released companion
+   clients, then exercise new companion clients against a server that returns
+   `404` for `/realtime/capabilities`.
+5. Verify token-unset, valid-token, missing-token, and rejected-token HTTP
+   writes while read-only push remains compatible. Confirm credentials appear
+   only in authorization headers, never WebSocket URLs or logs.
+6. Restart the server with simultaneous browser, overlay, Home Assistant, and
+   Android subscribers. Confirm reconnects refresh authoritative state without
+   duplicate updates or stale state from retired connections.
+
+Release the server capability before raising any companion minimum version.
+The SSE compatibility routes remain supported until the architecture
+compatibility boundary explicitly changes.
+
 ## License and Notice Files
 
 The image includes RelayTV license and notice files under:
