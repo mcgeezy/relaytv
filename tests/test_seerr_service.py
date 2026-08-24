@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
+
 import pytest
 
 from relaytv_app.integrations import seerr_service, seerr_sessions
 from relaytv_app.integrations.seerr_client import (
     SeerrBinaryResponse,
+    SeerrConfig,
     SeerrError,
     SeerrJsonResponse,
 )
@@ -284,11 +288,11 @@ def test_image_uses_only_allowlisted_tmdb_proxy_path(monkeypatch) -> None:
     )
     calls = _install_client(
         monkeypatch,
-        {"/imageproxy/tmdb/w342/poster.jpg": image},
+        {"/imageproxy/tmdb/t/p/w342/poster.jpg": image},
     )
 
     assert seerr_service.image("w342", "poster.jpg") is image
-    assert calls == [("/imageproxy/tmdb/w342/poster.jpg", {"auth": False})]
+    assert calls == [("/imageproxy/tmdb/t/p/w342/poster.jpg", {"auth": False})]
 
     for unsafe in ("../secret", "https://attacker.example/a.jpg", "folder/a.jpg"):
         try:
@@ -297,6 +301,58 @@ def test_image_uses_only_allowlisted_tmdb_proxy_path(monkeypatch) -> None:
             assert getattr(exc, "status_code", None) == 400
         else:
             raise AssertionError(f"unsafe image path should fail: {unsafe}")
+
+
+def test_image_requests_seerr_root_proxy_with_tmdb_asset_prefix(monkeypatch) -> None:
+    expected_path = "/imageproxy/tmdb/t/p/w342/poster.jpg"
+    requests: list[tuple[str, str | None, str | None]] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            requests.append(
+                (
+                    self.path,
+                    self.headers.get("X-Api-Key"),
+                    self.headers.get("Accept"),
+                )
+            )
+            if self.path != expected_path:
+                self.send_error(404)
+                return
+            body = b"jpeg"
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=60")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        host, port = server.server_address
+        config = SeerrConfig(
+            enabled=True,
+            server_url=f"http://{host}:{port}",
+            api_key="server-secret",
+            shared_requests_enabled=False,
+            request_user_id=None,
+        )
+        monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+
+        image = seerr_service.image("w342", "poster.jpg")
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+    assert image.content == b"jpeg"
+    assert image.content_type == "image/jpeg"
+    assert requests == [(expected_path, None, "image/*")]
 
 
 def test_user_selector_records_are_sanitized(monkeypatch) -> None:

@@ -417,7 +417,7 @@ def image(size: str, image_path: str) -> SeerrBinaryResponse:
         raise _invalid("Invalid Seerr image path or size")
     config = _base_config()
     response = SeerrClient(config).get_binary(
-        f"/imageproxy/tmdb/{selected_size}/{urllib.parse.quote(selected_path, safe='')}",
+        f"/imageproxy/tmdb/t/p/{selected_size}/{urllib.parse.quote(selected_path, safe='')}",
         auth=False,
     )
     if not response.content_type.lower().startswith("image/"):
