@@ -113,6 +113,8 @@ def test_ui_smoke() -> None:
     assert 'innerHTML' not in seerr_js
     assert 'X-Api-Key' not in seerr_js
     assert '/integrations/seerr/session/quick-connect' in seerr_js
+    assert "fetch('/seerr/playback'" in seerr_js
+    assert 'jellyfin_item_id' not in seerr_js
     assert 'secret' not in seerr_js.lower()
     assert "chromium.connect(wsEndpoint)" in seerr_playwright
     assert "query === 'retired'" in seerr_playwright

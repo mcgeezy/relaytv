@@ -13,7 +13,7 @@ from .seerr_client import (
     SeerrConfig,
     SeerrError,
 )
-from . import seerr_sessions
+from . import jellyfin_service, seerr_sessions
 
 logger = get_logger("seerr")
 
@@ -212,6 +212,14 @@ def item_detail(
             "seasons": _normalize_seasons(payload.get("seasons")) if kind == "tv" else [],
         }
     )
+    validated = _validated_playback(payload, media_type=kind, tmdb_id=tmdb_id)
+    if validated:
+        item["playback_available"] = True
+        item["playback"] = {
+            "provider": "jellyfin",
+            "media_type": kind,
+            "media_id": tmdb_id,
+        }
     return item
 
 
@@ -336,6 +344,72 @@ def create_request(
     }
 
 
+def playback_action(
+    *,
+    media_type: str,
+    media_id: int,
+    command: str,
+    session_id: str | None = None,
+) -> dict[str, object]:
+    kind = _media_type(media_type)
+    tmdb_id = _bounded_int(media_id, name="media_id", minimum=1, maximum=2_147_483_647)
+    selected = str(command or "").strip().lower()
+    if selected not in {"play_now", "play_next", "play_last"}:
+        raise _invalid("Playback command must be play_now, play_next, or play_last")
+    config, client = _client_with_config(session_id=session_id)
+    payload = client.get(f"/{kind}/{tmdb_id}")
+    if not isinstance(payload, dict):
+        raise _invalid_upstream()
+    if not _operation_current(config, session_id):
+        raise SeerrError(
+            "seerr_playback_unavailable",
+            "The Seerr configuration changed; try again",
+            status_code=409,
+        )
+    validated = _validated_playback(payload, media_type=kind, tmdb_id=tmdb_id)
+    if not validated:
+        raise SeerrError(
+            "seerr_playback_unavailable",
+            "This Seerr item is not validated on RelayTV's active media server",
+            status_code=409,
+        )
+    try:
+        result = jellyfin_service.dispatch_external_item(
+            validated,
+            command=selected,
+            guard=lambda: _operation_current(config, session_id),
+        )
+    except Exception:
+        logger.warning(
+            "seerr_playback_failed operation=playback host=%s media_type=%s result=dispatch_failed",
+            _safe_host(config.server_url),
+            kind,
+        )
+        raise SeerrError(
+            "seerr_playback_failed",
+            "RelayTV could not start Jellyfin playback",
+            status_code=502,
+        ) from None
+    if not bool(result.get("ok")):
+        raise SeerrError(
+            "seerr_playback_unavailable",
+            "The validated Jellyfin playback target changed; try again",
+            status_code=409,
+            upstream_status=None,
+        )
+    return {
+        "ok": True,
+        "media_type": kind,
+        "media_id": tmdb_id,
+        "command": selected,
+        "queued": str(result.get("action") or "").strip() == "queue_only",
+        "suppressed": bool(
+            result.get("suppressed_duplicate")
+            or result.get("suppressed_duplicate_ui_action")
+        ),
+    }
+
+
 def image(size: str, image_path: str) -> SeerrBinaryResponse:
     selected_size = str(size or "").strip().lower()
     selected_path = str(image_path or "").strip().lstrip("/")
@@ -406,6 +480,14 @@ def _request_mode(config: SeerrConfig) -> str:
     return "shared_admin" if config.shared_requests_enabled else "disabled"
 
 
+def _operation_current(config: SeerrConfig, session_id: str | None) -> bool:
+    if SeerrConfig.current() != config:
+        return False
+    if _request_mode(config) != "caller_session":
+        return True
+    return seerr_sessions.resolve(session_id) is not None
+
+
 def _normalize_media_page(payload: object, *, fallback_page: int) -> dict[str, object]:
     if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
         raise _invalid_upstream()
@@ -447,6 +529,29 @@ def _normalize_media(raw: dict, *, fallback_type: str) -> dict[str, object]:
         "request": request_summary,
         "playback_available": False,
     }
+
+
+def _validated_playback(
+    payload: dict[str, object], *, media_type: str, tmdb_id: int
+) -> dict[str, object]:
+    media_info = payload.get("mediaInfo")
+    if not isinstance(media_info, dict):
+        return {}
+    item_id = str(
+        media_info.get("jellyfinMediaId")
+        or media_info.get("JellyfinMediaId")
+        or ""
+    ).strip()
+    if not item_id:
+        return {}
+    try:
+        return jellyfin_service.validate_external_item(
+            item_id,
+            media_type=media_type,
+            tmdb_id=tmdb_id,
+        )
+    except Exception:
+        return {}
 
 
 def _normalize_request(raw: object) -> dict[str, object] | None:

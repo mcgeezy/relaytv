@@ -271,13 +271,19 @@ function _seerrRenderDetail(item){
 function _seerrRequestControls(item){
   const controls = document.createElement('div');
   controls.className = 'seerrRequestControls';
+  const status = document.createElement('div'); status.className = 'seerrRequestResult'; status.setAttribute('role','status');
+  if (item.playback_available) {
+    const playback = document.createElement('div'); playback.className = 'seerrRequestButtons';
+    const play = document.createElement('button'); play.type = 'button'; play.className = 'seerrRequestBtn seerrPlaybackBtn'; play.textContent = 'Play'; play.onclick = () => _seerrSubmitPlayback(item, 'play_now', play, status);
+    const queue = document.createElement('button'); queue.type = 'button'; queue.className = 'seerrRequestBtn secondary'; queue.textContent = 'Add to queue'; queue.onclick = () => _seerrSubmitPlayback(item, 'play_last', queue, status);
+    playback.append(play, queue); controls.appendChild(playback);
+  }
   if (__seerrRequestMode === 'disabled') {
-    const disabled = document.createElement('span'); disabled.className = 'seerrDisabledAction'; disabled.textContent = 'Requests are disabled by the operator'; controls.appendChild(disabled); return controls;
+    const disabled = document.createElement('span'); disabled.className = 'seerrDisabledAction'; disabled.textContent = 'Requests are disabled by the operator'; controls.append(disabled, status); return controls;
   }
   if (__seerrRequestMode === 'caller_session' && !__seerrCallerConnected) {
-    const connect = document.createElement('button'); connect.type = 'button'; connect.className = 'seerrRequestBtn'; connect.textContent = 'Connect Seerr account'; connect.onclick = () => window.relaytvSeerr.startQuickConnect(); controls.appendChild(connect); return controls;
+    const connect = document.createElement('button'); connect.type = 'button'; connect.className = 'seerrRequestBtn'; connect.textContent = 'Connect Seerr account'; connect.onclick = () => window.relaytvSeerr.startQuickConnect(); controls.append(connect, status); return controls;
   }
-  const status = document.createElement('div'); status.className = 'seerrRequestResult'; status.setAttribute('role','status');
   if (item.media_type === 'movie') {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'seerrRequestBtn'; button.textContent = 'Request movie'; button.onclick = () => _seerrSubmitRequest(item, null, button, status); controls.append(button, status); return controls;
   }
@@ -300,6 +306,21 @@ function _seerrRequestControls(item){
   };
   const all = document.createElement('button'); all.type = 'button'; all.className = 'seerrRequestBtn secondary'; all.textContent = 'Request all seasons'; all.onclick = () => _seerrSubmitRequest(item, 'all', all, status);
   actions.append(selected, all); controls.append(actions, status); return controls;
+}
+
+async function _seerrSubmitPlayback(item, command, button, status){
+  button.disabled = true; status.classList.remove('err','ok'); status.textContent = command === 'play_now' ? 'Starting playback…' : 'Adding to queue…';
+  try {
+    const response = await fetch('/seerr/playback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({media_type:item.media_type, media_id:item.media_id, command})});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(_seerrErrorMessage(body, response.status));
+    status.classList.add('ok');
+    status.textContent = command === 'play_now' ? 'Playback started on RelayTV.' : (body.queued ? 'Added to the RelayTV queue.' : 'Playback started because the queue was idle.');
+  } catch (error) {
+    status.classList.add('err'); status.textContent = error && error.message ? error.message : 'Playback failed.';
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function _seerrSubmitRequest(item, seasons, button, status){

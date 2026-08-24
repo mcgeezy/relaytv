@@ -164,6 +164,70 @@ def test_tv_detail_is_a_small_stable_product_model(monkeypatch) -> None:
     assert "must-not-escape" not in str(result)
 
 
+def test_detail_exposes_playback_only_after_exact_jellyfin_validation(monkeypatch) -> None:
+    calls = []
+    _install_client(
+        monkeypatch,
+        {
+            "/movie/329865": {
+                "id": 329865,
+                "mediaType": "movie",
+                "title": "Arrival",
+                "mediaInfo": {
+                    "status": 5,
+                    "jellyfinMediaId": "jellyfin-item-1",
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service,
+        "validate_external_item",
+        lambda item_id, **kwargs: calls.append((item_id, kwargs))
+        or {
+            "item_id": item_id,
+            "media_type": kwargs["media_type"],
+            "tmdb_id": kwargs["tmdb_id"],
+            "generation": 7,
+        },
+    )
+
+    result = seerr_service.item_detail("movie", 329865)
+
+    assert result["playback_available"] is True
+    assert result["playback"] == {
+        "provider": "jellyfin",
+        "media_type": "movie",
+        "media_id": 329865,
+    }
+    assert "jellyfin-item-1" not in str(result)
+    assert calls == [
+        ("jellyfin-item-1", {"media_type": "movie", "tmdb_id": 329865})
+    ]
+
+
+def test_detail_keeps_mismatched_jellyfin_item_request_only(monkeypatch) -> None:
+    _install_client(
+        monkeypatch,
+        {
+            "/movie/329865": {
+                "id": 329865,
+                "mediaType": "movie",
+                "title": "Arrival",
+                "mediaInfo": {"status": 5, "jellyfinMediaId": "wrong-item"},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service, "validate_external_item", lambda *args, **kwargs: {}
+    )
+
+    result = seerr_service.item_detail("movie", 329865)
+
+    assert result["playback_available"] is False
+    assert "playback" not in result
+
+
 def test_request_list_uses_only_configured_shared_attribution(monkeypatch) -> None:
     class _SharedConfig(_Config):
         shared_requests_enabled = True
@@ -492,3 +556,122 @@ def test_expired_caller_status_retires_session_and_disables_writes(monkeypatch) 
     assert "caller_identity" not in result
     assert result["error"]["code"] == "seerr_session_expired"
     assert retired == ["opaque"]
+
+
+def test_seerr_playback_revalidates_and_uses_jellyfin_command_sink(monkeypatch) -> None:
+    _install_client(
+        monkeypatch,
+        {
+            "/movie/329865": {
+                "id": 329865,
+                "mediaType": "movie",
+                "mediaInfo": {"jellyfinMediaId": "jellyfin-item-1"},
+            }
+        },
+    )
+    validated = {
+        "item_id": "jellyfin-item-1",
+        "media_type": "movie",
+        "tmdb_id": 329865,
+        "generation": 7,
+    }
+    dispatched = []
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service,
+        "validate_external_item",
+        lambda *args, **kwargs: dict(validated),
+    )
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service,
+        "dispatch_external_item",
+        lambda identity, **kwargs: dispatched.append((identity, kwargs))
+        or {"ok": True, "action": "queue_only", "private_url": "must-not-escape"},
+    )
+
+    result = seerr_service.playback_action(
+        media_type="movie",
+        media_id=329865,
+        command="play_last",
+    )
+
+    assert result == {
+        "ok": True,
+        "media_type": "movie",
+        "media_id": 329865,
+        "command": "play_last",
+        "queued": True,
+        "suppressed": False,
+    }
+    assert "jellyfin-item-1" not in str(result)
+    assert "must-not-escape" not in str(result)
+    assert len(dispatched) == 1
+    assert dispatched[0][0] == validated
+    assert dispatched[0][1]["command"] == "play_last"
+    assert callable(dispatched[0][1]["guard"])
+    assert dispatched[0][1]["guard"]() is True
+
+
+def test_seerr_playback_rejects_unvalidated_item_without_dispatch(monkeypatch) -> None:
+    _install_client(
+        monkeypatch,
+        {
+            "/movie/329865": {
+                "id": 329865,
+                "mediaType": "movie",
+                "mediaInfo": {"jellyfinMediaId": "wrong-item"},
+            }
+        },
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service, "validate_external_item", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service,
+        "dispatch_external_item",
+        lambda *args, **kwargs: dispatched.append((args, kwargs)),
+    )
+
+    with pytest.raises(SeerrError) as exc_info:
+        seerr_service.playback_action(
+            media_type="movie", media_id=329865, command="play_now"
+        )
+
+    assert exc_info.value.code == "seerr_playback_unavailable"
+    assert exc_info.value.status_code == 409
+    assert dispatched == []
+
+
+def test_seerr_playback_discards_result_after_configuration_change(monkeypatch) -> None:
+    old_config = _Config()
+    new_config = _Config()
+    new_config.server_url = "https://replacement.example"
+    configs = iter((old_config, new_config))
+    validated = []
+
+    class _Client:
+        def __init__(self, config):
+            assert config is old_config
+
+        def get(self, path, **kwargs):
+            return {
+                "id": 329865,
+                "mediaType": "movie",
+                "mediaInfo": {"jellyfinMediaId": "jellyfin-item-1"},
+            }
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: next(configs))
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+    monkeypatch.setattr(
+        seerr_service.jellyfin_service,
+        "validate_external_item",
+        lambda *args, **kwargs: validated.append((args, kwargs)),
+    )
+
+    with pytest.raises(SeerrError) as exc_info:
+        seerr_service.playback_action(
+            media_type="movie", media_id=329865, command="play_now"
+        )
+
+    assert exc_info.value.code == "seerr_playback_unavailable"
+    assert validated == []

@@ -234,6 +234,42 @@ def test_seerr_request_route_rejects_administrator_fields(monkeypatch) -> None:
     ]
 
 
+def test_seerr_playback_route_accepts_only_semantic_reference(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        seerr_service,
+        "playback_action",
+        lambda **kwargs: calls.append(kwargs) or {"ok": True},
+    )
+    client = TestClient(create_app(testing=True))
+
+    rejected = client.post(
+        "/seerr/playback",
+        json={
+            "media_type": "movie",
+            "media_id": 329865,
+            "command": "play_now",
+            "jellyfin_item_id": "caller-controlled",
+            "url": "https://unsafe.example/stream",
+        },
+    )
+    accepted = client.post(
+        "/seerr/playback",
+        json={"media_type": "movie", "media_id": 329865, "command": "play_last"},
+    )
+
+    assert rejected.status_code == 422
+    assert accepted.status_code == 200
+    assert calls == [
+        {
+            "media_type": "movie",
+            "media_id": 329865,
+            "command": "play_last",
+            "session_id": "",
+        }
+    ]
+
+
 def test_quick_connect_sets_only_opaque_relaytv_cookie(monkeypatch) -> None:
     monkeypatch.setattr(
         seerr_sessions,

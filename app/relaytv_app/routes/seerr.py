@@ -27,6 +27,14 @@ class SeerrQuickConnectCompleteReq(BaseModel):
     flow_id: str
 
 
+class SeerrPlaybackReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_type: str
+    media_id: int
+    command: str = "play_now"
+
+
 def _http_error(exc: SeerrError, session_id: str | None = None) -> HTTPException:
     if exc.code == "seerr_session_expired":
         seerr_sessions.retire(session_id)
@@ -101,6 +109,20 @@ def seerr_request_create(request: Request, req: SeerrRequestCreateReq):
             media_id=req.media_id,
             seasons=req.seasons,
             is_4k=req.is_4k,
+            session_id=session_id,
+        )
+    except SeerrError as exc:
+        raise _http_error(exc, session_id) from None
+
+
+@router.post("/seerr/playback")
+def seerr_playback(request: Request, req: SeerrPlaybackReq):
+    session_id = _session_id(request)
+    try:
+        return seerr_service.playback_action(
+            media_type=req.media_type,
+            media_id=req.media_id,
+            command=req.command,
             session_id=session_id,
         )
     except SeerrError as exc:

@@ -1,6 +1,6 @@
 # Seerr Integration Roadmap
 
-Status: M0-M4 and M6 complete; M5 playback bridge pending
+Status: M0-M6 complete; M7 release-readiness work pending
 
 Primary branch: `feat/seerr-integration`
 
@@ -183,6 +183,7 @@ GET  /seerr/search
 GET  /seerr/item/{media_type}/{media_id}
 GET  /seerr/requests
 POST /seerr/requests
+POST /seerr/playback
 GET  /seerr/image/{size}/{image_path:path}
 ```
 
@@ -206,6 +207,9 @@ Proposed behavior:
 - request creation accepts only `media_type`, `media_id`, `seasons`, and `is_4k`.
   The first release omits advanced server, quality-profile, root-folder, tag,
   arbitrary-user, and `ignoreQuota` fields. Seerr defaults remain authoritative.
+- `playback` accepts only a Seerr media type/TMDB ID and a bounded semantic
+  action. RelayTV refetches the Seerr item, revalidates the Jellyfin item type
+  and TMDB provider ID, and never accepts a caller-provided Jellyfin ID or URL.
 - `image` accepts only fixed image sizes and a validated TMDB image path, then
   uses Seerr's image proxy/cache when enabled. It must preserve useful cache
   validators while preventing path traversal and arbitrary upstream fetches.
@@ -345,7 +349,7 @@ quality gate before declaring the branch ready.
 | M2 | Normalized discover/search/detail/request-read API | Complete |
 | M3 | Responsive Seerr browser shell and settings UX | Complete |
 | M4 | Explicitly gated shared request creation and TV season selection | Complete |
-| M5 | Validated Seerr-to-Jellyfin play/queue bridge | Pending |
+| M5 | Validated Seerr-to-Jellyfin play/queue bridge | Complete |
 | M6 | Caller-specific Quick Connect sessions | Complete |
 | M7 | Compatibility, security, field soak, operator/API docs, rollout decision | Pending |
 
@@ -399,6 +403,17 @@ quality gate before declaring the branch ready.
   key is neither required nor used as fallback. Added focused transport,
   service, route, session-lifecycle, API-token, settings-retirement, static UI,
   and Quick Connect browser-smoke coverage.
+- **M5 — 2026-08-23:** Added a request-safe Seerr-to-Jellyfin playback bridge.
+  Item details expose Play and Queue only when Seerr supplies a Jellyfin media
+  ID that resolves on RelayTV's active server with an exact media-type and
+  TMDB-provider-ID match. The browser receives only a semantic capability and
+  posts the Seerr media type/TMDB ID back; it cannot select a Jellyfin item or
+  stream URL. Playback refetches and revalidates both identities, then enters
+  the established Jellyfin command sink and playback service. A combined
+  Seerr-session/settings and Jellyfin-generation guard discards the command if
+  either configuration changes before the point of effect. Added normalization,
+  mismatch, secret-containment, configuration-race, route, API-token, and UI
+  smoke coverage.
 
 ## Verification Plan
 

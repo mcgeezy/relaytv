@@ -32,6 +32,7 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
   const page = await context.newPage();
   const errors = [];
   let callerConnected = false;
+  const playbackCommands = [];
   page.on('pageerror', error => errors.push(`page: ${error.message}`));
   page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
   await page.route('**/integrations/seerr/status', route => route.fulfill({json:{enabled:true, configured:true, reachable:true, version:'3.4.1', application_title:'Smoke Seerr', request_mode:scenario.caller ? 'caller_session' : 'shared_admin', caller_connected:callerConnected, caller_identity:callerConnected ? {id:7,display_name:'Smoke Caller',username:'smoke'} : undefined}}));
@@ -46,7 +47,11 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     if (query === 'retired') await new Promise(resolve => setTimeout(resolve, 700));
     await route.fulfill({json:{page:1, total_pages:1, total_results:1, results:[media(query === 'retired' ? 31 : 32,'movie',query === 'retired' ? 'Retired Result' : 'Current Result')]}});
   });
-  await page.route('**/seerr/item/**', route => route.fulfill({json:{...media(10,'movie','Smoke Movie'), runtime_minutes:112, genres:[{id:18,name:'Drama'}], tagline:'A safe detail', seasons:[]}}));
+  await page.route('**/seerr/item/**', route => route.fulfill({json:{...media(10,'movie','Smoke Movie'), runtime_minutes:112, genres:[{id:18,name:'Drama'}], tagline:'A safe detail', seasons:[], playback_available:true, playback:{provider:'jellyfin',media_type:'movie',media_id:10}}}));
+  await page.route('**/seerr/playback', async route => {
+    playbackCommands.push((await route.request().postDataJSON()).command);
+    await route.fulfill({json:{ok:true,media_type:'movie',media_id:10,command:playbackCommands.at(-1),queued:false,suppressed:false}});
+  });
   await page.route('**/seerr/requests**', route => route.fulfill({json:{page:1,total_pages:1,total_results:1,results:[{request_id:4,status:'pending',media_type:'movie',media_id:10,media_status:'pending',is_4k:false,created_at:'',updated_at:''}]}}));
   try {
     await page.goto(`${baseUrl}/ui`, {waitUntil:'domcontentloaded'});
@@ -64,6 +69,9 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
     await page.locator('.seerrCard').first().click();
     await page.waitForFunction(() => document.querySelector('#seerrDetailTitle')?.textContent === 'Smoke Movie');
     check((await page.locator('.seerrDetailOverview').textContent()) === 'Smoke Movie overview', `${scenario.name}: detail mismatch`);
+    await page.locator('.seerrPlaybackBtn').click();
+    await page.waitForFunction(() => document.querySelector('.seerrRequestResult')?.textContent === 'Playback started on RelayTV.');
+    check(playbackCommands.join(',') === 'play_now', `${scenario.name}: validated playback action mismatch`);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelector('#seerrDetail')?.classList.contains('hidden'));
 
