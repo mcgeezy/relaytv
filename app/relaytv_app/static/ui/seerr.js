@@ -24,6 +24,42 @@ let __seerrQuickSerial = 0;
 const __SEERR_REQUEST_POLL_MS = 30000;
 const __SEERR_TIMEOUT_MS = 12000;
 
+function _seerrPopulateRequestUsers(select, usersPayload, configuredUserId){
+  if (!select) return;
+  select.replaceChildren();
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = 'API identity (default)';
+  select.appendChild(defaultOption);
+
+  const configuredId = Number(configuredUserId);
+  const selectedId = Number.isInteger(configuredId) && configuredId > 0 ? configuredId : 0;
+  let selectedIdAvailable = false;
+  const users = usersPayload && Array.isArray(usersPayload.users) ? usersPayload.users : [];
+  users.forEach(user => {
+    const id = Number(user && user.id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    const option = document.createElement('option');
+    option.value = String(id);
+    const display = String(user.display_name || user.username || `User ${id}`);
+    const username = String(user.username || '');
+    option.textContent = username && username !== display ? `${display} (${username})` : display;
+    select.appendChild(option);
+    if (id === selectedId) selectedIdAvailable = true;
+  });
+
+  // A failed lookup, or a user no longer returned by Seerr, must not turn an
+  // unrelated settings save into an explicit request-attribution clear.
+  if (selectedId && !selectedIdAvailable) {
+    const retainedOption = document.createElement('option');
+    retainedOption.value = String(selectedId);
+    retainedOption.textContent = `Configured user #${selectedId} (unavailable)`;
+    select.appendChild(retainedOption);
+  }
+  select.value = selectedId ? String(selectedId) : '';
+}
+
 function _seerrErrorMessage(body, status){
   const detail = body && body.detail;
   if (detail && typeof detail === 'object' && detail.message) return String(detail.message);

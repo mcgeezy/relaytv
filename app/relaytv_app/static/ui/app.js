@@ -2543,25 +2543,7 @@ async function loadSettingsUi(){
   }
   if (seerrRequestMode) seerrRequestMode.value = String(cur.seerr_request_mode || (cur.seerr_shared_requests_enabled ? 'shared_admin' : 'disabled'));
   syncSeerrRequestModeUi();
-  if (seerrRequestUser) {
-    seerrRequestUser.replaceChildren();
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '';
-    defaultOption.textContent = 'API identity (default)';
-    seerrRequestUser.appendChild(defaultOption);
-    const users = seerrUsers && Array.isArray(seerrUsers.users) ? seerrUsers.users : [];
-    users.forEach(user => {
-      const id = Number(user && user.id);
-      if (!Number.isInteger(id) || id <= 0) return;
-      const option = document.createElement('option');
-      option.value = String(id);
-      const display = String(user.display_name || user.username || `User ${id}`);
-      const username = String(user.username || '');
-      option.textContent = username && username !== display ? `${display} (${username})` : display;
-      seerrRequestUser.appendChild(option);
-    });
-    seerrRequestUser.value = cur.seerr_request_user_id ? String(cur.seerr_request_user_id) : '';
-  }
+  _seerrPopulateRequestUsers(seerrRequestUser, seerrUsers, cur.seerr_request_user_id);
   const seerrBadge = document.getElementById('setSeerrStatus');
   if (seerrBadge) {
     const enabled = seerrStatus ? !!seerrStatus.enabled : !!cur.seerr_enabled;

@@ -128,3 +128,46 @@ test('active movie requests show state while failed requests remain retryable', 
     );
   }
 });
+
+test('request-user selector preserves a configured user missing from inventory', () => {
+  const state = fixture();
+  const result = state.evaluate(`(() => {
+    const select = document.createElement('select');
+    _seerrPopulateRequestUsers(select, {
+      users: [{id: 2, display_name: 'Available User', username: 'available'}],
+    }, 7);
+    return {
+      value: select.value,
+      options: select.children.map(option => ({
+        value: option.value,
+        textContent: option.textContent,
+      })),
+    };
+  })()`);
+
+  assert.equal(result.value, '7');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.options)), [
+    {value: '', textContent: 'API identity (default)'},
+    {value: '2', textContent: 'Available User (available)'},
+    {value: '7', textContent: 'Configured user #7 (unavailable)'},
+  ]);
+});
+
+test('request-user selector survives lookup failure and permits an intentional clear', () => {
+  const state = fixture();
+  const result = state.evaluate(`(() => {
+    const select = document.createElement('select');
+    _seerrPopulateRequestUsers(select, null, 7);
+    const retainedValue = select.value;
+    select.value = '';
+    return {
+      retainedValue,
+      clearedValue: select.value,
+      options: select.children.map(option => option.value),
+    };
+  })()`);
+
+  assert.equal(result.retainedValue, '7');
+  assert.equal(result.clearedValue, '');
+  assert.deepEqual(result.options, ['', '7']);
+});
