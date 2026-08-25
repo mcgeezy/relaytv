@@ -303,6 +303,51 @@ def test_image_uses_only_allowlisted_tmdb_proxy_path(monkeypatch) -> None:
             raise AssertionError(f"unsafe image path should fail: {unsafe}")
 
 
+@pytest.mark.parametrize(
+    "content_type",
+    ["image/svg+xml", "image/gif", "text/html", "application/octet-stream", ""],
+)
+def test_image_rejects_active_or_unexpected_content_types(
+    monkeypatch, content_type: str
+) -> None:
+    image = SeerrBinaryResponse(
+        content=b"untrusted",
+        content_type=content_type,
+        cache_control="public, max-age=7200",
+        etag="",
+        last_modified="",
+    )
+    _install_client(
+        monkeypatch,
+        {"/imageproxy/tmdb/t/p/w342/poster.jpg": image},
+    )
+
+    with pytest.raises(SeerrError) as exc_info:
+        seerr_service.image("w342", "poster.jpg")
+
+    assert exc_info.value.code == "seerr_invalid_response"
+    assert exc_info.value.status_code == 502
+
+
+@pytest.mark.parametrize("content_type", ["image/jpeg", "image/png", "image/webp"])
+def test_image_accepts_only_allowlisted_raster_content_types(
+    monkeypatch, content_type: str
+) -> None:
+    image = SeerrBinaryResponse(
+        content=b"raster",
+        content_type=content_type,
+        cache_control="public, max-age=7200",
+        etag="",
+        last_modified="",
+    )
+    _install_client(
+        monkeypatch,
+        {"/imageproxy/tmdb/t/p/w342/poster.jpg": image},
+    )
+
+    assert seerr_service.image("w342", "poster.jpg") is image
+
+
 def test_image_requests_seerr_root_proxy_with_tmdb_asset_prefix(monkeypatch) -> None:
     expected_path = "/imageproxy/tmdb/t/p/w342/poster.jpg"
     requests: list[tuple[str, str | None, str | None]] = []

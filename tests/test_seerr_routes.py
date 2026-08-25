@@ -154,6 +154,7 @@ def test_seerr_image_route_preserves_only_cache_validators(monkeypatch) -> None:
     assert response.headers["content-type"] == "image/jpeg"
     assert response.headers["cache-control"] == "public, max-age=7200"
     assert response.headers["etag"] == '"abc"'
+    assert response.headers["x-content-type-options"] == "nosniff"
     assert "set-cookie" not in response.headers
 
 

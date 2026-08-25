@@ -192,7 +192,10 @@ def seerr_image(size: str, image_path: str):
         upstream = seerr_service.image(size, image_path)
     except SeerrError as exc:
         raise _http_error(exc) from None
-    headers = {"Cache-Control": upstream.cache_control or "public, max-age=3600"}
+    headers = {
+        "Cache-Control": upstream.cache_control or "public, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
+    }
     if upstream.etag:
         headers["ETag"] = upstream.etag
     if upstream.last_modified:
