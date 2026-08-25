@@ -57,7 +57,12 @@ _REQUEST_FILTERS = {
     "completed",
 }
 _IMAGE_SIZES = {"w185", "w342", "w500", "w780", "original"}
-_IMAGE_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+_IMAGE_CONTENT_TYPES = {
+    "image/jpeg": "image/jpeg",
+    "image/jpg": "image/jpeg",
+    "image/png": "image/png",
+    "image/webp": "image/webp",
+}
 _IMAGE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
 
 
@@ -421,11 +426,20 @@ def image(size: str, image_path: str) -> SeerrBinaryResponse:
         f"/imageproxy/tmdb/t/p/{selected_size}/{urllib.parse.quote(selected_path, safe='')}",
         auth=False,
     )
-    if response.content_type.strip().lower() not in _IMAGE_CONTENT_TYPES:
+    content_type = _IMAGE_CONTENT_TYPES.get(response.content_type.strip().lower())
+    if content_type is None:
         raise SeerrError(
             "seerr_invalid_response",
             "Seerr returned an unexpected image response",
             status_code=502,
+        )
+    if response.content_type != content_type:
+        return SeerrBinaryResponse(
+            content=response.content,
+            content_type=content_type,
+            cache_control=response.cache_control,
+            etag=response.etag,
+            last_modified=response.last_modified,
         )
     return response
 

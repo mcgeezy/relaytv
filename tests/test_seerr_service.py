@@ -329,9 +329,17 @@ def test_image_rejects_active_or_unexpected_content_types(
     assert exc_info.value.status_code == 502
 
 
-@pytest.mark.parametrize("content_type", ["image/jpeg", "image/png", "image/webp"])
+@pytest.mark.parametrize(
+    ("content_type", "expected_content_type"),
+    [
+        ("image/jpeg", "image/jpeg"),
+        ("image/jpg", "image/jpeg"),
+        ("image/png", "image/png"),
+        ("image/webp", "image/webp"),
+    ],
+)
 def test_image_accepts_only_allowlisted_raster_content_types(
-    monkeypatch, content_type: str
+    monkeypatch, content_type: str, expected_content_type: str
 ) -> None:
     image = SeerrBinaryResponse(
         content=b"raster",
@@ -345,7 +353,11 @@ def test_image_accepts_only_allowlisted_raster_content_types(
         {"/imageproxy/tmdb/t/p/w342/poster.jpg": image},
     )
 
-    assert seerr_service.image("w342", "poster.jpg") is image
+    result = seerr_service.image("w342", "poster.jpg")
+
+    assert result.content == image.content
+    assert result.content_type == expected_content_type
+    assert result.cache_control == image.cache_control
 
 
 def test_image_requests_seerr_root_proxy_with_tmdb_asset_prefix(monkeypatch) -> None:

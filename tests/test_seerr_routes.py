@@ -158,6 +158,45 @@ def test_seerr_image_route_preserves_only_cache_validators(monkeypatch) -> None:
     assert "set-cookie" not in response.headers
 
 
+def test_seerr_image_route_normalizes_safe_jpg_alias(monkeypatch) -> None:
+    class _Config:
+        enabled = True
+        configured = True
+        configuration_error = ""
+        server_url = "https://seerr.example"
+        api_key = "secret"
+        shared_requests_enabled = False
+        request_user_id = None
+        request_mode = "disabled"
+
+    class _Client:
+        def __init__(self, config):
+            assert isinstance(config, _Config)
+
+        def get_binary(self, path, **kwargs):
+            assert path == "/imageproxy/tmdb/t/p/w342/poster.jpg"
+            assert kwargs == {"auth": False}
+            return SeerrBinaryResponse(
+                content=b"jpeg",
+                content_type="image/jpg",
+                cache_control="public, max-age=7200",
+                etag="",
+                last_modified="",
+            )
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: _Config())
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+
+    response = TestClient(create_app(testing=True)).get(
+        "/seerr/image/w342/poster.jpg"
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"jpeg"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
 def test_seerr_read_error_contract_is_sanitized(monkeypatch) -> None:
     def _fail(*args, **kwargs):
         raise SeerrError(
