@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/mcgeezy/relaytv/compare/v0.9.2...v0.10.0) (2026-08-26)
+
+
+### Features
+
+* add native Seerr discovery and requests ([#65](https://github.com/mcgeezy/relaytv/issues/65)) ([f91a90e](https://github.com/mcgeezy/relaytv/commit/f91a90eebddfc899baf9f85d4a4714eb0d0d844e))
+* prefer realtime WebSocket connectivity ([#63](https://github.com/mcgeezy/relaytv/issues/63)) ([c59305f](https://github.com/mcgeezy/relaytv/commit/c59305f74f95c7044e3ce31c620ba5f685718268))
+
 ## [0.9.2](https://github.com/mcgeezy/relaytv/compare/v0.9.1...v0.9.2) (2026-08-22)
 
 
