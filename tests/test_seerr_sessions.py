@@ -99,6 +99,59 @@ def test_quick_connect_pending_flow_can_be_polled(monkeypatch) -> None:
     assert result == {"connected": False, "pending": True}
 
 
+def test_quick_connect_probe_validates_upstream_without_storing_flow(monkeypatch) -> None:
+    calls = []
+
+    class _Client:
+        def __init__(self, config, **kwargs):
+            pass
+
+        def request_json_response(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return SeerrJsonResponse(
+                data={"code": "123456", "secret": "abcdef1234567890"}, status=200
+            )
+
+    monkeypatch.setattr(seerr_sessions, "SeerrClient", _Client)
+
+    seerr_sessions.probe_quick_connect(_Config())
+
+    assert calls == [
+        (
+            "POST",
+            "/auth/jellyfin/quickconnect/initiate",
+            {"auth": False},
+        )
+    ]
+    assert seerr_sessions._FLOWS == {}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"code": "123456"},
+        {"code": "123456", "secret": "not-a-secret"},
+        {"code": "x" * 33, "secret": "abcdef1234567890"},
+    ],
+)
+def test_quick_connect_probe_rejects_invalid_challenges(monkeypatch, payload) -> None:
+    class _Client:
+        def __init__(self, config, **kwargs):
+            pass
+
+        def request_json_response(self, method, path, **kwargs):
+            return SeerrJsonResponse(data=payload, status=200)
+
+    monkeypatch.setattr(seerr_sessions, "SeerrClient", _Client)
+
+    with pytest.raises(SeerrError) as exc_info:
+        seerr_sessions.probe_quick_connect(_Config())
+
+    assert exc_info.value.code == "seerr_invalid_response"
+    assert seerr_sessions._FLOWS == {}
+
+
 def test_session_is_retired_when_server_or_mode_changes(monkeypatch) -> None:
     now = [100.0]
     monkeypatch.setattr(seerr_sessions.time, "monotonic", lambda: now[0])

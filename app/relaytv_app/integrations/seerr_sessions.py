@@ -45,6 +45,26 @@ def initiate() -> dict[str, object]:
     with _LOCK:
         _prune_locked(time.monotonic())
         _require_capacity_locked(_FLOWS, MAX_FLOWS, "Quick Connect")
+    code, secret = _initiate_upstream(config)
+    flow_id = secrets.token_urlsafe(32)
+    now = time.monotonic()
+    with _LOCK:
+        _prune_locked(now)
+        _require_capacity_locked(_FLOWS, MAX_FLOWS, "Quick Connect")
+        _FLOWS[flow_id] = _Flow(
+            secret=secret,
+            server_url=config.server_url,
+            expires_at=now + FLOW_TTL_SEC,
+        )
+    return {"flow_id": flow_id, "code": code, "expires_in": FLOW_TTL_SEC}
+
+
+def probe_quick_connect(config: SeerrConfig) -> None:
+    """Verify caller authentication without retaining an operator-facing flow."""
+    _initiate_upstream(config)
+
+
+def _initiate_upstream(config: SeerrConfig) -> tuple[str, str]:
     response = SeerrClient(config).request_json_response(
         "POST",
         "/auth/jellyfin/quickconnect/initiate",
@@ -57,17 +77,7 @@ def initiate() -> dict[str, object]:
     secret = str(data.get("secret") or "").strip()
     if not code or len(code) > 32 or not _QUICK_SECRET_RE.fullmatch(secret):
         raise _invalid_upstream()
-    flow_id = secrets.token_urlsafe(32)
-    now = time.monotonic()
-    with _LOCK:
-        _prune_locked(now)
-        _require_capacity_locked(_FLOWS, MAX_FLOWS, "Quick Connect")
-        _FLOWS[flow_id] = _Flow(
-            secret=secret,
-            server_url=config.server_url,
-            expires_at=now + FLOW_TTL_SEC,
-        )
-    return {"flow_id": flow_id, "code": code, "expires_in": FLOW_TTL_SEC}
+    return code, secret
 
 
 def complete(flow_id: str) -> tuple[str | None, dict[str, object]]:

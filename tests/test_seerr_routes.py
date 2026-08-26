@@ -87,6 +87,81 @@ def test_seerr_test_route_preserves_safe_timeout_status(monkeypatch) -> None:
     assert response.json()["detail"]["code"] == "seerr_timeout"
 
 
+def test_seerr_test_route_verifies_caller_quick_connect(monkeypatch) -> None:
+    class _Config:
+        enabled = True
+        configured = True
+        configuration_error = ""
+        server_url = "https://seerr.example"
+        api_key = ""
+        shared_requests_enabled = False
+        request_user_id = None
+        request_mode = "caller_session"
+
+    class _Client:
+        def __init__(self, config):
+            pass
+
+        def get(self, path, **kwargs):
+            assert path == "/status"
+            assert kwargs["auth"] is False
+            return {"version": "3.4.1"}
+
+    probes = []
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: _Config())
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+    monkeypatch.setattr(
+        seerr_sessions,
+        "probe_quick_connect",
+        lambda config: probes.append(config.server_url),
+    )
+
+    response = TestClient(create_app(testing=True)).post("/integrations/seerr/test")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert probes == ["https://seerr.example"]
+
+
+def test_seerr_test_route_rejects_unavailable_caller_quick_connect(monkeypatch) -> None:
+    class _Config:
+        enabled = True
+        configured = True
+        configuration_error = ""
+        server_url = "https://seerr.example"
+        api_key = ""
+        shared_requests_enabled = False
+        request_user_id = None
+        request_mode = "caller_session"
+
+    class _Client:
+        def __init__(self, config):
+            pass
+
+        def get(self, path, **kwargs):
+            return {"version": "3.4.1"}
+
+    def _unsupported(_config):
+        raise SeerrError(
+            "seerr_upstream_http",
+            "Seerr request failed",
+            status_code=502,
+            upstream_status=404,
+        )
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: _Config())
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+    monkeypatch.setattr(seerr_sessions, "probe_quick_connect", _unsupported)
+
+    response = TestClient(create_app(testing=True)).post("/integrations/seerr/test")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "code": "seerr_upstream_http",
+        "message": "Seerr request failed",
+    }
+
+
 def test_seerr_read_routes_delegate_bounded_semantic_inputs(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(

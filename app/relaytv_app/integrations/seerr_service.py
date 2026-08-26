@@ -162,6 +162,7 @@ def test_connection() -> dict[str, object]:
     client = SeerrClient(config)
     if _request_mode(config) == "caller_session":
         status.update(_probe(config, client=client, public_only=True))
+        seerr_sessions.probe_quick_connect(config)
         status["ok"] = True
         return status
     status.update(_probe(config, client=client))
