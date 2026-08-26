@@ -20,7 +20,7 @@ import time
 
 from fastapi import HTTPException
 
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .. import playback_service, player, resolver, state, video_profile
@@ -30,6 +30,14 @@ from ..thumb_cache import attach_local_thumbnail
 from . import jellyfin_receiver
 
 logger = get_logger("jellyfin")
+
+_EXTERNAL_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,128}$")
+_EXTERNAL_MEDIA_TYPES = {"movie": "movie", "tv": "series"}
+_EXTERNAL_PLAY_COMMANDS = {
+    "play_now": "PlayNow",
+    "play_next": "PlayNext",
+    "play_last": "PlayLast",
+}
 
 
 class CommandReqLike(Protocol):
@@ -959,6 +967,97 @@ def resolve_playable_item(item_id: str, *, media_source_id: str = "") -> dict[st
             (str(media_source_id or "").strip() if resolved_item_id == iid else ""),
         ]),
     }
+
+
+def validate_external_item(
+    item_id: str,
+    *,
+    media_type: str,
+    tmdb_id: int,
+) -> dict[str, object]:
+    """Validate an external catalog reference against the active media server.
+
+    The returned generation is an internal effect guard. Callers must pass the
+    whole result to ``dispatch_external_item`` rather than publishing it.
+    """
+    iid = str(item_id or "").strip()
+    kind = str(media_type or "").strip().lower()
+    try:
+        expected_tmdb = int(tmdb_id)
+    except (TypeError, ValueError):
+        return {}
+    if (
+        not _EXTERNAL_ITEM_ID_RE.fullmatch(iid)
+        or kind not in _EXTERNAL_MEDIA_TYPES
+        or expected_tmdb <= 0
+    ):
+        return {}
+    status = jellyfin_receiver.status()
+    if (
+        not bool(status.get("enabled"))
+        or not bool(status.get("running"))
+        or not str(status.get("server_url") or "").strip()
+    ):
+        return {}
+    generation = jellyfin_receiver.config_generation()
+    try:
+        detail = jellyfin_receiver.get_item_detail(iid)
+        if isinstance(detail, dict) and detail and detail.get("tmdb_id") is None:
+            detail = jellyfin_receiver.get_item_detail(iid, refresh=True)
+    except Exception:
+        return {}
+    if jellyfin_receiver.config_generation() != generation or not isinstance(detail, dict):
+        return {}
+    try:
+        actual_tmdb = int(detail.get("tmdb_id") or 0)
+    except (TypeError, ValueError):
+        return {}
+    if (
+        str(detail.get("type") or "").strip().lower() != _EXTERNAL_MEDIA_TYPES[kind]
+        or actual_tmdb != expected_tmdb
+    ):
+        return {}
+    return {
+        "item_id": iid,
+        "media_type": kind,
+        "tmdb_id": expected_tmdb,
+        "generation": generation,
+    }
+
+
+def dispatch_external_item(
+    validated: dict[str, object],
+    *,
+    command: str,
+    guard: Callable[[], bool] | None = None,
+) -> dict[str, object]:
+    """Dispatch a previously validated item through the registered command sink."""
+    item_id = str((validated or {}).get("item_id") or "").strip()
+    selected = str(command or "").strip().lower()
+    try:
+        generation = int((validated or {}).get("generation"))
+    except (TypeError, ValueError):
+        generation = -1
+    if not _EXTERNAL_ITEM_ID_RE.fullmatch(item_id) or selected not in _EXTERNAL_PLAY_COMMANDS:
+        raise ValueError("invalid validated Jellyfin playback action")
+    def still_current() -> bool:
+        if jellyfin_receiver.config_generation() != generation:
+            return False
+        if guard is None:
+            return True
+        try:
+            return bool(guard())
+        except Exception:
+            return False
+
+    if generation < 0 or not still_current():
+        return {"ok": False, "reason": "config_changed"}
+    result = jellyfin_receiver.dispatch_command(
+        "Play",
+        {"ItemId": item_id, "PlayCommand": _EXTERNAL_PLAY_COMMANDS[selected]},
+        guard=still_current,
+    )
+    return dict(result) if isinstance(result, dict) else {"ok": bool(result)}
 
 
 def _normalize_lang_pref(raw: str) -> str:

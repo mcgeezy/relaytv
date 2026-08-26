@@ -27,6 +27,7 @@ _TRUE_SPELLINGS = ("1", "true", "yes", "on")
 _FALSE_SPELLINGS = ("0", "false", "no", "off")
 _TRUE_SPELLINGS_EXTENDED = (*_TRUE_SPELLINGS, "enable", "enabled")
 _FALSE_SPELLINGS_EXTENDED = (*_FALSE_SPELLINGS, "disable", "disabled")
+SEERR_REQUEST_MODES = frozenset({"disabled", "shared_admin", "caller_session"})
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -91,6 +92,50 @@ def env_str(name: str, default: str = "") -> str:
     return value.strip()
 
 
+def normalize_optional_positive_int(value: object) -> int | None:
+    """Return a positive integer or ``None`` for empty/invalid input."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def normalize_seerr_request_mode(
+    value: object,
+    *,
+    shared_requests_enabled: bool = False,
+) -> str:
+    """Normalize the explicit Seerr identity mode with its legacy fallback."""
+    mode = str(value or "").strip().lower()
+    if mode in SEERR_REQUEST_MODES:
+        return mode
+    return "shared_admin" if shared_requests_enabled else "disabled"
+
+
+def seerr_settings_from_env() -> dict[str, object]:
+    """Parse operator-provided Seerr defaults for the persistent settings layer."""
+    shared_requests_enabled = env_bool(
+        "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
+    )
+    request_mode = normalize_seerr_request_mode(
+        os.getenv("RELAYTV_SEERR_REQUEST_MODE"),
+        shared_requests_enabled=shared_requests_enabled,
+    )
+    return {
+        "seerr_enabled": env_bool("RELAYTV_SEERR_ENABLED", False),
+        "seerr_server_url": env_str("RELAYTV_SEERR_SERVER_URL"),
+        "seerr_api_key": env_str("RELAYTV_SEERR_API_KEY"),
+        "seerr_shared_requests_enabled": request_mode == "shared_admin",
+        "seerr_request_mode": request_mode,
+        "seerr_request_user_id": normalize_optional_positive_int(
+            os.getenv("RELAYTV_SEERR_REQUEST_USER_ID")
+        ),
+    }
+
+
 def server_port() -> int:
     """The TCP port the HTTP server listens on.
 
@@ -138,6 +183,12 @@ SETTINGS_BUS_VARS = frozenset(
         "RELAYTV_JELLYFIN_USER_ID",
         "RELAYTV_QUALITY_CAP",
         "RELAYTV_QUALITY_MODE",
+        "RELAYTV_SEERR_API_KEY",
+        "RELAYTV_SEERR_ENABLED",
+        "RELAYTV_SEERR_REQUEST_USER_ID",
+        "RELAYTV_SEERR_REQUEST_MODE",
+        "RELAYTV_SEERR_SERVER_URL",
+        "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED",
         "RELAYTV_SUB_LANG",
         "RELAYTV_UPLOAD_MAX_SIZE_GB",
         "RELAYTV_UPLOAD_RETENTION_HOURS",

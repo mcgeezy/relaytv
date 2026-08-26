@@ -64,6 +64,102 @@ def test_extract_playlist_items_prefers_rich_entries() -> None:
     assert items[0]["media_source_id"] == "ms-1"
 
 
+def test_external_item_validation_requires_exact_type_and_tmdb_id(monkeypatch) -> None:
+    generation = [7]
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "status",
+        lambda: {"enabled": True, "running": True, "server_url": "http://jf.local"},
+    )
+    monkeypatch.setattr(jellyfin_receiver, "config_generation", lambda: generation[0])
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id, refresh=False: {
+            "item_id": item_id,
+            "type": "movie",
+            "tmdb_id": 329865,
+        },
+    )
+
+    validated = jellyfin_service.validate_external_item(
+        "jellyfin-item-1", media_type="movie", tmdb_id=329865
+    )
+
+    assert validated == {
+        "item_id": "jellyfin-item-1",
+        "media_type": "movie",
+        "tmdb_id": 329865,
+        "generation": 7,
+    }
+    assert (
+        jellyfin_service.validate_external_item(
+            "jellyfin-item-1", media_type="tv", tmdb_id=329865
+        )
+        == {}
+    )
+    assert (
+        jellyfin_service.validate_external_item(
+            "jellyfin-item-1", media_type="movie", tmdb_id=11
+        )
+        == {}
+    )
+
+
+def test_external_item_dispatch_is_guarded_against_server_switch(monkeypatch) -> None:
+    generation = [7]
+    calls = []
+    monkeypatch.setattr(jellyfin_receiver, "config_generation", lambda: generation[0])
+
+    def dispatch(action, payload, *, guard=None):
+        calls.append((action, payload, guard))
+        return {"ok": bool(guard()), "action": "queue_only"}
+
+    monkeypatch.setattr(jellyfin_receiver, "dispatch_command", dispatch)
+    validated = {
+        "item_id": "jellyfin-item-1",
+        "media_type": "movie",
+        "tmdb_id": 329865,
+        "generation": 7,
+    }
+
+    result = jellyfin_service.dispatch_external_item(validated, command="play_last")
+
+    assert result == {"ok": True, "action": "queue_only"}
+    assert calls[0][0:2] == (
+        "Play",
+        {"ItemId": "jellyfin-item-1", "PlayCommand": "PlayLast"},
+    )
+    generation[0] = 8
+    assert jellyfin_service.dispatch_external_item(validated, command="play_now") == {
+        "ok": False,
+        "reason": "config_changed",
+    }
+    assert len(calls) == 1
+
+
+def test_external_item_dispatch_combines_caller_and_server_guards(monkeypatch) -> None:
+    generation = [7]
+    caller_current = [True]
+    observed = []
+    monkeypatch.setattr(jellyfin_receiver, "config_generation", lambda: generation[0])
+
+    def dispatch(action, payload, *, guard=None):
+        caller_current[0] = False
+        observed.append(bool(guard()))
+        return {"ok": bool(observed[-1]), "reason": "config_changed"}
+
+    monkeypatch.setattr(jellyfin_receiver, "dispatch_command", dispatch)
+    result = jellyfin_service.dispatch_external_item(
+        {"item_id": "item-1", "generation": 7},
+        command="play_now",
+        guard=lambda: caller_current[0],
+    )
+
+    assert result["ok"] is False
+    assert observed == [False]
+
+
 # --- stream selection policy -----------------------------------------------
 
 
@@ -534,6 +630,7 @@ def test_normalize_catalog_item_exposes_image_roles_and_progress(monkeypatch) ->
             "ImageTags": {"Primary": "primary-tag"},
             "BackdropImageTags": ["backdrop-tag"],
             "RunTimeTicks": 1_000_000_000,
+            "ProviderIds": {"Tmdb": "329865", "Imdb": "tt0000001"},
             "UserData": {
                 "PlaybackPositionTicks": 250_000_000,
                 "Played": False,
@@ -552,6 +649,36 @@ def test_normalize_catalog_item_exposes_image_roles_and_progress(monkeypatch) ->
     assert item["progress_percent"] == 25.0
     assert item["is_played"] is False
     assert item["is_favorite"] is True
+    assert item["tmdb_id"] == 329865
+    assert "provider_ids" not in item
+
+
+def test_item_detail_requests_tmdb_provider_identity(monkeypatch) -> None:
+    urls = []
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "_catalog_base_token_user",
+        lambda: ("http://media.local", "token", "user-1"),
+    )
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_get", lambda key: None)
+    monkeypatch.setattr(jellyfin_receiver, "_catalog_cache_set", lambda *args, **kwargs: None)
+    monkeypatch.setattr(jellyfin_receiver, "_mark_catalog_ok", lambda: None)
+
+    def get_json(url, *, timeout, token):
+        urls.append(url)
+        return {
+            "Id": "item-1",
+            "Name": "Movie",
+            "Type": "Movie",
+            "ProviderIds": {"Tmdb": "329865"},
+        }
+
+    monkeypatch.setattr(jellyfin_receiver, "_get_json", get_json)
+
+    item = jellyfin_receiver.get_item_detail("item-1", refresh=True)
+
+    assert item["tmdb_id"] == 329865
+    assert urls and "ProviderIds" in urls[0]
 
 
 def test_persist_server_type_writes_only_on_change(monkeypatch) -> None:

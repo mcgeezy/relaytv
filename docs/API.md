@@ -682,6 +682,12 @@ native Qt control surface.
     - `jellyfin_playback_mode`
     - `jellyfin_server_type` (`jellyfin | emby`; normally set by server-type
       detection, not by hand)
+    - `seerr_enabled`
+    - `seerr_server_url`
+    - `seerr_api_key` (write-only; an empty value preserves the stored key)
+    - `seerr_api_key_clear` (explicitly clears the stored key)
+    - `seerr_request_mode` (`disabled | shared_admin | caller_session`)
+    - `seerr_request_user_id` (optional shared-mode attribution)
     - `apply_now`
   - supports `apply_now` for settings that can be applied live
   - response includes:
@@ -773,6 +779,100 @@ Native Jellyfin browse/detail endpoints:
   - body: `{"index": int}` where `-1` turns subtitles off
 - `POST /jellyfin/action`
   - item play command wrapper (`play_now`, `play_next`, `play_last`, `resume`)
+
+## Seerr integration, discovery, and request API
+
+RelayTV supports Seerr `3.1.0` and newer (development baseline: `3.4.1`). The
+integration is disabled by default. See [Seerr operations](SEERR_OPERATIONS.md)
+for setup, request-identity choices, and troubleshooting.
+
+Integration status and operator helpers:
+
+- `GET /integrations/seerr/status`
+  - returns only sanitized configuration, reachability, version,
+    media-server, request-mode, and caller-session state
+  - never returns the Seerr API key, upstream cookie, flow secret, or raw user
+    record
+- `POST /integrations/seerr/test`
+  - validates the configured origin and active authentication strategy
+- `GET /integrations/seerr/users`
+  - returns sanitized `id`, `display_name`, and `username` values for the
+    operator-controlled shared-mode attribution selector
+
+Caller-specific session endpoints:
+
+- `POST /integrations/seerr/session/quick-connect`
+  - starts Jellyfin Quick Connect and returns an approval `code`, opaque
+    RelayTV `flow_id`, and expiry
+- `POST /integrations/seerr/session/quick-connect/complete`
+  - body: `{"flow_id": "..."}`
+  - returns `pending: true` until approved; after approval, sets an `HttpOnly`,
+    `SameSite=Strict` RelayTV session cookie
+- `GET /integrations/seerr/session`
+  - returns caller connection state, sanitized identity, and remaining lifetime
+- `POST /integrations/seerr/session/logout`
+  - retires the in-memory session and clears the browser cookie
+
+Caller sessions last at most 12 hours, are bound to the configured Seerr
+origin, and do not survive a RelayTV restart. They are available only in
+`caller_session` mode and require Seerr to use Jellyfin as its media server.
+
+Discovery and request endpoints:
+
+- `GET /seerr/discover`
+  - query: `section=trending|movies|tv`, optional `page` (`1` to `500`)
+- `GET /seerr/search`
+  - query: `query` (1 to 200 characters), optional `page` (`1` to `500`)
+- `GET /seerr/item/{media_type}/{media_id}`
+  - `media_type`: `movie | tv`; `media_id`: positive TMDB ID
+  - `playback_available` is true only after an exact active-server Jellyfin
+    type and TMDB-provider-ID match
+- `GET /seerr/requests`
+  - query: `take` (`1` to `100`), `skip`, and an allowlisted `filter`
+  - returns sanitized request state plus recognizable title, year, rating, and
+    proxied artwork metadata when Seerr detail lookup succeeds
+- `POST /seerr/requests`
+  - example body:
+
+    ```json
+    {
+      "media_type": "tv",
+      "media_id": 123,
+      "seasons": [1, 2],
+      "is_4k": false
+    }
+    ```
+
+  - `seasons` may be a list of season numbers, `"all"`, or `null`; it is valid
+    only for TV requests
+  - accepts no caller-selected user, server, quality profile, root folder,
+    tags, quota override, or approval action
+  - may return `created: false, reason: "no_requestable_seasons"` as a
+    successful semantic response
+- `POST /seerr/playback`
+  - example body:
+
+    ```json
+    {
+      "media_type": "movie",
+      "media_id": 123,
+      "command": "play_now"
+    }
+    ```
+
+  - `command` accepts `play_now`, `play_next`, or `play_last`
+  - refetches the Seerr item and revalidates the active Jellyfin item before
+    acting; callers cannot provide a Jellyfin item ID, stream URL, or token
+- `GET /seerr/image/{size}/{image_path}`
+  - proxies only a validated TMDB image filename at `w185`, `w342`, `w500`,
+    `w780`, or `original`
+
+Every Seerr POST route uses the normal optional `RELAYTV_API_TOKEN` write
+guard. Upstream errors use `detail: {"code": "...", "message": "..."}`;
+common statuses are `400` for invalid input/configuration, `403` for disabled
+requests or permission failures, `404` for missing items/expired flows, `409`
+for duplicates or unavailable playback validation, `502` for upstream/auth
+failures, `503` for a disabled/unconfigured integration, and `504` for timeouts.
 
 ## Operational notes
 

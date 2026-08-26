@@ -296,6 +296,12 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_SEAMLESS_REPLACE_RETRIES` | `player.py` | - | static env |
 | `RELAYTV_SEAMLESS_REPLACE_RETRY_DELAY_SEC` | `player.py` | - | static env |
 | `RELAYTV_SEEK_TRANSITION_HOLD_SEC` | `routes/__init__.py` | - | static env |
+| `RELAYTV_SEERR_API_KEY` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_ENABLED` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_REQUEST_MODE` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_REQUEST_USER_ID` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_SERVER_URL` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_SHARED_REQUESTS_ENABLED` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_SESSION_FILE` | `state.py` | - | static env |
 | `RELAYTV_SETTINGS_FILE` | `state.py` | - | static env |
 | `RELAYTV_SHELL_V2_NATIVE_PLAYING_GRACE_SEC` | `player.py` | - | static env |

@@ -14,9 +14,10 @@ milestone logs live in git history.
   helpers and cross-domain glue.
 - `app/relaytv_app/static/ui/`: browser UI assets loaded by `/ui`.
   `app.js`/`app.css` own the shared remote, `jellyfin.js`/`jellyfin.css` own
-  the Jellyfin/Emby browse shell, and `peers.js`/`peers.css` own the
-  send-to-device sheet. These controllers consume public route payloads and do
-  not own catalog or playback product behavior.
+  the Jellyfin/Emby browse shell, `seerr.js`/`seerr.css` own the Seerr discovery
+  and request shell, and `peers.js`/`peers.css` own the send-to-device sheet.
+  These controllers consume public route payloads and do not own catalog,
+  request-policy, or playback product behavior.
 - `app/relaytv_app/config.py`: runtime config service — typed env
   parsing, the settings bus, and the explicit subprocess env-mirroring
   boundary. Runtime code reads configuration through it instead of
@@ -70,6 +71,22 @@ milestone logs live in git history.
   owns its threads, queue, and stop flag, and configuration changes run as
   transactions that suspend the socket — a retired generation can never be
   restarted, publish status, or reach the player.
+- `app/relaytv_app/integrations/seerr_client.py`: immutable Seerr configuration
+  snapshots and secret-safe HTTP transport. It bounds requests and response
+  bodies, rejects cross-origin redirects, and maps upstream failures into safe
+  RelayTV errors.
+- `app/relaytv_app/integrations/seerr_service.py`: Seerr product behavior —
+  discovery, search, item/request normalization, request policy, and the
+  validated Jellyfin playback bridge. It exposes an allowlisted product model,
+  never a generic upstream proxy.
+- `app/relaytv_app/integrations/seerr_sessions.py`: bounded, memory-only
+  caller sessions created through Seerr's Jellyfin Quick Connect flow. The
+  browser receives only an opaque RelayTV cookie; upstream cookies and flow
+  secrets never leave the server.
+- `app/relaytv_app/routes/seerr.py`: the public Seerr endpoint surface and
+  request models. Playback enters through the Jellyfin command sink and the
+  established playback service; neither the route nor Seerr service writes
+  playback globals.
 - `scripts/`: install, doctor, host operations, and release support.
 
 ## Machine-Checked Guardrails

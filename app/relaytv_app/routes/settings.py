@@ -6,9 +6,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import player, state, upload_store, ytdlp_update
-from ..config import runtime_config
+from ..config import (
+    SEERR_REQUEST_MODES,
+    normalize_seerr_request_mode,
+    runtime_config,
+)
 from ..debug import get_logger
-from ..integrations import jellyfin_receiver
+from ..integrations import jellyfin_receiver, seerr_sessions
+from ..integrations.seerr_client import normalize_server_url
 
 
 router = APIRouter()
@@ -51,6 +56,13 @@ class SettingsReq(BaseModel):
     jellyfin_sub_lang: str | None = None
     jellyfin_playback_mode: str | None = None
     jellyfin_server_type: str | None = None
+    seerr_enabled: bool | None = None
+    seerr_server_url: str | None = None
+    seerr_api_key: str | None = None
+    seerr_api_key_clear: bool = False
+    seerr_shared_requests_enabled: bool | None = None
+    seerr_request_mode: str | None = None
+    seerr_request_user_id: int | None = None
     apply_now: bool = False
 
 
@@ -63,11 +75,14 @@ def _settings_for_client(raw: dict | None) -> dict:
     """Return a UI-safe settings view without exposing secret values."""
     out = dict(raw or {})
     has_jf_pw = bool(str(out.get("jellyfin_password") or "").strip())
+    has_seerr_key = bool(str(out.get("seerr_api_key") or "").strip())
     yt_cookie_path = str(out.get("youtube_cookies_path") or "").strip()
     has_yt_cookies = bool(yt_cookie_path) and os.path.exists(yt_cookie_path)
     out["jellyfin_password"] = ""
     out["jellyfin_api_key"] = ""
     out["jellyfin_password_configured"] = has_jf_pw
+    out["seerr_api_key"] = ""
+    out["seerr_api_key_configured"] = has_seerr_key
     out["youtube_cookies_path"] = ""
     out["youtube_cookies_configured"] = has_yt_cookies
     out["youtube_use_invidious"] = bool(out.get("youtube_use_invidious"))
@@ -76,6 +91,16 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["idle_dashboard_enabled"] = bool(out.get("idle_dashboard_enabled", True))
     out["idle_notifications_enabled"] = bool(out.get("idle_notifications_enabled", True))
     out["iptv_enabled"] = bool(out.get("iptv_enabled", False))
+    out["seerr_enabled"] = bool(out.get("seerr_enabled", False))
+    out["seerr_shared_requests_enabled"] = bool(
+        out.get("seerr_shared_requests_enabled", False)
+    )
+    request_mode = normalize_seerr_request_mode(
+        out.get("seerr_request_mode"),
+        shared_requests_enabled=out["seerr_shared_requests_enabled"],
+    )
+    out["seerr_request_mode"] = request_mode
+    out["seerr_shared_requests_enabled"] = request_mode == "shared_admin"
     return out
 
 
@@ -187,8 +212,51 @@ def update_settings(req: SettingsReq):
     else:
         patch = req.dict(exclude_unset=True)
     apply_now = bool(patch.pop("apply_now", False))
-    requested_keys = set(patch.keys())
     existing = state.get_settings() if hasattr(state, "get_settings") else {}
+    clear_seerr_key = bool(patch.pop("seerr_api_key_clear", False))
+    if "seerr_api_key" in patch:
+        seerr_key = str(patch.get("seerr_api_key") or "").strip()
+        if seerr_key:
+            patch["seerr_api_key"] = seerr_key
+        elif clear_seerr_key:
+            patch["seerr_api_key"] = ""
+        else:
+            patch.pop("seerr_api_key", None)
+    elif clear_seerr_key:
+        patch["seerr_api_key"] = ""
+    requested_keys = set(patch.keys())
+    if "seerr_server_url" in requested_keys:
+        try:
+            patch["seerr_server_url"] = normalize_server_url(patch.get("seerr_server_url"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+    candidate_seerr_enabled = bool(
+        patch.get("seerr_enabled", (existing or {}).get("seerr_enabled", False))
+    )
+    candidate_seerr_url = str(
+        patch.get("seerr_server_url", (existing or {}).get("seerr_server_url", "")) or ""
+    ).strip()
+    if candidate_seerr_enabled and not candidate_seerr_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Seerr server URL is required when the integration is enabled",
+        )
+    if "seerr_request_user_id" in requested_keys:
+        user_id = patch.get("seerr_request_user_id")
+        if user_id is not None and int(user_id) <= 0:
+            raise HTTPException(status_code=400, detail="Seerr request user must be positive")
+    if "seerr_request_mode" in requested_keys:
+        request_mode = str(patch.get("seerr_request_mode") or "").strip().lower()
+        if request_mode not in SEERR_REQUEST_MODES:
+            raise HTTPException(status_code=400, detail="Invalid Seerr request identity mode")
+        patch["seerr_request_mode"] = request_mode
+        patch["seerr_shared_requests_enabled"] = request_mode == "shared_admin"
+        requested_keys.add("seerr_shared_requests_enabled")
+    elif "seerr_shared_requests_enabled" in requested_keys:
+        patch["seerr_request_mode"] = (
+            "shared_admin" if bool(patch.get("seerr_shared_requests_enabled")) else "disabled"
+        )
+        requested_keys.add("seerr_request_mode")
     candidate_invidious_base = _normalize_invidious_base(
         patch.get("youtube_invidious_base", (existing or {}).get("youtube_invidious_base", ""))
     )
@@ -199,6 +267,18 @@ def update_settings(req: SettingsReq):
         raise HTTPException(status_code=400, detail="YouTube Invidious server is required when Invidious mode is enabled")
 
     updated = state.update_settings(patch) if hasattr(state, "update_settings") else patch
+    previous_seerr_identity = (
+        bool((existing or {}).get("seerr_enabled")),
+        str((existing or {}).get("seerr_server_url") or "").strip(),
+        str((existing or {}).get("seerr_request_mode") or "disabled").strip(),
+    )
+    updated_seerr_identity = (
+        bool(updated.get("seerr_enabled")),
+        str(updated.get("seerr_server_url") or "").strip(),
+        str(updated.get("seerr_request_mode") or "disabled").strip(),
+    )
+    if previous_seerr_identity != updated_seerr_identity:
+        seerr_sessions.retire_all()
     if "quality_mode" in requested_keys and updated.get("quality_mode") is not None:
         runtime_config.set_value("RELAYTV_QUALITY_MODE", str(updated.get("quality_mode") or "").strip())
     if "quality_cap" in requested_keys and updated.get("quality_cap") is not None:
@@ -273,6 +353,33 @@ def update_settings(req: SettingsReq):
         runtime_config.set_value("RELAYTV_JELLYFIN_ENABLED", "1" if bool(updated.get("jellyfin_enabled")) else "0")
     if "iptv_enabled" in requested_keys and updated.get("iptv_enabled") is not None:
         runtime_config.set_value("RELAYTV_IPTV_ENABLED", "1" if bool(updated.get("iptv_enabled")) else "0")
+    if "seerr_enabled" in requested_keys and updated.get("seerr_enabled") is not None:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_ENABLED", "1" if bool(updated.get("seerr_enabled")) else "0"
+        )
+    if "seerr_server_url" in requested_keys:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_SERVER_URL", str(updated.get("seerr_server_url") or "").strip()
+        )
+    if "seerr_api_key" in requested_keys:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_API_KEY", str(updated.get("seerr_api_key") or "").strip()
+        )
+    if "seerr_shared_requests_enabled" in requested_keys:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED",
+            "1" if bool(updated.get("seerr_shared_requests_enabled")) else "0",
+        )
+    if "seerr_request_mode" in requested_keys:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_REQUEST_MODE",
+            str(updated.get("seerr_request_mode") or "disabled").strip(),
+        )
+    if "seerr_request_user_id" in requested_keys:
+        runtime_config.set_value(
+            "RELAYTV_SEERR_REQUEST_USER_ID",
+            str(updated.get("seerr_request_user_id") or "").strip(),
+        )
     if "jellyfin_server_url" in requested_keys and updated.get("jellyfin_server_url") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_URL", str(updated.get("jellyfin_server_url") or "").strip())
     if "jellyfin_username" in requested_keys and updated.get("jellyfin_username") is not None:
@@ -296,6 +403,22 @@ def update_settings(req: SettingsReq):
     live_apply_failed: list[str] = []
     if "iptv_enabled" in requested_keys:
         live_applied.append("iptv_enabled")
+    live_applied.extend(
+        key
+        for key in sorted(
+            requested_keys.intersection(
+                {
+                    "seerr_enabled",
+                    "seerr_server_url",
+                    "seerr_api_key",
+                    "seerr_shared_requests_enabled",
+                    "seerr_request_mode",
+                    "seerr_request_user_id",
+                }
+            )
+        )
+        if key not in live_applied
+    )
     playing_now = bool(player.is_playing())
     if (not apply_now) and playing_now:
         try:

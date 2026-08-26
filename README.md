@@ -41,10 +41,12 @@ sharing, use **RelayTV Play** or **RelayTV Queue** from the
 through the Home Assistant Companion app with the
 [`mobile_app.share` automation](https://github.com/mcgeezy/relaytv-ha#home-assistant-companion-app-share-automation).
 
-### 🎬 Browse it
+### 🎬 Browse and request it
 
 Explore Jellyfin or Emby from a responsive library built for phones and
-desktops, then launch playback on the connected display.
+desktops, then launch playback on the connected display. Connect Seerr to
+discover upcoming movies and series, follow request status, and request them
+under an explicit administrator or caller-specific identity.
 
 ### 📺 Watch it live
 
@@ -132,6 +134,8 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
   links directly to the TV and control playback from your phone.
 - **Jellyfin and Emby** — responsive Home, Movies, TV, series, season, episode,
   search, resume, and queue workflows.
+- **Seerr** — discovery, search, request tracking, deliberately selected
+  request identity, and validated playback of available Jellyfin media.
 - **HTTP API** — local automation from shell scripts, dashboards, services, and
   custom applications.
 
@@ -145,8 +149,8 @@ API directly to the public internet.
 | --- | --- |
 | [Installation](docs/INSTALL.md) | [HTTP API](docs/API.md) |
 | [Native runtime operations](docs/NATIVE_RUNTIME_OPERATIONS.md) | [Jellyfin/Emby operations](docs/JELLYFIN_OPERATIONS.md) |
-| [IPTV operations](docs/IPTV_OPERATIONS.md) | [Architecture](docs/ARCHITECTURE.md) |
-| [Release process](docs/RELEASE.md) | |
+| [IPTV operations](docs/IPTV_OPERATIONS.md) | [Seerr operations](docs/SEERR_OPERATIONS.md) |
+| [Architecture](docs/ARCHITECTURE.md) | [Release process](docs/RELEASE.md) |
 
 The [documentation map](docs/README.md) links the remaining runbooks and
 machine-checked inventories.

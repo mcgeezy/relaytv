@@ -171,6 +171,23 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
     assert _cfg("RELAYTV_JELLYFIN_AUTH_ENABLED") == "1"
 
 
+def test_settings_apply_syncs_seerr_config(quiet_settings_apply) -> None:
+    _apply(
+        seerr_enabled=True,
+        seerr_server_url=" https://seerr.example/api/v1 ",
+        seerr_api_key=" secret-key ",
+        seerr_request_mode="shared_admin",
+        seerr_request_user_id=7,
+    )
+
+    assert _cfg("RELAYTV_SEERR_ENABLED") == "1"
+    assert _cfg("RELAYTV_SEERR_SERVER_URL") == "https://seerr.example"
+    assert _cfg("RELAYTV_SEERR_API_KEY") == "secret-key"
+    assert _cfg("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED") == "1"
+    assert _cfg("RELAYTV_SEERR_REQUEST_MODE") == "shared_admin"
+    assert _cfg("RELAYTV_SEERR_REQUEST_USER_ID") == "7"
+
+
 def test_settings_apply_syncs_server_type_to_live_receiver(quiet_settings_apply, monkeypatch) -> None:
     applied: list[str] = []
     monkeypatch.setattr(
@@ -216,6 +233,11 @@ def test_settings_apply_does_not_write_env_beyond_mirror_contract(quiet_settings
         jellyfin_sub_lang="off",
         jellyfin_playback_mode="auto",
         jellyfin_server_type="emby",
+        seerr_enabled=True,
+        seerr_server_url="https://seerr.example",
+        seerr_api_key="seerr-secret",
+        seerr_shared_requests_enabled=False,
+        seerr_request_user_id=7,
     )
 
     for name in sorted(SETTINGS_BUS_VARS):
@@ -243,6 +265,11 @@ def test_startup_sync_populates_runtime_config_from_persisted_settings(
         "jellyfin_sub_lang": "off",
         "jellyfin_playback_mode": "auto",
         "uploads": {"max_size_gb": 12.5, "retention_hours": 48},
+        "seerr_enabled": True,
+        "seerr_server_url": "https://seerr.example",
+        "seerr_api_key": "seerr-secret",
+        "seerr_shared_requests_enabled": False,
+        "seerr_request_user_id": 7,
     }
     monkeypatch.delenv("RELAYTV_JELLYFIN_SERVER_URL", raising=False)
     monkeypatch.setattr("relaytv_app.main.get_settings", lambda: dict(persisted))
@@ -263,6 +290,11 @@ def test_startup_sync_populates_runtime_config_from_persisted_settings(
         assert _cfg("RELAYTV_JELLYFIN_AUDIO_LANG") == "eng"
         assert _cfg("RELAYTV_JELLYFIN_SUB_LANG") == "off"
         assert _cfg("RELAYTV_JELLYFIN_PLAYBACK_MODE") == "auto"
+        assert _cfg("RELAYTV_SEERR_ENABLED") == "1"
+        assert _cfg("RELAYTV_SEERR_SERVER_URL") == "https://seerr.example"
+        assert _cfg("RELAYTV_SEERR_API_KEY") == "seerr-secret"
+        assert _cfg("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED") == "0"
+        assert _cfg("RELAYTV_SEERR_REQUEST_USER_ID") == "7"
         assert _cfg("RELAYTV_UPLOAD_MAX_SIZE_GB") == "12.5"
         assert _cfg("RELAYTV_UPLOAD_RETENTION_HOURS") == "48"
         # The startup sync writes nothing to the environment.

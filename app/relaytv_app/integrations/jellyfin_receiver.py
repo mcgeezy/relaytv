@@ -1281,6 +1281,25 @@ def _extract_media_source_id(data: dict[str, object]) -> str:
     return ""
 
 
+def _tmdb_provider_id(data: dict[str, object]) -> int | None:
+    provider_ids = data.get("ProviderIds")
+    if not isinstance(provider_ids, dict):
+        return None
+    raw = next(
+        (
+            value
+            for key, value in provider_ids.items()
+            if str(key or "").strip().lower() == "tmdb"
+        ),
+        None,
+    )
+    try:
+        value = int(str(raw or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return value if 0 < value <= 2_147_483_647 else None
+
+
 def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -> dict[str, object]:
     iid = str(data.get("Id") or "").strip()
     item_type = str(data.get("Type") or "").strip().lower()
@@ -1412,6 +1431,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "video_bit_depth": video_bit_depth,
         "video_fps": video_fps,
         "video_bitrate": video_bitrate,
+        "tmdb_id": _tmdb_provider_id(data),
     }
     _attach_thumb(out)
     if out.get("thumbnail_local"):
@@ -1459,7 +1479,7 @@ def get_item_detail(item_id: str, *, refresh: bool = False) -> dict[str, object]
     quoted = _urlparse.quote(iid)
     fields = (
         "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesId,"
-        "SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex"
+        "SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex,ProviderIds"
     )
     candidates: list[str] = []
     if user_id:

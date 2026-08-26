@@ -142,6 +142,7 @@ from .settings import (
     update_settings as update_settings,
     upload_youtube_cookies as upload_youtube_cookies,
 )
+from .seerr import router as seerr_router
 from .snapshots import router as snapshots_router
 from .status import router as status_router
 from .ui import router as ui_router
@@ -166,6 +167,7 @@ router.include_router(postlive_router)
 router.include_router(queue_router)
 router.include_router(realtime_router)
 router.include_router(settings_router)
+router.include_router(seerr_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)
 router.include_router(ui_router)
@@ -3739,6 +3741,7 @@ def ui():
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/seerr.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/peers.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
@@ -3758,6 +3761,7 @@ def ui():
       <div class="hdrRight">
         <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
         <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
+        <button id="seerrOpenBtn" class="seerrLaunch" title="Open Seerr" aria-label="Open Seerr"><span aria-hidden="true">✦</span><span>Seerr</span></button>
         <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
           <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
@@ -4216,11 +4220,53 @@ def ui():
         </div>
       </div>
     </div>
+
+    <div id="seerrShell" class="seerrShell hidden" aria-hidden="true">
+      <div class="seerrShellInner">
+        <header class="seerrShellHead">
+          <button id="seerrBackBtn" class="seerrBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>
+          <div class="seerrIdentity"><span class="seerrMark" aria-hidden="true">✦</span><div><small>Discover and request</small><strong id="seerrTitle">Seerr</strong></div></div>
+          <button id="seerrConnection" class="seerrConnection" type="button" aria-live="polite">Checking…</button>
+        </header>
+        <div class="seerrWorkspace">
+          <nav class="seerrTabs" role="tablist" aria-label="Seerr sections">
+            <button class="seerrTab active" data-seerr-section="trending" role="tab" aria-selected="true">Discover</button>
+            <button class="seerrTab" data-seerr-section="movies" role="tab" aria-selected="false">Movies</button>
+            <button class="seerrTab" data-seerr-section="tv" role="tab" aria-selected="false">Series</button>
+            <button class="seerrTab" data-seerr-section="requests" role="tab" aria-selected="false">Requests</button>
+          </nav>
+          <section class="seerrPanel" role="tabpanel">
+            <div class="seerrTools">
+              <label class="seerrSearchWrap"><span aria-hidden="true">⌕</span><input id="seerrSearchInput" class="input" type="search" maxlength="200" placeholder="Search movies and series…" aria-label="Search Seerr" /></label>
+              <select id="seerrRequestFilter" class="input hidden" aria-label="Filter requests">
+                <option value="all">All requests</option><option value="pending">Pending</option><option value="processing">Processing</option><option value="available">Available</option><option value="failed">Failed</option>
+              </select>
+            </div>
+            <div id="seerrBrowseStatus" class="seerrBrowseStatus" role="status" aria-live="polite"></div>
+            <div id="seerrGrid" class="seerrGrid"></div>
+            <button id="seerrMoreBtn" class="seerrMore hidden" type="button">Load more</button>
+          </section>
+        </div>
+        <div id="seerrDetailBackdrop" class="seerrDetailBackdrop hidden" aria-hidden="true"></div>
+        <aside id="seerrDetail" class="seerrDetail hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="seerrDetailTitle"></aside>
+        <div id="seerrConnectBackdrop" class="seerrConnectBackdrop hidden" aria-hidden="true">
+          <section id="seerrConnectDialog" class="seerrConnectDialog" role="dialog" aria-modal="true" aria-labelledby="seerrConnectTitle">
+            <button id="seerrConnectClose" class="seerrDetailClose" type="button" aria-label="Close Quick Connect">✕</button>
+            <h2 id="seerrConnectTitle">Connect your Seerr account</h2>
+            <p>Open Jellyfin’s Quick Connect screen and enter this code:</p>
+            <div id="seerrConnectCode" class="seerrConnectCode" aria-live="polite">······</div>
+            <div id="seerrConnectStatus" class="seerrRequestResult" role="status" aria-live="polite"></div>
+            <button id="seerrConnectRetry" class="seerrRequestBtn hidden" type="button">Start again</button>
+          </section>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/seerr.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/peers.js?v=__UI_ASSET_V__" defer></script>
@@ -4545,6 +4591,50 @@ def ui():
       </div>
     </details>
 
+    <details class="settingsGroup">
+      <summary>Seerr Integration <span id="setSeerrStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy"><div class="toggleTitle">Enable Seerr</div><div class="toggleHint">Show RelayTV discovery, search, and request status backed by Seerr.</div></div>
+          <label class="toggleSwitch" for="setSeerrEnabled" title="Enable Seerr integration"><input type="checkbox" id="setSeerrEnabled" /><span class="toggleTrack" aria-hidden="true"></span></label>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setSeerrServerUrl">Seerr server</label>
+          <input id="setSeerrServerUrl" class="input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://10.0.55.2:5055" />
+          <div class="hint">Use the Seerr base URL. An API key is required only for shared browsing and administrator requests.</div>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setSeerrApiKey">API key</label>
+          <input id="setSeerrApiKey" class="input" type="password" autocomplete="new-password" spellcheck="false" placeholder="(leave blank to keep existing)" />
+          <div class="toggleRow">
+            <div class="toggleCopy"><div class="toggleTitle">Clear stored API key</div><div class="toggleHint">Remove the saved key on the next apply.</div></div>
+            <label class="toggleSwitch" for="setSeerrClearApiKey" title="Clear stored Seerr API key"><input type="checkbox" id="setSeerrClearApiKey" /><span class="toggleTrack" aria-hidden="true"></span></label>
+          </div>
+          <div id="setSeerrApiKeyState" class="hint"></div>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setSeerrRequestMode">Request identity</label>
+          <select id="setSeerrRequestMode" class="input">
+            <option value="disabled">Requests disabled</option>
+            <option value="shared_admin">Shared administrator API</option>
+            <option value="caller_session">Caller-specific sign-in</option>
+          </select>
+          <div id="setSeerrRequestModeHint" class="hint">Choose exactly which Seerr identity is allowed to create requests.</div>
+        </div>
+        <div id="setSeerrRequestUserRow" class="fieldRow hidden">
+          <label class="fieldLbl" for="setSeerrRequestUser">Shared request attribution</label>
+          <select id="setSeerrRequestUser" class="input"><option value="">API identity (default)</option></select>
+          <div class="hint">Changes attribution only; the administrator API identity still controls permissions and auto-approval.</div>
+        </div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setSeerrApplyBtn" class="btn electricBlue">Apply Seerr</button>
+          <button type="button" id="setSeerrTestBtn" class="btn">Test connection</button>
+          <div id="setSeerrApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
+        </div>
+        <div id="setSeerrDiag" class="hint"></div>
+      </div>
+    </details>
+
     <div class="modalBottom">
       <button id="settingsSaveBtn" class="btn primary electricBlue">Apply</button>
     </div>
@@ -4566,11 +4656,13 @@ def _ui_asset_version() -> str:
         "app.css",
         "jellyfin.css",
         "iptv.css",
+        "seerr.css",
         "peers.css",
         "realtime_transport.js",
         "app.js",
         "jellyfin.js",
         "iptv.js",
+        "seerr.js",
         "peers.js",
     ):
         path = _resolve_static_asset("ui", name)
