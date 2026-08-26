@@ -2,7 +2,9 @@
 """RelayTV-facing Seerr product behavior and sanitized integration status."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
+import threading
 import time
 import urllib.parse
 
@@ -64,6 +66,23 @@ _IMAGE_CONTENT_TYPES = {
     "image/webp": "image/webp",
 }
 _IMAGE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
+_REQUEST_METADATA_WORKERS = 8
+_REQUEST_METADATA_TTL_SEC = 5 * 60
+_REQUEST_METADATA_FAILURE_TTL_SEC = 30
+_REQUEST_METADATA_MAX_ENTRIES = 512
+_REQUEST_METADATA_FIELDS = (
+    "title",
+    "original_title",
+    "date",
+    "year",
+    "poster_url",
+    "backdrop_url",
+    "rating",
+)
+_REQUEST_METADATA_LOCK = threading.Lock()
+_REQUEST_METADATA_CACHE: dict[
+    tuple[str, str, int], tuple[float, dict[str, object]]
+] = {}
 
 
 def _config_status(config: SeerrConfig) -> dict[str, object]:
@@ -256,17 +275,19 @@ def list_requests(
     if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
         raise _invalid_upstream()
     page_info = payload.get("pageInfo") if isinstance(payload.get("pageInfo"), dict) else {}
+    results = [
+        normalized
+        for raw in payload["results"]
+        if (normalized := _normalize_request(raw)) is not None
+    ]
+    _enrich_request_metadata(config, client, results)
     return {
         "page": _safe_int(page_info.get("page")) or (skip_number // take_number) + 1,
         "total_pages": _safe_int(page_info.get("pages")),
         "total_results": _safe_int(page_info.get("results")),
         "take": take_number,
         "skip": skip_number,
-        "results": [
-            normalized
-            for raw in payload["results"]
-            if (normalized := _normalize_request(raw)) is not None
-        ],
+        "results": results,
     }
 
 
@@ -587,6 +608,115 @@ def _normalize_request(raw: object) -> dict[str, object] | None:
         "created_at": _text(raw.get("createdAt"), limit=40),
         "updated_at": _text(raw.get("updatedAt"), limit=40),
     }
+
+
+def _enrich_request_metadata(
+    config: SeerrConfig,
+    client: SeerrClient,
+    results: list[dict[str, object]],
+) -> None:
+    targets: dict[tuple[str, str, int], list[dict[str, object]]] = {}
+    misses: dict[tuple[str, str, int], tuple[str, int]] = {}
+    for item in results:
+        kind = _media_type_or_none(item.get("media_type"))
+        media_id = _safe_int(item.get("media_id"))
+        if kind is None or media_id <= 0:
+            continue
+        key = (config.server_url, kind, media_id)
+        targets.setdefault(key, []).append(item)
+        cached = _request_metadata_cache_get(key)
+        if cached is None:
+            misses[key] = (kind, media_id)
+        elif cached:
+            item.update(cached)
+
+    if not misses:
+        return
+    with ThreadPoolExecutor(
+        max_workers=min(_REQUEST_METADATA_WORKERS, len(misses)),
+        thread_name_prefix="relaytv-seerr-metadata",
+    ) as executor:
+        futures = {
+            executor.submit(_fetch_request_metadata, client, kind, media_id): key
+            for key, (kind, media_id) in misses.items()
+        }
+        for future in as_completed(futures):
+            key = futures[future]
+            kind, media_id = misses[key]
+            try:
+                metadata = future.result()
+                ttl = _REQUEST_METADATA_TTL_SEC
+            except SeerrError as exc:
+                metadata = {}
+                ttl = _REQUEST_METADATA_FAILURE_TTL_SEC
+                logger.warning(
+                    "seerr_request_metadata host=%s media_type=%s media_id=%d result=%s",
+                    _safe_host(config.server_url),
+                    kind,
+                    media_id,
+                    exc.code,
+                )
+            except Exception:
+                metadata = {}
+                ttl = _REQUEST_METADATA_FAILURE_TTL_SEC
+                logger.warning(
+                    "seerr_request_metadata host=%s media_type=%s media_id=%d result=unexpected_error",
+                    _safe_host(config.server_url),
+                    kind,
+                    media_id,
+                )
+            _request_metadata_cache_set(key, metadata, ttl_sec=ttl)
+            if metadata:
+                for item in targets[key]:
+                    item.update(metadata)
+
+
+def _fetch_request_metadata(
+    client: SeerrClient, kind: str, media_id: int
+) -> dict[str, object]:
+    payload = client.get(f"/{kind}/{media_id}")
+    if not isinstance(payload, dict):
+        raise _invalid_upstream()
+    returned_id = _safe_int(payload.get("id"))
+    returned_kind = _media_type_or_none(payload.get("mediaType"))
+    if returned_id != media_id or (returned_kind is not None and returned_kind != kind):
+        raise _invalid_upstream()
+    normalized = _normalize_media(payload, fallback_type=kind)
+    return {field: normalized[field] for field in _REQUEST_METADATA_FIELDS}
+
+
+def _request_metadata_cache_get(
+    key: tuple[str, str, int],
+) -> dict[str, object] | None:
+    now = time.monotonic()
+    with _REQUEST_METADATA_LOCK:
+        cached = _REQUEST_METADATA_CACHE.get(key)
+        if cached is None:
+            return None
+        expires_at, metadata = cached
+        if expires_at <= now:
+            _REQUEST_METADATA_CACHE.pop(key, None)
+            return None
+        return dict(metadata)
+
+
+def _request_metadata_cache_set(
+    key: tuple[str, str, int], metadata: dict[str, object], *, ttl_sec: float
+) -> None:
+    now = time.monotonic()
+    with _REQUEST_METADATA_LOCK:
+        _REQUEST_METADATA_CACHE[key] = (now + max(1.0, float(ttl_sec)), dict(metadata))
+        for candidate, (expires_at, _) in list(_REQUEST_METADATA_CACHE.items()):
+            if expires_at <= now:
+                _REQUEST_METADATA_CACHE.pop(candidate, None)
+        while len(_REQUEST_METADATA_CACHE) > _REQUEST_METADATA_MAX_ENTRIES:
+            oldest = min(_REQUEST_METADATA_CACHE, key=lambda item: _REQUEST_METADATA_CACHE[item][0])
+            _REQUEST_METADATA_CACHE.pop(oldest, None)
+
+
+def _clear_request_metadata_cache() -> None:
+    with _REQUEST_METADATA_LOCK:
+        _REQUEST_METADATA_CACHE.clear()
 
 
 def _latest_request(value: object) -> dict[str, object] | None:

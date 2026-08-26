@@ -24,6 +24,13 @@ class _Config:
     request_mode = "disabled"
 
 
+@pytest.fixture(autouse=True)
+def _clear_request_metadata_cache():
+    seerr_service._clear_request_metadata_cache()
+    yield
+    seerr_service._clear_request_metadata_cache()
+
+
 def _install_client(monkeypatch, responses: dict[str, object], *, config=None):
     calls = []
     selected_config = config or _Config()
@@ -257,7 +264,18 @@ def test_request_list_uses_only_configured_shared_attribution(monkeypatch) -> No
                         "requestedBy": {"email": "private@example.com"},
                     }
                 ],
-            }
+            },
+            "/movie/55": {
+                "id": 55,
+                "mediaType": "movie",
+                "title": "Request Title",
+                "originalTitle": "Original Request Title",
+                "releaseDate": "2025-03-14",
+                "posterPath": "/request-poster.jpg",
+                "backdropPath": "/request-backdrop.jpg",
+                "voteAverage": 8.24,
+                "credits": {"cast": [{"email": "private@example.com"}]},
+            },
         },
         config=_SharedConfig(),
     )
@@ -274,8 +292,94 @@ def test_request_list_uses_only_configured_shared_attribution(monkeypatch) -> No
         "is_4k": True,
         "created_at": "2026-08-23T10:00:00Z",
         "updated_at": "",
+        "title": "Request Title",
+        "original_title": "Original Request Title",
+        "date": "2025-03-14",
+        "year": 2025,
+        "poster_url": "/seerr/image/w342/request-poster.jpg",
+        "backdrop_url": "/seerr/image/w780/request-backdrop.jpg",
+        "rating": 8.2,
     }
+    assert [call[0] for call in calls] == ["/request", "/movie/55"]
     assert "private@example.com" not in str(result)
+
+
+def test_request_metadata_is_deduplicated_and_cached(monkeypatch) -> None:
+    calls = _install_client(
+        monkeypatch,
+        {
+            "/request": {
+                "pageInfo": {"page": 1, "pages": 1, "results": 2},
+                "results": [
+                    {
+                        "id": request_id,
+                        "status": 1,
+                        "media": {"mediaType": "tv", "tmdbId": 44, "status": 2},
+                    }
+                    for request_id in (1, 2)
+                ],
+            },
+            "/tv/44": {
+                "id": 44,
+                "name": "Cached Series",
+                "firstAirDate": "2024-01-12",
+                "posterPath": "/series.jpg",
+            },
+        },
+    )
+
+    first = seerr_service.list_requests(take=20, skip=0, status_filter="all")
+    second = seerr_service.list_requests(take=20, skip=0, status_filter="all")
+
+    assert [item["title"] for item in first["results"]] == [
+        "Cached Series",
+        "Cached Series",
+    ]
+    assert [item["poster_url"] for item in second["results"]] == [
+        "/seerr/image/w342/series.jpg",
+        "/seerr/image/w342/series.jpg",
+    ]
+    assert [path for path, _kwargs in calls].count("/tv/44") == 1
+
+
+def test_request_metadata_failure_keeps_other_cards_usable(monkeypatch) -> None:
+    config = _Config()
+
+    class _Client:
+        def __init__(self, current_config):
+            assert current_config is config
+
+        def get(self, path, **kwargs):
+            if path == "/request":
+                return {
+                    "pageInfo": {"page": 1, "pages": 1, "results": 2},
+                    "results": [
+                        {
+                            "id": 1,
+                            "status": 1,
+                            "media": {"mediaType": "movie", "tmdbId": 11, "status": 2},
+                        },
+                        {
+                            "id": 2,
+                            "status": 1,
+                            "media": {"mediaType": "movie", "tmdbId": 22, "status": 2},
+                        },
+                    ],
+                }
+            if path == "/movie/11":
+                return {"id": 11, "title": "Recognizable Movie"}
+            raise SeerrError(
+                "seerr_timeout", "Seerr timed out", status_code=504
+            )
+
+    monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+    monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
+
+    result = seerr_service.list_requests(take=20, skip=0, status_filter="all")
+
+    assert result["results"][0]["title"] == "Recognizable Movie"
+    assert "title" not in result["results"][1]
+    assert [item["media_id"] for item in result["results"]] == [11, 22]
 
 
 def test_image_uses_only_allowlisted_tmdb_proxy_path(monkeypatch) -> None:

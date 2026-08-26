@@ -829,6 +829,8 @@ Discovery and request endpoints:
     type and TMDB-provider-ID match
 - `GET /seerr/requests`
   - query: `take` (`1` to `100`), `skip`, and an allowlisted `filter`
+  - returns sanitized request state plus recognizable title, year, rating, and
+    proxied artwork metadata when Seerr detail lookup succeeds
 - `POST /seerr/requests`
   - example body:
 
