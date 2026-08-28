@@ -267,10 +267,14 @@ def _worker() -> None:
                     continue
                 tmp_out = os.path.join(td, "out.jpg")
                 if _normalize_to_jpg(raw_fp, tmp_out):
-                    _commit_file(tmp_out, dst)
+                    committed = _commit_file(tmp_out, dst)
                 else:
                     # Fallback: persist original bytes (may not be jpg but better than dropping).
-                    _commit_file(raw_fp, dst)
+                    committed = _commit_file(raw_fp, dst)
+                if not committed:
+                    # A full/read-only disk is a failed thumbnail attempt too;
+                    # clearing backoff here hammers storage on every status poll.
+                    continue
                 _touch(dst)
                 _prune_thumb_dir()
                 failed = False

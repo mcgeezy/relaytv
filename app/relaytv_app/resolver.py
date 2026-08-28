@@ -1053,17 +1053,22 @@ _YTDLP_INFO_LOCK = threading.Lock()
 _YTDLP_INFO_INFLIGHT: dict[str, threading.Event] = {}
 
 
+def _ytdlp_info_cached_locked(url: str, now: float) -> dict | None:
+    """Return a live entry while the caller holds ``_YTDLP_INFO_LOCK``."""
+    entry = _YTDLP_INFO_CACHE.get(url)
+    if entry is None:
+        return None
+    if (now - entry[0]) >= _YTDLP_INFO_TTL_SEC:
+        _YTDLP_INFO_CACHE.pop(url, None)
+        return None
+    _YTDLP_INFO_CACHE.move_to_end(url)
+    return entry[1]
+
+
 def _ytdlp_info_cached(url: str, now: float) -> dict | None:
     """Return a live cache entry, evicting it if the TTL has passed."""
     with _YTDLP_INFO_LOCK:
-        entry = _YTDLP_INFO_CACHE.get(url)
-        if entry is None:
-            return None
-        if (now - entry[0]) >= _YTDLP_INFO_TTL_SEC:
-            _YTDLP_INFO_CACHE.pop(url, None)
-            return None
-        _YTDLP_INFO_CACHE.move_to_end(url)
-        return entry[1]
+        return _ytdlp_info_cached_locked(url, now)
 
 
 def _ytdlp_info_store(url: str, now: float, data: dict) -> None:
@@ -1104,6 +1109,12 @@ def ytdlp_info(url: str) -> dict | None:
     # Coordinate duplicates: whoever claims the URL fetches it, everyone else
     # waits for that result instead of spawning another yt-dlp.
     with _YTDLP_INFO_LOCK:
+        # The previous owner may have completed between the optimistic cache
+        # read above and this lock acquisition. Recheck before claiming a new
+        # subprocess or that narrow window launches the same yt-dlp twice.
+        cached = _ytdlp_info_cached_locked(u, time.time())
+        if cached is not None:
+            return cached
         pending = _YTDLP_INFO_INFLIGHT.get(u)
         owner = pending is None
         if owner:

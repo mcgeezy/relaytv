@@ -108,6 +108,25 @@ def test_a_success_clears_a_previous_failure(thumb_env) -> None:
     assert thumb_cache._claim_thumb(tid) is True
 
 
+def test_a_failed_thumbnail_commit_enters_backoff(thumb_env, monkeypatch) -> None:
+    """Download success is not success when the cache file cannot be published."""
+    url = "https://cdn.test/disk-full.jpg"
+    tid = thumb_cache.thumb_id(url)
+    monkeypatch.setattr(thumb_cache, "_download_to", lambda source, path: True)
+    monkeypatch.setattr(thumb_cache, "_normalize_to_jpg", lambda source, path: False)
+    monkeypatch.setattr(thumb_cache, "_commit_file", lambda source, path: False)
+    monkeypatch.setattr(thumb_cache, "_prune_thumb_dir", lambda *args, **kwargs: None)
+    assert thumb_cache._claim_thumb(tid) is True
+
+    worker = threading.Thread(target=thumb_cache._worker, daemon=True)
+    worker.start()
+    thumb_env.put((url, tid))
+    thumb_env.join()
+
+    assert tid in thumb_cache._FAILED_AT
+    assert thumb_cache._claim_thumb(tid) is False
+
+
 def test_failure_map_is_bounded(thumb_env) -> None:
     for index in range(thumb_cache.THUMB_FAILURE_MAP_MAX + 200):
         thumb_cache._release_thumb(f"tid{index}", failed=True)
@@ -191,6 +210,33 @@ def test_concurrent_lookups_run_one_subprocess(monkeypatch) -> None:
 
     assert len(calls) == 1, f"spawned {len(calls)} subprocesses for one URL"
     assert all(r == {"title": "shared"} for r in results), results
+
+
+def test_cache_is_rechecked_before_claiming_a_new_lookup(monkeypatch) -> None:
+    """An owner can finish between the optimistic read and inflight lock."""
+    url = "https://x.test/completed-in-gap"
+    expected = {"title": "already done"}
+    original_cached = resolver._ytdlp_info_cached
+    first = True
+
+    def _complete_during_first_read(key, now):
+        nonlocal first
+        if first:
+            first = False
+            resolver._ytdlp_info_store(key, now, expected)
+            return None
+        return original_cached(key, now)
+
+    subprocess_calls: list[str] = []
+    monkeypatch.setattr(resolver, "_ytdlp_info_cached", _complete_during_first_read)
+    monkeypatch.setattr(
+        resolver,
+        "_run_ytdlp_provider_command",
+        lambda requested, *args, **kwargs: subprocess_calls.append(requested),
+    )
+
+    assert resolver.ytdlp_info(url) == expected
+    assert subprocess_calls == []
 
 
 def test_a_failed_lookup_releases_its_inflight_slot(monkeypatch) -> None:
