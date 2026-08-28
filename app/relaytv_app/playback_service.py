@@ -592,6 +592,9 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
 
 def clear_session() -> None:
     """Reset the session to idle: no current item, no resume position."""
+    # Terminal transition: a play still resolving must not republish over the
+    # idle session this is establishing.
+    player.retire_playback_intents("clear_session")
     state.set_now_playing(None)
     state.set_session_position(None)
     state.set_session_state("idle")
