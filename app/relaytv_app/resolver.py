@@ -7,6 +7,7 @@ import json
 import time
 import urllib.request
 import shutil
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from .config import runtime_config
@@ -1034,9 +1035,52 @@ def youtube_oembed_info(youtube_url: str) -> dict | None:
     return None
 
 
-# Cache for yt-dlp metadata lookups (thumbnails, titles) to avoid repeated calls
-_YTDLP_INFO_CACHE: dict[str, tuple[float, dict]] = {}
+# Cache for yt-dlp metadata lookups (thumbnails, titles) to avoid repeated calls.
+#
+# Was an unlocked dict with a TTL check but no eviction, so it grew for the
+# life of the process — every distinct URL ever looked up kept its full
+# yt-dlp JSON resident. Entries also expired only when read again, so a URL
+# looked up once and never revisited was never released.
+#
+# Concurrent lookups of the same URL each ran their own yt-dlp subprocess,
+# because nothing recorded that one was already in flight.
+_YTDLP_INFO_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
 _YTDLP_INFO_TTL_SEC = int(os.getenv("YTDLP_INFO_TTL_SEC", "21600"))  # 6 hours
+_YTDLP_INFO_CACHE_MAX = max(16, int(os.getenv("YTDLP_INFO_CACHE_MAX") or "256"))
+_YTDLP_INFO_LOCK = threading.Lock()
+# One condition per URL currently being fetched, so a second caller waits for
+# the first rather than spawning a duplicate subprocess.
+_YTDLP_INFO_INFLIGHT: dict[str, threading.Event] = {}
+
+
+def _ytdlp_info_cached(url: str, now: float) -> dict | None:
+    """Return a live cache entry, evicting it if the TTL has passed."""
+    with _YTDLP_INFO_LOCK:
+        entry = _YTDLP_INFO_CACHE.get(url)
+        if entry is None:
+            return None
+        if (now - entry[0]) >= _YTDLP_INFO_TTL_SEC:
+            _YTDLP_INFO_CACHE.pop(url, None)
+            return None
+        _YTDLP_INFO_CACHE.move_to_end(url)
+        return entry[1]
+
+
+def _ytdlp_info_store(url: str, now: float, data: dict) -> None:
+    with _YTDLP_INFO_LOCK:
+        _YTDLP_INFO_CACHE[url] = (now, data)
+        _YTDLP_INFO_CACHE.move_to_end(url)
+        # Drop anything past its TTL first, then the least recently used.
+        for stale in [k for k, (ts, _v) in _YTDLP_INFO_CACHE.items() if (now - ts) >= _YTDLP_INFO_TTL_SEC]:
+            _YTDLP_INFO_CACHE.pop(stale, None)
+        while len(_YTDLP_INFO_CACHE) > _YTDLP_INFO_CACHE_MAX:
+            _YTDLP_INFO_CACHE.popitem(last=False)
+
+
+def reset_ytdlp_info_cache_for_tests() -> None:
+    with _YTDLP_INFO_LOCK:
+        _YTDLP_INFO_CACHE.clear()
+        _YTDLP_INFO_INFLIGHT.clear()
 
 
 def ytdlp_info(url: str) -> dict | None:
@@ -1053,9 +1097,22 @@ def ytdlp_info(url: str) -> dict | None:
         return None
 
     now = time.time()
-    cached = _YTDLP_INFO_CACHE.get(u)
-    if cached and (now - cached[0]) < _YTDLP_INFO_TTL_SEC:
-        return cached[1]
+    cached = _ytdlp_info_cached(u, now)
+    if cached is not None:
+        return cached
+
+    # Coordinate duplicates: whoever claims the URL fetches it, everyone else
+    # waits for that result instead of spawning another yt-dlp.
+    with _YTDLP_INFO_LOCK:
+        pending = _YTDLP_INFO_INFLIGHT.get(u)
+        owner = pending is None
+        if owner:
+            pending = threading.Event()
+            _YTDLP_INFO_INFLIGHT[u] = pending
+    if not owner:
+        # Bounded: a hung lookup must not pin every other caller forever.
+        pending.wait(timeout=25.0)
+        return _ytdlp_info_cached(u, time.time())
 
     try:
         p, _selected_args, _challenged = _run_ytdlp_provider_command(
@@ -1069,10 +1126,14 @@ def ytdlp_info(url: str) -> dict | None:
         data = json.loads((p.stdout or "").strip() or "{}")
         if not isinstance(data, dict) or not data:
             return None
-        _YTDLP_INFO_CACHE[u] = (now, data)
+        _ytdlp_info_store(u, now, data)
         return data
     except Exception:
         return None
+    finally:
+        with _YTDLP_INFO_LOCK:
+            _YTDLP_INFO_INFLIGHT.pop(u, None)
+        pending.set()
 
 
 def resolve_title(url: str) -> str:
