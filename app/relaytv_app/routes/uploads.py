@@ -14,6 +14,28 @@ from ..debug import get_logger
 router = APIRouter()
 logger = get_logger("routes.uploads")
 
+# Ingestion runs on the event loop, so every blocking call here stalls HTTP
+# controls and realtime subscribers for the whole upload. The writes, syncs,
+# metadata, and cleanup scans all move to a worker thread.
+#
+# The per-chunk fsync went further than durability needed: a 4 GiB upload
+# issued roughly 4000 fsyncs *and* 4000 JSON session rewrites, each one a
+# write plus an os.replace. Durable progress is batched instead. The in-memory
+# session stays exact — it drives the progressive-start decision — and the
+# session file is still written immediately on every state change (progressive
+# start, fallback, completion), so restart behavior is unchanged; only the
+# routine progress heartbeat is coarser.
+_DURABLE_SYNC_BYTES = 64 * 1024 * 1024
+_DURABLE_SYNC_SEC = 5.0
+
+
+def _write_chunk(handle, chunk: bytes, *, sync: bool) -> None:
+    """Blocking file write, run off the event loop."""
+    handle.write(chunk)
+    if sync:
+        handle.flush()
+        os.fsync(handle.fileno())
+
 
 @router.get("/media/uploads/{upload_id}/{filename}", name="get_uploaded_media")
 def get_uploaded_media(upload_id: str, filename: str):
@@ -133,7 +155,8 @@ def _enqueue_uploaded_media_url(url: str) -> dict:
 @router.post("/ingest/media")
 async def ingest_media(request: Request, file: UploadFile = File(...), title: str | None = Form(None)):
     settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
-    upload_store.cleanup_uploads(settings_snapshot)
+    # Scans and stats the whole upload tree; not something to do on the loop.
+    await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
     filename = str(getattr(file, "filename", "") or "").strip()
     content_type = str(getattr(file, "content_type", "") or "").split(";", 1)[0].strip().lower()
     if not upload_store.is_allowed_upload(content_type, filename):
@@ -146,8 +169,10 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
     upload_id = upload_store.new_upload_id()
     public_name = upload_store.sanitize_upload_filename(filename, content_type=content_type)
     target_dir = upload_store.upload_dir(upload_id)
-    os.makedirs(target_dir, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(prefix="relaytv-upload-", suffix=".part", dir=target_dir)
+    await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
+    fd, tmp_path = await run_in_threadpool(
+        tempfile.mkstemp, "relaytv-upload-", ".part", target_dir
+    )
     os.close(fd)
     final_path = os.path.join(target_dir, public_name)
     size_bytes = 0
@@ -160,12 +185,13 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
                 size_bytes += len(chunk)
                 if size_bytes > max_bytes:
                     raise HTTPException(status_code=413, detail="Uploaded media exceeds configured storage size limit")
-                out.write(chunk)
-            out.flush()
-            os.fsync(out.fileno())
+                await run_in_threadpool(_write_chunk, out, chunk, sync=False)
+            # One sync at the end: the file is not readable by anything until
+            # the os.replace below publishes it.
+            await run_in_threadpool(_write_chunk, out, b"", sync=True)
         if size_bytes <= 0:
             raise HTTPException(status_code=400, detail="Uploaded media is empty")
-        os.replace(tmp_path, final_path)
+        await run_in_threadpool(os.replace, tmp_path, final_path)
         media_title = str(title or "").strip() or os.path.basename(filename or public_name) or public_name
         meta = {
             "id": upload_id,
@@ -177,10 +203,10 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
             "size_bytes": int(size_bytes),
             "created_unix": float(time.time()),
         }
-        upload_store.write_metadata(upload_id, meta)
+        await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
         media_url = str(request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name))
         item = upload_store.build_item(meta, absolute_url=media_url)
-        cleanup_result = upload_store.cleanup_uploads(settings_snapshot)
+        cleanup_result = await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
         return {
             "ok": True,
             "media_id": upload_id,
@@ -221,7 +247,8 @@ async def ingest_media_enqueue(request: Request, file: UploadFile = File(...), t
 @router.post("/ingest/media/play")
 async def ingest_media_play(request: Request, file: UploadFile = File(...), title: str | None = Form(None)):
     settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
-    upload_store.cleanup_uploads(settings_snapshot)
+    # Scans and stats the whole upload tree; not something to do on the loop.
+    await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
     filename = str(getattr(file, "filename", "") or "").strip()
     content_type = str(getattr(file, "content_type", "") or "").split(";", 1)[0].strip().lower()
     if not upload_store.is_allowed_upload(content_type, filename):
@@ -242,11 +269,11 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
         content_type=content_type,
         size_bytes=0,
     )
-    upload_store.write_metadata(upload_id, meta)
+    await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
 
     media_url = str(request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name))
     target_dir = upload_store.upload_dir(upload_id)
-    os.makedirs(target_dir, exist_ok=True)
+    await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
     final_path = os.path.join(target_dir, public_name)
     size_bytes = 0
     progressive_started = False
@@ -257,7 +284,9 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
     stored_ok = False
     session = upload_store.new_play_session(meta)
     session["path"] = final_path
-    upload_store.write_session(upload_id, session)
+    await run_in_threadpool(upload_store.write_session, upload_id, session)
+    synced_bytes = 0
+    synced_at = time.monotonic()
     try:
         with open(final_path, "wb") as out:
             while True:
@@ -269,9 +298,16 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                 size_bytes += len(chunk)
                 if size_bytes > max_bytes:
                     raise HTTPException(status_code=413, detail="Uploaded media exceeds configured storage size limit")
-                out.write(chunk)
-                out.flush()
-                os.fsync(out.fileno())
+                # Progressive playback reads this file while it is being
+                # written, so the bytes must reach the filesystem every chunk.
+                # Forcing them all the way to the platter every chunk is what
+                # was expensive, and is not what the reader needs.
+                now_mono = time.monotonic()
+                due = (
+                    size_bytes - synced_bytes >= _DURABLE_SYNC_BYTES
+                    or now_mono - synced_at >= _DURABLE_SYNC_SEC
+                )
+                await run_in_threadpool(_write_chunk, out, chunk, sync=due)
 
                 session = upload_store.mark_session_progress(
                     session,
@@ -281,7 +317,12 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                     chunk_finished_unix=chunk_finished,
                     path=final_path,
                 )
-                upload_store.write_session(upload_id, session)
+                if due:
+                    # The in-memory session is exact either way; this is the
+                    # durable heartbeat, and it rides along with the sync.
+                    synced_bytes = size_bytes
+                    synced_at = now_mono
+                    await run_in_threadpool(upload_store.write_session, upload_id, session)
 
                 if progressive_started or session.get("fallback_to_full_upload") is True:
                     continue
@@ -295,29 +336,30 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                         progressive_started = True
                         playback_mode = "progressive"
                         session = upload_store.mark_session_progressive_started(session)
-                        upload_store.write_session(upload_id, session)
+                        await run_in_threadpool(upload_store.write_session, upload_id, session)
                     except Exception as exc:
                         logger.warning("progressive_upload_start_failed id=%s error=%s", upload_id, exc)
                         fallback_reason = "start_failed"
                         session = upload_store.mark_session_fallback(session, fallback_reason)
-                        upload_store.write_session(upload_id, session)
+                        await run_in_threadpool(upload_store.write_session, upload_id, session)
                 elif reason not in ("buffering", "warming_up", "waiting_for_upload"):
                     fallback_reason = str(reason or "").strip() or "fallback_full_upload"
                     session = upload_store.mark_session_fallback(session, fallback_reason)
-                    upload_store.write_session(upload_id, session)
+                    await run_in_threadpool(upload_store.write_session, upload_id, session)
                     _progressive_fallback_toast()
                     fallback_toast_sent = True
 
-            out.flush()
-            os.fsync(out.fileno())
+            # Final durable sync: the file is complete and playback may still
+            # be reading it.
+            await run_in_threadpool(_write_chunk, out, b"", sync=True)
 
         if size_bytes <= 0:
             raise HTTPException(status_code=400, detail="Uploaded media is empty")
 
         meta["size_bytes"] = int(size_bytes)
-        upload_store.write_metadata(upload_id, meta)
+        await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
         session = upload_store.mark_session_complete(session)
-        upload_store.write_session(upload_id, session)
+        await run_in_threadpool(upload_store.write_session, upload_id, session)
 
         item = upload_store.build_item(meta, absolute_url=media_url)
         if not progressive_started:
@@ -328,9 +370,9 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
             now_playing = await _play_uploaded_item(item, mode="ingest_media_play")
             playback_mode = "full_upload"
             session = upload_store.mark_session_completed_playback(session, mode=playback_mode)
-            upload_store.write_session(upload_id, session)
+            await run_in_threadpool(upload_store.write_session, upload_id, session)
 
-        cleanup_result = upload_store.cleanup_uploads(settings_snapshot)
+        cleanup_result = await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
         stored_ok = True
         return {
             "ok": True,
@@ -355,6 +397,6 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
             pass
         if not stored_ok:
             try:
-                upload_store.delete_upload(upload_id)
+                await run_in_threadpool(upload_store.delete_upload, upload_id)
             except Exception:
                 pass
