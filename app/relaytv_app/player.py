@@ -5983,7 +5983,12 @@ def _hydrate_jellyfin_resume_metadata(now: dict) -> dict:
         except Exception:
             origin = ""
         meta = (
-            jellyfin_receiver.get_item_metadata(item_id, token_override=token, server_url_override=origin)
+            jellyfin_receiver.get_item_metadata(
+                item_id,
+                token_override=token,
+                server_url_override=origin,
+                user_id_override=str(out.get("_jellyfin_metadata_user_id") or "").strip(),
+            )
             if item_id
             else {}
         )

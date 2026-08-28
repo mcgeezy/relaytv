@@ -706,7 +706,9 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "native_qt_mpv_runtime_duration": qt_runtime_telemetry.get("mpv_runtime_duration"),
         "native_qt_mpv_runtime_volume": qt_runtime_telemetry.get("mpv_runtime_volume"),
         "native_qt_mpv_runtime_mute": qt_runtime_telemetry.get("mpv_runtime_mute"),
-        "native_qt_mpv_runtime_path": str(qt_runtime_telemetry.get("mpv_runtime_path") or ""),
+        "native_qt_mpv_runtime_path": public_media.sanitize_public_url(
+            qt_runtime_telemetry.get("mpv_runtime_path")
+        ),
         "native_qt_mpv_runtime_current_vo": str(qt_runtime_telemetry.get("mpv_runtime_current_vo") or ""),
         "native_qt_mpv_runtime_current_ao": str(qt_runtime_telemetry.get("mpv_runtime_current_ao") or ""),
         "native_qt_mpv_runtime_aid": qt_runtime_telemetry.get("mpv_runtime_aid"),
@@ -3253,6 +3255,12 @@ def _status_payload() -> dict[str, object]:
         playing = False
         transitioning_between_items = False
     runtime = _runtime_capabilities(playing=playing)
+    # Treat the status assembler as the final trust boundary too. Runtime
+    # adapters need the signed playback URL internally, but no adapter or test
+    # double should be able to publish its credential-bearing form.
+    runtime["native_qt_mpv_runtime_path"] = public_media.sanitize_public_url(
+        runtime.get("native_qt_mpv_runtime_path")
+    )
     effective_ytdlp_format = None
     try:
         effective_ytdlp_format = str(getattr(player, "_effective_ytdl_format", lambda s=None: "")(settings_snapshot) or "")

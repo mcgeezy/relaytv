@@ -1230,6 +1230,40 @@ def test_user_login_mode_uses_only_session_even_when_api_key_is_stored(monkeypat
     assert jellyfin_receiver.catalog_token() == "user-session-token"
 
 
+def test_shared_metadata_uses_the_controlling_user_context(monkeypatch) -> None:
+    requested: list[str] = []
+    jellyfin_receiver._catalog_cache_clear()
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.local:8096")
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "device_id", "relaytv-device")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"Id": "movie-id", "Name": "Visible Movie", "Type": "Movie"}
+            ).encode()
+
+    def _open(req, timeout=5):
+        requested.append(req.full_url)
+        return _Response()
+
+    monkeypatch.setattr(jellyfin_receiver._urlrequest, "urlopen", _open)
+
+    metadata = jellyfin_receiver.get_item_metadata(
+        "movie-id", user_id_override="gavin-user-id"
+    )
+
+    assert metadata["title"] == "Visible Movie"
+    assert requested == ["http://jf.local:8096/Users/gavin-user-id/Items/movie-id"]
+
+
 def test_catalog_login_does_not_change_shared_socket_identity(monkeypatch) -> None:
     monkeypatch.setattr(
         jellyfin_receiver,

@@ -1109,14 +1109,20 @@ def _build_emby_headers(*, token: str = "") -> dict[str, str]:
     return out
 
 
-def get_item_metadata(item_id: str, *, token_override: str = "", server_url_override: str = "") -> dict[str, object]:
+def get_item_metadata(
+    item_id: str,
+    *,
+    token_override: str = "",
+    server_url_override: str = "",
+    user_id_override: str = "",
+) -> dict[str, object]:
     iid = str(item_id or "").strip()
     context = _request_context()
     base = str(server_url_override or context.server_url or "").strip().rstrip("/")
     if not iid or not base:
         return {}
     token = str(token_override or context.catalog_token or "").strip()
-    user_id = context.catalog_user_id
+    user_id = str(user_id_override or context.catalog_user_id or "").strip()
     token_key = hashlib.sha1(token.encode("utf-8", "ignore")).hexdigest()[:12] if token else "-"
     cache_key = f"meta:{base}:{user_id}:{iid}:{token_key}"
     cached = _catalog_cache_get(cache_key)
@@ -1554,9 +1560,12 @@ def _catalog_base_token_user() -> tuple[str, str, str]:
     return context.server_url, context.catalog_token, context.catalog_user_id
 
 
-def get_item_detail(item_id: str, *, refresh: bool = False) -> dict[str, object]:
+def get_item_detail(
+    item_id: str, *, refresh: bool = False, user_id_override: str = ""
+) -> dict[str, object]:
     iid = str(item_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
+    user_id = str(user_id_override or user_id or "").strip()
     if not iid or not base:
         return {}
     cache_key = f"detail:{base}:{user_id}:{iid}"
@@ -1604,6 +1613,7 @@ def resolve_playback_url(
     subtitle_stream_index: str = "",
     max_height: int | None = None,
     max_streaming_bitrate: int | None = None,
+    user_id_override: str = "",
 ) -> dict[str, object]:
     """
     Ask Jellyfin for a playable URL for an item, preferring transcode when requested.
@@ -1611,6 +1621,7 @@ def resolve_playback_url(
     """
     iid = str(item_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
+    user_id = str(user_id_override or user_id or "").strip()
     if not iid or not base:
         return {"url": "", "method": "none", "media_source_id": ""}
     mid = str(media_source_id or "").strip()
@@ -2582,9 +2593,11 @@ def list_series_episodes(
     season_id: str = "",
     season_number: int | None = None,
     refresh: bool = False,
+    user_id_override: str = "",
 ) -> dict[str, object]:
     sid = str(series_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
+    user_id = str(user_id_override or user_id or "").strip()
     if not sid or not base:
         return {"series_id": sid, "season_id": str(season_id or "").strip(), "season_number": season_number, "episodes": [], "count": 0}
 

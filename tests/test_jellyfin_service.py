@@ -184,7 +184,11 @@ def _detail(**overrides) -> dict:
 
 
 def test_select_playback_url_direct_when_profile_is_healthy(monkeypatch) -> None:
-    monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail())
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "get_item_detail",
+        lambda iid, refresh=False, user_id_override="": _detail(),
+    )
     monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True})
     monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
 
@@ -443,10 +447,12 @@ def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_receiver, "session_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "api_key", lambda: "")
 
-    metadata_calls: list[str] = []
+    metadata_calls: list[tuple[str, str]] = []
 
-    def fake_metadata(iid, *, token_override="", server_url_override=""):
-        metadata_calls.append(iid)
+    def fake_metadata(
+        iid, *, token_override="", server_url_override="", user_id_override=""
+    ):
+        metadata_calls.append((iid, user_id_override))
         return {
             "title": f"Episode {iid}",
             "channel": "Series · S01",
@@ -464,22 +470,45 @@ def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
     monkeypatch.setattr(state, "NOW_PLAYING", {})
     monkeypatch.setattr(state, "persist_queue", lambda: None)
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+    smart_item_users: list[str] = []
+
+    def fake_smart_item(url, start_pos=None, user_id_override=""):
+        smart_item_users.append(user_id_override)
+        return {"url": url, "title": "Episode ep-1"}
+
     monkeypatch.setattr(
-        jellyfin_service, "smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Episode ep-1"}
+        jellyfin_service,
+        "smart_item_from_url",
+        fake_smart_item,
     )
-    monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lambda iid: ("", ""))
+    monkeypatch.setattr(
+        jellyfin_service,
+        "preferred_stream_indices",
+        lambda iid, user_id_override="": ("", ""),
+    )
     monkeypatch.setattr(playback_service, "suppress_auto_next", lambda sec, **kw: None)
     monkeypatch.setattr(playback_service, "play_now", lambda item, **kw: dict(item))
     monkeypatch.setattr(playback_service, "update_now_playing", lambda now: None)
 
     out = jellyfin_service.handle_command(
-        FakeCommandReq(action="Play", payload={"ItemIds": ["ep-1", "ep-2", "ep-3"], "PlayCommand": "PlayNow"}),
+        FakeCommandReq(
+            action="Play",
+            payload={
+                "ItemIds": ["ep-1", "ep-2", "ep-3"],
+                "PlayCommand": "PlayNow",
+                "ControllingUserId": "gavin-user-id",
+            },
+        ),
         controls={},
         ui=_noop_ui(),
     )
 
     assert out["ok"] is True and out["action"] == "play"
-    assert metadata_calls == ["ep-2", "ep-3"]
+    assert metadata_calls == [
+        ("ep-2", "gavin-user-id"),
+        ("ep-3", "gavin-user-id"),
+    ]
+    assert smart_item_users == ["gavin-user-id"]
     assert [q["jellyfin_item_id"] for q in state.QUEUE] == ["ep-2", "ep-3"]
     assert [q["title"] for q in state.QUEUE] == ["Episode ep-2", "Episode ep-3"]
     assert state.QUEUE[0]["channel"] == "Series · S01"
