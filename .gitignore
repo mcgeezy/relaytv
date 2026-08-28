@@ -109,3 +109,6 @@ local-scripts/
 .venv-ci/
 logs/
 ytmpv-pipeline-check-*.log
+
+# Local-only compose overlay for testing a branch in the released image.
+docker-compose.branchtest.yml
