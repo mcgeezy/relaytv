@@ -5051,6 +5051,20 @@ def _play_item_owned(
                     pass
         raise _PlaybackSuperseded(stage)
 
+    def _run_owned(stage: str, effect):
+        """Run a short irreversible effect atomically with intent ownership.
+
+        A plain check immediately before clearing the queue still leaves a
+        check/act window in which a newer Play can claim the generation. Keep
+        only the short mutation itself under the intent lock; resolution and
+        availability waits remain fully concurrent.
+        """
+        with _INTENT_LOCK:
+            if intent != _PLAYBACK_INTENT:
+                raise _PlaybackSuperseded(stage)
+            return effect()
+
+    _require_owned("pre_history_update")
     update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
     _mark_playback_transition()
     if isinstance(item_or_text, dict):
@@ -5063,13 +5077,16 @@ def _play_item_owned(
 
         item = iptv_service.resolve_queue_item(item)
 
+    # make_item and IPTV catalog resolution may both block. Nothing below may
+    # touch device or queue state until the result is known to belong to the
+    # still-current Play.
+    _require_owned("post_item_prepare")
     raw = validate_user_url(item["url"])
     item["url"] = raw
     title = item.get("title") or raw
     provider = item.get("provider") or provider_from_url(raw)
     http_headers = _item_http_headers(item)
     play_t0 = time.monotonic()
-    note_playback_started(start_pos)
     debug_log("player", f"play_item start mode={mode} provider={provider} use_resolver={use_resolver}")
     if provider == "iptv":
         debug_log(
@@ -5084,11 +5101,14 @@ def _play_item_owned(
     ours = _our_phys_addr() or ""
     should_take_over = _setting_enabled("tv_takeover_enabled", True) and (not ours or active_src != ours)
     if cec_auto_on_switch(cec) and should_take_over:
-        tv_on_and_switch()
+        _run_owned("pre_cec_takeover", tv_on_and_switch)
 
     if clear_queue:
-        with state.QUEUE_LOCK:
-            state.QUEUE.clear()
+        def _clear_queue() -> None:
+            with state.QUEUE_LOCK:
+                state.QUEUE.clear()
+
+        _run_owned("pre_queue_clear", _clear_queue)
         state.persist_queue()
 
     stream, audio = (raw, None)
@@ -5231,6 +5251,7 @@ def _play_item_owned(
         # Rechecked under the lock: a Stop can land between the wait above and
         # acquiring it, and loading media is the point of no return.
         _require_owned("pre_load", relay_stream=stream if relay_playback else "")
+        note_playback_started(start_pos)
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
         # immediately before the playback handoff so background idle workers do

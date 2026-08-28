@@ -152,6 +152,66 @@ def test_newer_play_supersedes_a_slower_older_one(harness) -> None:
     assert results and not results[0]
 
 
+def test_retired_item_preparation_cannot_clear_the_replacement_queue(harness, monkeypatch) -> None:
+    """IPTV preparation used to return into CEC and queue clearing before its first guard."""
+    from relaytv_app.integrations import iptv_service
+
+    entered = threading.Event()
+    release = threading.Event()
+    takeover: list[bool] = []
+
+    def _slow_item(item):
+        entered.set()
+        release.wait(5.0)
+        return dict(item)
+
+    monkeypatch.setattr(iptv_service, "resolve_queue_item", _slow_item)
+    monkeypatch.setattr(player, "cec_auto_on_switch", lambda cec: True)
+    monkeypatch.setattr(player, "tv_on_and_switch", lambda: takeover.append(True))
+    monkeypatch.setattr(player, "_our_phys_addr", lambda: "1000")
+    monkeypatch.setattr(state, "get_tv_state", lambda: {"active_source_phys_addr": "2000"})
+
+    results: list[dict] = []
+    errors: list[BaseException] = []
+
+    def _run():
+        try:
+            results.append(
+                player.play_item(
+                    {
+                        "url": "https://iptv.invalid/source/channel",
+                        "provider": "iptv",
+                        "iptv_source_id": "source",
+                        "iptv_channel_id": "channel",
+                    },
+                    use_resolver=False,
+                    cec=True,
+                    clear_queue=True,
+                    mode="test",
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    assert entered.wait(1.0), "IPTV preparation never entered"
+
+    winner = {"url": "https://example.com/newer.mp4", "title": "newer"}
+    player.claim_playback_intent()
+    state.NOW_PLAYING = winner
+    state.QUEUE[:] = [winner]
+    release.set()
+    thread.join(timeout=5.0)
+
+    assert not errors, errors
+    assert not thread.is_alive()
+    assert results == [winner]
+    assert state.QUEUE == [winner]
+    assert takeover == []
+    assert harness["loaded"] == []
+
+
 def test_a_play_that_is_never_superseded_publishes(harness) -> None:
     harness["gate"].set()
 
