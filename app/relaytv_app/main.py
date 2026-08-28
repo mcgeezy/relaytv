@@ -145,28 +145,30 @@ def create_app(*, testing: bool = False) -> FastAPI:
     # outermost and rejected writes still show up in request logging.
     @app.middleware("http")
     async def _api_token_guard(request: Request, call_next):
+        authorization = request.headers.get("authorization")
+        write_allowed = api_auth.write_request_allowed(
+            request.method,
+            authorization,
+            path=request.url.path,
+        )
+        if not write_allowed:
+            return JSONResponse(
+                {"detail": "api token required"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         if api_auth.cross_site_mutating_get(
             request.method,
             request.url.path,
             sec_fetch_site=request.headers.get("sec-fetch-site"),
             referer=request.headers.get("referer"),
             host=request.headers.get("host"),
-        ):
+        ) and not api_auth.valid_api_bearer(authorization):
             return JSONResponse(
                 {"detail": "cross-site write request rejected"},
                 status_code=403,
             )
-        if api_auth.write_request_allowed(
-            request.method,
-            request.headers.get("authorization"),
-            path=request.url.path,
-        ):
-            return await call_next(request)
-        return JSONResponse(
-            {"detail": "api token required"},
-            status_code=401,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return await call_next(request)
 
     @app.middleware("http")
     async def _log_slow_requests(request: Request, call_next):

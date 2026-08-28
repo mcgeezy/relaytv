@@ -125,7 +125,8 @@ must not control the WebSocket origin check.
   Once the underlying download completes, the player swaps mpv onto the
   finalized local spool file (gaining seeking) and this route drops out.
   Not part of the public API surface — clients should never call it.
-- `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
+- `POST /snapshot`: capture a snapshot of active playback
+- `GET /snapshot`: compatibility alias; tokenless callers must supply same-origin browser provenance, while headerless API clients must use POST or a valid bearer token
 - `GET /share`
   - query: `url` or `link`, optional `cec`
   - share-target compatible immediate play helper

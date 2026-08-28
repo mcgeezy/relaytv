@@ -249,7 +249,7 @@ def test_referer_fallback_rejects_cross_origin_snapshot(monkeypatch) -> None:
     assert response.status_code == 403
 
 
-def test_same_origin_and_headerless_snapshot_clients_remain_compatible(monkeypatch) -> None:
+def test_same_origin_snapshot_remains_open_but_headerless_get_fails_closed(monkeypatch) -> None:
     monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
     runtime_config.refresh_from_env()
     client = _client()
@@ -264,10 +264,26 @@ def test_same_origin_and_headerless_snapshot_clients_remain_compatible(monkeypat
     )
     headerless = client.get("/snapshot")
 
-    # No playback is active, so reaching the handler yields 409. The important
-    # contract is that neither legitimate shape is rejected by the CSRF guard.
+    # No playback is active, so the same-origin request reaches the handler.
+    # Headerless tokenless GET cannot be distinguished from an older browser
+    # with its Referer suppressed, so callers must use POST instead.
     assert same_origin.status_code == 409
-    assert headerless.status_code == 409
+    assert headerless.status_code == 403
+    assert headerless.json()["detail"] == "cross-site write request rejected"
+
+
+def test_valid_bearer_allows_a_headerless_snapshot_get(monkeypatch) -> None:
+    monkeypatch.setenv("RELAYTV_API_TOKEN", TOKEN)
+    runtime_config.refresh_from_env()
+
+    response = _client().get(
+        "/snapshot",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    # A bearer credential is not browser-forgeable, so the compatibility GET
+    # may reach the handler without optional browser provenance headers.
+    assert response.status_code == 409
 
 
 def test_share_target_redirects_without_playing(monkeypatch) -> None:

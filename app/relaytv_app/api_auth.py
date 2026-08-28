@@ -131,8 +131,11 @@ def cross_site_mutating_get(
     source = _request_authority(str(referer or ""), absolute=True)
     target = _request_authority(str(host or ""), absolute=False)
     if source is None or target is None:
-        # Headerless non-browser API clients retain the local-first behavior.
-        return False
+        # Without either browser provenance signal, a tokenless API request is
+        # indistinguishable from an older/privacy-filtered cross-site browser.
+        # Fail closed; callers that cannot send these headers use POST or a
+        # configured bearer token (handled by the middleware).
+        return True
     # Host has no scheme, so normalize an omitted port to the Referer's scheme
     # default before comparing.
     if target[1] is None:
@@ -149,6 +152,14 @@ def write_request_allowed(
         return True
     if not is_write_request(method, path):
         return True
+    return valid_api_bearer(authorization)
+
+
+def valid_api_bearer(authorization: str | None) -> bool:
+    """Return True only for a configured token and its matching bearer value."""
+    token = configured_api_token()
+    if not token:
+        return False
     presented = bearer_token_from_header(authorization)
     if not presented:
         return False

@@ -151,7 +151,10 @@ def test_idle_playback_still_conflicts(snap_dir, client, monkeypatch) -> None:
 
 def test_get_alias_behaves_the_same(snap_dir, client, monkeypatch) -> None:
     monkeypatch.setattr(player, "mpv_command", lambda cmd: {"error": "property not found"})
-    assert client.get("/snapshot").status_code == 502
+    assert client.get(
+        "/snapshot",
+        headers={"Sec-Fetch-Site": "same-origin"},
+    ).status_code == 502
 
 
 def test_timeout_setting_falls_back_on_garbage(monkeypatch) -> None:
