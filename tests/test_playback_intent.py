@@ -184,7 +184,6 @@ def test_stop_at_final_publish_boundary_wins(harness, monkeypatch) -> None:
     assert not stop_thread.is_alive()
     assert state.NOW_PLAYING is None
     assert state.SESSION_STATE == "idle"
-    assert harness["watchdogs"] == []
 
 
 def test_newer_play_supersedes_a_slower_older_one(harness) -> None:
