@@ -4162,10 +4162,12 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
         confirm_interval = 0.05
     confirm_interval = max(0.01, min(confirm_interval, 0.25))
 
+    last_props: dict[str, Any] = {}
     for i in range(confirm_polls):
         try:
-            props = mpv_get_many(["playlist-pos", "playlist-count", "time-pos", "path", "pause"])
-            if _consume_mpv_queued_next_if_started(props, force_playlist_advance=True):
+            sample = mpv_get_many(["playlist-pos", "playlist-count", "time-pos", "path", "pause"])
+            last_props = sample if isinstance(sample, dict) else {}
+            if _consume_mpv_queued_next_if_started(last_props, force_playlist_advance=True):
                 return "mpv_playlist_next"
         except Exception:
             pass
@@ -4174,7 +4176,28 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
                 poll_sleep(confirm_interval)
             else:
                 time.sleep(confirm_interval)
-    return "mpv_playlist_next_pending"
+
+    # A successful IPC response only confirms that mpv accepted the command;
+    # it does not mean the next playlist entry actually started. Publishing an
+    # unconfirmed handoff as success leaves the queue head in place, so the
+    # natural-end worker retries playlist-next forever while the UI alternates
+    # between its transition and idle surfaces. Retire the stale internal
+    # playlist and let advance_queue_playback use its normal dequeue/play_item
+    # fallback in this same, serialized advance operation.
+    logger.warning(
+        "mpv_playlist_next_unconfirmed playlist_pos=%s playlist_count=%s path_present=%s action=dequeue_play_item",
+        last_props.get("playlist-pos"),
+        last_props.get("playlist-count"),
+        bool(str(last_props.get("path") or "").strip()),
+    )
+    try:
+        cleanup = mpv_command(["playlist-clear"])
+        if not isinstance(cleanup, dict) or cleanup.get("error") != "success":
+            logger.warning("mpv_playlist_next_cleanup_failed error=%s", cleanup)
+    except Exception as exc:
+        logger.warning("mpv_playlist_next_cleanup_failed error=%s", exc)
+    _reset_mpv_up_next_state()
+    return None
 
 
 def _notify_warn_toast(text: str) -> None:
@@ -6156,7 +6179,12 @@ def _session_tracker_tick() -> None:
         _reset_mpv_up_next_state()
         return
     props = mpv_get_many(["time-pos", "duration", "pause", "playlist-pos", "playlist-count", "path", "core-idle", "eof-reached"])
-    _consume_mpv_queued_next_if_started(props)
+    # Queue advance owns the decision between consuming a confirmed seamless
+    # handoff and retiring it for dequeue/play_item fallback. Do not let this
+    # telemetry path consume the queue between the advance path's final sample
+    # and its stale-playlist cleanup.
+    with state.ADVANCE_LOCK:
+        _consume_mpv_queued_next_if_started(props)
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     if not now:
         if _repair_orphan_runtime_playback(props):
