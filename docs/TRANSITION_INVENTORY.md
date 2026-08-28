@@ -94,9 +94,9 @@ The five Phase 3 review scenarios and where they are guarded at phase start:
 | Transition global | Writers outside `state.py` (write sites) |
 | --- | --- |
 | `AUTO_NEXT_SUPPRESS_UNTIL` | `playback_service.py` (2) |
-| `NOW_PLAYING` | `playback_service.py` (11)<br>`player.py` (9)<br>`routes/__init__.py` (1) |
+| `NOW_PLAYING` | `playback_service.py` (6)<br>`player.py` (8)<br>`routes/__init__.py` (1) |
 | `QUEUE` | `integrations/jellyfin_service.py` (4)<br>`playback_service.py` (7)<br>`player.py` (5)<br>`routes/queue.py` (6)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
-| `SESSION_POSITION` | `playback_service.py` (8)<br>`player.py` (8) |
-| `SESSION_STATE` | `playback_service.py` (10)<br>`player.py` (11)<br>`routes/__init__.py` (4) |
+| `SESSION_POSITION` | `playback_service.py` (7)<br>`player.py` (7) |
+| `SESSION_STATE` | `playback_service.py` (3)<br>`player.py` (10)<br>`routes/__init__.py` (4) |
 | `_TEMP_PLAYBACK_STACK` | `playback_service.py` (8)<br>`routes/__init__.py` (2)<br>`routes/playback.py` (2) |
 <!-- END GENERATED TRANSITION TABLE -->

@@ -123,7 +123,9 @@ from .playback import (
     resume_session as resume_session,
     seek as seek,
     seek_abs as seek_abs,
+    ShareReq as ShareReq,
     share as share,
+    share_target as share_target,
     smart as smart,
     stop as stop,
     toggle_pause as toggle_pause,
@@ -3410,7 +3412,13 @@ def _status_payload() -> dict[str, object]:
             iptv_status = iptv_service.status()
         except Exception:
             iptv_status.update({"source_count": 0, "channel_count": 0})
-    return {
+    # Durable-write health. A device whose disk stopped accepting writes used
+    # to look completely healthy while quietly discarding every setting and
+    # queue change; the key is absent while writes are landing, so the payload
+    # only grows when something is actually wrong.
+    persistence = state.persistence_health() if hasattr(state, "persistence_health") else {"ok": True}
+
+    payload: dict[str, object] = {
         "state": sess,
         "device_name": str(settings_snapshot.get("device_name") or "RelayTV"),
         "idle_dashboard_enabled": bool(settings_snapshot.get("idle_dashboard_enabled", True)),
@@ -3466,6 +3474,9 @@ def _status_payload() -> dict[str, object]:
         **runtime,
         "effective_ytdlp_format": effective_ytdlp_format,
     }
+    if not persistence.get("ok", True):
+        payload["persistence"] = persistence
+    return payload
 
 
 @router.get("/status")

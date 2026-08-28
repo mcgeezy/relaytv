@@ -28,7 +28,12 @@ _STORE_LOCK = threading.Lock()
 _STORE: IptvStore | None = None
 _STORE_PATH = ""
 _REFRESH_LOCKS: dict[str, threading.Lock] = {}
-_WORKER_STOP = threading.Event()
+# One stop flag per worker generation. It used to be a module global that
+# start_worker cleared, so starting while the previous worker was still
+# shutting down un-stopped that worker and left two refresh loops running
+# against the same sources.
+_WORKER_LOCK = threading.Lock()
+_WORKER_STOP: threading.Event | None = None
 _WORKER_THREAD: threading.Thread | None = None
 
 _ATTR_RE = re.compile(r"([A-Za-z0-9_-]+)=(\"[^\"]*\"|'[^']*'|[^\s,]*)")
@@ -730,20 +735,44 @@ def _refresh_due_sources() -> None:
 
 
 def start_worker() -> None:
-    global _WORKER_THREAD
-    if _WORKER_THREAD is not None and _WORKER_THREAD.is_alive():
-        return
-    _WORKER_STOP.clear()
+    global _WORKER_THREAD, _WORKER_STOP
+    with _WORKER_LOCK:
+        if _WORKER_THREAD is not None and _WORKER_THREAD.is_alive():
+            return
+        stop = threading.Event()
 
-    def _run() -> None:
-        while not _WORKER_STOP.wait(60.0):
-            _refresh_due_sources()
-            if enabled():
-                _check_due_favorites()
+        def _run(stop: threading.Event = stop) -> None:
+            # Closes over its own flag, so a later start cannot revive it and a
+            # retired generation cannot outlive its stop.
+            while not stop.wait(60.0):
+                _refresh_due_sources()
+                if enabled():
+                    _check_due_favorites()
 
-    _WORKER_THREAD = threading.Thread(target=_run, name="relaytv-iptv-refresh", daemon=True)
-    _WORKER_THREAD.start()
+        thread = threading.Thread(target=_run, name="relaytv-iptv-refresh", daemon=True)
+        _WORKER_STOP = stop
+        _WORKER_THREAD = thread
+        thread.start()
 
 
-def stop_worker() -> None:
-    _WORKER_STOP.set()
+def stop_worker(*, timeout: float = 2.0) -> None:
+    """Retire the refresh worker and wait, briefly, for it to leave.
+
+    Joining matters at shutdown: a refresh in flight holds source state and
+    network handles, and without the join the process could exit or a
+    replacement could start while it was still running.
+    """
+    global _WORKER_THREAD, _WORKER_STOP
+    with _WORKER_LOCK:
+        stop = _WORKER_STOP
+        thread = _WORKER_THREAD
+        _WORKER_STOP = None
+        _WORKER_THREAD = None
+        if stop is not None:
+            stop.set()
+    if thread is not None and thread.is_alive() and timeout > 0:
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            # A refresh can take longer than the join; it will exit on its own
+            # next loop because its flag is set and no longer reachable.
+            logger.warning("iptv_refresh_worker_did_not_exit")

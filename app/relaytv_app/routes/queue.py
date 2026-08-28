@@ -585,10 +585,11 @@ def queue_dedupe():
         if changed:
             state.QUEUE[:] = deduped
             snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
-            try:
-                state.persist_queue_payload(snapshot)
-            except Exception as e:
-                logger.warning("queue_persist_failed route=queue_dedupe error=%s", e)
+    if changed:
+        try:
+            state.persist_queue_payload(snapshot)
+        except Exception as e:
+            logger.warning("queue_persist_failed route=queue_dedupe error=%s", e)
     try:
         player.prime_mpv_up_next_from_queue(force=True)
     except Exception:
@@ -618,10 +619,10 @@ def queue_move(req: QueueMoveReq):
         state.QUEUE.insert(to, item)
         snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
 
-        try:
-            state.persist_queue_payload(snapshot)
-        except Exception as e:
-            logger.warning("queue_persist_failed route=queue_move error=%s", e)
+    try:
+        state.persist_queue_payload(snapshot)
+    except Exception as e:
+        logger.warning("queue_persist_failed route=queue_move error=%s", e)
     try:
         player.prime_mpv_up_next_from_queue(force=True)
     except Exception:

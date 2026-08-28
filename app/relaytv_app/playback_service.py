@@ -441,9 +441,9 @@ def resume_paused_in_place() -> dict[str, Any] | None:
     resumed = dict(now)
     resumed["closed"] = False
     suppress_auto_next(2.0)
-    state.set_now_playing(resumed)
-    state.set_session_state("playing")
-    state.set_pause_reason(None)
+    # One mutation, one write: the three-setter form persisted twice through
+    # combinations the session was never conceptually in.
+    state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
     return result
 
 
@@ -581,8 +581,7 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
         resumed["started"] = int(time.time())
         resumed["mode"] = "resume"
         resumed["closed"] = False
-        state.set_now_playing(resumed)
-        state.set_session_state("playing")
+        state.update_session(now_playing=resumed, session_state="playing")
 
     resume_result: dict[str, Any] | None = None
     if start_pos is not None:
@@ -601,9 +600,7 @@ def clear_session() -> None:
     # Terminal transition: a play still resolving must not republish over the
     # idle session this is establishing.
     player.retire_playback_intents("clear_session")
-    state.set_now_playing(None)
-    state.set_session_position(None)
-    state.set_session_state("idle")
+    state.update_session(now_playing=None, session_position=None, session_state="idle")
     try:
         state.persist_queue()
     except Exception:
@@ -616,8 +613,10 @@ def mark_paused(paused: bool, *, reason: str | None = None) -> None:
     ``reason`` preserves a pre-existing pause reason across an in-place
     restart (Jellyfin track switches); it defaults to a user pause.
     """
-    state.set_session_state("paused" if paused else "playing")
-    state.set_pause_reason((reason if reason is not None else "user") if paused else None)
+    state.update_session(
+        session_state="paused" if paused else "playing",
+        pause_reason=(reason if reason is not None else "user") if paused else None,
+    )
 
 
 def update_now_playing(now: dict) -> None:
@@ -631,9 +630,7 @@ def update_now_playing(now: dict) -> None:
 
 def mark_resumed_now_playing(resumed: dict) -> None:
     """Record a successfully resumed item as the playing session."""
-    state.set_now_playing(resumed)
-    state.set_session_state("playing")
-    state.set_pause_reason(None)
+    state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
 
 
 def stop_current() -> dict[str, Any]:
@@ -776,17 +773,18 @@ def restore_playback_state(snapshot: dict) -> None:
         mode="temporary_resume",
         start_pos=(float(start_pos) if start_pos is not None else None),
     )
+    paused = False
     if snapshot.get("paused"):
         try:
             player.mpv_set("pause", True)
-            state.set_session_state("paused")
-            state.set_pause_reason("temporary")
+            paused = True
         except Exception:
             pass
-    else:
-        state.set_session_state("playing")
-        state.set_pause_reason(None)
-    state.set_now_playing(resumed)
+    state.update_session(
+        session_state="paused" if paused else "playing",
+        pause_reason="temporary" if paused else None,
+        now_playing=resumed,
+    )
 
 
 def complete_temporary_playback(frame_id: str, reason: str) -> bool:

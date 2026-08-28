@@ -54,13 +54,28 @@ it to a heading plus a couple of sentences; end it with a `---` rule.
 
 ## Quality Gates
 
-Run before finishing any change:
+Run before finishing any change. The JavaScript gates are not optional — CI
+runs them, and a `.js` change that only passes the Python gates will fail
+there:
 
 ```text
 ruff check app tests
 PYTHONPATH=app pytest -q
 git diff --check
+node --check app/relaytv_app/static/ui/app.js
+node --check app/relaytv_app/static/ui/realtime_transport.js
+PYTHONPATH=app python3 -c "import re; from relaytv_app.routes import x11_overlay_page; print(re.findall(r'<script>(.*?)</script>', x11_overlay_page().body.decode(), re.S)[0])" | node --check -
+node --test tests/js/*.test.js
 ```
+
+CI installs with `pip install -e '.[dev]'`, which honors the pins in
+`pyproject.toml`. A system Python may resolve different versions, so a green
+local run is not proof of a green CI run — and the difference is not always
+subtle. FastAPI is the one that has bitten: versions before 0.129 flatten
+included routers into `app.routes`, later ones keep them as lazy entries, so a
+test that walks routes can find everything locally and nothing on CI. When a
+test inspects framework internals, make it assert that it *found* something,
+or it will pass by finding nothing.
 
 Several public surfaces are machine-checked against in-tree inventory docs.
 When intentionally changing one of these surfaces, regenerate its doc with the
@@ -71,6 +86,71 @@ matching test's `--write` mode instead of hand-editing:
 - playback transition writers: `tests/test_transition_inventory.py` → `docs/TRANSITION_INVENTORY.md`
 - Jellyfin route surface: `tests/test_jellyfin_inventory.py` → `docs/JELLYFIN_INVENTORY.md`
 - runtime profile matrix: `tests/test_runtime_matrix.py` → `docs/OPERATIONS_TEST_MATRIX.md`
+
+## Test Discipline
+
+Two rules, both learned by shipping code that broke without a test noticing:
+
+- **Revert proof.** For every concurrency, lifecycle, or boundary fix, revert
+  the production guard alone and confirm the new test *fails*. A test that
+  passes against the audited behavior has pinned nothing.
+- **A test that cannot fail is not coverage.** Before trusting a new test, ask
+  what it would take for it to fail. A responsiveness test that blocks an
+  `asyncio.Event` and asserts the loop still ticks proves only that asyncio
+  yields; it passes against the bug it was written for. Reach for the real
+  path — a real request through an ASGI transport, a real thread blocked on a
+  real `time.sleep` — when the cheap version would pass either way.
+
+Race and lifecycle tests should drive the actual interleaving rather than
+simulate it: block the slow half on an event, wait until it is genuinely in
+flight, issue the competing operation, then release.
+
+## Device Testing
+
+The published image copies in only `app/relaytv_app` and installs every
+dependency system-wide; the project itself is never installed as a package. So
+a branch runs inside the *released* image by bind-mounting the checkout over
+`/app/relaytv_app` — seconds, instead of the ten minutes a rebuild takes:
+
+```yaml
+# docker-compose.branchtest.yml — local only, keep it untracked
+services:
+  relaytv:
+    volumes:
+      - type: bind
+        source: /opt/dev/relaytv/app/relaytv_app
+        target: /app/relaytv_app
+        read_only: true
+```
+
+```text
+docker rm -f relaytv   # the running container is usually not owned by this
+                       # compose project, so `compose down` finds nothing and
+                       # `up` then fails on the container-name conflict
+docker compose -f docker-compose.yml -f docker-compose.override.yml \
+               -f docker-compose.branchtest.yml up -d
+```
+
+Four things to know before touching a device:
+
+- **`docker-compose.override.yml` is per-device.** `scripts/install.sh`
+  generates it from the hardware that host actually exposes, so they differ
+  between devices — a Pi's carries `/dev/video10-13`, `/dev/cec0`, and
+  `.Xauthority` an x86_64 host does not. Never copy one device's override to
+  another. When rsyncing a branch between devices, exclude
+  `docker-compose.override.yml`, `.env`, `data/`, and `bin/`, and back up the
+  first three first.
+- **`RELAYTV_MODE=headless` implies Xvfb**, which the published image is not
+  built with (`RELAYTV_INSTALL_HEADLESS=0`). Leave the mode alone unless the
+  image was built for it.
+- **`docker exec … python3 -c` starts a fresh process.** It reads empty module
+  state, not the running server's, so discovery, cache, and session state read
+  as zero. Read runtime state through the HTTP API; `docker exec` is only good
+  for checking which *code* is loaded.
+- **The suite does not cover the process lifecycle.** `start_mpv` calls
+  `stop_mpv` to clear the previous process, and only a *seamless replace*
+  skips that path — so a defect in cold start can sit behind a fully green
+  suite. Play something on a device before claiming a playback change works.
 
 ## Security Constraints
 

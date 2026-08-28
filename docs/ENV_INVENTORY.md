@@ -307,6 +307,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_SHELL_V2_NATIVE_PLAYING_GRACE_SEC` | `player.py` | - | static env |
 | `RELAYTV_SLOW_REQUEST_MS` | `debug.py` | - | static env |
 | `RELAYTV_SNAPSHOT_DIR` | `routes/snapshots.py` | - | static env |
+| `RELAYTV_SNAPSHOT_TIMEOUT_SEC` | `routes/snapshots.py` | - | static env |
 | `RELAYTV_SPLASH` | `player.py` | - | static env |
 | `RELAYTV_SPLASH_ARGS` | `player.py` | - | static env |
 | `RELAYTV_SPLASH_IMAGE` | `player.py` | - | static env |
@@ -316,12 +317,15 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_STATUS_INCLUDE_MPV_LOG` | `routes/__init__.py` | - | static env |
 | `RELAYTV_SUB_LANG` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_THUMB_DIR` | `qt_shell_app.py`<br>`thumb_cache.py` | - | child process input |
+| `RELAYTV_THUMB_FAILURE_BACKOFF_SEC` | `thumb_cache.py` | - | static env |
+| `RELAYTV_THUMB_FAILURE_MAP_MAX` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_JPEG_Q` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_MAX_BYTES` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_MAX_FILES` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_MAX_TOTAL_BYTES` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_MAX_TOTAL_MB` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_PRUNE_INTERVAL_SEC` | `thumb_cache.py` | - | static env |
+| `RELAYTV_THUMB_QUEUE_MAX` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_RETENTION_SEC` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_SRC_MAP_MAX` | `thumb_cache.py` | - | static env |
 | `RELAYTV_THUMB_WIDTH` | `thumb_cache.py` | - | static env |
@@ -361,6 +365,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `YTDLP_FORMAT_TIKTOK` | `ytdlp_format_policy.py` | - | static env |
 | `YTDLP_FORMAT_TWITCH` | `ytdlp_format_policy.py` | - | static env |
 | `YTDLP_FORMAT_YOUTUBE` | `ytdlp_format_policy.py` | - | static env |
+| `YTDLP_INFO_CACHE_MAX` | `resolver.py` | - | static env |
 | `YTDLP_INFO_TTL_SEC` | `resolver.py` | - | static env |
 | `YTDLP_JS_RUNTIME` | `resolver.py` | - | static env |
 <!-- END GENERATED ENV TABLE -->

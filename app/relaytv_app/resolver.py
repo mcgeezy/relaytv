@@ -7,6 +7,7 @@ import json
 import time
 import urllib.request
 import shutil
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from .config import runtime_config
@@ -19,6 +20,7 @@ from fastapi import HTTPException
 from .debug import debug_log, get_logger
 from .thumb_cache import attach_local_thumbnail
 from . import upload_store
+from . import url_boundary
 from . import ytdlp_format_policy
 
 
@@ -218,42 +220,59 @@ def validate_user_url(raw: str) -> str:
     u = normalize_shared_url(extract_first_url(raw or ""))
     if not u:
         raise HTTPException(status_code=400, detail="Missing url")
-    try:
-        p = urlparse(u)
-    except Exception:
+    # One parser for ingestion and serialization. Validating with urlparse and
+    # serializing with urlsplit().port meant a malformed port passed here and
+    # raised later, poisoning every payload that carried the item.
+    parsed = url_boundary.parse_url(u)
+    if parsed is None:
         raise HTTPException(status_code=400, detail="Invalid url")
-    if (p.scheme or "").lower() not in ("http", "https"):
+    if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Unsupported URL scheme (http/https only)")
-    if not (p.netloc or "").strip():
+    if not parsed.hostname:
         raise HTTPException(status_code=400, detail="Invalid url host")
     return u
 
+# Provider domains, matched at a dot boundary. Order is significant: the first
+# entry that matches wins, mirroring the if/elif chain this replaced.
+#
+# The YouTube tuple is wider than youtube.com on purpose. The substring test it
+# replaces ("youtu" in host) also matched youtube-nocookie.com and
+# youtubekids.com, and dropping them would be a silent behavior change; only
+# the lookalikes it matched by accident are gone.
+_PROVIDER_DOMAINS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("youtube", ("youtube.com", "youtu.be", "youtube-nocookie.com", "youtubekids.com")),
+    ("rumble", ("rumble.com",)),
+    ("twitch", ("twitch.tv",)),
+    ("tiktok", ("tiktok.com",)),
+    ("bitchute", ("bitchute.com",)),
+    ("odysee", ("odysee.com", "lbry.tv")),
+    ("vimeo", ("vimeo.com",)),
+)
+
+_YOUTUBE_DOMAINS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
+
+
+def url_hostname(u: object) -> str:
+    """Return the lowercased hostname, or "" when the URL is malformed."""
+    parsed = url_boundary.parse_url(u)
+    return parsed.hostname if parsed is not None else ""
+
+
 def is_youtube_url(u: str) -> bool:
-    try:
-        p = urlparse(u)
-        host = (p.netloc or "").lower()
-        return (
-            host.endswith("youtube.com")
-            or host.endswith("www.youtube.com")
-            or host.endswith("m.youtube.com")
-            or host.endswith("youtu.be")
-            or "youtube.com" in host
-        )
-    except Exception:
-        return False
+    return url_boundary.host_matches_any(url_hostname(u), _YOUTUBE_DOMAINS)
 
 
 def youtube_id_from_url(u: str) -> str | None:
     """Extract a YouTube video id from common URL shapes."""
     try:
         p = urlparse(u)
-        host = (p.netloc or "").lower()
+        host = url_hostname(u)
 
-        if host.endswith("youtu.be"):
+        if url_boundary.host_matches(host, "youtu.be"):
             vid = p.path.strip("/").split("/")[0]
             return vid or None
 
-        if "youtube.com" in host:
+        if url_boundary.host_matches_any(host, ("youtube.com", "youtube-nocookie.com")):
             q = parse_qs(p.query)
             if "v" in q and q["v"]:
                 return q["v"][0]
@@ -275,27 +294,20 @@ def youtube_id_from_url(u: str) -> str | None:
 
 
 def provider_from_url(u: str) -> str:
-    """Very small provider classifier (used only for UI niceness)."""
+    """Classify a URL's provider.
+
+    Described as "UI niceness" when it was a substring match, but the result
+    also selects resolver strategy and transport fallbacks, so a lookalike
+    domain could steer a URL into the wrong provider's handling.
+    """
     if upload_store.is_upload_url(u):
         return "upload"
-    try:
-        host = (urlparse(u).netloc or "").lower()
-    except Exception:
-        host = ""
-    if "youtu" in host:
-        return "youtube"
-    if host.endswith("rumble.com") or "rumble.com" in host:
-        return "rumble"
-    if host.endswith("twitch.tv") or "twitch.tv" in host:
-        return "twitch"
-    if host.endswith("tiktok.com") or "tiktok.com" in host:
-        return "tiktok"
-    if host.endswith("bitchute.com") or "bitchute.com" in host:
-        return "bitchute"
-    if host.endswith("odysee.com") or "odysee.com" in host or host.endswith("lbry.tv") or "lbry.tv" in host:
-        return "odysee"
-    if host.endswith("vimeo.com") or "vimeo.com" in host:
-        return "vimeo"
+    host = url_hostname(u)
+    if not host:
+        return "other"
+    for provider, domains in _PROVIDER_DOMAINS:
+        if url_boundary.host_matches_any(host, domains):
+            return provider
     return "other"
 
 
@@ -1034,9 +1046,57 @@ def youtube_oembed_info(youtube_url: str) -> dict | None:
     return None
 
 
-# Cache for yt-dlp metadata lookups (thumbnails, titles) to avoid repeated calls
-_YTDLP_INFO_CACHE: dict[str, tuple[float, dict]] = {}
+# Cache for yt-dlp metadata lookups (thumbnails, titles) to avoid repeated calls.
+#
+# Was an unlocked dict with a TTL check but no eviction, so it grew for the
+# life of the process — every distinct URL ever looked up kept its full
+# yt-dlp JSON resident. Entries also expired only when read again, so a URL
+# looked up once and never revisited was never released.
+#
+# Concurrent lookups of the same URL each ran their own yt-dlp subprocess,
+# because nothing recorded that one was already in flight.
+_YTDLP_INFO_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
 _YTDLP_INFO_TTL_SEC = int(os.getenv("YTDLP_INFO_TTL_SEC", "21600"))  # 6 hours
+_YTDLP_INFO_CACHE_MAX = max(16, int(os.getenv("YTDLP_INFO_CACHE_MAX") or "256"))
+_YTDLP_INFO_LOCK = threading.Lock()
+# One condition per URL currently being fetched, so a second caller waits for
+# the first rather than spawning a duplicate subprocess.
+_YTDLP_INFO_INFLIGHT: dict[str, threading.Event] = {}
+
+
+def _ytdlp_info_cached_locked(url: str, now: float) -> dict | None:
+    """Return a live entry while the caller holds ``_YTDLP_INFO_LOCK``."""
+    entry = _YTDLP_INFO_CACHE.get(url)
+    if entry is None:
+        return None
+    if (now - entry[0]) >= _YTDLP_INFO_TTL_SEC:
+        _YTDLP_INFO_CACHE.pop(url, None)
+        return None
+    _YTDLP_INFO_CACHE.move_to_end(url)
+    return entry[1]
+
+
+def _ytdlp_info_cached(url: str, now: float) -> dict | None:
+    """Return a live cache entry, evicting it if the TTL has passed."""
+    with _YTDLP_INFO_LOCK:
+        return _ytdlp_info_cached_locked(url, now)
+
+
+def _ytdlp_info_store(url: str, now: float, data: dict) -> None:
+    with _YTDLP_INFO_LOCK:
+        _YTDLP_INFO_CACHE[url] = (now, data)
+        _YTDLP_INFO_CACHE.move_to_end(url)
+        # Drop anything past its TTL first, then the least recently used.
+        for stale in [k for k, (ts, _v) in _YTDLP_INFO_CACHE.items() if (now - ts) >= _YTDLP_INFO_TTL_SEC]:
+            _YTDLP_INFO_CACHE.pop(stale, None)
+        while len(_YTDLP_INFO_CACHE) > _YTDLP_INFO_CACHE_MAX:
+            _YTDLP_INFO_CACHE.popitem(last=False)
+
+
+def reset_ytdlp_info_cache_for_tests() -> None:
+    with _YTDLP_INFO_LOCK:
+        _YTDLP_INFO_CACHE.clear()
+        _YTDLP_INFO_INFLIGHT.clear()
 
 
 def ytdlp_info(url: str) -> dict | None:
@@ -1053,9 +1113,28 @@ def ytdlp_info(url: str) -> dict | None:
         return None
 
     now = time.time()
-    cached = _YTDLP_INFO_CACHE.get(u)
-    if cached and (now - cached[0]) < _YTDLP_INFO_TTL_SEC:
-        return cached[1]
+    cached = _ytdlp_info_cached(u, now)
+    if cached is not None:
+        return cached
+
+    # Coordinate duplicates: whoever claims the URL fetches it, everyone else
+    # waits for that result instead of spawning another yt-dlp.
+    with _YTDLP_INFO_LOCK:
+        # The previous owner may have completed between the optimistic cache
+        # read above and this lock acquisition. Recheck before claiming a new
+        # subprocess or that narrow window launches the same yt-dlp twice.
+        cached = _ytdlp_info_cached_locked(u, time.time())
+        if cached is not None:
+            return cached
+        pending = _YTDLP_INFO_INFLIGHT.get(u)
+        owner = pending is None
+        if owner:
+            pending = threading.Event()
+            _YTDLP_INFO_INFLIGHT[u] = pending
+    if not owner:
+        # Bounded: a hung lookup must not pin every other caller forever.
+        pending.wait(timeout=25.0)
+        return _ytdlp_info_cached(u, time.time())
 
     try:
         p, _selected_args, _challenged = _run_ytdlp_provider_command(
@@ -1069,10 +1148,14 @@ def ytdlp_info(url: str) -> dict | None:
         data = json.loads((p.stdout or "").strip() or "{}")
         if not isinstance(data, dict) or not data:
             return None
-        _YTDLP_INFO_CACHE[u] = (now, data)
+        _ytdlp_info_store(u, now, data)
         return data
     except Exception:
         return None
+    finally:
+        with _YTDLP_INFO_LOCK:
+            _YTDLP_INFO_INFLIGHT.pop(u, None)
+        pending.set()
 
 
 def resolve_title(url: str) -> str:

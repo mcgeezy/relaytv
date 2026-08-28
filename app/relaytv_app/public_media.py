@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlunsplit
+
+from . import url_boundary
 
 
 _PRIVATE_ITEM_KEYS = {
@@ -56,26 +58,33 @@ def sanitize_public_url(value: object) -> str:
     raw = str(value or "").strip()
     if not raw:
         return ""
-    try:
-        parsed = urlsplit(raw)
-    except Exception:
+    # Shares its parser with input validation, so a value this cannot represent
+    # can no longer be accepted in the first place. Values already on disk from
+    # before that guard still reach here, and must not raise: a single poisoned
+    # item used to break /queue, /status, /history, and realtime for everyone,
+    # on every request, until someone hand-edited the JSON.
+    parsed = url_boundary.parse_url(raw)
+    if parsed is None:
         return ""
-    if not parsed.scheme or not parsed.netloc:
+    # Preserved from the urlsplit version: a value with no scheme or no
+    # authority is a relative reference or a non-network URL (file:, data:),
+    # and is passed through untouched.
+    if not parsed.scheme or not parsed.raw_netloc:
         return raw
-
-    hostname = parsed.hostname or ""
-    if not hostname:
+    # An authority that parsed but yielded no hostname is malformed. Omit it
+    # rather than echoing it back: the raw form can still carry credentials,
+    # which is the one thing this function exists to remove.
+    if not parsed.hostname:
         return ""
-    netloc = f"[{hostname}]" if ":" in hostname else hostname
-    if parsed.port is not None:
-        netloc = f"{netloc}:{parsed.port}"
 
     query = [
         (key, val)
         for key, val in parse_qsl(parsed.query, keep_blank_values=True)
         if not _is_sensitive_query_key(key)
     ]
-    return urlunsplit((parsed.scheme, netloc, parsed.path, urlencode(query, doseq=True), ""))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), "")
+    )
 
 
 def public_media_item(item: object) -> object:
