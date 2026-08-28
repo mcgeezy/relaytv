@@ -390,7 +390,21 @@ def discovered() -> list[dict[str, object]]:
     return records
 
 
-def _resolve_service(zc, service_type: str, name: str, *, timeout_ms: int) -> bool:
+def _browse_session_owned(session: "_BrowseSession | None") -> bool:
+    if session is None:
+        return True
+    with _BROWSE_LOCK:
+        return _BROWSE_SESSION is session and not session.stop.is_set()
+
+
+def _resolve_service(
+    zc,
+    service_type: str,
+    name: str,
+    *,
+    timeout_ms: int,
+    session: "_BrowseSession | None" = None,
+) -> bool:
     """Resolve one service into the cache. Returns True when it is still there."""
     try:
         info = zc.get_service_info(service_type, name, timeout=timeout_ms)
@@ -398,12 +412,21 @@ def _resolve_service(zc, service_type: str, name: str, *, timeout_ms: int) -> bo
         logger.debug("mdns_resolve_failed name=%s error=%s", name, exc)
         return False
     record = discovered_record_from_service(name, info)
-    if record is None:
-        _forget_service(name)
-        return False
     with _BROWSE_LOCK:
+        if session is not None and (
+            _BROWSE_SESSION is not session or session.stop.is_set()
+        ):
+            logger.info(
+                "mdns_resolution_retired generation=%s name=%s",
+                session.generation,
+                name,
+            )
+            return False
+        if record is None:
+            _DISCOVERED.pop(str(name or ""), None)
+            return False
         known = str(name or "") in _DISCOVERED
-    _remember_service(record)
+        _DISCOVERED[str(record.get("service_name") or "")] = record
     if not known:
         logger.info(
             "mdns_discovered name=%s device_id=%s base_url=%s",
@@ -414,13 +437,17 @@ def _resolve_service(zc, service_type: str, name: str, *, timeout_ms: int) -> bo
     return True
 
 
-def _refresh_known_services(zc, service_type: str, stop: threading.Event | None = None) -> None:
+def _refresh_known_services(
+    zc,
+    service_type: str,
+    session: "_BrowseSession | None" = None,
+) -> None:
     with _BROWSE_LOCK:
         names = list(_DISCOVERED.keys())
     for name in names:
-        if stop is not None and stop.is_set():
+        if session is not None and not _browse_session_owned(session):
             return
-        _resolve_service(zc, service_type, name, timeout_ms=1500)
+        _resolve_service(zc, service_type, name, timeout_ms=1500, session=session)
 
 
 def _resolve_worker(session: "_BrowseSession") -> None:
@@ -443,9 +470,15 @@ def _resolve_worker(session: "_BrowseSession") -> None:
             return
         if item is not None:
             queued_type, name = item
-            _resolve_service(zc, queued_type or service_type, name, timeout_ms=2000)
+            _resolve_service(
+                zc,
+                queued_type or service_type,
+                name,
+                timeout_ms=2000,
+                session=session,
+            )
         if time.time() >= next_sweep:
-            _refresh_known_services(zc, service_type, stop=session.stop)
+            _refresh_known_services(zc, service_type, session=session)
             next_sweep = time.time() + float(_browse_refresh_sec())
 
 
