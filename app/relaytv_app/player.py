@@ -2484,11 +2484,18 @@ def _persist_runtime_volume_before_stop() -> None:
 
 
 def stop_mpv(*, restart_splash: bool = True):
+    """Tear down the mpv process.
+
+    Deliberately does *not* retire playback intents. start_mpv calls this to
+    clear the previous process before starting the new one, as do its
+    video-output fallbacks, so retiring here made every cold start supersede
+    itself: the play that had just loaded found it no longer owned the intent
+    and published nothing — no history, no now_playing, no watchdog.
+
+    Retirement belongs to the transitions that mean "the user is done with
+    this item", which live in playback_service.
+    """
     global MPV_PROC
-    # Retire first. A play still resolving would otherwise finish and load its
-    # stream into the runtime this is tearing down, restarting playback
-    # seconds after the user stopped it.
-    retire_playback_intents("stop_mpv")
     _persist_runtime_volume_before_stop()
     _stop_qt_shell()
     _reset_mpv_up_next_state()
@@ -2514,9 +2521,6 @@ def stop_playback_keep_qt_shell() -> bool:
         return False
     if not _idle_qt_shell_enabled():
         return False
-    # Same reasoning as stop_mpv: this is a terminal transition, so any play
-    # still resolving must not be allowed to publish over the idle surface.
-    retire_playback_intents("stop_playback_keep_qt_shell")
     _persist_runtime_volume_before_stop()
     try:
         mpv_command(["playlist-clear"])

@@ -1,0 +1,11 @@
+# Temporary: run branch code in the released image without a rebuild.
+# The image copies only app/relaytv_app and installs every dependency
+# system-wide, so bind-mounting the checkout over it runs the branch.
+# Delete this file when done testing.
+services:
+  relaytv:
+    volumes:
+      - type: bind
+        source: /opt/dev/relaytv/app/relaytv_app
+        target: /app/relaytv_app
+        read_only: true

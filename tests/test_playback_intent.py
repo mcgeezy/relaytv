@@ -237,7 +237,58 @@ def test_mpv_lock_is_not_held_across_resolution() -> None:
     assert resolve_at < lock_at, "resolve_streams must run before MPV_LOCK is taken"
 
 
-def test_stop_paths_retire_intents() -> None:
-    for name in ("stop_mpv", "stop_playback_keep_qt_shell"):
-        source = inspect.getsource(getattr(player, name))
+def test_terminal_transitions_retire_intents() -> None:
+    from relaytv_app import playback_service
+
+    for name in ("stop_all", "stop_keep_shell", "stop_current", "close_current", "clear_session"):
+        source = inspect.getsource(getattr(playback_service, name))
         assert "retire_playback_intents" in source, f"{name} does not retire in-flight plays"
+
+
+def test_stop_mpv_does_not_retire_intents() -> None:
+    """start_mpv tears down the previous process before starting the new one.
+
+    Retiring in stop_mpv made every cold start supersede itself: the play that
+    had just loaded found it no longer owned the intent, so it published
+    nothing — no history, no now_playing, no watchdog. Only a seamless replace
+    survived, because that path never calls stop_mpv.
+
+    Found on a device, not by the suite; this is the guard that would have.
+    """
+    assert "retire_playback_intents" not in inspect.getsource(player.stop_mpv)
+    # And the internal restart really does go through it.
+    assert "stop_mpv(restart_splash=False)" in inspect.getsource(player.start_mpv)
+
+
+def test_a_cold_start_publishes(harness, monkeypatch) -> None:
+    """The regression, end to end: no seamless replace, so start_mpv runs.
+
+    Fails when stop_mpv retires, because start_mpv's own teardown supersedes
+    the play in flight.
+    """
+    stopped: list[bool] = []
+
+    def _fake_start_mpv(stream, **kwargs):
+        # Mirrors the real start_mpv: tear down the previous process first.
+        player.stop_mpv(restart_splash=False)
+        harness["loaded"].append(stream)
+
+    monkeypatch.setattr(player, "_load_stream_in_existing_mpv", lambda *a, **k: False)
+    monkeypatch.setattr(player, "start_mpv", _fake_start_mpv)
+    monkeypatch.setattr(player, "_stop_qt_shell", lambda *a, **k: stopped.append(True))
+    monkeypatch.setattr(player, "_persist_runtime_volume_before_stop", lambda: None)
+    monkeypatch.setattr(player, "_reset_mpv_up_next_state", lambda: None)
+    monkeypatch.setattr(player, "_set_mpv_process_start_option_active", lambda v: None)
+    monkeypatch.setattr(player, "_cleanup_ipc_socket", lambda: None)
+    monkeypatch.setattr(player, "MPV_PROC", None, raising=False)
+    harness["gate"].set()
+
+    now = player.play_item(
+        "https://youtu.be/cold", use_resolver=True, cec=False, clear_queue=False, mode="play_now"
+    )
+
+    assert harness["loaded"] == ["https://cdn.test/stream.m3u8"]
+    assert now.get("url") == "https://youtu.be/cold", f"cold start published nothing: {now!r}"
+    assert len(harness["history"]) == 1, "cold start wrote no history"
+    assert len(harness["watchdogs"]) == 1, "cold start armed no watchdog"
+    assert state.SESSION_STATE == "playing"
