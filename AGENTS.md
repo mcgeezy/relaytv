@@ -64,6 +64,7 @@ PYTHONPATH=app pytest -q
 git diff --check
 node --check app/relaytv_app/static/ui/app.js
 node --check app/relaytv_app/static/ui/realtime_transport.js
+PYTHONPATH=app python3 -c "import re; from relaytv_app.routes import x11_overlay_page; print(re.findall(r'<script>(.*?)</script>', x11_overlay_page().body.decode(), re.S)[0])" | node --check -
 node --test tests/js/*.test.js
 ```
 
