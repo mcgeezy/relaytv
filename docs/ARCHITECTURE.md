@@ -141,16 +141,19 @@ indefinitely is preferable to breaking slowly updated companion installations.
 
 Carried from the review, in rough value order:
 
-1. Extend the checked-in browser smoke beyond the Jellyfin, IPTV, and
+1. Complete the temporary application-wide functionality remediation tracked
+   in `FUNCTIONALITY_AUDIT.md`, then remove that working document and retain
+   only genuinely open architecture follow-ups here.
+2. Extend the checked-in browser smoke beyond the Jellyfin, IPTV, and
    send-to-device shells to settings, general queue actions, and the remaining
    `/ui` surfaces.
-2. Versioned models for queue/history/session/settings — migrations
+3. Versioned models for queue/history/session/settings — migrations
    remain implicit.
-3. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle
+4. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle
    behavior, status payload construction).
-4. Consolidate provider/URL classification, still duplicated between
+5. Consolidate provider/URL classification, still duplicated between
    resolver and player paths.
-5. Keep splitting `test_smoke.py` by behavior.
+6. Keep splitting `test_smoke.py` by behavior.
 
 ## Non-Goals
 
