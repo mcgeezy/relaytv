@@ -1211,6 +1211,14 @@
       background: linear-gradient(180deg, rgba(60,42,18,.94), rgba(38,26,10,.96));
       box-shadow: 0 0 18px rgba(255,180,80,.20), 0 10px 24px rgba(0,0,0,.45);
     }
+    /* A rejected command, not a lost connection: different cause, different
+       colour, and no dimming of the controls that are still working. */
+    .connBadge.cmdErr{
+      color: #ffd7d1;
+      border-color: rgba(255,140,120,.5);
+      background: linear-gradient(180deg, rgba(72,26,22,.94), rgba(46,14,12,.96));
+      box-shadow: 0 0 18px rgba(255,110,90,.22), 0 10px 24px rgba(0,0,0,.45);
+    }
     body.connLost .remoteCard,
     body.connLost .queueCard{
       filter: saturate(.55) brightness(.78);

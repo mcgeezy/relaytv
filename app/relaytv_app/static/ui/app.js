@@ -66,6 +66,23 @@ function _fetchWithTimeout(url, opts, timeoutMs){
   return fetch(url, finalOpts).finally(() => clearTimeout(timer));
 }
 
+// Turn a rejected response into one short line worth showing the user.
+async function _commandErrorDetail(response){
+  const status = Number(response && response.status) || 0;
+  if (status === 401 || status === 403) return 'Not authorized — check API token';
+  let detail = '';
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload === 'object'){
+      detail = String(payload.detail || payload.message || '').trim();
+    }
+  } catch(_e) {}
+  // Collapse to a single short line: it goes in a one-line badge, and the
+  // server's detail is free text we do not control the length of.
+  detail = detail.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return detail || `Command failed (HTTP ${status || '?'})`;
+}
+
 async function post(path, body, postOpts) {
   const opts = {
     method: 'POST',
@@ -74,25 +91,44 @@ async function post(path, body, postOpts) {
   };
   // Generous timeout: Android wifi power-save adds seconds of first-packet
   // latency right when the user picks the phone up.
-  let ok = false;
+  let response = null;
+  let unreachable = false;
   try {
-    await _fetchWithTimeout(path, opts, 5000);
-    ok = true;
+    response = await _fetchWithTimeout(path, opts, 5000);
   } catch(_e) {
     // A network error doesn't prove the request never reached the server (the
     // connection can drop after the command lands), and most commands are
     // toggles or relative seeks where a resend would double-apply. Only
     // retry commands the caller marked idempotent (absolute sets); everything
     // else surfaces the failure so the user can retap.
+    unreachable = true;
     if (postOpts && postOpts.idempotent) {
       try {
-        await _fetchWithTimeout(path, opts, 5000);
-        ok = true;
+        response = await _fetchWithTimeout(path, opts, 5000);
+        unreachable = false;
       } catch(_e2) {}
     }
   }
-  if (!ok) _connSignal(false, {sticky: true, message: 'Command failed — check connection'});
+
+  if (unreachable || !response){
+    _connSignal(false, {sticky: true, message: 'Command failed — check connection'});
+    refresh().catch(() => null);
+    return {ok: false, status: 0, detail: 'unreachable', reached: false};
+  }
+
+  // The request arrived and the server answered. A resend would double-apply,
+  // so a rejection is never retried here regardless of `idempotent` — it is
+  // reported instead.
+  if (!response.ok){
+    const detail = await _commandErrorDetail(response);
+    _commandRejected(detail);
+    refresh().catch(() => null);
+    return {ok: false, status: response.status, detail, reached: true};
+  }
+
+  _connSignal(true);
   refresh().catch(() => null);
+  return {ok: true, status: response.status, detail: '', reached: true};
 }
 
 // --- Manual URL modal + clipboard helpers
@@ -204,10 +240,14 @@ async function submitAddUrl(mode){
 
   addUrlSubmitting = true;
   try {
-    if (mode === 'queue') {
-      await post('/enqueue', {url});
-    } else {
-      await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
+    const result = (mode === 'queue')
+      ? await post('/enqueue', {url})
+      : await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
+    // Keep the modal open when the server refused, so the link is still there
+    // to retry or correct. Closing it used to look exactly like success.
+    if (result && result.ok === false){
+      _setAddHelper(result.detail || 'Could not add that link.', 'err');
+      return;
     }
     closeAddUrl();
   } finally {
@@ -432,6 +472,7 @@ function _connSignal(ok, opts){
     __connFailStreak = 0;
     if (badge && Date.now() >= __connBadgeStickyUntil){
       badge.classList.add('hidden');
+      badge.classList.remove('cmdErr');
       document.body.classList.remove('connLost');
     }
     return;
@@ -442,10 +483,26 @@ function _connSignal(ok, opts){
   if (__connFailStreak >= 2 || o.sticky){
     if (badge){
       badge.textContent = o.message || 'Reconnecting…';
+      badge.classList.remove('cmdErr');
       badge.classList.remove('hidden');
     }
     document.body.classList.add('connLost');
   }
+}
+
+// A command the server actively rejected is not a connection problem: the
+// request arrived, was understood, and was refused. Reporting it as
+// "Reconnecting…" sends the user to check their wifi over a 409 or an expired
+// token, and dimming the remote implies the whole app is offline. Rejections
+// get their own badge and leave the connLost state alone.
+function _commandRejected(message){
+  __connFailStreak = 0;
+  __connBadgeStickyUntil = Date.now() + 3500;
+  const badge = document.getElementById('connBadge');
+  if (!badge) return;
+  badge.textContent = String(message || 'Command rejected');
+  badge.classList.add('cmdErr');
+  badge.classList.remove('hidden');
 }
 
 function _scheduleUiEventReconnect(){
