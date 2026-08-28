@@ -46,20 +46,20 @@ the repository instructions:
 
 | ID | Priority | Area | Finding | User/operator impact | Status |
 | --- | --- | --- | --- | --- | --- |
-| F01 | High | Playback | A resolver started by an older Play can finish after Stop or a newer Play and still load media and publish session state. | Playback can restart after Stop or select the wrong item. | Planned |
-| F02 | High | API auth | `GET /share` starts playback and clears the queue, and `GET /snapshot` commands mpv, while the token middleware exempts all GET requests. | Token-enabled installations retain unauthenticated control paths. | Planned |
-| F03 | High | URL/public state | Input validation accepts malformed host/port forms that later make public URL serialization raise. | One poisoned queue item can repeatedly break queue/status/realtime snapshots. | Planned |
-| F04 | High | Persistence | Settings, queue, and history snapshots can be written out of order; session fields do not share one mutation/publish lock. | A successful newer mutation can disappear after restart, and persisted session fields can be incoherent. | Planned |
-| F05 | High | mDNS | Advertisement startup can self-deadlock, late registration can publish after Stop, failed startup can leak Zeroconf, and browse generations reuse a stop event. | Discovery can hang, leak resources, or revive retired workers. | Planned |
-| F06 | Medium-high | IPTV | The refresh worker reuses a module stop event and Stop neither joins nor retires the active generation. | A refresh can survive shutdown and run concurrently with its replacement. | Planned |
-| F07 | Medium-high | Browser UI | The shared control helper treats any completed HTTP response as success without checking `response.ok`. | Rejected Play/Pause, Next, Close, seek, volume, and queue commands appear to succeed. | Planned |
-| F08 | Medium-high | Uploads | Async upload endpoints perform synchronous writes, cleanup scans, JSON persistence, and repeated `fsync()` calls. | Large uploads can stall HTTP controls and realtime connections. | Planned |
-| F09 | Product gap | Jellyfin | Shared/API-key cast-target settings exist in an unmerged implementation but are absent from the released settings request and modal. | Operators cannot configure the intended all-user cast target from the product UI. | Planned separately |
-| F10 | Medium | Thumbnail/cache | Thumbnail jobs are unbounded and not deduplicated; failed images can be queued repeatedly. The yt-dlp metadata cache is also unbounded and unlocked. | Long-running processes can accumulate memory/work and repeatedly hit failing providers. | Planned |
-| F11 | Medium | Snapshot | Snapshot creation ignores the mpv result and returns before the image is known to exist. | Clients receive `ok: true` followed by an immediate 404 or a permanently missing image. | Planned |
-| F12 | Medium | Post-live relay | Concurrent session creation can publish more than one supposedly single-player relay pipeline. | Duplicate yt-dlp/ffmpeg pipelines consume CPU, disk, and network until reaped. | Planned |
-| F13 | Medium | Upload boundary | Upload IDs are joined to the upload root without canonical format or containment validation after URL decoding. | Crafted legacy/public paths can address metadata/session paths outside the intended upload root when matching files exist. | Planned |
-| F14 | Medium | Provider matching | Provider classification uses netloc substring checks rather than hostname label boundaries. | Lookalike domains can select the wrong resolver strategy. | Planned |
+| F01 | High | Playback | A resolver started by an older Play can finish after Stop or a newer Play and still load media and publish session state. | Playback can restart after Stop or select the wrong item. | In review (#74) |
+| F02 | High | API auth | `GET /share` starts playback and clears the queue, and `GET /snapshot` commands mpv, while the token middleware exempts all GET requests. | Token-enabled installations retain unauthenticated control paths. | In review (#68) |
+| F03 | High | URL/public state | Input validation accepts malformed host/port forms that later make public URL serialization raise. | One poisoned queue item can repeatedly break queue/status/realtime snapshots. | In review (#70) |
+| F04 | High | Persistence | Settings, queue, and history snapshots can be written out of order; session fields do not share one mutation/publish lock. | A successful newer mutation can disappear after restart, and persisted session fields can be incoherent. | In review (#73) |
+| F05 | High | mDNS | Advertisement startup can self-deadlock, late registration can publish after Stop, failed startup can leak Zeroconf (the `except` closes the global, still `None`, not the local it built — found while fixing, not in the original review), and browse generations reuse a stop event. | Discovery can hang, leak resources, or revive retired workers. | In review (#72) |
+| F06 | Medium-high | IPTV | The refresh worker reuses a module stop event and Stop neither joins nor retires the active generation. | A refresh can survive shutdown and run concurrently with its replacement. | In review (#72) |
+| F07 | Medium-high | Browser UI | The shared control helper treats any completed HTTP response as success without checking `response.ok`. | Rejected Play/Pause, Next, Close, seek, volume, and queue commands appear to succeed. | In review (#69) |
+| F08 | Medium-high | Uploads | Async upload endpoints perform synchronous writes, cleanup scans, JSON persistence, and repeated `fsync()` calls. | Large uploads can stall HTTP controls and realtime connections. | In review (#75) |
+| F09 | Product gap | Jellyfin | Shared/API-key cast-target settings exist in an unmerged implementation but are absent from the released settings request and modal. | Operators cannot configure the intended all-user cast target from the product UI. | In review (#77) |
+| F10 | Medium | Thumbnail/cache | Thumbnail jobs are unbounded and not deduplicated; failed images can be queued repeatedly. The yt-dlp metadata cache is also unbounded and unlocked. | Long-running processes can accumulate memory/work and repeatedly hit failing providers. | In review (#76) |
+| F11 | Medium | Snapshot | Snapshot creation ignores the mpv result and returns before the image is known to exist. | Clients receive `ok: true` followed by an immediate 404 or a permanently missing image. | In review (#69) |
+| F12 | Medium | Post-live relay | Concurrent session creation can publish more than one supposedly single-player relay pipeline. | Duplicate yt-dlp/ffmpeg pipelines consume CPU, disk, and network until reaped. | In review (#72 / #74) |
+| F13 | Medium | Upload boundary | Upload IDs are joined to the upload root without canonical format or containment validation after URL decoding. | Crafted legacy/public paths can address metadata/session paths outside the intended upload root when matching files exist. | In review (#71) |
+| F14 | Medium | Provider matching | Provider classification uses netloc substring checks rather than hostname label boundaries. | Lookalike domains can select the wrong resolver strategy. | In review (#70) |
 
 The realtime WebSocket/SSE hub and current Jellyfin socket-generation ownership
 were also reviewed. No new blocking defect was found in those implementations.
@@ -588,6 +588,7 @@ playback-intent generation unless its public response contract changes.
 | 2026-08-27 | Audit baseline | `audit/functionality-review` at `1c4b3d0` | Findings recorded; implementation not started. |
 | 2026-08-27 | Findings verified, roadmap sequenced | `audit/functionality-review` | All 14 findings reproduced against the working tree; F02 impact widened to tokenless installs; PR sequence set. |
 | 2026-08-28 | Companion compatibility confirmed | `relaytv-android`, `relaytv-ha` working copies | Neither companion calls `GET /share` or `GET /snapshot`; both already POST with a bearer token. PR 1 needs no companion change. |
+| 2026-08-28 | PRs 1-10 implemented and opened | #68, #69, #70, #71, #72, #73, #74, #75, #76, #77 | Every finding has a fix in review, each with a revert proof confirmed to fail against the reverted guard. CI green on all. PR 11 remains blocked on these merging. |
 
 Update this log only at completed milestones. Detailed investigation and soak
 logs belong in PR descriptions and git history rather than growing this file
