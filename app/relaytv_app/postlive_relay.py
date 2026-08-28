@@ -496,11 +496,15 @@ def close_session(token: str, *, reason: str) -> None:
 
 
 def close_all(*, reason: str = "shutdown") -> None:
-    with _LOCK:
-        tokens = list(_SESSIONS.keys())
-    for token in tokens:
-        close_session(token, reason=reason)
-    _prune_completed_spools(keep=0)
+    # Share the creation transaction. Without this, shutdown could snapshot an
+    # empty map while create_session was still spawning, return, and then have
+    # that creator publish a pipeline nothing would ever retire.
+    with _CREATE_LOCK:
+        with _LOCK:
+            tokens = list(_SESSIONS.keys())
+        for token in tokens:
+            close_session(token, reason=reason)
+        _prune_completed_spools(keep=0)
 
 
 def sweep_spool_root() -> None:

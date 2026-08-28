@@ -135,6 +135,42 @@ def test_stop_unregisters_and_closes(monkeypatch) -> None:
     assert zc.closed is True
 
 
+@pytest.mark.parametrize("early_return", ["disabled", "active", "dependency_missing"])
+def test_registration_early_returns_do_not_self_deadlock(monkeypatch, early_return) -> None:
+    """status() must be called only after the advertisement lock is released."""
+    if early_return == "disabled":
+        monkeypatch.setattr(discovery_mdns, "_enabled", lambda: False)
+    elif early_return == "active":
+        monkeypatch.setattr(discovery_mdns, "_ZEROCONF", object(), raising=False)
+        monkeypatch.setattr(discovery_mdns, "_SERVICE_INFO", object(), raising=False)
+    else:
+        monkeypatch.setattr(discovery_mdns, "Zeroconf", None)
+
+    worker = threading.Thread(target=discovery_mdns.start, daemon=True)
+    worker.start()
+    worker.join(timeout=1.0)
+    if worker.is_alive():
+        # Keep a reverted implementation from wedging fixture teardown after
+        # this assertion records the regression.
+        discovery_mdns._LOCK = threading.Lock()
+    assert not worker.is_alive(), f"start deadlocked on {early_return}"
+
+
+def test_duplicate_async_start_does_not_self_deadlock(monkeypatch) -> None:
+    class _AliveThread:
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+    monkeypatch.setattr(discovery_mdns, "_START_THREAD", _AliveThread(), raising=False)
+    worker = threading.Thread(target=discovery_mdns.start_async, daemon=True)
+    worker.start()
+    worker.join(timeout=1.0)
+    if worker.is_alive():
+        discovery_mdns._LOCK = threading.Lock()
+    assert not worker.is_alive(), "a duplicate start_async call deadlocked"
+
+
 # --- F05: mDNS browse --------------------------------------------------------
 
 
@@ -321,3 +357,53 @@ def test_create_session_still_supersedes_after_spawning(monkeypatch) -> None:
     assert order == ["spawn"]
     # The session that was playing is untouched by the failure.
     assert "existing" in postlive_relay._SESSIONS
+
+
+def test_close_all_waits_for_an_inflight_creation(monkeypatch) -> None:
+    """Shutdown must retire a session whose spawn was already in progress."""
+    entered = threading.Event()
+    release = threading.Event()
+    closed: list[str] = []
+
+    class _Session:
+        token = "late"
+
+    def _slow_create(page_url, ytdl_format, ytdlp_args=()):
+        entered.set()
+        release.wait(5.0)
+        session = _Session()
+        with postlive_relay._LOCK:
+            postlive_relay._SESSIONS[session.token] = session
+        return session
+
+    def _close(token, *, reason=""):
+        closed.append(token)
+        with postlive_relay._LOCK:
+            postlive_relay._SESSIONS.pop(token, None)
+
+    monkeypatch.setattr(postlive_relay, "_create_session_locked", _slow_create)
+    monkeypatch.setattr(postlive_relay, "close_session", _close)
+    monkeypatch.setattr(postlive_relay, "_prune_completed_spools", lambda **kwargs: None)
+    monkeypatch.setattr(postlive_relay, "_SESSIONS", {}, raising=False)
+
+    creator = threading.Thread(
+        target=postlive_relay.create_session,
+        args=("https://x.test/a", "best"),
+        daemon=True,
+    )
+    creator.start()
+    assert entered.wait(1.0), "session creation never entered its transaction"
+
+    closer = threading.Thread(target=postlive_relay.close_all, daemon=True)
+    closer.start()
+    closer.join(timeout=0.1)
+    assert closer.is_alive(), "close_all bypassed the in-flight creation"
+
+    release.set()
+    creator.join(timeout=2.0)
+    closer.join(timeout=2.0)
+
+    assert not creator.is_alive()
+    assert not closer.is_alive()
+    assert closed == ["late"]
+    assert postlive_relay._SESSIONS == {}

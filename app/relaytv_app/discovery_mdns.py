@@ -197,15 +197,20 @@ def _teardown(zc, info) -> None:
 
 def start() -> dict[str, object]:
     global _ZEROCONF, _SERVICE_INFO, _LAST_ERROR
+    generation: int | None = None
     with _LOCK:
-        if not _enabled():
-            return status()
-        if _SERVICE_INFO is not None and _ZEROCONF is not None:
-            return status()
-        if Zeroconf is None or ServiceInfo is None:
+        if not _enabled() or (_SERVICE_INFO is not None and _ZEROCONF is not None):
+            pass
+        elif Zeroconf is None or ServiceInfo is None:
             _LAST_ERROR = "zeroconf dependency unavailable"
-            return status()
-        generation = _claim_generation()
+        else:
+            generation = _claim_generation()
+
+    # status() takes _LOCK itself. Every early return used to call it from
+    # inside the non-reentrant lock above, permanently wedging discovery when
+    # advertising was disabled, already active, or the dependency was absent.
+    if generation is None:
+        return status()
 
     zc = None
     info = None
@@ -255,11 +260,12 @@ def start_async() -> dict[str, object]:
     """Start mDNS registration in a background thread so app startup cannot block."""
     global _START_THREAD
     with _LOCK:
-        if _START_THREAD is not None and _START_THREAD.is_alive():
-            return status()
-        t = threading.Thread(target=start, daemon=True, name="relaytv-mdns-start")
-        _START_THREAD = t
-        t.start()
+        if _START_THREAD is None or not _START_THREAD.is_alive():
+            t = threading.Thread(target=start, daemon=True, name="relaytv-mdns-start")
+            _START_THREAD = t
+            t.start()
+    # Do not call status() while _LOCK is held; the duplicate-start path used
+    # to self-deadlock here for the same reason as start()'s early returns.
     return status()
 
 
