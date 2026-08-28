@@ -38,12 +38,62 @@ THUMB_RETENTION_SEC = max(0, int(os.getenv("RELAYTV_THUMB_RETENTION_SEC") or str
 THUMB_PRUNE_INTERVAL_SEC = max(0, int(os.getenv("RELAYTV_THUMB_PRUNE_INTERVAL_SEC") or "120"))
 THUMB_SRC_MAP_MAX = max(1, int(os.getenv("RELAYTV_THUMB_SRC_MAP_MAX") or "4096"))
 
-_Q: "queue.Queue[tuple[str, str]]" = queue.Queue()
+# The work queue was unbounded and had no de-duplication, so every /status
+# poll re-enqueued the same ids for any thumbnail that had not landed yet: a
+# history page of items whose provider was down grew the queue without limit
+# and re-requested the same failing URLs forever.
+THUMB_QUEUE_MAX = max(16, int(os.getenv("RELAYTV_THUMB_QUEUE_MAX") or "512"))
+# How long a failed thumbnail is left alone before it may be retried.
+THUMB_FAILURE_BACKOFF_SEC = max(0, int(os.getenv("RELAYTV_THUMB_FAILURE_BACKOFF_SEC") or "900"))
+THUMB_FAILURE_MAP_MAX = max(1, int(os.getenv("RELAYTV_THUMB_FAILURE_MAP_MAX") or "2048"))
+
+_Q: "queue.Queue[tuple[str, str]]" = queue.Queue(maxsize=THUMB_QUEUE_MAX)
 _STARTED = False
 _LOCK = threading.Lock()
 _PRUNE_LOCK = threading.Lock()
 _SRC_BY_ID: dict[str, str] = {}
 _LAST_PRUNE_TS = 0.0
+# Ids queued or being fetched right now, and ids whose last fetch failed.
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT: set[str] = set()
+_FAILED_AT: dict[str, float] = {}
+
+
+def _claim_thumb(tid: str) -> bool:
+    """Return True when this caller should enqueue ``tid``.
+
+    False when it is already queued or in flight, or when its last attempt
+    failed recently enough that retrying would just hammer a dead provider.
+    """
+    now = time.time()
+    with _INFLIGHT_LOCK:
+        if tid in _INFLIGHT:
+            return False
+        failed_at = _FAILED_AT.get(tid)
+        if failed_at is not None and (now - failed_at) < THUMB_FAILURE_BACKOFF_SEC:
+            return False
+        _INFLIGHT.add(tid)
+        return True
+
+
+def _release_thumb(tid: str, *, failed: bool) -> None:
+    now = time.time()
+    with _INFLIGHT_LOCK:
+        _INFLIGHT.discard(tid)
+        if failed:
+            if len(_FAILED_AT) >= THUMB_FAILURE_MAP_MAX:
+                # Drop the oldest failures rather than growing without bound.
+                for stale, _ts in sorted(_FAILED_AT.items(), key=lambda kv: kv[1])[:64]:
+                    _FAILED_AT.pop(stale, None)
+            _FAILED_AT[tid] = now
+        else:
+            _FAILED_AT.pop(tid, None)
+
+
+def reset_thumb_tracking_for_tests() -> None:
+    with _INFLIGHT_LOCK:
+        _INFLIGHT.clear()
+        _FAILED_AT.clear()
 
 def _ensure_dir() -> None:
     try:
@@ -200,28 +250,38 @@ def _worker() -> None:
     _ensure_dir()
     while True:
         url, tid = _Q.get()
+        failed = True
         try:
             dst = local_abs_path(tid)
             if os.path.exists(dst) and os.path.getsize(dst) > 0:
                 _touch(dst)
                 _prune_thumb_dir()
+                failed = False
                 continue
             with tempfile.TemporaryDirectory() as td:
                 raw_fp = os.path.join(td, "in")
                 ok = _download_to(url, raw_fp)
                 if not ok:
+                    # Stays failed: the backoff is what stops a dead provider
+                    # from being re-requested on every status poll.
                     continue
                 tmp_out = os.path.join(td, "out.jpg")
                 if _normalize_to_jpg(raw_fp, tmp_out):
-                    _commit_file(tmp_out, dst)
+                    committed = _commit_file(tmp_out, dst)
                 else:
                     # Fallback: persist original bytes (may not be jpg but better than dropping).
-                    _commit_file(raw_fp, dst)
+                    committed = _commit_file(raw_fp, dst)
+                if not committed:
+                    # A full/read-only disk is a failed thumbnail attempt too;
+                    # clearing backoff here hammers storage on every status poll.
+                    continue
                 _touch(dst)
                 _prune_thumb_dir()
+                failed = False
         except Exception:
             pass
         finally:
+            _release_thumb(tid, failed=failed)
             try:
                 _Q.task_done()
             except Exception:
@@ -255,12 +315,17 @@ def attach_local_thumbnail(item: dict) -> dict:
         # Remember source URL for best-effort synchronous materialization fallback.
         _remember_src(tid, thumb.strip())
 
-        # Enqueue generation if missing.
+        # Enqueue generation if missing, once.
         if not (os.path.exists(dst) and os.path.getsize(dst) > 0):
-            try:
-                _Q.put_nowait((thumb.strip(), tid))
-            except Exception:
-                pass
+            if _claim_thumb(tid):
+                try:
+                    _Q.put_nowait((thumb.strip(), tid))
+                except queue.Full:
+                    # Saturated: drop this request rather than grow. The next
+                    # poll re-offers it, so nothing is permanently lost.
+                    _release_thumb(tid, failed=False)
+                except Exception:
+                    _release_thumb(tid, failed=False)
             return item  # don't advertise local until ready
 
         _touch(dst)
