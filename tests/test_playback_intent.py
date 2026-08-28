@@ -24,6 +24,15 @@ def _isolated_playback(monkeypatch):
     monkeypatch.setattr(state, "set_session_state", lambda value: setattr(state, "SESSION_STATE", value))
     monkeypatch.setattr(state, "set_pause_reason", lambda value: None)
     monkeypatch.setattr(state, "set_session_position", lambda value: None)
+
+    def _update_session(**values):
+        if "now_playing" in values:
+            state.NOW_PLAYING = values["now_playing"]
+        if "session_state" in values:
+            state.SESSION_STATE = values["session_state"]
+        return True
+
+    monkeypatch.setattr(state, "update_session", _update_session)
     monkeypatch.setattr(state, "persist_queue", lambda: True)
     monkeypatch.setattr(state, "update_history_progress", lambda *a, **k: None, raising=False)
     yield
@@ -129,6 +138,53 @@ def test_stop_during_resolve_prevents_load_and_publish(harness) -> None:
     assert harness["watchdogs"] == [], "a retired play armed the watchdog"
     assert state.NOW_PLAYING is None
     assert state.SESSION_STATE == "idle"
+
+
+def test_stop_at_final_publish_boundary_wins(harness, monkeypatch) -> None:
+    """Retirement and final session publication are one ordered decision.
+
+    A check immediately before history insertion leaves Stop free to clear the
+    session while the old play is publishing, after which that old play can set
+    the session back to playing. Block inside history insertion to exercise the
+    exact boundary deterministically.
+    """
+    publish_entered = threading.Event()
+    release_publish = threading.Event()
+    stop_started = threading.Event()
+    stop_done = threading.Event()
+    results: list[dict] = []
+    errors: list[BaseException] = []
+
+    def _blocked_history(now):
+        publish_entered.set()
+        assert release_publish.wait(5.0)
+
+    def _stop() -> None:
+        stop_started.set()
+        player.retire_playback_intents("stop-at-publish")
+        state.update_session(now_playing=None, session_state="idle")
+        stop_done.set()
+
+    monkeypatch.setattr(player, "_add_history_entry", _blocked_history)
+    harness["gate"].set()
+    play_thread = _play_in_thread("https://youtu.be/publish", results, errors)
+    assert publish_entered.wait(5.0)
+
+    stop_thread = threading.Thread(target=_stop, daemon=True)
+    stop_thread.start()
+    assert stop_started.wait(1.0)
+    assert not stop_done.wait(0.1), "Stop bypassed an in-progress owned publication"
+
+    release_publish.set()
+    play_thread.join(timeout=5.0)
+    stop_thread.join(timeout=5.0)
+
+    assert not errors, errors
+    assert not play_thread.is_alive()
+    assert not stop_thread.is_alive()
+    assert state.NOW_PLAYING is None
+    assert state.SESSION_STATE == "idle"
+    assert harness["watchdogs"] == []
 
 
 def test_newer_play_supersedes_a_slower_older_one(harness) -> None:

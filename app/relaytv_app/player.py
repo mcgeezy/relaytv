@@ -5392,16 +5392,20 @@ def _play_item_owned(
     else:
         now["_playback_started_pos"] = 0.0
 
-    # The last gate before this play becomes the device's published state.
-    _require_owned("pre_publish")
-    _add_history_entry(now)
-    state.update_session(
-        now_playing=now,
-        session_state="playing",
-        pause_reason=None,
-        session_position=float(start_pos) if start_pos is not None else 0.0,
-    )
+    # Publishing must be one owned effect, not a check followed by mutations.
+    # Stop/Close retire intents without MPV_LOCK, so either this complete
+    # history/session publication wins first and the terminal transition
+    # overwrites it, or retirement wins and none of it lands.
+    def _publish_playback() -> None:
+        _add_history_entry(now)
+        state.update_session(
+            now_playing=now,
+            session_state="playing",
+            pause_reason=None,
+            session_position=float(start_pos) if start_pos is not None else 0.0,
+        )
 
+    _run_owned("publish", _publish_playback)
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.
