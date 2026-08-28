@@ -490,7 +490,14 @@ API-key settings infer shared mode so upgrades do not silently lose the target.
   operator-configured user-login identity.
 - Control and catalog both use the selected identity; inactive stored
   credentials are retained for reversible switching but never used as fallback.
+- In shared mode, carry Jellyfin's `ControllingUserId` through item detail,
+  playback planning, queue metadata, and delayed resume hydration so an
+  API-key target can resolve the initiating user's visible metadata without
+  becoming a user-login target.
 - Secrets stay redacted; expose only configured-state booleans.
+- Treat public status assembly as the final media-URL trust boundary: signed
+  URLs are scrubbed even if a failed lookup put one in a display field or
+  native runtime telemetry rather than a normal URL field.
 - Initiating-caller attribution for a shared cast remains a separate follow-up
   in `ARCHITECTURE.md`; user-login mode is not presented as per-caller identity.
 
@@ -502,8 +509,11 @@ Test steps:
    unchanged; the new mode is persisted settings state, not a new route or env
    surface.
 4. **Device:** register against the real Jellyfin server, confirm RelayTV appears
-   as a cast target for a **second** Jellyfin user, rename the device and confirm
-   identity is stable, then disconnect and reconnect.
+   as a cast target for a **second** Jellyfin user, cast an item and verify title,
+   artwork, pause, resume, stop, and progress reporting, rename the device and
+   confirm identity is stable, then disconnect and reconnect.
+5. Scan public status against the configured API key and verify neither display
+   metadata nor native runtime telemetry contains the credential.
 
 ### PR 11 — `docs: close functionality audit`
 
@@ -640,6 +650,7 @@ playback-intent generation unless its public response contract changes.
 | 2026-08-28 | PRs 1-10 implemented and opened | #68, #69, #70, #71, #72, #73, #74, #75, #76, #77 | Every finding has a fix in review, each with a revert proof confirmed to fail against the reverted guard. CI green on all. PR 11 remains blocked on these merging. |
 | 2026-08-28 | Fleet verification on a combined branch | `test/audit-combined` on Living Room (x86_64) and Mark's Room (aarch64) | Found and fixed a regression in #74 that the 752-test suite missed: retiring intents inside `player.stop_mpv` made every cold start supersede itself, because `start_mpv` calls `stop_mpv` to clear the previous process. Only a seamless replace survived. Retirement moved to the `playback_service` terminal transitions; two tests added, both confirmed to fail against the reverted fix. Cross-device discovery, mDNS restart cycles, and the Jellyfin socket all verified. Per-PR results and remaining checks are recorded in each PR. |
 | 2026-08-28 | Review findings remediated and integration stack rebuilt | #68, #72, #73, #74, #76, #77; `test/audit-combined` at `bb6ecbb` | Closed the cross-site snapshot, lifecycle deadlock/leak, stale publication, late playback side-effect, cache publication, and implicit Jellyfin identity gaps with revert-proven tests. The pushed combined branch includes open runtime PRs #66 and #68-#77 plus the #78 test instructions; 948 Python and 24 JavaScript tests pass with all syntax, lint, inventory, and diff gates clean. |
+| 2026-08-28 | Shared Jellyfin second-user soak completed | #77 at `43f0e1a`; `test/audit-combined` at `f5dab00` | A real cast from Gavin to the userless shared target found two preview defects: metadata requests lacked caller context, and a failed lookup could expose a signed stream URL through public title/runtime telemetry. Four revert-proven regressions now cover command-user propagation, user-scoped metadata lookup, delayed hydration, and final status redaction. Live title/artwork, pause, resume, stop, 36 successful progress reports, and one successful stopped report passed with zero failures or dropped commands; Jellyfin logged no new empty-Guid exception. The combined stack passes 951 Python and 24 JavaScript tests. |
 
 Update this log only at completed milestones. Detailed investigation and soak
 logs belong in PR descriptions and git history rather than growing this file
