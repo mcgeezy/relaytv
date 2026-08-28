@@ -26,6 +26,11 @@ _ZEROCONF = None
 _SERVICE_INFO = None
 _LAST_ERROR: str | None = None
 _START_THREAD: threading.Thread | None = None
+# Registration talks to the network, so it cannot hold _LOCK throughout without
+# making stop() wait on it. Instead each attempt claims a generation, does its
+# network work unlocked, and re-checks ownership before publishing. stop()
+# claims a generation too, which is what retires an attempt already in flight.
+_GENERATION = 0
 
 # Browsing state. The browser callbacks must not block the zeroconf event
 # thread, so they only enqueue names and a resolver thread does the lookups.
@@ -34,9 +39,32 @@ _BROWSE_ZEROCONF = None
 _BROWSE_BROWSER = None
 _BROWSE_LAST_ERROR: str | None = None
 _BROWSE_THREAD: threading.Thread | None = None
-_BROWSE_STOP = threading.Event()
 _BROWSE_QUEUE: queue.Queue | None = None
 _DISCOVERED: dict[str, dict[str, object]] = {}
+# The browse worker's stop flag used to be a module global. start_browse
+# cleared it, so restarting while the previous worker was still shutting down
+# un-stopped that worker and left two resolvers running against whichever
+# Zeroconf happened to be current. Each session now owns its own.
+_BROWSE_SESSION: "_BrowseSession | None" = None
+_BROWSE_GENERATION = 0
+
+
+class _BrowseSession:
+    """One browse generation: its own stop flag, queue, and Zeroconf.
+
+    Owning these per generation is what keeps a retired worker from consuming
+    its replacement's queue or writing its replacement's globals.
+    """
+
+    __slots__ = ("generation", "stop", "queue", "zeroconf", "browser", "thread")
+
+    def __init__(self, generation: int) -> None:
+        self.generation = generation
+        self.stop = threading.Event()
+        self.queue: queue.Queue = queue.Queue(maxsize=256)
+        self.zeroconf = None
+        self.browser = None
+        self.thread: threading.Thread | None = None
 
 
 def _enabled() -> bool:
@@ -136,42 +164,90 @@ def status() -> dict[str, object]:
     return advertise
 
 
+def _claim_generation() -> int:
+    """Take ownership of the advertisement slot. Caller must hold _LOCK."""
+    global _GENERATION
+    _GENERATION += 1
+    return _GENERATION
+
+
+def _owns(generation: int) -> bool:
+    """Caller must hold _LOCK."""
+    return generation == _GENERATION
+
+
+def _close_zeroconf(zc) -> None:
+    if zc is None:
+        return
+    try:
+        zc.close()
+    except Exception:
+        pass
+
+
+def _teardown(zc, info) -> None:
+    """Unregister and close, tolerating a partially built pair."""
+    try:
+        if zc is not None and info is not None:
+            zc.unregister_service(info)
+    except Exception:
+        pass
+    _close_zeroconf(zc)
+
+
 def start() -> dict[str, object]:
     global _ZEROCONF, _SERVICE_INFO, _LAST_ERROR
     with _LOCK:
         if not _enabled():
-            pass
-        elif _SERVICE_INFO is not None and _ZEROCONF is not None:
-            pass
-        elif Zeroconf is None or ServiceInfo is None:
+            return status()
+        if _SERVICE_INFO is not None and _ZEROCONF is not None:
+            return status()
+        if Zeroconf is None or ServiceInfo is None:
             _LAST_ERROR = "zeroconf dependency unavailable"
-        else:
-            try:
-                stype = _service_type()
-                name = _instance_name()
-                ip = _detect_ipv4()
-                info = ServiceInfo(
-                    type_=stype,
-                    name=f"{name}.{stype}",
-                    addresses=[socket.inet_aton(ip)],
-                    port=_service_port(),
-                    properties=_props(),
-                    server=(os.getenv("RELAYTV_MDNS_SERVER") or f"{socket.gethostname()}.local.").strip(),
-                )
-                zc = Zeroconf()
-                zc.register_service(info)
-                _ZEROCONF = zc
-                _SERVICE_INFO = info
-                _LAST_ERROR = None
-            except Exception as e:
+            return status()
+        generation = _claim_generation()
+
+    zc = None
+    info = None
+    try:
+        stype = _service_type()
+        name = _instance_name()
+        ip = _detect_ipv4()
+        info = ServiceInfo(
+            type_=stype,
+            name=f"{name}.{stype}",
+            addresses=[socket.inet_aton(ip)],
+            port=_service_port(),
+            properties=_props(),
+            server=(os.getenv("RELAYTV_MDNS_SERVER") or f"{socket.gethostname()}.local.").strip(),
+        )
+        zc = Zeroconf()
+        zc.register_service(info)
+    except Exception as e:
+        # Close the Zeroconf *we* built. The previous version closed the global
+        # _ZEROCONF, which is still None here because it is only assigned after
+        # register_service succeeds — so a failed registration leaked an open
+        # Zeroconf, with its sockets and threads, on every retry.
+        _teardown(zc, info)
+        with _LOCK:
+            if _owns(generation):
                 _LAST_ERROR = str(e)
-                try:
-                    if _ZEROCONF is not None:
-                        _ZEROCONF.close()
-                except Exception:
-                    pass
                 _ZEROCONF = None
                 _SERVICE_INFO = None
+        return status()
+
+    with _LOCK:
+        published = _owns(generation)
+        if published:
+            _ZEROCONF = zc
+            _SERVICE_INFO = info
+            _LAST_ERROR = None
+    if not published:
+        # stop() ran while we were registering. Publishing now would advertise
+        # a service the app believes it retired, and nothing would ever
+        # unregister it.
+        logger.info("mdns_registration_retired generation=%d", generation)
+        _teardown(zc, info)
     return status()
 
 
@@ -191,20 +267,14 @@ def stop() -> dict[str, object]:
     global _ZEROCONF, _SERVICE_INFO
     stop_browse()
     with _LOCK:
+        # Retires any registration still in flight: it will find it no longer
+        # owns the slot and tear down what it built instead of publishing.
+        _claim_generation()
         zc = _ZEROCONF
         info = _SERVICE_INFO
         _ZEROCONF = None
         _SERVICE_INFO = None
-    try:
-        if zc is not None and info is not None:
-            zc.unregister_service(info)
-    except Exception:
-        pass
-    try:
-        if zc is not None:
-            zc.close()
-    except Exception:
-        pass
+    _teardown(zc, info)
     return status()
 
 
@@ -338,45 +408,69 @@ def _resolve_service(zc, service_type: str, name: str, *, timeout_ms: int) -> bo
     return True
 
 
-def _refresh_known_services(zc, service_type: str) -> None:
+def _refresh_known_services(zc, service_type: str, stop: threading.Event | None = None) -> None:
     with _BROWSE_LOCK:
         names = list(_DISCOVERED.keys())
     for name in names:
-        if _BROWSE_STOP.is_set():
+        if stop is not None and stop.is_set():
             return
         _resolve_service(zc, service_type, name, timeout_ms=1500)
 
 
-def _resolve_worker() -> None:
-    """Resolve queued service names off the zeroconf callback thread."""
+def _resolve_worker(session: "_BrowseSession") -> None:
+    """Resolve queued service names off the zeroconf callback thread.
+
+    Reads only its own session, so a retired generation cannot pick work off
+    its replacement's queue or resolve against its replacement's Zeroconf.
+    """
     service_type = _service_type()
     next_sweep = time.time() + float(_browse_refresh_sec())
-    while not _BROWSE_STOP.is_set():
+    while not session.stop.is_set():
         try:
-            item = _BROWSE_QUEUE.get(timeout=0.5) if _BROWSE_QUEUE is not None else None
+            item = session.queue.get(timeout=0.5)
         except Exception:
             item = None
-        with _BROWSE_LOCK:
-            zc = _BROWSE_ZEROCONF
+        zc = session.zeroconf
         if zc is None:
             continue
+        if session.stop.is_set():
+            return
         if item is not None:
             queued_type, name = item
             _resolve_service(zc, queued_type or service_type, name, timeout_ms=2000)
         if time.time() >= next_sweep:
-            _refresh_known_services(zc, service_type)
+            _refresh_known_services(zc, service_type, stop=session.stop)
             next_sweep = time.time() + float(_browse_refresh_sec())
 
 
 def _on_service_state_change(zeroconf, service_type, name, state_change) -> None:
+    """Module-level handler, kept for the current session's queue."""
+    _handle_service_state_change(_BROWSE_SESSION, service_type, name, state_change)
+
+
+def _handle_service_state_change(session, service_type, name, state_change) -> None:
     if ServiceStateChange is not None and state_change == ServiceStateChange.Removed:
         _forget_service(name)
         return
-    if _BROWSE_QUEUE is not None:
-        try:
-            _BROWSE_QUEUE.put_nowait((service_type, name))
-        except Exception:
-            pass
+    if session is None or session.stop.is_set():
+        return
+    try:
+        session.queue.put_nowait((service_type, name))
+    except Exception:
+        pass
+
+
+def _session_handler(session: "_BrowseSession"):
+    """Bind the callback to one generation.
+
+    ServiceBrowser holds this for the life of the browser, so binding it to the
+    session keeps a retired browser's callbacks out of the live queue.
+    """
+
+    def _handler(zeroconf, service_type, name, state_change) -> None:
+        _handle_service_state_change(session, service_type, name, state_change)
+
+    return _handler
 
 
 def browse_status() -> dict[str, object]:
@@ -394,7 +488,8 @@ def browse_status() -> dict[str, object]:
 
 def start_browse() -> dict[str, object]:
     """Begin browsing for other RelayTV devices on the local network."""
-    global _BROWSE_ZEROCONF, _BROWSE_BROWSER, _BROWSE_LAST_ERROR, _BROWSE_THREAD, _BROWSE_QUEUE
+    global _BROWSE_ZEROCONF, _BROWSE_BROWSER, _BROWSE_LAST_ERROR, _BROWSE_THREAD
+    global _BROWSE_QUEUE, _BROWSE_SESSION, _BROWSE_GENERATION
     with _BROWSE_LOCK:
         if not _browse_enabled():
             return browse_status()
@@ -403,26 +498,37 @@ def start_browse() -> dict[str, object]:
         if Zeroconf is None or ServiceBrowser is None:
             _BROWSE_LAST_ERROR = "zeroconf dependency unavailable"
             return browse_status()
+
+        _BROWSE_GENERATION += 1
+        session = _BrowseSession(_BROWSE_GENERATION)
+        zc = None
         try:
-            _BROWSE_STOP.clear()
-            _BROWSE_QUEUE = queue.Queue(maxsize=256)
             zc = Zeroconf()
-            browser = ServiceBrowser(zc, _service_type(), handlers=[_on_service_state_change])
-            _BROWSE_ZEROCONF = zc
-            _BROWSE_BROWSER = browser
-            _BROWSE_LAST_ERROR = None
-            thread = threading.Thread(target=_resolve_worker, daemon=True, name="relaytv-mdns-browse")
-            _BROWSE_THREAD = thread
-            thread.start()
+            session.zeroconf = zc
+            # Bind the handler to this session before the browser can fire it.
+            session.browser = ServiceBrowser(
+                zc, _service_type(), handlers=[_session_handler(session)]
+            )
         except Exception as exc:
             _BROWSE_LAST_ERROR = str(exc)
-            try:
-                if _BROWSE_ZEROCONF is not None:
-                    _BROWSE_ZEROCONF.close()
-            except Exception:
-                pass
-            _BROWSE_ZEROCONF = None
-            _BROWSE_BROWSER = None
+            # Close the Zeroconf we built, not the global: the global is still
+            # None here, because it is only assigned once the browser exists.
+            _close_zeroconf(zc)
+            return browse_status()
+
+        _BROWSE_SESSION = session
+        _BROWSE_ZEROCONF = zc
+        _BROWSE_BROWSER = session.browser
+        _BROWSE_QUEUE = session.queue
+        _BROWSE_LAST_ERROR = None
+        session.thread = threading.Thread(
+            target=_resolve_worker,
+            args=(session,),
+            daemon=True,
+            name=f"relaytv-mdns-browse-{session.generation}",
+        )
+        _BROWSE_THREAD = session.thread
+        session.thread.start()
     return browse_status()
 
 
@@ -433,28 +539,34 @@ def start_browse_async() -> dict[str, object]:
 
 
 def stop_browse() -> dict[str, object]:
-    global _BROWSE_ZEROCONF, _BROWSE_BROWSER, _BROWSE_THREAD
-    _BROWSE_STOP.set()
+    global _BROWSE_ZEROCONF, _BROWSE_BROWSER, _BROWSE_THREAD, _BROWSE_QUEUE, _BROWSE_SESSION
     with _BROWSE_LOCK:
+        session = _BROWSE_SESSION
         browser = _BROWSE_BROWSER
         zc = _BROWSE_ZEROCONF
+        thread = _BROWSE_THREAD
+        _BROWSE_SESSION = None
         _BROWSE_BROWSER = None
         _BROWSE_ZEROCONF = None
+        _BROWSE_QUEUE = None
+        _BROWSE_THREAD = None
         _DISCOVERED.clear()
+        # Signal inside the lock so a concurrent start cannot observe a live
+        # session that is already being torn down.
+        if session is not None:
+            session.stop.set()
+
+    # Network teardown and the join stay outside the lock and stay bounded.
     try:
         if browser is not None:
             browser.cancel()
     except Exception:
         pass
-    try:
-        if zc is not None:
-            zc.close()
-    except Exception:
-        pass
-    thread = _BROWSE_THREAD
-    _BROWSE_THREAD = None
+    _close_zeroconf(zc)
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
+        if thread.is_alive():
+            logger.warning("mdns_browse_worker_did_not_exit name=%s", thread.name)
     return browse_status()
 
 

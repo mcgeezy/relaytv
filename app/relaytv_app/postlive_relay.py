@@ -62,6 +62,10 @@ _SPOOL_TTL_SEC = 6 * 3600.0
 _SPOOL_POLL_SEC = 0.05
 
 _LOCK = threading.Lock()
+# Serializes session creation. Distinct from _LOCK, which guards _SESSIONS for
+# short reads and writes; this one is held across a spawn, and nothing holding
+# _LOCK ever takes it, so the ordering cannot invert.
+_CREATE_LOCK = threading.Lock()
 _SESSIONS: dict[str, "RelaySession"] = {}
 # token -> (spool path, completion timestamp) for sessions whose mux
 # finished cleanly; kept so the player can upgrade onto the local file
@@ -211,7 +215,20 @@ def create_session(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySessi
     (``ResolvedStreams.ytdlp_args``) so the relay runs the exact strategy
     that produced the resolve. Raises RelayError on any spawn failure with
     everything already spawned torn back down.
+
+    Creation is serialized. The supersede below deliberately happens *after*
+    this call's pipeline is up, so that a spawn failure leaves whatever is
+    playing untouched — restart-in-place relies on it. But that ordering also
+    meant two concurrent calls could both spawn, both read an empty _SESSIONS,
+    and both publish, leaving two live pipelines burning CPU, disk, and
+    network until the reaper caught them. Letting one creation finish before
+    the next begins keeps "at most one" true without giving up the ordering.
     """
+    with _CREATE_LOCK:
+        return _create_session_locked(page_url, ytdl_format, ytdlp_args)
+
+
+def _create_session_locked(page_url: str, ytdl_format: str, ytdlp_args=()) -> RelaySession:
     if not relay_enabled():
         raise RelayError("post-live relay is disabled (RELAYTV_POSTLIVE_RELAY=0)")
     url = str(page_url or "").strip()
