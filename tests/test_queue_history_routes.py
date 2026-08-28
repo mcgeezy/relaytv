@@ -88,6 +88,29 @@ def test_queue_remove_move_dedupe_and_clear(monkeypatch) -> None:
     assert prime_calls == [True, True, True, True]
 
 
+def test_queue_routes_publish_only_after_releasing_queue_lock(monkeypatch) -> None:
+    client, _, _ = _client_with_queue_patches(monkeypatch)
+    observed: list[bool] = []
+
+    def _persist(_payload):
+        acquired = routes.state.QUEUE_LOCK.acquire(blocking=False)
+        observed.append(acquired)
+        if acquired:
+            routes.state.QUEUE_LOCK.release()
+
+    monkeypatch.setattr(routes.state, "persist_queue_payload", _persist)
+    routes.state.QUEUE[:] = [
+        {"url": "https://example.com/a.mp4", "title": "A"},
+        {"url": "https://example.com/b.mp4", "title": "B"},
+    ]
+
+    assert client.post("/queue/move", json={"from_index": 1, "to_index": 0}).status_code == 200
+    routes.state.QUEUE.append({"url": "https://example.com/a.mp4", "title": "duplicate"})
+    assert client.post("/queue/dedupe").status_code == 200
+
+    assert observed == [True, True]
+
+
 def test_queue_and_history_read_shapes(monkeypatch) -> None:
     client, _, _ = _client_with_queue_patches(monkeypatch)
     routes.state.NOW_PLAYING = {"url": "https://example.com/now.mp4", "title": "Now"}

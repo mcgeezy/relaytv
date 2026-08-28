@@ -164,7 +164,7 @@ def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:
     assert state._normalize_jellyfin_server_type(None) == "jellyfin"
     assert state._default_settings()["jellyfin_server_type"] == "jellyfin"
 
-    monkeypatch.setattr(state, "_atomic_write_json", lambda path, payload: None)
+    monkeypatch.setattr(state, "_atomic_write_json", lambda path, payload: True)
     assert state.update_settings({"jellyfin_server_type": " EMBY "})["jellyfin_server_type"] == "emby"
     assert state.update_settings({"jellyfin_server_type": "bogus"})["jellyfin_server_type"] == "jellyfin"
 
