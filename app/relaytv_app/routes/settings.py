@@ -50,6 +50,7 @@ class SettingsReq(BaseModel):
     jellyfin_enabled: bool | None = None
     jellyfin_server_url: str | None = None
     jellyfin_api_key: str | None = None
+    jellyfin_auth_mode: str | None = None
     jellyfin_username: str | None = None
     jellyfin_password: str | None = None
     jellyfin_user_id: str | None = None
@@ -228,6 +229,17 @@ def update_settings(req: SettingsReq):
     elif clear_seerr_key:
         patch["seerr_api_key"] = ""
     requested_keys = set(patch.keys())
+    # Backward compatibility for API clients written before the explicit mode:
+    # submitting a non-empty API key historically meant shared cast behavior.
+    if "jellyfin_api_key" in requested_keys and "jellyfin_auth_mode" not in requested_keys:
+        if str(patch.get("jellyfin_api_key") or "").strip():
+            patch["jellyfin_auth_mode"] = "shared_api_key"
+            requested_keys.add("jellyfin_auth_mode")
+    if "jellyfin_auth_mode" in requested_keys:
+        auth_mode = str(patch.get("jellyfin_auth_mode") or "").strip().lower()
+        if auth_mode not in {"shared_api_key", "user_login"}:
+            raise HTTPException(status_code=400, detail="Invalid Jellyfin authentication mode")
+        patch["jellyfin_auth_mode"] = auth_mode
     if "seerr_server_url" in requested_keys:
         try:
             patch["seerr_server_url"] = normalize_server_url(patch.get("seerr_server_url"))
@@ -402,7 +414,7 @@ def update_settings(req: SettingsReq):
     if "jellyfin_server_type" in requested_keys and updated.get("jellyfin_server_type") is not None:
         runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_TYPE", str(updated.get("jellyfin_server_type") or "jellyfin").strip().lower())
     if requested_keys.intersection(
-        {"jellyfin_enabled", "jellyfin_server_url", "jellyfin_api_key", "jellyfin_username", "jellyfin_password"}
+        {"jellyfin_enabled", "jellyfin_server_url", "jellyfin_api_key", "jellyfin_auth_mode", "jellyfin_username", "jellyfin_password"}
     ):
         runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1")
 
@@ -485,6 +497,7 @@ def update_settings(req: SettingsReq):
         "jellyfin_enabled",
         "jellyfin_server_url",
         "jellyfin_api_key",
+        "jellyfin_auth_mode",
         "jellyfin_username",
         "jellyfin_password",
     }
@@ -493,13 +506,20 @@ def update_settings(req: SettingsReq):
             jf_enabled = bool(updated.get("jellyfin_enabled"))
             jf_server = str(updated.get("jellyfin_server_url") or "").strip()
             jf_api_key = str(updated.get("jellyfin_api_key") or "").strip()
+            jf_auth_mode = str(updated.get("jellyfin_auth_mode") or "user_login").strip()
             jf_user = str(updated.get("jellyfin_username") or "").strip()
             jf_pw = str(updated.get("jellyfin_password") or "").strip()
             jf_device_name = str(updated.get("device_name") or "RelayTV")
-            if jf_enabled and jf_server and (jf_api_key or (jf_user and jf_pw)):
+            credentials_ready = (
+                bool(jf_api_key)
+                if jf_auth_mode == "shared_api_key"
+                else bool(jf_user and jf_pw)
+            )
+            if jf_enabled and jf_server and credentials_ready:
                 jellyfin_receiver.connect(
                     server_url=jf_server,
                     api_key=jf_api_key,
+                    auth_mode=jf_auth_mode,
                     device_name=jf_device_name,
                 )
                 live_applied.extend(
@@ -510,7 +530,7 @@ def update_settings(req: SettingsReq):
                     k for k in sorted(requested_keys.intersection(jellyfin_setting_keys)) if k not in live_apply_failed
                 )
                 jellyfin_receiver.mark_error("jellyfin_server_url_required")
-            elif jf_enabled and not jf_api_key and (not jf_user or not jf_pw):
+            elif jf_enabled and not credentials_ready:
                 live_apply_failed.extend(
                     k for k in sorted(requested_keys.intersection(jellyfin_setting_keys)) if k not in live_apply_failed
                 )

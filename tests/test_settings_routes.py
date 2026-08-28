@@ -208,6 +208,16 @@ def test_settings_api_key_omission_preserves_and_explicit_values_replace_or_clea
     assert cleared.json()["settings"]["jellyfin_api_key_configured"] is False
 
 
+def test_settings_rejects_unknown_jellyfin_auth_mode(monkeypatch) -> None:
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {})
+    client = TestClient(create_app(testing=True))
+
+    response = client.post("/settings", json={"jellyfin_auth_mode": "automatic"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid Jellyfin authentication mode"
+
+
 def test_youtube_cookies_routes_upload_and_clear(monkeypatch, tmp_path) -> None:
     updates: list[dict[str, object]] = []
     target = tmp_path / "cookies.txt"

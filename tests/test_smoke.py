@@ -197,9 +197,13 @@ def test_ui_smoke() -> None:
     assert 'id="setYtUseInvidious"' in response.text
     assert 'id="setIdleQrEnabled"' in response.text
     assert 'id="setJfEnabled"' in response.text
+    assert 'id="setJfAuthMode"' in response.text
+    assert 'value="shared_api_key"' in response.text
+    assert 'value="user_login"' in response.text
     assert 'id="setJfApiKey"' in response.text
     assert 'id="setJfClearApiKey"' in response.text
     assert js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
+    assert js.count("jellyfin_auth_mode: jfAuthMode") == 2
     assert 'id="setJfClearPassword"' in response.text
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
     assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in js

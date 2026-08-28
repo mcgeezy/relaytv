@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app import routes
+from relaytv_app import state
 from relaytv_app.config import MIRRORED_TO_ENV, SETTINGS_BUS_VARS, runtime_config
 from relaytv_app.main import create_app
 from relaytv_app.routes import settings as settings_routes
@@ -173,6 +174,15 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
     assert _cfg("RELAYTV_JELLYFIN_AUTH_ENABLED") == "1"
 
 
+def test_legacy_jellyfin_api_key_settings_infer_shared_auth_mode(monkeypatch) -> None:
+    monkeypatch.setattr(state, "_load_json", lambda path, default: {"jellyfin_api_key": "legacy-key"})
+    monkeypatch.setattr(state, "SETTINGS", {})
+
+    state.load_settings()
+
+    assert state.get_settings()["jellyfin_auth_mode"] == "shared_api_key"
+
+
 def test_settings_apply_syncs_seerr_config(quiet_settings_apply) -> None:
     _apply(
         seerr_enabled=True,
@@ -223,11 +233,57 @@ def test_settings_apply_connects_api_key_only_receiver(quiet_settings_apply, mon
         {
             "server_url": "https://jf.example",
             "api_key": "shared-key",
+            "auth_mode": "shared_api_key",
             "device_name": "RelayTV",
         }
     ]
     assert "jellyfin_api_key" in response["live_applied"]
     assert "jellyfin_api_key" not in response["live_apply_failed"]
+
+
+def test_settings_apply_selects_user_login_even_with_stored_api_key(
+    quiet_settings_apply, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        routes.state,
+        "get_settings",
+        lambda: {
+            "jellyfin_api_key": "inactive-key",
+            "jellyfin_password": "stored-password",
+        },
+    )
+    monkeypatch.setattr(
+        routes.state,
+        "update_settings",
+        lambda patch: {
+            "jellyfin_api_key": "inactive-key",
+            "jellyfin_password": "stored-password",
+            **patch,
+        },
+    )
+    monkeypatch.setattr(
+        settings_routes.jellyfin_receiver,
+        "connect",
+        lambda **kwargs: calls.append(dict(kwargs)),
+    )
+
+    response = _apply(
+        jellyfin_enabled=True,
+        jellyfin_server_url="https://jf.example",
+        jellyfin_auth_mode="user_login",
+        jellyfin_username="mark",
+    )
+
+    assert calls == [
+        {
+            "server_url": "https://jf.example",
+            "api_key": "inactive-key",
+            "auth_mode": "user_login",
+            "device_name": "RelayTV",
+        }
+    ]
+    assert "jellyfin_auth_mode" in response["live_applied"]
 
 
 def test_settings_apply_clears_jellyfin_api_key(quiet_settings_apply) -> None:

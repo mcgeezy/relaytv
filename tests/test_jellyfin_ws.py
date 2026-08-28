@@ -331,6 +331,7 @@ def test_receiver_status_reports_socket_health_without_secrets() -> None:
 
 
 def test_receiver_status_reports_shared_control_and_catalog_sources(monkeypatch) -> None:
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "auth_mode", "shared_api_key")
     monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "running", True)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_url", "http://jf.local:8096")
@@ -349,7 +350,7 @@ def test_receiver_status_reports_shared_control_and_catalog_sources(monkeypatch)
     assert st["control_auth_source"] == "api_key"
     assert st["cast_target_scope"] == "shared"
     assert st["cast_target_ready"] is True
-    assert st["catalog_auth_source"] == "user_session"
+    assert st["catalog_auth_source"] == "api_key"
     assert st["catalog_ready"] is True
 
 
@@ -1202,16 +1203,31 @@ def test_authentication_captures_its_inputs_with_its_generation(monkeypatch) -> 
     assert jellyfin_receiver._request_context().generation != before
 
 
-def test_request_context_separates_shared_control_from_catalog_login(monkeypatch) -> None:
+def test_shared_mode_uses_only_api_key_even_when_login_token_exists(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
     monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "catalog-user-token")
 
     context = jellyfin_receiver._request_context()
 
     assert context.control_token == "shared-api-key"
-    assert context.catalog_token == "catalog-user-token"
+    assert context.catalog_token == "shared-api-key"
     assert jellyfin_receiver.control_token() == "shared-api-key"
-    assert jellyfin_receiver.catalog_token() == "catalog-user-token"
+    assert jellyfin_receiver.catalog_token() == "shared-api-key"
+
+
+def test_user_login_mode_uses_only_session_even_when_api_key_is_stored(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "user_login")
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "inactive-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "user-session-token")
+
+    context = jellyfin_receiver._request_context()
+
+    assert context.auth_mode == "user_login"
+    assert context.control_token == "user-session-token"
+    assert context.catalog_token == "user-session-token"
+    assert jellyfin_receiver.control_token() == "user-session-token"
+    assert jellyfin_receiver.catalog_token() == "user-session-token"
 
 
 def test_catalog_login_does_not_change_shared_socket_identity(monkeypatch) -> None:
@@ -1226,6 +1242,7 @@ def test_catalog_login_does_not_change_shared_socket_identity(monkeypatch) -> No
         },
     )
     monkeypatch.setattr(jellyfin_receiver, "command_sink_registered", lambda: True)
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
     monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "")
     before = jellyfin_ws._identity()
@@ -1310,6 +1327,7 @@ def test_catalog_auth_failure_does_not_degrade_shared_control(monkeypatch) -> No
         ("last_error", "control-plane-marker"),
     ):
         monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
+    monkeypatch.setitem(jellyfin_receiver._STATUS, "auth_mode", "shared_api_key")
     monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "")
     monkeypatch.setattr(jellyfin_receiver, "_AUTH_USERNAME", "catalog-user")
@@ -1336,6 +1354,7 @@ def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> 
     """A URL and token captured together stay together even after a switch."""
     monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
     monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "old-control-token")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "old-catalog-token")
     with jellyfin_receiver._LOCK:
         jellyfin_receiver._STATUS.update(
@@ -1384,6 +1403,7 @@ def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
     ):
         monkeypatch.setitem(jellyfin_receiver._STATUS, key, value)
     monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "session-token")
 
     def _post(context, path, payload, timeout=3.0):
@@ -1407,6 +1427,7 @@ def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
 
 def test_registration_switch_discards_the_old_context_result(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_ws, "enabled", lambda: False)
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "user_login")
     for key, value in (
         ("enabled", True),
         ("running", True),

@@ -31,11 +31,10 @@ def _noop_ui() -> dict:
     }
 
 
-def test_catalog_token_prefers_login_session_over_server_api_key(monkeypatch) -> None:
-    monkeypatch.setattr(jellyfin_receiver, "session_token", lambda: "catalog-user-token")
-    monkeypatch.setattr(jellyfin_receiver, "api_key", lambda: "shared-api-key")
+def test_catalog_token_uses_receiver_selected_identity(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "catalog_token", lambda: "selected-token")
 
-    assert jellyfin_service.catalog_token() == "catalog-user-token"
+    assert jellyfin_service.catalog_token() == "selected-token"
 
 
 # --- command normalization -------------------------------------------------

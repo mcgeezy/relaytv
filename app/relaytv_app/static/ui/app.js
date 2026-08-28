@@ -2396,6 +2396,21 @@ function syncSeerrRequestModeUi(){
   }
 }
 
+function syncJellyfinAuthModeUi(){
+  const modeSelect = document.getElementById('setJfAuthMode');
+  const mode = String(modeSelect?.value || 'user_login');
+  const sharedFields = document.getElementById('setJfSharedAuthFields');
+  const userFields = document.getElementById('setJfUserAuthFields');
+  const hint = document.getElementById('setJfAuthModeHint');
+  if (sharedFields) sharedFields.classList.toggle('hidden', mode !== 'shared_api_key');
+  if (userFields) userFields.classList.toggle('hidden', mode !== 'user_login');
+  if (hint) {
+    hint.textContent = mode === 'shared_api_key'
+      ? 'One administrator API identity advertises RelayTV to every user allowed to control shared devices.'
+      : 'The stored Jellyfin user owns the cast session and catalog; other users do not share this target identity.';
+  }
+}
+
 async function loadSettingsUi(){
   const [devRes, setRes, tvRes, jfRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
@@ -2437,6 +2452,7 @@ async function loadSettingsUi(){
   const iptvEnabled = document.getElementById('setIptvEnabled');
   const jfEnabled = document.getElementById('setJfEnabled');
   const jfServerUrl = document.getElementById('setJfServerUrl');
+  const jfAuthMode = document.getElementById('setJfAuthMode');
   const jfApiKeyInput = document.getElementById('setJfApiKey');
   const jfClearApiKey = document.getElementById('setJfClearApiKey');
   const jfApiKeyState = document.getElementById('setJfApiKeyState');
@@ -2481,6 +2497,8 @@ async function loadSettingsUi(){
   );
   if (jfEnabled) jfEnabled.checked = !!cur.jellyfin_enabled;
   if (jfServerUrl) jfServerUrl.value = (cur.jellyfin_server_url || defaultJellyfinServerUrl());
+  if (jfAuthMode) jfAuthMode.value = (cur.jellyfin_auth_mode || (cur.jellyfin_api_key_configured ? 'shared_api_key' : 'user_login'));
+  syncJellyfinAuthModeUi();
   if (jfApiKeyInput) jfApiKeyInput.value = '';
   if (jfClearApiKey) jfClearApiKey.checked = false;
   if (jfApiKeyState) {
@@ -2707,6 +2725,8 @@ function bindSettingsUi(){
   const jfApplyMsg = document.getElementById('setJfApplyResult');
   const jfCacheClearBtn = document.getElementById('setJfCacheClearBtn');
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
+  const jfAuthModeSelect = document.getElementById('setJfAuthMode');
+  if (jfAuthModeSelect) jfAuthModeSelect.onchange = syncJellyfinAuthModeUi;
   const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
   const seerrTestBtn = document.getElementById('setSeerrTestBtn');
   const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
@@ -2808,6 +2828,7 @@ function bindSettingsUi(){
     }
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
+    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
     const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
     const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
     const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
@@ -2825,13 +2846,15 @@ function bindSettingsUi(){
       if (!jfServer) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Server URL is required.'; } return; }
       const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
       const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
-      if (!hasApiKey && !hasLogin) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A server API key or username and password is required.'; } return; }
+      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A server API key is required for shared cast mode.'; } return; }
+      if (jfAuthMode === 'user_login' && !hasLogin) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A username and password is required for user-scoped mode.'; } return; }
     }
 
     const payload = {
       device_name: deviceName || 'RelayTV',
       jellyfin_enabled: jfEnabled,
       jellyfin_server_url: jfServer,
+      jellyfin_auth_mode: jfAuthMode,
       jellyfin_username: jfUser,
       jellyfin_user_id: jfUserId,
       jellyfin_audio_lang: jfAudioLang,
@@ -2982,6 +3005,7 @@ function bindSettingsUi(){
     const uploadRetentionHours = Number(document.getElementById('setUploadRetentionHours')?.value || '24');
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
+    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
     const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
     const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
     const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
@@ -3015,7 +3039,8 @@ function bindSettingsUi(){
       if (!jfServer) { alert(`${jfBrandName()} server URL is required.`); return; }
       const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
       const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
-      if (!hasApiKey && !hasLogin) { alert(`A ${jfBrandName()} server API key or username and password is required.`); return; }
+      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { alert(`A ${jfBrandName()} server API key is required for shared cast mode.`); return; }
+      if (jfAuthMode === 'user_login' && !hasLogin) { alert(`A ${jfBrandName()} username and password is required for user-scoped mode.`); return; }
     }
     if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
     if (seerrEnabled && seerrRequestMode !== 'caller_session' && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required for shared browsing.'); return; }
@@ -3048,6 +3073,7 @@ function bindSettingsUi(){
       iptv_enabled: !!document.getElementById('setIptvEnabled')?.checked,
       jellyfin_enabled: jfEnabled,
       jellyfin_server_url: jfServer,
+      jellyfin_auth_mode: jfAuthMode,
       jellyfin_username: jfUser,
       jellyfin_user_id: jfUserId,
       jellyfin_audio_lang: jfAudioLang,

@@ -108,6 +108,13 @@ def _normalize_jellyfin_playback_mode(v: object) -> str:
     return "auto"
 
 
+def _normalize_jellyfin_auth_mode(v: object, *, api_key_configured: bool = False) -> str:
+    s = str(v or "").strip().lower()
+    if s in ("shared_api_key", "user_login"):
+        return s
+    return "shared_api_key" if api_key_configured else "user_login"
+
+
 def _normalize_jellyfin_server_type(v: object) -> str:
     s = str(v or "").strip().lower()
     if s in ("jellyfin", "emby"):
@@ -944,6 +951,7 @@ def _default_settings() -> dict:
     quality_mode = _normalize_quality_mode(os.getenv("RELAYTV_QUALITY_MODE"))
     quality_cap = _normalize_quality_cap(os.getenv("RELAYTV_QUALITY_CAP"))
     seerr_defaults = seerr_settings_from_env()
+    jellyfin_api_key = (os.getenv("RELAYTV_JELLYFIN_API_KEY") or "").strip()
     return {
         "device_name": device_name,
         "video_mode": (os.getenv("RELAYTV_VIDEO_MODE", "auto") or "auto").strip().lower(),
@@ -981,7 +989,10 @@ def _default_settings() -> dict:
         ),
         "jellyfin_enabled": _env_bool("RELAYTV_JELLYFIN_ENABLED", False),
         "jellyfin_server_url": (os.getenv("RELAYTV_JELLYFIN_SERVER_URL") or "").strip(),
-        "jellyfin_api_key": (os.getenv("RELAYTV_JELLYFIN_API_KEY") or "").strip(),
+        "jellyfin_api_key": jellyfin_api_key,
+        "jellyfin_auth_mode": _normalize_jellyfin_auth_mode(
+            None, api_key_configured=bool(jellyfin_api_key)
+        ),
         "jellyfin_auth_enabled": _env_bool("RELAYTV_JELLYFIN_AUTH_ENABLED", True),
         "jellyfin_username": (os.getenv("RELAYTV_JELLYFIN_USERNAME") or "").strip(),
         "jellyfin_password": (os.getenv("RELAYTV_JELLYFIN_PASSWORD") or "").strip(),
@@ -1001,6 +1012,10 @@ def load_settings() -> None:
     data = _load_json(path, {})
     if isinstance(data, dict):
         defaults.update({k: v for k, v in data.items() if v is not None})
+        if "jellyfin_auth_mode" not in data:
+            defaults["jellyfin_auth_mode"] = _normalize_jellyfin_auth_mode(
+                None, api_key_configured=bool(str(defaults.get("jellyfin_api_key") or "").strip())
+            )
         if "seerr_request_mode" not in data:
             defaults["seerr_request_mode"] = (
                 "shared_admin"
@@ -1022,6 +1037,10 @@ def load_settings() -> None:
     defaults["weather"] = _normalize_weather_settings(defaults.get("weather"))
     defaults["uploads"] = _normalize_upload_settings(defaults.get("uploads"))
     defaults["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(defaults.get("jellyfin_playback_mode"))
+    defaults["jellyfin_auth_mode"] = _normalize_jellyfin_auth_mode(
+        defaults.get("jellyfin_auth_mode"),
+        api_key_configured=bool(str(defaults.get("jellyfin_api_key") or "").strip()),
+    )
     defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(defaults.get("jellyfin_server_type"))
     defaults["seerr_enabled"] = bool(defaults.get("seerr_enabled"))
     defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
@@ -1081,6 +1100,7 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_enabled",
         "jellyfin_server_url",
         "jellyfin_api_key",
+        "jellyfin_auth_mode",
         "jellyfin_auth_enabled",
         "jellyfin_username",
         "jellyfin_password",
@@ -1169,6 +1189,11 @@ def update_settings(patch: dict) -> dict:
         clean["jellyfin_server_url"] = str(clean.get("jellyfin_server_url") or "").strip()
     if "jellyfin_api_key" in clean:
         clean["jellyfin_api_key"] = str(clean.get("jellyfin_api_key") or "").strip()
+    if "jellyfin_auth_mode" in clean:
+        clean["jellyfin_auth_mode"] = _normalize_jellyfin_auth_mode(
+            clean.get("jellyfin_auth_mode"),
+            api_key_configured=bool(str(clean.get("jellyfin_api_key") or "").strip()),
+        )
     if "jellyfin_username" in clean:
         clean["jellyfin_username"] = str(clean.get("jellyfin_username") or "").strip()
     if "jellyfin_password" in clean:

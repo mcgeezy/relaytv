@@ -4547,45 +4547,58 @@ def ui():
         </div>
 
         <div class="fieldRow">
-          <label class="fieldLbl">Server API key</label>
-          <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-          <div class="hint">Makes RelayTV a shared Jellyfin cast target for users allowed to control shared devices. API keys are administrator-level secrets.</div>
-          <div class="toggleRow">
-            <div class="toggleCopy">
-              <div class="toggleTitle">Clear stored API key</div>
-              <div class="toggleHint">Remove the saved server API key on the next apply.</div>
-            </div>
-            <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
-              <input type="checkbox" id="setJfClearApiKey" />
-              <span class="toggleTrack" aria-hidden="true"></span>
-            </label>
-          </div>
-          <div class="hint" id="setJfApiKeyState"></div>
+          <label class="fieldLbl" for="setJfAuthMode">Cast target identity</label>
+          <select id="setJfAuthMode" class="input">
+            <option value="shared_api_key">Shared cast target (server API key)</option>
+            <option value="user_login">User-scoped cast target (username and password)</option>
+          </select>
+          <div class="hint" id="setJfAuthModeHint"></div>
         </div>
 
-        <div class="fieldRow">
-          <label class="fieldLbl">Username</label>
-          <input id="setJfUsername" class="input" placeholder="server username" />
+        <div id="setJfSharedAuthFields">
+          <div class="fieldRow">
+            <label class="fieldLbl">Server API key</label>
+            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            <div class="hint">Makes RelayTV a shared cast target for every Jellyfin user allowed to control shared devices. API keys are administrator-level secrets.</div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Clear stored API key</div>
+                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
+                <input type="checkbox" id="setJfClearApiKey" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint" id="setJfApiKeyState"></div>
+          </div>
+        </div>
+
+        <div id="setJfUserAuthFields">
+          <div class="fieldRow">
+            <label class="fieldLbl">Username</label>
+            <input id="setJfUsername" class="input" placeholder="server username" />
+          </div>
+          <div class="fieldRow">
+            <label class="fieldLbl">Password</label>
+            <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Clear stored password</div>
+                <div class="toggleHint">Remove the saved server password on the next apply.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
+                <input type="checkbox" id="setJfClearPassword" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint" id="setJfPasswordState"></div>
+          </div>
         </div>
         <div class="fieldRow">
           <label class="fieldLbl">Preferred user ID (optional)</label>
           <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
-          <div class="hint">Optional profile override for catalog browsing on this TV. Leave blank to use the authenticated user.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Password</label>
-          <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-          <div class="toggleRow">
-            <div class="toggleCopy">
-              <div class="toggleTitle">Clear stored password</div>
-              <div class="toggleHint">Remove the saved server password on the next apply.</div>
-            </div>
-            <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
-              <input type="checkbox" id="setJfClearPassword" />
-              <span class="toggleTrack" aria-hidden="true"></span>
-            </label>
-          </div>
-          <div class="hint" id="setJfPasswordState"></div>
+          <div class="hint">Optional profile override for catalog browsing on this TV. In user-login mode, leave blank to use the authenticated user.</div>
         </div>
         <div class="fieldRow">
           <label class="fieldLbl">Preferred audio language</label>

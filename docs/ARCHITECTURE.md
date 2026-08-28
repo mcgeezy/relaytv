@@ -87,6 +87,10 @@ milestone logs live in git history.
   request models. Playback enters through the Jellyfin command sink and the
   established playback service; neither the route nor Seerr service writes
   playback globals.
+- Jellyfin shared-cast commands expose an initiating controller identity, but
+  RelayTV does not yet switch catalog/watch-state attribution per caller.
+  `jellyfin_auth_mode=user_login` is one operator-configured account, not a
+  caller session; dynamic caller attribution remains an open product follow-up.
 - `scripts/`: install, doctor, host operations, and release support.
 
 ## Machine-Checked Guardrails

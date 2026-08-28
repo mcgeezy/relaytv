@@ -57,8 +57,8 @@ def _first_nonempty_str(values: list[object]) -> str:
 
 
 def catalog_token() -> str:
-    """Credential for user-scoped catalog, metadata, and media requests."""
-    return _first_nonempty_str([jellyfin_receiver.session_token(), jellyfin_receiver.api_key()])
+    """Credential selected for catalog, metadata, and media requests."""
+    return jellyfin_receiver.catalog_token()
 
 
 def extract_play_url(payload: dict | None) -> str:

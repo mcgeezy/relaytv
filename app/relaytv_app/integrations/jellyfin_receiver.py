@@ -55,6 +55,7 @@ class _RequestContext:
     client_version: str
     username: str
     password: str
+    auth_mode: str
     control_token: str
     catalog_token: str
     catalog_user_id: str
@@ -81,6 +82,7 @@ _STATUS: dict[str, object] = {
     "last_detect_ok": None,
     "last_detect_error": None,
     "api_key_configured": False,
+    "auth_mode": "user_login",
     "connected": False,
     "last_heartbeat_ts": None,
     "last_command": None,
@@ -130,6 +132,7 @@ _STATUS: dict[str, object] = {
 }
 
 _API_KEY: str = ""
+_AUTH_MODE: str = "user_login"
 _AUTH_USERNAME: str = ""
 _AUTH_PASSWORD: str = ""
 _ACCESS_TOKEN: str = ""
@@ -325,18 +328,27 @@ def derive_device_id() -> str:
 def _read_config() -> dict[str, object]:
     configured_name = ""
     configured_server_type = ""
+    configured_auth_mode = ""
     try:
         from .. import state as _state
 
         s = _state.get_settings() if hasattr(_state, "get_settings") else {}
         configured_name = str((s or {}).get("device_name") or "").strip()
         configured_server_type = str((s or {}).get("jellyfin_server_type") or "").strip().lower()
+        configured_auth_mode = str((s or {}).get("jellyfin_auth_mode") or "").strip().lower()
     except Exception:
         configured_name = ""
         configured_server_type = ""
+        configured_auth_mode = ""
     server_type = configured_server_type or (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_TYPE") or "").strip().lower()
     if server_type not in ("jellyfin", "emby"):
         server_type = "jellyfin"
+    if configured_auth_mode not in ("shared_api_key", "user_login"):
+        configured_auth_mode = (
+            "shared_api_key"
+            if str(runtime_config.snapshot().raw("RELAYTV_JELLYFIN_API_KEY") or "").strip()
+            else "user_login"
+        )
     device_name = (
         configured_name
         or (runtime_config.snapshot().raw("RELAYTV_DEVICE_NAME") or "").strip()
@@ -354,6 +366,7 @@ def _read_config() -> dict[str, object]:
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
         "server_type": server_type,
+        "auth_mode": configured_auth_mode,
     }
 
 
@@ -387,7 +400,7 @@ def start() -> None:
 
 def _start_locked() -> None:
     """Initialize Jellyfin receiver runtime state (network wiring added later)."""
-    global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+    global _API_KEY, _AUTH_MODE, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     cfg = _read_config()
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
@@ -399,6 +412,8 @@ def _start_locked() -> None:
         _STATUS["client_version"] = str(cfg["client_version"])
         _STATUS["heartbeat_sec"] = int(cfg["heartbeat_sec"])
         _STATUS["server_type"] = str(cfg["server_type"])
+        _AUTH_MODE = str(cfg["auth_mode"])
+        _STATUS["auth_mode"] = _AUTH_MODE
         _API_KEY = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_API_KEY") or "").strip()
         _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
         _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
@@ -491,18 +506,19 @@ def mark_heartbeat() -> None:
 def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     out = dict(raw)
     now_ts = int(time.time())
-    if bool(out.get("api_key_configured")):
+    auth_mode = str(out.get("auth_mode") or "user_login")
+    if auth_mode == "shared_api_key" and bool(out.get("api_key_configured")):
         out["control_auth_source"] = "api_key"
         out["cast_target_scope"] = "shared"
-    elif bool(out.get("authenticated")):
+    elif auth_mode == "user_login" and bool(out.get("authenticated")):
         out["control_auth_source"] = "user_session"
         out["cast_target_scope"] = "user_scoped"
     else:
         out["control_auth_source"] = "none"
         out["cast_target_scope"] = "unavailable"
-    if bool(out.get("authenticated")):
+    if auth_mode == "user_login" and bool(out.get("authenticated")):
         out["catalog_auth_source"] = "user_session"
-    elif bool(out.get("api_key_configured")):
+    elif auth_mode == "shared_api_key" and bool(out.get("api_key_configured")):
         out["catalog_auth_source"] = "api_key"
     else:
         out["catalog_auth_source"] = "none"
@@ -559,16 +575,21 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
         out["sync_health"] = "error"
         out["sync_health_reason"] = "register_failed"
         return out
-    if bool(out.get("auth_user_configured")) and bool(out.get("last_auth_ok")) is False:
+    if auth_mode == "user_login" and bool(out.get("auth_user_configured")) and bool(out.get("last_auth_ok")) is False:
         out["sync_health"] = "error"
         out["sync_health_reason"] = "auth_failed"
         return out
 
-    if auth_ts == 0 and bool(out.get("auth_user_configured")):
+    if auth_mode == "user_login" and auth_ts == 0 and bool(out.get("auth_user_configured")):
         out["sync_health"] = "degraded"
         out["sync_health_reason"] = "awaiting_auth"
         return out
-    if register_ts == 0 and bool(out.get("api_key_configured") or out.get("authenticated")):
+    active_credential = (
+        bool(out.get("api_key_configured"))
+        if auth_mode == "shared_api_key"
+        else bool(out.get("authenticated"))
+    )
+    if register_ts == 0 and active_credential:
         out["sync_health"] = "degraded"
         out["sync_health_reason"] = "awaiting_register"
         return out
@@ -721,8 +742,9 @@ def _request_context() -> _RequestContext:
             client_version=str(_STATUS.get("client_version") or "1.0"),
             username=str(_AUTH_USERNAME or ""),
             password=str(_AUTH_PASSWORD or ""),
-            control_token=str(_API_KEY or _ACCESS_TOKEN or ""),
-            catalog_token=str(_ACCESS_TOKEN or _API_KEY or ""),
+            auth_mode=str(_AUTH_MODE or "user_login"),
+            control_token=str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN),
+            catalog_token=str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN),
             catalog_user_id=catalog_user_id,
             authenticated=bool(_STATUS.get("authenticated")),
             connected=bool(_STATUS.get("connected")),
@@ -799,7 +821,7 @@ def _maybe_retry_detection() -> None:
     _run_detection(context.server_url, generation=context.generation)
 
 
-def connect(*, server_url: str, api_key: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
+def connect(*, server_url: str, api_key: str | None = None, auth_mode: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
     """Configure and enable Jellyfin receiver runtime."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
@@ -810,12 +832,13 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
     # heartbeat from reopening it to the old server mid-transaction.
     with _control_socket_suspended():
         return _connect_locked(
-            server_url=server_url, api_key=api_key, device_name=device_name, heartbeat_sec=heartbeat_sec
+            server_url=server_url, api_key=api_key, auth_mode=auth_mode,
+            device_name=device_name, heartbeat_sec=heartbeat_sec
         )
 
 
-def _connect_locked(*, server_url: str, api_key: str | None, device_name: str | None, heartbeat_sec: int | None) -> dict[str, object]:
-    global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+def _connect_locked(*, server_url: str, api_key: str | None, auth_mode: str | None, device_name: str | None, heartbeat_sec: int | None) -> dict[str, object]:
+    global _API_KEY, _AUTH_MODE, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
         _STATUS["enabled"] = True
@@ -829,6 +852,15 @@ def _connect_locked(*, server_url: str, api_key: str | None, device_name: str | 
             _STATUS["heartbeat_sec"] = max(2, int(heartbeat_sec))
         if api_key is not None:
             _API_KEY = str(api_key or "").strip()
+        selected_mode = str(auth_mode or "").strip().lower()
+        if not selected_mode and api_key is not None:
+            selected_mode = "shared_api_key" if _API_KEY else "user_login"
+        if not selected_mode:
+            selected_mode = str(_AUTH_MODE or "").strip().lower()
+        if selected_mode not in ("shared_api_key", "user_login"):
+            selected_mode = "shared_api_key" if _API_KEY else "user_login"
+        _AUTH_MODE = selected_mode
+        _STATUS["auth_mode"] = _AUTH_MODE
         _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
         _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
         _ACCESS_TOKEN = ""
@@ -980,9 +1012,9 @@ def api_key() -> str:
 
 
 def control_token() -> str:
-    """Return the credential that owns the receiver's shared control plane."""
+    """Return the credential selected for the receiver control plane."""
     with _LOCK:
-        return str(_API_KEY or _ACCESS_TOKEN or "")
+        return str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN)
 
 
 def control_socket_identity_headers(status_snapshot: dict[str, object] | None = None) -> dict[str, str]:
@@ -1020,9 +1052,9 @@ def control_socket_identity_headers(status_snapshot: dict[str, object] | None = 
 
 
 def catalog_token() -> str:
-    """Return the credential used for user-scoped catalog and media work."""
+    """Return the credential selected for catalog and media work."""
     with _LOCK:
-        return str(_ACCESS_TOKEN or _API_KEY or "")
+        return str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN)
 
 
 def session_token() -> str:
@@ -3243,6 +3275,8 @@ def _ensure_authentication() -> None:
     if not runtime_config.snapshot().flag("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
         return
     context = _request_context()
+    if context.auth_mode != "user_login":
+        return
     if not context.enabled or not context.running:
         return
     if context.authenticated:
