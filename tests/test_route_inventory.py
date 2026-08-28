@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import inspect
+
 from fastapi.routing import APIRoute, APIWebSocketRoute
 
+from relaytv_app import api_auth
 from relaytv_app.main import create_app
 
 
@@ -138,7 +141,8 @@ EXPECTED_ROUTES = {
     ("POST", "/settings", "update_settings"),
     ("POST", "/settings/youtube/cookies", "upload_youtube_cookies"),
     ("POST", "/settings/youtube/cookies/clear", "clear_youtube_cookies"),
-    ("GET", "/share", "share"),
+    ("GET", "/share", "share_target"),
+    ("POST", "/share", "share"),
     ("POST", "/smart", "smart"),
     ("GET", "/snapshot", "snapshot"),
     ("POST", "/snapshot", "snapshot"),
@@ -229,3 +233,88 @@ def test_compatibility_aliases_are_preserved() -> None:
         else:
             actual = routes_by_endpoint.get(endpoint, set())
         assert expected.issubset(actual)
+
+
+# Helpers whose presence in a GET handler means the route changes server state.
+# Deliberately narrow: this is a tripwire for the next mutating GET someone
+# adds, not a proof of purity. A handler that mutates only through an
+# indirection none of these names appear in will slip past, which is why
+# api_auth.MUTATING_GET_PATHS is reviewed rather than inferred.
+_MUTATING_CALL_MARKERS = (
+    "play_now(",
+    "play_item(",
+    "mpv_command(",
+    "advance_queue(",
+    "stop_all(",
+    "persist_queue(",
+    "persist_history(",
+    "persist_settings(",
+    "persist_session(",
+    "QUEUE.clear(",
+)
+
+
+def _collect_get_handlers(routes, prefix: str = "") -> list[tuple[str, str, object]]:
+    """Flatten GET routes with their handlers, across FastAPI versions.
+
+    Must recurse the same way _collect_api_routes does: FastAPI >= 0.129 keeps
+    included routers as lazy entries rather than flattening them into
+    app.routes, so a flat scan finds nothing and every check below passes
+    vacuously.
+    """
+    out: list[tuple[str, str, object]] = []
+    for route in routes:
+        if isinstance(route, APIRoute):
+            if "GET" in (route.methods or set()):
+                out.append((prefix + route.path, route.name, route.endpoint))
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            context = getattr(route, "include_context", None)
+            included_prefix = str(getattr(context, "prefix", "") or "")
+            out.extend(_collect_get_handlers(included.routes, prefix + included_prefix))
+    return out
+
+
+def _get_route_handlers() -> list[tuple[str, str, object]]:
+    return _collect_get_handlers(create_app(testing=True).routes)
+
+
+def test_get_route_scan_actually_finds_routes() -> None:
+    """Guard the guard: a scan that finds nothing would pass every check."""
+    paths = {path for path, _name, _fn in _get_route_handlers()}
+    assert len(paths) > 40, f"GET route scan collapsed to {len(paths)} routes"
+    assert "/status" in paths and "/health" in paths
+
+
+def test_declared_mutating_gets_are_routes_that_exist() -> None:
+    """Every classified path must still be a real GET route."""
+    get_paths = {path for path, _name, _fn in _get_route_handlers()}
+    assert api_auth.MUTATING_GET_PATHS <= get_paths
+
+
+def test_no_undeclared_mutating_get_routes() -> None:
+    """A new GET that changes state must be classified before it can ship.
+
+    The token guard keys off the HTTP method, so an unclassified mutating GET
+    is an unauthenticated control path on a token-enabled install — and a
+    cross-origin-reachable one on every install, since a browser will issue a
+    GET from an <img> or a prefetch without a preflight.
+    """
+    undeclared: list[tuple[str, str, list[str]]] = []
+    for path, name, endpoint in _get_route_handlers():
+        if path in api_auth.MUTATING_GET_PATHS:
+            continue
+        try:
+            source = inspect.getsource(endpoint)
+        except (OSError, TypeError):
+            continue
+        hits = [marker for marker in _MUTATING_CALL_MARKERS if marker in source]
+        if hits:
+            undeclared.append((path, name, hits))
+
+    assert not undeclared, (
+        "GET routes reach mutating helpers without being declared in "
+        f"api_auth.MUTATING_GET_PATHS: {undeclared}. Prefer removing the side "
+        "effect (see GET /share) over adding the path to that set."
+    )

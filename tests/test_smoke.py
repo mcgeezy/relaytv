@@ -763,7 +763,7 @@ def test_share_requests_cec_takeover_by_default(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(routes.player, "play_item", fake_play_item)
 
-    response = routes.share(url="https://example.test/video")
+    response = routes.share(routes.ShareReq(url="https://example.test/video"))
 
     assert response["status"] == "playing"
     assert observed["cec"] is True
