@@ -79,8 +79,50 @@ def uploads_root() -> str:
     return _UPLOADS_ROOT
 
 
+# Upload ids are generated, never supplied: new_upload_id() has produced
+# "u_" + 20 hex characters since the first commit, so this is the whole format
+# that has ever existed on disk and enforcing it orphans nothing.
+_UPLOAD_ID_RE = re.compile(r"^u_[0-9a-f]{20}$")
+
+
+def is_valid_upload_id(upload_id: object) -> bool:
+    """Return True when ``upload_id`` has the generated shape."""
+    return bool(_UPLOAD_ID_RE.match(str(upload_id or "").strip()))
+
+
+def _is_contained(path: str, root: str) -> bool:
+    """Return True when ``path`` resolves inside ``root``."""
+    try:
+        return os.path.commonpath([os.path.abspath(root), os.path.abspath(path)]) == os.path.abspath(root)
+    except (ValueError, OSError):
+        # Different drives, or a path that cannot be resolved at all.
+        return False
+
+
 def upload_dir(upload_id: str) -> str:
-    return os.path.join(uploads_root(), str(upload_id or "").strip())
+    """Return the directory holding an upload, or "" when the id is not one.
+
+    This is the containment boundary for the whole store: metadata, session,
+    media, and deletion paths are all derived from it. An id reaches here from
+    a URL, where upload_ref_from_url used to decode %2F *after* splitting the
+    path, so "..%2F..%2Fdata" arrived as a single component that unquoted into
+    "../../data" and escaped the root. Only the filename was ever basename'd.
+
+    "" rather than a raised exception, because every caller already treats a
+    missing upload as expired (410) and a raise would turn a hostile URL into
+    a 500. Derived paths must propagate the "" instead of joining onto it:
+    os.path.join("", "meta.json") is a *relative* path, which would read from
+    the working directory.
+    """
+    ident = str(upload_id or "").strip()
+    if not is_valid_upload_id(ident):
+        return ""
+    path = os.path.join(uploads_root(), ident)
+    # Belt and braces. The format check already makes traversal impossible;
+    # this keeps that true if the format is ever widened.
+    if not _is_contained(path, uploads_root()):
+        return ""
+    return path
 
 
 def upload_public_path(upload_id: str, filename: str) -> str:
@@ -107,7 +149,11 @@ def upload_ref_from_url(url: object) -> tuple[str, str] | None:
     if len(parts) != 2:
         return None
     upload_id, filename = parts
-    if not upload_id or not filename:
+    if not filename:
+        return None
+    # unquote runs after the split, so an encoded separator survives inside a
+    # single component: "..%2F..%2Fdata" decodes to "../../data" here.
+    if not is_valid_upload_id(upload_id):
         return None
     return upload_id, os.path.basename(filename)
 
@@ -162,11 +208,13 @@ def new_upload_id() -> str:
 
 
 def metadata_path(upload_id: str) -> str:
-    return os.path.join(upload_dir(upload_id), "meta.json")
+    base = upload_dir(upload_id)
+    return os.path.join(base, "meta.json") if base else ""
 
 
 def session_path(upload_id: str) -> str:
-    return os.path.join(upload_dir(upload_id), "session.json")
+    base = upload_dir(upload_id)
+    return os.path.join(base, "session.json") if base else ""
 
 
 def load_metadata(upload_id: str) -> dict | None:
@@ -416,7 +464,10 @@ def stored_file_path(meta: dict) -> str | None:
     stored_name = os.path.basename(str(meta.get("stored_name") or "").strip())
     if not upload_id or not stored_name:
         return None
-    return os.path.join(upload_dir(upload_id), stored_name)
+    base = upload_dir(upload_id)
+    if not base:
+        return None
+    return os.path.join(base, stored_name)
 
 
 def media_exists(upload_id: str) -> bool:
@@ -524,6 +575,12 @@ def list_upload_metadata() -> list[dict]:
 
 def delete_upload(upload_id: str) -> None:
     path = upload_dir(upload_id)
+    if not path:
+        # Never hand an unvalidated id to rmtree. Reached today only with
+        # server-generated ids and ids read back from meta.json, but the
+        # operation is recursive deletion and the guard costs nothing.
+        logger.warning("upload_delete_rejected id=%r", str(upload_id)[:64])
+        return
     try:
         shutil.rmtree(path)
     except FileNotFoundError:
