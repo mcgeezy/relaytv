@@ -254,13 +254,37 @@ _MUTATING_CALL_MARKERS = (
 )
 
 
-def _get_route_handlers() -> list[tuple[str, str, object]]:
-    app = create_app(testing=True)
+def _collect_get_handlers(routes, prefix: str = "") -> list[tuple[str, str, object]]:
+    """Flatten GET routes with their handlers, across FastAPI versions.
+
+    Must recurse the same way _collect_api_routes does: FastAPI >= 0.129 keeps
+    included routers as lazy entries rather than flattening them into
+    app.routes, so a flat scan finds nothing and every check below passes
+    vacuously.
+    """
     out: list[tuple[str, str, object]] = []
-    for route in app.routes:
-        if isinstance(route, APIRoute) and "GET" in (route.methods or set()):
-            out.append((route.path, route.name, route.endpoint))
+    for route in routes:
+        if isinstance(route, APIRoute):
+            if "GET" in (route.methods or set()):
+                out.append((prefix + route.path, route.name, route.endpoint))
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            context = getattr(route, "include_context", None)
+            included_prefix = str(getattr(context, "prefix", "") or "")
+            out.extend(_collect_get_handlers(included.routes, prefix + included_prefix))
     return out
+
+
+def _get_route_handlers() -> list[tuple[str, str, object]]:
+    return _collect_get_handlers(create_app(testing=True).routes)
+
+
+def test_get_route_scan_actually_finds_routes() -> None:
+    """Guard the guard: a scan that finds nothing would pass every check."""
+    paths = {path for path, _name, _fn in _get_route_handlers()}
+    assert len(paths) > 40, f"GET route scan collapsed to {len(paths)} routes"
+    assert "/status" in paths and "/health" in paths
 
 
 def test_declared_mutating_gets_are_routes_that_exist() -> None:
