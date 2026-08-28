@@ -89,6 +89,53 @@ def test_queue_and_history_do_not_share_a_version_line(state_dir) -> None:
     assert os.path.exists(os.path.join(str(state_dir), state.HISTORY_STATE_FILE))
 
 
+def test_concurrent_settings_updates_leave_the_latest_on_disk(state_dir, monkeypatch) -> None:
+    """Exercise update_settings itself, not only the publisher primitive."""
+    entered = threading.Event()
+    release_older = threading.Event()
+    writes: list[float] = []
+    monkeypatch.setattr(state, "SETTINGS", {"volume": 100.0}, raising=False)
+
+    def _ordered_write(_path, payload):
+        value = float(payload["volume"])
+        if value == 10.0:
+            entered.set()
+            release_older.wait(5.0)
+        writes.append(value)
+        return True
+
+    monkeypatch.setattr(state, "_atomic_write_json", _ordered_write)
+
+    older = threading.Thread(target=state.update_settings, args=({"volume": 10},), daemon=True)
+    newer = threading.Thread(target=state.update_settings, args=({"volume": 20},), daemon=True)
+    older.start()
+    assert entered.wait(1.0), "older settings write never entered persistence"
+    newer.start()
+    for _ in range(100):
+        if state.get_settings().get("volume") == 20.0:
+            break
+        threading.Event().wait(0.01)
+    assert state.get_settings()["volume"] == 20.0
+    release_older.set()
+    older.join(timeout=2.0)
+    newer.join(timeout=2.0)
+
+    assert not older.is_alive() and not newer.is_alive()
+    assert writes[-1] == 20.0, writes
+
+
+def test_stale_queue_payload_cannot_replace_current_queue(state_dir) -> None:
+    newer = {"url": "https://example.com/newer.mp4", "title": "newer"}
+    state.QUEUE = [newer]
+
+    state.persist_queue_payload(
+        {"queue": [{"url": "https://example.com/older.mp4"}], "saved_at": 1}
+    )
+
+    payload = _read(os.path.join(str(state_dir), state.QUEUE_STATE_FILE))
+    assert payload["queue"] == [state._persistable_queue_item(newer)]
+
+
 # --- composite session mutation ----------------------------------------------
 
 
@@ -164,6 +211,13 @@ def test_write_failure_is_reported_not_swallowed(state_dir, monkeypatch) -> None
     assert health["ok"] is False
     assert state.SETTINGS_STATE_FILE in health["failing"]
     assert "No space left" in health["failing"][state.SETTINGS_STATE_FILE]["last_error"]
+
+
+def test_update_settings_does_not_report_success_when_disk_write_fails(state_dir, monkeypatch) -> None:
+    monkeypatch.setattr(state, "_atomic_write_json", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="settings persistence failed"):
+        state.update_settings({"volume": 42})
 
 
 def test_health_recovers_after_a_successful_write(state_dir, monkeypatch) -> None:

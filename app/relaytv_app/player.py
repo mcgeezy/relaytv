@@ -5233,10 +5233,12 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         now["_playback_started_pos"] = 0.0
 
     _add_history_entry(now)
-    state.set_now_playing(now)
-    state.set_session_state("playing")
-    state.set_pause_reason(None)
-    state.set_session_position(float(start_pos) if start_pos is not None else 0.0)
+    state.update_session(
+        now_playing=now,
+        session_state="playing",
+        pause_reason=None,
+        session_position=float(start_pos) if start_pos is not None else 0.0,
+    )
 
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids

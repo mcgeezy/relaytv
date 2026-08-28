@@ -291,6 +291,11 @@ class _Publisher:
                         self._written = version
             return ok
 
+    def superseded(self, version: int) -> bool:
+        """Whether a successful newer snapshot made ``version`` unnecessary."""
+        with self._counter_lock:
+            return version <= self._written
+
 
 _QUEUE_PUBLISHER = _Publisher("queue", lambda: _state_path(QUEUE_STATE_FILE))
 _HISTORY_PUBLISHER = _Publisher("history", lambda: _state_path(HISTORY_STATE_FILE))
@@ -795,9 +800,18 @@ def _load_persisted_session() -> None:
         pass
 
 
-def persist_queue_payload(payload: dict) -> None:
-    """Public wrapper (modules shouldn't rely on underscored helpers)."""
-    return _persist_queue_payload(payload)
+def persist_queue_payload(payload: dict) -> bool:
+    """Persist the current queue, retaining the legacy caller signature.
+
+    Callers historically built ``payload`` under ``QUEUE_LOCK`` and published
+    it later. A newer mutation could land between those steps, after which the
+    stale payload received the newest version and won on disk. Re-snapshotting
+    here couples the version to the current queue under one lock. ``payload``
+    remains accepted so existing internal call sites and companion test hooks
+    do not need an atomic migration.
+    """
+    del payload
+    return _persist_queue()
 
 def persist_history_payload(payload: dict) -> None:
     return _persist_history_payload(payload)
@@ -1340,12 +1354,14 @@ def update_settings(patch: dict) -> dict:
         clean["jellyfin_server_type"] = _normalize_jellyfin_server_type(clean.get("jellyfin_server_type"))
     with SETTINGS_LOCK:
         SETTINGS.update(clean)
+        version = _SETTINGS_PUBLISHER.reserve()
         payload = dict(SETTINGS)
-    try:
-        _atomic_write_json(_state_path(SETTINGS_STATE_FILE), payload)
-    except Exception:
-        pass
-    return payload
+    published = _SETTINGS_PUBLISHER.publish(version, payload)
+    if not published and not _SETTINGS_PUBLISHER.superseded(version):
+        raise RuntimeError("settings persistence failed")
+    # A newer concurrent update may have superseded this response as well as
+    # its disk write. Return the state that actually owns memory and disk.
+    return get_settings() if not published else payload
 
 def _load_runtime_state() -> None:
     """Load startup state in a deterministic order."""

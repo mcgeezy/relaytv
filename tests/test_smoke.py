@@ -862,7 +862,7 @@ def test_update_settings_syncs_cec_env_and_stops_monitor(monkeypatch: pytest.Mon
 
 def test_play_item_attempts_cec_takeover_without_probe_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     takeover_calls: list[bool] = []
-    now_values: list[dict] = []
+    session_updates: list[dict[str, object]] = []
 
     monkeypatch.setattr(player, "update_history_progress", lambda *a, **k: None)
     monkeypatch.setattr(player, "_mark_playback_transition", lambda *a, **k: None)
@@ -883,10 +883,7 @@ def test_play_item_attempts_cec_takeover_without_probe_gate(monkeypatch: pytest.
     monkeypatch.setattr(player.state, "get_tv_state", lambda: {"active_source_phys_addr": "2000"})
     monkeypatch.setattr(player, "_our_phys_addr", lambda: "1000")
     monkeypatch.setattr(player.state, "persist_queue", lambda: None)
-    monkeypatch.setattr(player.state, "set_now_playing", lambda value: now_values.append(value))
-    monkeypatch.setattr(player.state, "set_session_state", lambda value: None)
-    monkeypatch.setattr(player.state, "set_pause_reason", lambda value: None)
-    monkeypatch.setattr(player.state, "set_session_position", lambda value: None)
+    monkeypatch.setattr(player.state, "update_session", lambda **values: session_updates.append(values) or True)
 
     result = player.play_item(
         {"url": "https://example.test/video", "title": "Example"},
@@ -898,7 +895,14 @@ def test_play_item_attempts_cec_takeover_without_probe_gate(monkeypatch: pytest.
 
     assert takeover_calls == [True]
     assert result["url"] == "https://example.test/video"
-    assert now_values
+    assert session_updates == [
+        {
+            "now_playing": result,
+            "session_state": "playing",
+            "pause_reason": None,
+            "session_position": 0.0,
+        }
+    ]
 
 
 def test_public_install_docs_offer_latest_without_full_image_variant() -> None:
@@ -4859,7 +4863,7 @@ def test_session_tracker_does_not_reopen_closed_session(monkeypatch: pytest.Monk
 
 def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytest.MonkeyPatch) -> None:
     start_calls: list[dict[str, object]] = []
-    now_values: list[dict] = []
+    session_updates: list[dict[str, object]] = []
     events: list[object] = []
 
     monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
@@ -4887,10 +4891,7 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
     monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda force=False: False)
     monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
     monkeypatch.setattr(player.state, 'get_tv_state', lambda: {})
-    monkeypatch.setattr(player.state, 'set_now_playing', lambda value: now_values.append(value))
-    monkeypatch.setattr(player.state, 'set_session_state', lambda value: None)
-    monkeypatch.setattr(player.state, 'set_pause_reason', lambda value: None)
-    monkeypatch.setattr(player.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(player.state, 'update_session', lambda **values: session_updates.append(values) or True)
     monkeypatch.setattr(player, 'resolve_streams', lambda url: (_ for _ in ()).throw(AssertionError('yt-dlp should not run')))
     monkeypatch.setattr(player.time, 'time', lambda: 1000.0)
     monkeypatch.setattr(
@@ -4921,7 +4922,11 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(monkeypatch: pytes
     assert start_calls == [{'stream': 'https://video.example/resolved.mp4', 'audio': 'https://audio.example/resolved.m4a', 'start_pos': 42.5}]
     assert now['stream'] == 'https://video.example/resolved.mp4'
     assert now['_resolved_stream'] == 'https://video.example/resolved.mp4'
-    assert now_values[-1]['_resolved_at'] == 999.0
+    assert len(session_updates) == 1
+    assert session_updates[0]['now_playing']['_resolved_at'] == 999.0
+    assert session_updates[0]['session_state'] == 'playing'
+    assert session_updates[0]['pause_reason'] is None
+    assert session_updates[0]['session_position'] == 42.5
     assert events[0] == ('sleep', pytest.approx(4.2))
     assert events[1] == 'load'
     assert events[-1] == 'start'
