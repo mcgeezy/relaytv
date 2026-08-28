@@ -134,6 +134,50 @@ def test_failure_map_is_bounded(thumb_env) -> None:
     assert len(thumb_cache._FAILED_AT) <= thumb_cache.THUMB_FAILURE_MAP_MAX
 
 
+def test_sync_thumbnail_path_respects_failure_backoff(thumb_env, monkeypatch) -> None:
+    url = "https://cdn.test/dead-sync.jpg"
+    tid = thumb_cache.thumb_id(url)
+    thumb_cache._remember_src(tid, url)
+    thumb_cache._release_thumb(tid, failed=True)
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        thumb_cache,
+        "_download_to",
+        lambda source, path: attempts.append(source) or False,
+    )
+
+    assert thumb_cache.ensure_cached_sync(tid, timeout_s=0) is False
+    assert thumb_cache.ensure_cached_sync(tid, timeout_s=0) is False
+    assert attempts == []
+
+
+def test_sync_thumbnail_path_does_not_duplicate_inflight_work(thumb_env, monkeypatch) -> None:
+    url = "https://cdn.test/inflight.jpg"
+    tid = thumb_cache.thumb_id(url)
+    thumb_cache._remember_src(tid, url)
+    assert thumb_cache._claim_thumb(tid) is True
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        thumb_cache,
+        "_download_to",
+        lambda source, path: attempts.append(source) or False,
+    )
+
+    assert thumb_cache.ensure_cached_sync(tid, timeout_s=0) is False
+    assert attempts == []
+
+
+def test_sync_thumbnail_failure_enters_backoff(thumb_env, monkeypatch) -> None:
+    url = "https://cdn.test/new-failure.jpg"
+    tid = thumb_cache.thumb_id(url)
+    thumb_cache._remember_src(tid, url)
+    monkeypatch.setattr(thumb_cache, "_download_to", lambda source, path: False)
+
+    assert thumb_cache.ensure_cached_sync(tid, timeout_s=0) is False
+    assert tid in thumb_cache._FAILED_AT
+    assert thumb_cache._claim_thumb(tid) is False
+
+
 # --- yt-dlp metadata cache ---------------------------------------------------
 
 

@@ -269,12 +269,24 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
         content_type=content_type,
         size_bytes=0,
     )
-    await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
-
-    media_url = str(request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name))
-    target_dir = upload_store.upload_dir(upload_id)
-    await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
-    final_path = os.path.join(target_dir, public_name)
+    upload_store.register_active_upload(upload_id)
+    try:
+        await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
+        media_url = str(request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name))
+        target_dir = upload_store.upload_dir(upload_id)
+        await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
+        final_path = os.path.join(target_dir, public_name)
+        session = upload_store.new_play_session(meta)
+        session["path"] = final_path
+        await run_in_threadpool(upload_store.write_session, upload_id, session)
+    except Exception:
+        await run_in_threadpool(upload_store.delete_upload, upload_id)
+        upload_store.unregister_active_upload(upload_id)
+        raise
+    except BaseException:
+        # Cancellation cannot leave an id permanently protected from cleanup.
+        upload_store.unregister_active_upload(upload_id)
+        raise
     size_bytes = 0
     progressive_started = False
     fallback_reason = ""
@@ -282,9 +294,6 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
     playback_mode = "full_upload"
     now_playing = None
     stored_ok = False
-    session = upload_store.new_play_session(meta)
-    session["path"] = final_path
-    await run_in_threadpool(upload_store.write_session, upload_id, session)
     synced_bytes = 0
     synced_at = time.monotonic()
     try:
@@ -327,7 +336,11 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                 if progressive_started or session.get("fallback_to_full_upload") is True:
                     continue
 
-                ready, reason = upload_store.progressive_start_ready(meta, session)
+                ready, reason = await run_in_threadpool(
+                    upload_store.progressive_start_ready,
+                    meta,
+                    session,
+                )
                 if ready:
                     item = upload_store.build_item(meta, absolute_url=media_url)
                     item["_local_stream_path"] = final_path
@@ -400,3 +413,4 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                 await run_in_threadpool(upload_store.delete_upload, upload_id)
             except Exception:
                 pass
+        upload_store.unregister_active_upload(upload_id)
