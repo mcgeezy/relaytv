@@ -145,7 +145,11 @@ def create_app(*, testing: bool = False) -> FastAPI:
     # outermost and rejected writes still show up in request logging.
     @app.middleware("http")
     async def _api_token_guard(request: Request, call_next):
-        if api_auth.write_request_allowed(request.method, request.headers.get("authorization")):
+        if api_auth.write_request_allowed(
+            request.method,
+            request.headers.get("authorization"),
+            path=request.url.path,
+        ):
             return await call_next(request)
         return JSONResponse(
             {"detail": "api token required"},

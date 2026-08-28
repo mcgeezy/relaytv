@@ -2,7 +2,10 @@
 import time
 import uuid
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from .. import player, playback_service, state
@@ -50,6 +53,14 @@ class PlayNowReq(BaseModel):
     resolved_stream: str | None = None
     resolved_audio: str | None = None
     resolved_at: float | None = None
+
+
+class ShareReq(BaseModel):
+    """Payload for the share target's authenticated POST."""
+
+    url: str | None = None
+    link: str | None = None
+    cec: bool = True
 
 
 class PlayTemporaryReq(BaseModel):
@@ -506,22 +517,54 @@ def previous():
     return play_now(PlayNowReq(url=chosen.get("url"), preserve_current=True, reason="previous"))
 
 
-@router.get("/share")
-def share(url: str | None = None, link: str | None = None, cec: bool = True):
-    shared = (url or link or "").strip()
+@router.post("/share")
+def share(req: ShareReq):
+    """Play a shared link immediately, clearing the queue.
+
+    The share target itself is the GET below; this is the endpoint it hands
+    off to, and the one API clients should call.
+    """
+    shared = (req.url or req.link or "").strip()
     if not shared:
-        raise HTTPException(status_code=400, detail="Missing url or link query parameter")
+        raise HTTPException(status_code=400, detail="Missing url or link")
     item = _smart_item_from_url(shared)
     start_pos = item.get("resume_pos") if isinstance(item, dict) else None
     now = playback_service.play_now(
         item,
         use_resolver=True,
-        cec=cec,
+        cec=req.cec,
         clear_queue=True,
         mode="share",
         start_pos=(float(start_pos) if start_pos is not None else None),
     )
     return {"status": "playing", "now_playing": _annotate_upload_item(now), "source": "share_target"}
+
+
+@router.get("/share")
+def share_target(url: str | None = None, link: str | None = None, cec: bool = True):
+    """Hand a shared link to the UI instead of playing it.
+
+    This is the PWA share target (``routes/assets.py``, web app manifest),
+    which the Web Share Target API can only declare as a GET and which reaches
+    us as a plain browser navigation carrying no ``Authorization`` header.
+
+    It used to clear the queue and start playback directly. That made every
+    install — token or not — drivable by any page the operator visited, since
+    an ``<img src>`` or a prefetch issues the GET and the side effect lands
+    even though the browser discards the response. Authenticating the route
+    would not have helped: the share target cannot send a header, so it would
+    simply have stopped working.
+
+    Redirecting keeps the share target intact and moves the side effect onto
+    the UI's authenticated JSON POST, which a cross-origin page cannot forge
+    without a CORS preflight this app never answers. ``cec`` is accepted for
+    URL compatibility; callers that need it should POST.
+    """
+    shared = (url or link or "").strip()
+    if not shared:
+        raise HTTPException(status_code=400, detail="Missing url or link query parameter")
+    # 303 so the redirect is a GET regardless of how the share target arrived.
+    return RedirectResponse(f"/ui?share={quote(shared, safe='')}", status_code=303)
 
 
 @router.post("/smart")

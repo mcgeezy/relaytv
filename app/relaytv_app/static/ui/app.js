@@ -3065,6 +3065,39 @@ function bindSettingsUi(){
 }
 
 
+// Consume the ``?share=`` parameter the share target redirects us to.
+//
+// ``GET /share`` used to play the link itself. It no longer does: a bare GET is
+// reachable from any page the operator visits, so the side effect moved here,
+// behind the same authenticated JSON POST every other control uses. The user
+// still gets one tap — the modal opens prefilled — and now gets a choice
+// between Play and Queue that the old share target never offered.
+async function consumeShareParam(){
+  let shared = '';
+  try {
+    shared = (new URLSearchParams(window.location.search || '').get('share') || '').trim();
+  } catch(_e) {
+    return false;
+  }
+  if (!shared) return false;
+  // Strip it before anything can fail, so a reload or a back-navigation does
+  // not re-open the modal with a link the user already dealt with.
+  try {
+    const here = new URL(window.location.href);
+    here.searchParams.delete('share');
+    history.replaceState(history.state, '', here.pathname + here.search + here.hash);
+  } catch(_e) {}
+  const normalized = normalizeUrl(shared);
+  if (!looksLikeUrl(normalized)) return false;
+  const inp = document.getElementById('addUrlInput');
+  // Set the value first: openAddUrl only reaches for the clipboard when the
+  // field is empty, and the shared link is the better answer.
+  if (inp) inp.value = normalized;
+  await openAddUrl();
+  return true;
+}
+
+
 function bindAddUrlUi(){
   const btn = document.getElementById('addUrlBtn');
   const bd  = document.getElementById('addBackdrop');
@@ -3144,6 +3177,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('pageshow', wakeReconnect);
   connectUiEventStream();
   refresh();
+  consumeShareParam().catch(() => {});
   setInterval(() => {
     if (_uiEventHealthy()) return;
     refresh().catch(() => {});

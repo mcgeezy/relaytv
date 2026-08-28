@@ -6,9 +6,11 @@ write endpoint open. With a token configured, write requests require
 ``Authorization: Bearer <token>`` while reads, /health, /ui, and static
 assets stay open.
 """
+from urllib.parse import unquote
+
 from fastapi.testclient import TestClient
 
-from relaytv_app import api_auth
+from relaytv_app import api_auth, playback_service
 from relaytv_app.config import runtime_config
 from relaytv_app.main import create_app
 
@@ -179,3 +181,102 @@ def test_settings_response_never_exposes_token(monkeypatch) -> None:
     assert response.status_code == 200
     assert TOKEN not in response.text
     assert "api_token" not in response.json()
+
+
+# --- token on: mutating GETs are classified as writes -------------------------
+
+
+def test_is_write_request_classifies_mutating_gets() -> None:
+    assert api_auth.is_write_request("POST", "/anything") is True
+    assert api_auth.is_write_request("GET", "/status") is False
+    assert api_auth.is_write_request("HEAD", "/snapshot") is False
+    # The compatibility alias mutates despite the method.
+    assert api_auth.is_write_request("GET", "/snapshot") is True
+    assert api_auth.is_write_request("get", "/snapshot/") is True
+    # /share redirects now, so it is a genuine read again.
+    assert api_auth.is_write_request("GET", "/share") is False
+
+
+def test_mutating_get_requires_token(monkeypatch) -> None:
+    _enable_token(monkeypatch)
+    client = _client()
+
+    unauthenticated = client.get("/snapshot")
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers.get("WWW-Authenticate") == "Bearer"
+
+    wrong = client.get("/snapshot", headers={"Authorization": "Bearer nope"})
+    assert wrong.status_code == 401
+
+    # The correct token gets past the guard and reaches the handler, which
+    # rejects with 409 because nothing is playing. Anything but 401 proves the
+    # middleware let it through.
+    authorized = client.get("/snapshot", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert authorized.status_code != 401
+
+
+def test_mutating_get_open_when_token_unset(monkeypatch) -> None:
+    """Local-first default is unchanged: no token, no guard."""
+    monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    runtime_config.refresh_from_env()
+
+    client = _client()
+    assert client.get("/snapshot").status_code != 401
+
+
+def test_share_target_redirects_without_playing(monkeypatch) -> None:
+    """The share target must not be a control path, with or without a token."""
+    monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    runtime_config.refresh_from_env()
+
+    played: list[object] = []
+    monkeypatch.setattr(
+        playback_service, "play_now", lambda *a, **k: played.append((a, k)) or {}
+    )
+
+    client = _client()
+    response = client.get(
+        "/share", params={"url": "https://youtu.be/abc123"}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert location.startswith("/ui?share=")
+    assert "youtu.be" in unquote(location)
+    assert played == []
+
+
+def test_share_target_redirect_survives_token(monkeypatch) -> None:
+    """A browser navigation carries no bearer header; it must still work."""
+    _enable_token(monkeypatch)
+
+    client = _client()
+    response = client.get(
+        "/share", params={"url": "https://youtu.be/abc123"}, follow_redirects=False
+    )
+    assert response.status_code == 303
+
+
+def test_share_post_is_guarded_and_plays(monkeypatch) -> None:
+    _enable_token(monkeypatch)
+
+    played: list[dict] = []
+
+    def _fake_play_now(item, **kwargs):
+        played.append({"item": item, **kwargs})
+        return {"title": "shared"}
+
+    monkeypatch.setattr(playback_service, "play_now", _fake_play_now)
+
+    client = _client()
+    assert client.post("/share", json={"url": "https://youtu.be/abc123"}).status_code == 401
+    assert played == []
+
+    ok = client.post(
+        "/share",
+        json={"url": "https://youtu.be/abc123"},
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["source"] == "share_target"
+    assert len(played) == 1
+    assert played[0]["clear_queue"] is True

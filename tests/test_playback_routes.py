@@ -117,7 +117,7 @@ def test_share_route_requests_cec_takeover_by_default(monkeypatch) -> None:
     monkeypatch.setattr(routes.player, "play_item", fake_play_item)
 
     client = TestClient(create_app(testing=True))
-    response = client.get("/share", params={"url": "https://example.test/video"})
+    response = client.post("/share", json={"url": "https://example.test/video"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "playing"
@@ -130,6 +130,34 @@ def test_share_route_requests_cec_takeover_by_default(monkeypatch) -> None:
         "mode": "share",
         "start_pos": 11.0,
     }
+
+
+def test_share_target_get_redirects_into_the_ui(monkeypatch) -> None:
+    """The share target hands off to the UI; it must not play anything itself.
+
+    A GET is reachable from any page the operator visits — an <img> or a
+    prefetch issues it and the side effect lands even though the response is
+    discarded — so the playback call belongs behind the UI's JSON POST.
+    """
+    monkeypatch.setattr(routes, "_smart_item_from_url", lambda url: {"url": url})
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("the share target must not start playback")
+
+    monkeypatch.setattr(routes.player, "play_item", _fail)
+
+    client = TestClient(create_app(testing=True))
+    response = client.get(
+        "/share", params={"url": "https://example.test/video"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/ui?share=https%3A%2F%2Fexample.test%2Fvideo"
+
+
+def test_share_target_get_still_rejects_a_missing_link() -> None:
+    client = TestClient(create_app(testing=True))
+    assert client.get("/share", follow_redirects=False).status_code == 400
 
 
 def test_smart_route_queues_when_currently_playing(monkeypatch) -> None:

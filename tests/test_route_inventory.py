@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import inspect
+
 from fastapi.routing import APIRoute, APIWebSocketRoute
 
+from relaytv_app import api_auth
 from relaytv_app.main import create_app
 
 
@@ -138,7 +141,8 @@ EXPECTED_ROUTES = {
     ("POST", "/settings", "update_settings"),
     ("POST", "/settings/youtube/cookies", "upload_youtube_cookies"),
     ("POST", "/settings/youtube/cookies/clear", "clear_youtube_cookies"),
-    ("GET", "/share", "share"),
+    ("GET", "/share", "share_target"),
+    ("POST", "/share", "share"),
     ("POST", "/smart", "smart"),
     ("GET", "/snapshot", "snapshot"),
     ("POST", "/snapshot", "snapshot"),
@@ -229,3 +233,64 @@ def test_compatibility_aliases_are_preserved() -> None:
         else:
             actual = routes_by_endpoint.get(endpoint, set())
         assert expected.issubset(actual)
+
+
+# Helpers whose presence in a GET handler means the route changes server state.
+# Deliberately narrow: this is a tripwire for the next mutating GET someone
+# adds, not a proof of purity. A handler that mutates only through an
+# indirection none of these names appear in will slip past, which is why
+# api_auth.MUTATING_GET_PATHS is reviewed rather than inferred.
+_MUTATING_CALL_MARKERS = (
+    "play_now(",
+    "play_item(",
+    "mpv_command(",
+    "advance_queue(",
+    "stop_all(",
+    "persist_queue(",
+    "persist_history(",
+    "persist_settings(",
+    "persist_session(",
+    "QUEUE.clear(",
+)
+
+
+def _get_route_handlers() -> list[tuple[str, str, object]]:
+    app = create_app(testing=True)
+    out: list[tuple[str, str, object]] = []
+    for route in app.routes:
+        if isinstance(route, APIRoute) and "GET" in (route.methods or set()):
+            out.append((route.path, route.name, route.endpoint))
+    return out
+
+
+def test_declared_mutating_gets_are_routes_that_exist() -> None:
+    """Every classified path must still be a real GET route."""
+    get_paths = {path for path, _name, _fn in _get_route_handlers()}
+    assert api_auth.MUTATING_GET_PATHS <= get_paths
+
+
+def test_no_undeclared_mutating_get_routes() -> None:
+    """A new GET that changes state must be classified before it can ship.
+
+    The token guard keys off the HTTP method, so an unclassified mutating GET
+    is an unauthenticated control path on a token-enabled install — and a
+    cross-origin-reachable one on every install, since a browser will issue a
+    GET from an <img> or a prefetch without a preflight.
+    """
+    undeclared: list[tuple[str, str, list[str]]] = []
+    for path, name, endpoint in _get_route_handlers():
+        if path in api_auth.MUTATING_GET_PATHS:
+            continue
+        try:
+            source = inspect.getsource(endpoint)
+        except (OSError, TypeError):
+            continue
+        hits = [marker for marker in _MUTATING_CALL_MARKERS if marker in source]
+        if hits:
+            undeclared.append((path, name, hits))
+
+    assert not undeclared, (
+        "GET routes reach mutating helpers without being declared in "
+        f"api_auth.MUTATING_GET_PATHS: {undeclared}. Prefer removing the side "
+        "effect (see GET /share) over adding the path to that set."
+    )
