@@ -54,7 +54,7 @@ the repository instructions:
 | F06 | Medium-high | IPTV | The refresh worker reuses a module stop event and Stop neither joins nor retires the active generation. | A refresh can survive shutdown and run concurrently with its replacement. | In review (#72) |
 | F07 | Medium-high | Browser UI | The shared control helper treats any completed HTTP response as success without checking `response.ok`. | Rejected Play/Pause, Next, Close, seek, volume, and queue commands appear to succeed. | In review (#69) |
 | F08 | Medium-high | Uploads | Async upload endpoints perform synchronous writes, cleanup scans, JSON persistence, and repeated `fsync()` calls. | Large uploads can stall HTTP controls and realtime connections. | In review (#75) |
-| F09 | Product gap | Jellyfin | Shared/API-key cast-target settings exist in an unmerged implementation but are absent from the released settings request and modal. | Operators cannot configure the intended all-user cast target from the product UI. | In review (#77) |
+| F09 | Product gap | Jellyfin | Shared/API-key cast-target settings are absent from the release, and the first implementation implicitly combines API-key control with login-session catalog access. | Operators cannot configure the intended all-user target or tell which stored identity is active. | In review (#77) |
 | F10 | Medium | Thumbnail/cache | Thumbnail jobs are unbounded and not deduplicated; failed images can be queued repeatedly. The yt-dlp metadata cache is also unbounded and unlocked. | Long-running processes can accumulate memory/work and repeatedly hit failing providers. | In review (#76) |
 | F11 | Medium | Snapshot | Snapshot creation ignores the mpv result and returns before the image is known to exist. | Clients receive `ok: true` followed by an immediate 404 or a permanently missing image. | In review (#69) |
 | F12 | Medium | Post-live relay | Concurrent session creation can publish more than one supposedly single-player relay pipeline. | Duplicate yt-dlp/ffmpeg pipelines consume CPU, disk, and network until reaped. | In review (#72 / #74) |
@@ -482,20 +482,25 @@ Test steps:
 
 Findings F09. **Independent — start in parallel with PR 1.**
 
-The work exists on `fix/jellyfin-shared-cast-target` (7 commits, +931/-64).
-Rebase onto current `main` rather than merging mechanically; `jellyfin_receiver.py`
-and `jellyfin_ws.py` have both moved since the branch was cut. If PR 6 lands
-first, re-check the settings persistence path.
+The rebased implementation is in #77 on `feat/jellyfin-shared-cast`. Its
+Settings modal and receiver now share one persisted, explicit mode; legacy
+API-key settings infer shared mode so upgrades do not silently lose the target.
 
-- Explicit settings choice between shared/admin API-key identity and
-  caller-specific login identity.
+- Explicit settings choice between shared/admin API-key identity and one
+  operator-configured user-login identity.
+- Control and catalog both use the selected identity; inactive stored
+  credentials are retained for reversible switching but never used as fallback.
 - Secrets stay redacted; expose only configured-state booleans.
+- Initiating-caller attribution for a shared cast remains a separate follow-up
+  in `ARCHITECTURE.md`; user-login mode is not presented as per-caller identity.
 
 Test steps:
 
 1. The existing branch tests pass after rebase — re-run rather than assume.
 2. `/settings` never returns the API key; only a `*_configured` boolean.
-3. Regenerate `JELLYFIN_INVENTORY.md` and the env inventory.
+3. Confirm the machine-checked Jellyfin route and environment inventories are
+   unchanged; the new mode is persisted settings state, not a new route or env
+   surface.
 4. **Device:** register against the real Jellyfin server, confirm RelayTV appears
    as a cast target for a **second** Jellyfin user, rename the device and confirm
    identity is stable, then disconnect and reconnect.
@@ -634,6 +639,7 @@ playback-intent generation unless its public response contract changes.
 | 2026-08-28 | Companion compatibility confirmed | `relaytv-android`, `relaytv-ha` working copies | Neither companion calls `GET /share` or `GET /snapshot`; both already POST with a bearer token. PR 1 needs no companion change. |
 | 2026-08-28 | PRs 1-10 implemented and opened | #68, #69, #70, #71, #72, #73, #74, #75, #76, #77 | Every finding has a fix in review, each with a revert proof confirmed to fail against the reverted guard. CI green on all. PR 11 remains blocked on these merging. |
 | 2026-08-28 | Fleet verification on a combined branch | `test/audit-combined` on Living Room (x86_64) and Mark's Room (aarch64) | Found and fixed a regression in #74 that the 752-test suite missed: retiring intents inside `player.stop_mpv` made every cold start supersede itself, because `start_mpv` calls `stop_mpv` to clear the previous process. Only a seamless replace survived. Retirement moved to the `playback_service` terminal transitions; two tests added, both confirmed to fail against the reverted fix. Cross-device discovery, mDNS restart cycles, and the Jellyfin socket all verified. Per-PR results and remaining checks are recorded in each PR. |
+| 2026-08-28 | Review findings remediated and integration stack rebuilt | #68, #72, #73, #74, #76, #77; `test/audit-combined` at `bb6ecbb` | Closed the cross-site snapshot, lifecycle deadlock/leak, stale publication, late playback side-effect, cache publication, and implicit Jellyfin identity gaps with revert-proven tests. The pushed combined branch includes open runtime PRs #66 and #68-#77 plus the #78 test instructions; 948 Python and 24 JavaScript tests pass with all syntax, lint, inventory, and diff gates clean. |
 
 Update this log only at completed milestones. Detailed investigation and soak
 logs belong in PR descriptions and git history rather than growing this file
