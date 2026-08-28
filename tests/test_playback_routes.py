@@ -448,18 +448,23 @@ def test_clear_now_playing_route_advances_queue_and_discards_temporary_state(mon
 
 
 def test_clear_resumable_session_route_stops_and_clears_state(monkeypatch) -> None:
-    now_values: list[object] = []
-    session_positions: list[object] = []
-    session_states: list[str] = []
     stop_calls: list[bool] = []
     persist_calls: list[bool] = []
+    session_writes: list[dict] = []
 
     monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.com/current.mp4"}, raising=False)
-    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: now_values.append(value) or setattr(routes.state, "NOW_PLAYING", value))
-    monkeypatch.setattr(routes.state, "set_session_position", lambda value: session_positions.append(value))
-    monkeypatch.setattr(routes.state, "set_session_state", lambda value: session_states.append(value) or setattr(routes.state, "SESSION_STATE", value))
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(routes.state, "SESSION_POSITION", 42.0, raising=False)
     monkeypatch.setattr(routes.state, "persist_queue", lambda: persist_calls.append(True))
     monkeypatch.setattr(routes.player, "stop_mpv", lambda *args, **kwargs: stop_calls.append(True))
+    # Record the durable writes without performing them. Asserting on the
+    # session's resulting state rather than on which setters were called keeps
+    # this honest about the outcome, which is what the route promises.
+    monkeypatch.setattr(
+        routes.state,
+        "_persist_session_payload",
+        lambda payload, version=None: session_writes.append(payload) or True,
+    )
 
     client = TestClient(create_app(testing=True))
     response = client.post("/resume/clear")
@@ -467,9 +472,14 @@ def test_clear_resumable_session_route_stops_and_clears_state(monkeypatch) -> No
     assert response.status_code == 200
     assert response.json() == {"status": "cleared", "resume_available": False}
     assert stop_calls == [True]
-    assert now_values == [None]
-    assert session_positions == [None]
-    assert session_states == ["idle"]
+    assert routes.state.NOW_PLAYING is None
+    assert routes.state.SESSION_POSITION is None
+    assert routes.state.SESSION_STATE == "idle"
+    # Cleared as one mutation, so no intermediate combination is ever written.
+    assert len(session_writes) == 1
+    assert session_writes[0]["now_playing"] is None
+    assert session_writes[0]["session_position"] is None
+    assert session_writes[0]["session_state"] == "idle"
     assert persist_calls == [True]
 
 

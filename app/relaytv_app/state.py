@@ -171,8 +171,14 @@ def _load_json(path: str, default):
         return default
 
 
-def _atomic_write_json(path: str, obj) -> None:
-    """Best-effort atomic write (same filesystem)."""
+def _atomic_write_json(path: str, obj) -> bool:
+    """Best-effort atomic write (same filesystem). Returns True on success.
+
+    Used to return None and swallow every failure into a log line, which meant
+    a full or read-only disk produced a successful API response and state that
+    silently reverted on restart. Callers get the outcome now, and
+    ``persistence_health()`` records it either way.
+    """
     tmp = None
     try:
         _ensure_state_dir()
@@ -182,14 +188,115 @@ def _atomic_write_json(path: str, obj) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
+        tmp = None
+        return True
     except Exception as e:
         logger.warning("state_write_failed path=%s error=%s", path, e)
+        _record_write_failure(path, e)
+        return False
     finally:
         if tmp and os.path.exists(tmp):
             try:
                 os.unlink(tmp)
             except Exception:
                 pass
+
+
+# --- Persistence health -------------------------------------------------------
+
+_HEALTH_LOCK = threading.Lock()
+_WRITE_FAILURES: dict[str, dict[str, object]] = {}
+
+
+def _record_write_failure(path: str, error: BaseException) -> None:
+    name = os.path.basename(str(path or "")) or "unknown"
+    with _HEALTH_LOCK:
+        entry = _WRITE_FAILURES.setdefault(name, {"count": 0, "last_error": "", "last_unix": 0.0})
+        entry["count"] = int(entry.get("count") or 0) + 1
+        # Type and message only: a path can name a mount an operator has not
+        # asked us to publish, and this is surfaced through /status.
+        entry["last_error"] = f"{type(error).__name__}: {error}"[:200]
+        entry["last_unix"] = time.time()
+
+
+def _record_write_success(path: str) -> None:
+    name = os.path.basename(str(path or "")) or "unknown"
+    with _HEALTH_LOCK:
+        _WRITE_FAILURES.pop(name, None)
+
+
+def persistence_health() -> dict[str, object]:
+    """Report durable-write health for /status.
+
+    A device whose disk stopped accepting writes used to look completely
+    healthy while quietly discarding every setting and queue change.
+    """
+    with _HEALTH_LOCK:
+        failures = {name: dict(entry) for name, entry in _WRITE_FAILURES.items()}
+    return {"ok": not failures, "failing": failures}
+
+
+def reset_persistence_health_for_tests() -> None:
+    with _HEALTH_LOCK:
+        _WRITE_FAILURES.clear()
+
+
+class _Publisher:
+    """Serializes writes to one state file and drops superseded snapshots.
+
+    Payloads are built under their store's lock and written outside it, so two
+    mutations can reach the disk out of order: the older writer wins the race
+    to os.replace and the newer mutation is lost, reappearing missing after a
+    restart. Each payload carries the version it was built at, and a write that
+    is no longer the newest is dropped instead of applied.
+
+    The counter and the write mutex are separate on purpose. ``reserve()`` is
+    called while a store lock is held, so it must never wait on disk I/O.
+    """
+
+    __slots__ = ("_name", "_path_getter", "_counter_lock", "_write_lock", "_version", "_written")
+
+    def __init__(self, name: str, path_getter) -> None:
+        self._name = name
+        self._path_getter = path_getter
+        self._counter_lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._version = 0
+        self._written = 0
+
+    def reserve(self) -> int:
+        """Take the next version. Cheap; safe to call under a store lock."""
+        with self._counter_lock:
+            self._version += 1
+            return self._version
+
+    def publish(self, version: int, payload) -> bool:
+        """Write ``payload`` unless a newer snapshot already landed."""
+        with self._write_lock:
+            with self._counter_lock:
+                if version <= self._written:
+                    logger.debug(
+                        "state_write_superseded store=%s version=%d written=%d",
+                        self._name,
+                        version,
+                        self._written,
+                    )
+                    return False
+            path = self._path_getter()
+            ok = _atomic_write_json(path, payload)
+            if ok:
+                _record_write_success(path)
+                with self._counter_lock:
+                    if version > self._written:
+                        self._written = version
+            return ok
+
+
+_QUEUE_PUBLISHER = _Publisher("queue", lambda: _state_path(QUEUE_STATE_FILE))
+_HISTORY_PUBLISHER = _Publisher("history", lambda: _state_path(HISTORY_STATE_FILE))
+_SESSION_PUBLISHER = _Publisher("session", lambda: _state_path(SESSION_STATE_FILE))
+_SETTINGS_PUBLISHER = _Publisher("settings", lambda: _state_path(SETTINGS_STATE_FILE))
+
 
 def _is_safe_thumb_filename(fn: str) -> bool:
     if not fn:
@@ -437,27 +544,34 @@ ADVANCE_LOCK = threading.Lock()
 AUTO_NEXT_SUPPRESS_UNTIL = 0.0  # epoch seconds; auto-next ignored until this time
 
 
-def _persist_queue_payload(payload: dict) -> None:
-    path = _state_path(QUEUE_STATE_FILE)
-    _atomic_write_json(path, payload)
+def _persist_queue_payload(payload: dict, version: int | None = None) -> bool:
+    return _QUEUE_PUBLISHER.publish(
+        _QUEUE_PUBLISHER.reserve() if version is None else version, payload
+    )
 
 
-def _persist_history_payload(payload: dict) -> None:
-    path = _state_path(HISTORY_STATE_FILE)
-    _atomic_write_json(path, payload)
+def _persist_history_payload(payload: dict, version: int | None = None) -> bool:
+    return _HISTORY_PUBLISHER.publish(
+        _HISTORY_PUBLISHER.reserve() if version is None else version, payload
+    )
 
 
-def _persist_session_payload(payload: dict) -> None:
-    path = _state_path(SESSION_STATE_FILE)
-    _atomic_write_json(path, payload)
+def _persist_session_payload(payload: dict, version: int | None = None) -> bool:
+    return _SESSION_PUBLISHER.publish(
+        _SESSION_PUBLISHER.reserve() if version is None else version, payload
+    )
 
-def persist_session() -> None:
+SESSION_LOCK = threading.RLock()
+
+
+def _session_payload() -> dict:
+    """Build the session snapshot. Caller must hold SESSION_LOCK."""
     persisted_now = NOW_PLAYING
     if isinstance(NOW_PLAYING, dict) and str(NOW_PLAYING.get("provider") or "").lower() == "iptv":
         # Do not duplicate credential-bearing IPTV stream URLs into session
         # JSON. The opaque catalog reference is resolved again on resume.
         persisted_now = _persistable_history_item(NOW_PLAYING)
-    payload = {
+    return {
         "session_state": SESSION_STATE,
         "pause_reason": SESSION_PAUSE_REASON,
         "session_position": SESSION_POSITION,
@@ -476,31 +590,79 @@ def persist_session() -> None:
         },
         "saved_at": int(time.time()),
     }
-    _persist_session_payload(payload)
 
 
-def _persist_queue() -> None:
+def persist_session() -> bool:
+    with SESSION_LOCK:
+        version = _SESSION_PUBLISHER.reserve()
+        payload = _session_payload()
+    return _persist_session_payload(payload, version)
+
+
+_SESSION_UNSET = object()
+
+
+def update_session(
+    *,
+    session_state=_SESSION_UNSET,
+    pause_reason=_SESSION_UNSET,
+    session_position=_SESSION_UNSET,
+    now_playing=_SESSION_UNSET,
+    persist: bool = True,
+) -> bool:
+    """Apply several session fields as one mutation and persist once.
+
+    The individual setters each mutated a global and then wrote the *whole*
+    composite payload, so a caller changing three fields wrote three times and
+    the first two were snapshots of a state that never conceptually existed —
+    now_playing set while session_state still said idle, and so on. A restart
+    landing between them restored one of those intermediate combinations.
+    """
+    global SESSION_STATE, SESSION_PAUSE_REASON, SESSION_POSITION, NOW_PLAYING
+    with SESSION_LOCK:
+        if session_state is not _SESSION_UNSET:
+            SESSION_STATE = session_state
+        if pause_reason is not _SESSION_UNSET:
+            SESSION_PAUSE_REASON = pause_reason
+        if session_position is not _SESSION_UNSET:
+            SESSION_POSITION = session_position
+        if now_playing is not _SESSION_UNSET:
+            NOW_PLAYING = now_playing
+        if not persist:
+            return True
+        version = _SESSION_PUBLISHER.reserve()
+        payload = _session_payload()
+    # Disk work happens outside the lock; the version keeps ordering correct.
+    return _persist_session_payload(payload, version)
+
+
+def _persist_queue() -> bool:
     """Persist current queue to disk (safe to call anywhere)."""
     with QUEUE_LOCK:
+        # Reserve inside the lock so the version orders with the snapshot it
+        # describes; the write itself happens outside, so no state lock is
+        # ever held across disk I/O.
+        version = _QUEUE_PUBLISHER.reserve()
         queue = []
         for it in list(QUEUE):
             normalized = _persistable_queue_item(it)
             if isinstance(normalized, dict):
                 queue.append(normalized)
         payload = {"queue": queue, "saved_at": int(time.time())}
-    _persist_queue_payload(payload)
+    return _persist_queue_payload(payload, version)
 
 
-def _persist_history() -> None:
+def _persist_history() -> bool:
     """Persist current history to disk (safe to call anywhere)."""
     with HISTORY_LOCK:
+        version = _HISTORY_PUBLISHER.reserve()
         history = []
         for it in list(HISTORY):
             normalized = _persistable_history_item(it)
             if isinstance(normalized, dict):
                 history.append(normalized)
         payload = {"history": history, "saved_at": int(time.time())}
-    _persist_history_payload(payload)
+    return _persist_history_payload(payload, version)
 
 def _history_add(entry: dict) -> None:
     with HISTORY_LOCK:
@@ -640,23 +802,19 @@ def persist_queue_payload(payload: dict) -> None:
 def persist_history_payload(payload: dict) -> None:
     return _persist_history_payload(payload)
 
-def persist_queue() -> None:
+def persist_queue() -> bool:
     return _persist_queue()
 
-def persist_history() -> None:
+def persist_history() -> bool:
     return _persist_history()
 
 
 def set_session_state(val: str) -> None:
-    global SESSION_STATE
-    SESSION_STATE = val
-    persist_session()
+    update_session(session_state=val)
 
 
 def set_pause_reason(reason: str | None) -> None:
-    global SESSION_PAUSE_REASON
-    SESSION_PAUSE_REASON = reason
-    persist_session()
+    update_session(pause_reason=reason)
 
 
 def get_pause_reason() -> str | None:
@@ -664,15 +822,11 @@ def get_pause_reason() -> str | None:
 
 
 def set_session_position(pos: float | None) -> None:
-    global SESSION_POSITION
-    SESSION_POSITION = pos
-    persist_session()
+    update_session(session_position=pos)
 
 
 def set_now_playing(now: dict | None) -> None:
-    global NOW_PLAYING
-    NOW_PLAYING = now
-    persist_session()
+    update_session(now_playing=now)
 
 
 def get_now_playing() -> dict | None:
@@ -1042,10 +1196,11 @@ def load_settings() -> None:
     with SETTINGS_LOCK:
         SETTINGS = defaults
 
-def persist_settings() -> None:
+def persist_settings() -> bool:
     with SETTINGS_LOCK:
+        version = _SETTINGS_PUBLISHER.reserve()
         payload = dict(SETTINGS)
-    _atomic_write_json(_state_path(SETTINGS_STATE_FILE), payload)
+    return _SETTINGS_PUBLISHER.publish(version, payload)
 
 def get_settings() -> dict:
     with SETTINGS_LOCK:
