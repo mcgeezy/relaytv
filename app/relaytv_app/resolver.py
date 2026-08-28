@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from .debug import debug_log, get_logger
 from .thumb_cache import attach_local_thumbnail
 from . import upload_store
+from . import url_boundary
 from . import ytdlp_format_policy
 
 
@@ -218,42 +219,59 @@ def validate_user_url(raw: str) -> str:
     u = normalize_shared_url(extract_first_url(raw or ""))
     if not u:
         raise HTTPException(status_code=400, detail="Missing url")
-    try:
-        p = urlparse(u)
-    except Exception:
+    # One parser for ingestion and serialization. Validating with urlparse and
+    # serializing with urlsplit().port meant a malformed port passed here and
+    # raised later, poisoning every payload that carried the item.
+    parsed = url_boundary.parse_url(u)
+    if parsed is None:
         raise HTTPException(status_code=400, detail="Invalid url")
-    if (p.scheme or "").lower() not in ("http", "https"):
+    if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Unsupported URL scheme (http/https only)")
-    if not (p.netloc or "").strip():
+    if not parsed.hostname:
         raise HTTPException(status_code=400, detail="Invalid url host")
     return u
 
+# Provider domains, matched at a dot boundary. Order is significant: the first
+# entry that matches wins, mirroring the if/elif chain this replaced.
+#
+# The YouTube tuple is wider than youtube.com on purpose. The substring test it
+# replaces ("youtu" in host) also matched youtube-nocookie.com and
+# youtubekids.com, and dropping them would be a silent behavior change; only
+# the lookalikes it matched by accident are gone.
+_PROVIDER_DOMAINS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("youtube", ("youtube.com", "youtu.be", "youtube-nocookie.com", "youtubekids.com")),
+    ("rumble", ("rumble.com",)),
+    ("twitch", ("twitch.tv",)),
+    ("tiktok", ("tiktok.com",)),
+    ("bitchute", ("bitchute.com",)),
+    ("odysee", ("odysee.com", "lbry.tv")),
+    ("vimeo", ("vimeo.com",)),
+)
+
+_YOUTUBE_DOMAINS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
+
+
+def url_hostname(u: object) -> str:
+    """Return the lowercased hostname, or "" when the URL is malformed."""
+    parsed = url_boundary.parse_url(u)
+    return parsed.hostname if parsed is not None else ""
+
+
 def is_youtube_url(u: str) -> bool:
-    try:
-        p = urlparse(u)
-        host = (p.netloc or "").lower()
-        return (
-            host.endswith("youtube.com")
-            or host.endswith("www.youtube.com")
-            or host.endswith("m.youtube.com")
-            or host.endswith("youtu.be")
-            or "youtube.com" in host
-        )
-    except Exception:
-        return False
+    return url_boundary.host_matches_any(url_hostname(u), _YOUTUBE_DOMAINS)
 
 
 def youtube_id_from_url(u: str) -> str | None:
     """Extract a YouTube video id from common URL shapes."""
     try:
         p = urlparse(u)
-        host = (p.netloc or "").lower()
+        host = url_hostname(u)
 
-        if host.endswith("youtu.be"):
+        if url_boundary.host_matches(host, "youtu.be"):
             vid = p.path.strip("/").split("/")[0]
             return vid or None
 
-        if "youtube.com" in host:
+        if url_boundary.host_matches_any(host, ("youtube.com", "youtube-nocookie.com")):
             q = parse_qs(p.query)
             if "v" in q and q["v"]:
                 return q["v"][0]
@@ -275,27 +293,20 @@ def youtube_id_from_url(u: str) -> str | None:
 
 
 def provider_from_url(u: str) -> str:
-    """Very small provider classifier (used only for UI niceness)."""
+    """Classify a URL's provider.
+
+    Described as "UI niceness" when it was a substring match, but the result
+    also selects resolver strategy and transport fallbacks, so a lookalike
+    domain could steer a URL into the wrong provider's handling.
+    """
     if upload_store.is_upload_url(u):
         return "upload"
-    try:
-        host = (urlparse(u).netloc or "").lower()
-    except Exception:
-        host = ""
-    if "youtu" in host:
-        return "youtube"
-    if host.endswith("rumble.com") or "rumble.com" in host:
-        return "rumble"
-    if host.endswith("twitch.tv") or "twitch.tv" in host:
-        return "twitch"
-    if host.endswith("tiktok.com") or "tiktok.com" in host:
-        return "tiktok"
-    if host.endswith("bitchute.com") or "bitchute.com" in host:
-        return "bitchute"
-    if host.endswith("odysee.com") or "odysee.com" in host or host.endswith("lbry.tv") or "lbry.tv" in host:
-        return "odysee"
-    if host.endswith("vimeo.com") or "vimeo.com" in host:
-        return "vimeo"
+    host = url_hostname(u)
+    if not host:
+        return "other"
+    for provider, domains in _PROVIDER_DOMAINS:
+        if url_boundary.host_matches_any(host, domains):
+            return provider
     return "other"
 
 
