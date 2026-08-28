@@ -224,6 +224,52 @@ def test_mutating_get_open_when_token_unset(monkeypatch) -> None:
     assert client.get("/snapshot").status_code != 401
 
 
+def test_cross_site_mutating_get_is_rejected_without_a_token(monkeypatch) -> None:
+    """A hostile page must not turn an open local API into a browser CSRF path."""
+    monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    runtime_config.refresh_from_env()
+    client = _client()
+
+    response = client.get("/snapshot", headers={"Sec-Fetch-Site": "cross-site"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "cross-site write request rejected"
+
+
+def test_referer_fallback_rejects_cross_origin_snapshot(monkeypatch) -> None:
+    monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    runtime_config.refresh_from_env()
+    client = _client()
+
+    response = client.get(
+        "/snapshot",
+        headers={"Referer": "https://attacker.example/page", "Host": "relaytv.lan:8787"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_same_origin_and_headerless_snapshot_clients_remain_compatible(monkeypatch) -> None:
+    monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    runtime_config.refresh_from_env()
+    client = _client()
+
+    same_origin = client.get(
+        "/snapshot",
+        headers={
+            "Sec-Fetch-Site": "same-origin",
+            "Referer": "http://testserver/ui",
+            "Host": "testserver",
+        },
+    )
+    headerless = client.get("/snapshot")
+
+    # No playback is active, so reaching the handler yields 409. The important
+    # contract is that neither legitimate shape is rejected by the CSRF guard.
+    assert same_origin.status_code == 409
+    assert headerless.status_code == 409
+
+
 def test_share_target_redirects_without_playing(monkeypatch) -> None:
     """The share target must not be a control path, with or without a token."""
     monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)

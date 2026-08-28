@@ -26,6 +26,7 @@ The token is env-only: read through runtime config snapshots, never
 persisted with settings, never returned by ``/settings``, never logged.
 """
 import hmac
+from urllib.parse import urlsplit
 
 from .config import runtime_config
 
@@ -78,6 +79,65 @@ def _normalized_path(path: str) -> str:
     if len(value) > 1 and value.endswith("/"):
         value = value.rstrip("/") or "/"
     return value
+
+
+def _request_authority(value: str, *, absolute: bool) -> tuple[str, int | None] | None:
+    """Return a comparable host/port pair without trusting malformed headers."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlsplit(raw if absolute else f"//{raw}")
+        host = str(parsed.hostname or "").strip().lower().rstrip(".")
+        if not host:
+            return None
+        port = parsed.port
+        if port is None and absolute:
+            if parsed.scheme.lower() == "http":
+                port = 80
+            elif parsed.scheme.lower() == "https":
+                port = 443
+        return host, port
+    except (TypeError, ValueError):
+        return None
+
+
+def cross_site_mutating_get(
+    method: str,
+    path: str,
+    *,
+    sec_fetch_site: str | None = None,
+    referer: str | None = None,
+    host: str | None = None,
+) -> bool:
+    """Reject browser-forgeable write aliases without changing local API use.
+
+    The compatibility GET remains available to Home Assistant and direct LAN
+    clients when no API token is configured. Browsers, however, label an image
+    or prefetch issued by another origin with ``Sec-Fetch-Site``; older clients
+    commonly still send a Referer, which provides a second boundary check.
+    """
+    if str(method or "").strip().upper() != "GET":
+        return False
+    if _normalized_path(path) not in MUTATING_GET_PATHS:
+        return False
+
+    fetch_site = str(sec_fetch_site or "").strip().lower()
+    if fetch_site == "same-origin" or fetch_site == "none":
+        return False
+    if fetch_site in {"cross-site", "same-site"}:
+        return True
+
+    source = _request_authority(str(referer or ""), absolute=True)
+    target = _request_authority(str(host or ""), absolute=False)
+    if source is None or target is None:
+        # Headerless non-browser API clients retain the local-first behavior.
+        return False
+    # Host has no scheme, so normalize an omitted port to the Referer's scheme
+    # default before comparing.
+    if target[1] is None:
+        target = (target[0], source[1])
+    return source != target
 
 
 def write_request_allowed(
