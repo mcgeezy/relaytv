@@ -108,6 +108,14 @@ def public_media_item(item: object) -> object:
             if safe_url:
                 result[key] = safe_url
             continue
+        if isinstance(value, str) and value.strip().lower().startswith(("http://", "https://")):
+            # A failed metadata lookup can leave the signed stream URL in a
+            # display field such as title. Public redaction is about the value,
+            # not only the expected schema key.
+            safe_value = sanitize_public_url(value)
+            if safe_value:
+                result[key] = safe_value
+            continue
         result[key] = value
 
     if source_url and provider != "iptv":

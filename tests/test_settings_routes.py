@@ -35,6 +35,7 @@ def test_get_settings_route_sanitizes_secret_values(monkeypatch, tmp_path) -> No
     assert body["jellyfin_password_configured"] is True
     assert body["seerr_api_key"] == ""
     assert body["seerr_api_key_configured"] is True
+    assert body["jellyfin_api_key_configured"] is True
     assert body["youtube_cookies_path"] == ""
     assert body["youtube_cookies_configured"] is True
     assert body["youtube_use_invidious"] is True
@@ -167,6 +168,54 @@ def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:
     monkeypatch.setattr(state, "_atomic_write_json", lambda path, payload: True)
     assert state.update_settings({"jellyfin_server_type": " EMBY "})["jellyfin_server_type"] == "emby"
     assert state.update_settings({"jellyfin_server_type": "bogus"})["jellyfin_server_type"] == "jellyfin"
+
+
+def test_settings_api_key_omission_preserves_and_explicit_values_replace_or_clear(monkeypatch) -> None:
+    stored: dict[str, object] = {
+        "jellyfin_enabled": True,
+        "jellyfin_server_url": "https://jf.example",
+        "jellyfin_api_key": "old-key",
+        "jellyfin_username": "",
+        "jellyfin_password": "",
+    }
+    patches: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(stored))
+
+    def update(patch: dict[str, object]) -> dict[str, object]:
+        patches.append(dict(patch))
+        stored.update(patch)
+        return dict(stored)
+
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(routes.jellyfin_receiver, "connect", lambda **kwargs: None)
+
+    client = TestClient(create_app(testing=True))
+
+    preserved = client.post("/settings", json={"jellyfin_server_url": "https://jf.example"})
+    replaced = client.post("/settings", json={"jellyfin_api_key": "new-key"})
+    cleared = client.post("/settings", json={"jellyfin_api_key": ""})
+
+    assert preserved.status_code == 200
+    assert "jellyfin_api_key" not in patches[0]
+    assert replaced.status_code == 200
+    assert patches[1]["jellyfin_api_key"] == "new-key"
+    assert cleared.status_code == 200
+    assert patches[2]["jellyfin_api_key"] == ""
+    assert replaced.json()["settings"]["jellyfin_api_key"] == ""
+    assert replaced.json()["settings"]["jellyfin_api_key_configured"] is True
+    assert cleared.json()["settings"]["jellyfin_api_key_configured"] is False
+
+
+def test_settings_rejects_unknown_jellyfin_auth_mode(monkeypatch) -> None:
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {})
+    client = TestClient(create_app(testing=True))
+
+    response = client.post("/settings", json={"jellyfin_auth_mode": "automatic"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid Jellyfin authentication mode"
 
 
 def test_youtube_cookies_routes_upload_and_clear(monkeypatch, tmp_path) -> None:

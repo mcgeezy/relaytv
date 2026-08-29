@@ -2453,6 +2453,21 @@ function syncSeerrRequestModeUi(){
   }
 }
 
+function syncJellyfinAuthModeUi(){
+  const modeSelect = document.getElementById('setJfAuthMode');
+  const mode = String(modeSelect?.value || 'user_login');
+  const sharedFields = document.getElementById('setJfSharedAuthFields');
+  const userFields = document.getElementById('setJfUserAuthFields');
+  const hint = document.getElementById('setJfAuthModeHint');
+  if (sharedFields) sharedFields.classList.toggle('hidden', mode !== 'shared_api_key');
+  if (userFields) userFields.classList.toggle('hidden', mode !== 'user_login');
+  if (hint) {
+    hint.textContent = mode === 'shared_api_key'
+      ? 'One administrator API identity advertises RelayTV to every user allowed to control shared devices.'
+      : 'The stored Jellyfin user owns the cast session and catalog; other users do not share this target identity.';
+  }
+}
+
 async function loadSettingsUi(){
   const [devRes, setRes, tvRes, jfRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
@@ -2494,6 +2509,10 @@ async function loadSettingsUi(){
   const iptvEnabled = document.getElementById('setIptvEnabled');
   const jfEnabled = document.getElementById('setJfEnabled');
   const jfServerUrl = document.getElementById('setJfServerUrl');
+  const jfAuthMode = document.getElementById('setJfAuthMode');
+  const jfApiKeyInput = document.getElementById('setJfApiKey');
+  const jfClearApiKey = document.getElementById('setJfClearApiKey');
+  const jfApiKeyState = document.getElementById('setJfApiKeyState');
   const jfUsername = document.getElementById('setJfUsername');
   const jfUserId = document.getElementById('setJfUserId');
   const jfPwInput = document.getElementById('setJfPassword');
@@ -2535,6 +2554,15 @@ async function loadSettingsUi(){
   );
   if (jfEnabled) jfEnabled.checked = !!cur.jellyfin_enabled;
   if (jfServerUrl) jfServerUrl.value = (cur.jellyfin_server_url || defaultJellyfinServerUrl());
+  if (jfAuthMode) jfAuthMode.value = (cur.jellyfin_auth_mode || (cur.jellyfin_api_key_configured ? 'shared_api_key' : 'user_login'));
+  syncJellyfinAuthModeUi();
+  if (jfApiKeyInput) jfApiKeyInput.value = '';
+  if (jfClearApiKey) jfClearApiKey.checked = false;
+  if (jfApiKeyState) {
+    const hasApiKey = !!cur.jellyfin_api_key_configured;
+    jfApiKeyState.textContent = hasApiKey ? 'Server API key is stored.' : 'No server API key stored.';
+    jfApiKeyState.setAttribute('data-configured', hasApiKey ? '1' : '0');
+  }
   if (jfUsername) jfUsername.value = (cur.jellyfin_username || '');
   if (jfUserId) jfUserId.value = (cur.jellyfin_user_id || '');
   if (jfAudioLang) jfAudioLang.value = (cur.jellyfin_audio_lang || '');
@@ -2552,8 +2580,10 @@ async function loadSettingsUi(){
     const enabled = jfStatus && Object.prototype.hasOwnProperty.call(jfStatus, 'enabled')
       ? !!jfStatus.enabled
       : !!cur.jellyfin_enabled;
-    const up = !!(enabled && jfStatus && (jfStatus.connected || jfStatus.authenticated));
-    jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';
+    const castReady = !!(enabled && jfStatus && jfStatus.cast_target_ready);
+    const up = !!(enabled && jfStatus && (castReady || jfStatus.connected || jfStatus.authenticated));
+    const castScope = String((jfStatus && jfStatus.cast_target_scope) || 'unavailable');
+    jfBadge.textContent = enabled ? (castReady ? (castScope === 'shared' ? 'Shared Cast' : 'Cast Ready') : (up ? 'Connected' : 'Down')) : 'Disabled';
     jfBadge.classList.remove('up', 'down', 'warn', 'unknown');
     jfBadge.classList.add(enabled ? (up ? 'up' : 'down') : 'unknown');
   }
@@ -2569,6 +2599,11 @@ async function loadSettingsUi(){
       const pLat = Number.isFinite(Number(jfStatus.last_progress_latency_ms)) ? `${Number(jfStatus.last_progress_latency_ms)}ms` : 'n/a';
       const sLat = Number.isFinite(Number(jfStatus.last_stopped_latency_ms)) ? `${Number(jfStatus.last_stopped_latency_ms)}ms` : 'n/a';
       const auth = jfStatus.authenticated ? 'yes' : 'no';
+      const castReady = jfStatus.cast_target_ready ? 'ready' : 'not ready';
+      const castScope = (jfStatus.cast_target_scope || 'unavailable').toString();
+      const controlAuth = (jfStatus.control_auth_source || 'none').toString();
+      const catalogReady = jfStatus.catalog_ready ? 'ready' : 'not ready';
+      const catalogAuth = (jfStatus.catalog_auth_source || 'none').toString();
       const catalogUserId = (jfStatus.catalog_user_id || '').toString().trim();
       const catalogUserSource = (jfStatus.catalog_user_source || 'none').toString().trim();
       const catalogUser = catalogUserId ? `${catalogUserId} (${catalogUserSource || 'preferred'})` : 'auto';
@@ -2581,7 +2616,7 @@ async function loadSettingsUi(){
       const healthReason = (jfStatus.sync_health_reason || '').toString().trim();
       const err = (jfStatus.last_error || '').toString().trim();
       jfSyncDiag.textContent =
-        `Health: ${health}${healthReason ? ` (${healthReason})` : ''} · Auth: ${auth} · Catalog user: ${catalogUser} · Cache: ${cacheDiag} (clears: ${cacheClears}${cacheClearReason ? `, ${cacheClearReason}` : ''}) · Progress ok/fail: ${pOk}/${pFail} (${pLat}) · Stopped ok/fail: ${sOk}/${sFail} (${sLat}) · Stop dedupe: ${sSupp}` +
+        `Health: ${health}${healthReason ? ` (${healthReason})` : ''} · Cast: ${castReady}, ${castScope} (${controlAuth}) · Catalog: ${catalogReady} (${catalogAuth}), login: ${auth}, user: ${catalogUser} · Cache: ${cacheDiag} (clears: ${cacheClears}${cacheClearReason ? `, ${cacheClearReason}` : ''}) · Progress ok/fail: ${pOk}/${pFail} (${pLat}) · Stopped ok/fail: ${sOk}/${sFail} (${sLat}) · Stop dedupe: ${sSupp}` +
         (err ? ` · Last error: ${err}` : '');
     }
   }
@@ -2747,6 +2782,8 @@ function bindSettingsUi(){
   const jfApplyMsg = document.getElementById('setJfApplyResult');
   const jfCacheClearBtn = document.getElementById('setJfCacheClearBtn');
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
+  const jfAuthModeSelect = document.getElementById('setJfAuthMode');
+  if (jfAuthModeSelect) jfAuthModeSelect.onchange = syncJellyfinAuthModeUi;
   const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
   const seerrTestBtn = document.getElementById('setSeerrTestBtn');
   const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
@@ -2848,6 +2885,10 @@ function bindSettingsUi(){
     }
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
+    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
+    const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
+    const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
+    const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
     const jfUser = (document.getElementById('setJfUsername')?.value || '').trim();
     const jfUserId = (document.getElementById('setJfUserId')?.value || '').trim();
     const jfPass = (document.getElementById('setJfPassword')?.value || '').trim();
@@ -2860,14 +2901,17 @@ function bindSettingsUi(){
 
     if (jfEnabled) {
       if (!jfServer) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Server URL is required.'; } return; }
-      if (!jfUser) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Username is required.'; } return; }
-      if (!jfPass && !jfPwConfigured) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Password is required.'; } return; }
+      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
+      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
+      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A server API key is required for shared cast mode.'; } return; }
+      if (jfAuthMode === 'user_login' && !hasLogin) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A username and password is required for user-scoped mode.'; } return; }
     }
 
     const payload = {
       device_name: deviceName || 'RelayTV',
       jellyfin_enabled: jfEnabled,
       jellyfin_server_url: jfServer,
+      jellyfin_auth_mode: jfAuthMode,
       jellyfin_username: jfUser,
       jellyfin_user_id: jfUserId,
       jellyfin_audio_lang: jfAudioLang,
@@ -2875,6 +2919,7 @@ function bindSettingsUi(){
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
       apply_now: true
     };
+    if (jfApiKey || jfClearApiKey) payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
 
     if (jfApplyBtn) jfApplyBtn.disabled = true;
@@ -3017,6 +3062,10 @@ function bindSettingsUi(){
     const uploadRetentionHours = Number(document.getElementById('setUploadRetentionHours')?.value || '24');
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
+    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
+    const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
+    const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
+    const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
     const jfUser = (document.getElementById('setJfUsername')?.value || '').trim();
     const jfUserId = (document.getElementById('setJfUserId')?.value || '').trim();
     const jfPass = (document.getElementById('setJfPassword')?.value || '').trim();
@@ -3045,8 +3094,10 @@ function bindSettingsUi(){
     }
     if (jfEnabled) {
       if (!jfServer) { alert(`${jfBrandName()} server URL is required.`); return; }
-      if (!jfUser) { alert(`${jfBrandName()} username is required.`); return; }
-      if (!jfPass && !jfPwConfigured) { alert(`${jfBrandName()} password is required.`); return; }
+      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
+      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
+      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { alert(`A ${jfBrandName()} server API key is required for shared cast mode.`); return; }
+      if (jfAuthMode === 'user_login' && !hasLogin) { alert(`A ${jfBrandName()} username and password is required for user-scoped mode.`); return; }
     }
     if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
     if (seerrEnabled && seerrRequestMode !== 'caller_session' && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required for shared browsing.'); return; }
@@ -3079,6 +3130,7 @@ function bindSettingsUi(){
       iptv_enabled: !!document.getElementById('setIptvEnabled')?.checked,
       jellyfin_enabled: jfEnabled,
       jellyfin_server_url: jfServer,
+      jellyfin_auth_mode: jfAuthMode,
       jellyfin_username: jfUser,
       jellyfin_user_id: jfUserId,
       jellyfin_audio_lang: jfAudioLang,
@@ -3100,6 +3152,7 @@ function bindSettingsUi(){
     Object.entries(tvControl).forEach(([key, value]) => {
       if (tvBaseline[key] !== undefined && value !== tvBaseline[key]) payload[key] = value;
     });
+    if (jfApiKey || jfClearApiKey) payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
     if (seerrApiKey) payload.seerr_api_key = seerrApiKey;
     if (seerrClearApiKey) payload.seerr_api_key_clear = true;

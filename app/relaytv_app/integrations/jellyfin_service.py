@@ -56,9 +56,9 @@ def _first_nonempty_str(values: list[object]) -> str:
     return ""
 
 
-def access_token() -> str:
-    """Prefer authenticated login-session token; fall back to configured API key."""
-    return _first_nonempty_str([jellyfin_receiver.session_token(), jellyfin_receiver.api_key()])
+def catalog_token() -> str:
+    """Credential selected for catalog, metadata, and media requests."""
+    return jellyfin_receiver.catalog_token()
 
 
 def extract_play_url(payload: dict | None) -> str:
@@ -791,6 +791,7 @@ def select_playback_url(
     audio_stream_index: str = "",
     subtitle_stream_index: str = "",
     settings: dict | None = None,
+    user_id_override: str = "",
 ) -> dict[str, str]:
     iid = str(item_id or "").strip()
     src = str(source_url or "").strip()
@@ -805,7 +806,11 @@ def select_playback_url(
 
     detail = {}
     try:
-        detail = jellyfin_receiver.get_item_detail(iid)
+        detail = (
+            jellyfin_receiver.get_item_detail(iid, user_id_override=user_id_override)
+            if user_id_override
+            else jellyfin_receiver.get_item_detail(iid)
+        )
     except Exception:
         detail = {}
     profile = {}
@@ -857,6 +862,7 @@ def select_playback_url(
         subtitle_stream_index=sidx,
         max_height=(cap_height if cap_height > 0 else None),
         max_streaming_bitrate=target_bitrate,
+        user_id_override=user_id_override,
     )
     t_url = str((selected or {}).get("url") or "").strip()
     t_method = str((selected or {}).get("method") or "").strip()
@@ -898,13 +904,19 @@ def first_playable_episode(payload: dict | None) -> dict[str, object]:
     return {}
 
 
-def resolve_playable_item(item_id: str, *, media_source_id: str = "") -> dict[str, object]:
+def resolve_playable_item(
+    item_id: str, *, media_source_id: str = "", user_id_override: str = ""
+) -> dict[str, object]:
     iid = str(item_id or "").strip()
     if not iid:
         return {"item_id": "", "detail": {}, "media_source_id": ""}
 
     try:
-        detail = jellyfin_receiver.get_item_detail(iid)
+        detail = (
+            jellyfin_receiver.get_item_detail(iid, user_id_override=user_id_override)
+            if user_id_override
+            else jellyfin_receiver.get_item_detail(iid)
+        )
     except Exception:
         detail = {}
 
@@ -943,6 +955,7 @@ def resolve_playable_item(item_id: str, *, media_source_id: str = "") -> dict[st
         series_id,
         season_id=season_id,
         season_number=season_number,
+        user_id_override=user_id_override,
     )
     episode = first_playable_episode(episodes_payload)
     resolved_item_id = str((episode.get("item_id") if isinstance(episode, dict) else "") or "").strip()
@@ -952,7 +965,13 @@ def resolve_playable_item(item_id: str, *, media_source_id: str = "") -> dict[st
     resolved_detail = episode if isinstance(episode, dict) else {}
     if resolved_item_id != iid:
         try:
-            fetched = jellyfin_receiver.get_item_detail(resolved_item_id)
+            fetched = (
+                jellyfin_receiver.get_item_detail(
+                    resolved_item_id, user_id_override=user_id_override
+                )
+                if user_id_override
+                else jellyfin_receiver.get_item_detail(resolved_item_id)
+            )
         except Exception:
             fetched = {}
         if isinstance(fetched, dict) and fetched:
@@ -1133,7 +1152,9 @@ def _language_matches(pref: str, candidate: str) -> bool:
     return False
 
 
-def preferred_stream_indices(item_id: str) -> tuple[str, str]:
+def preferred_stream_indices(
+    item_id: str, *, user_id_override: str = ""
+) -> tuple[str, str]:
     iid = str(item_id or "").strip()
     if not iid:
         return "", ""
@@ -1144,7 +1165,11 @@ def preferred_stream_indices(item_id: str) -> tuple[str, str]:
         return "", ""
     sub_off = sub_pref in {"off", "none", "disabled", "no", "false", "0"}
     try:
-        detail = jellyfin_receiver.get_item_detail(iid)
+        detail = (
+            jellyfin_receiver.get_item_detail(iid, user_id_override=user_id_override)
+            if user_id_override
+            else jellyfin_receiver.get_item_detail(iid)
+        )
     except Exception:
         detail = {}
     audio_streams = detail.get("audio_streams") if isinstance(detail, dict) else []
@@ -1848,7 +1873,7 @@ def _restart_with_stream_params(
         settings_snapshot = state.get_settings()
     except Exception:
         settings_snapshot = {}
-    auth_token = access_token()
+    auth_token = catalog_token()
 
     source_url = build_item_stream_url(
         item_id,
@@ -2433,7 +2458,13 @@ def _extract_api_key_from_url(url: str) -> str:
         return ""
 
 
-def smart_item_from_url(url: str, *, start_pos: float | None = None, lightweight: bool = False) -> dict:
+def smart_item_from_url(
+    url: str,
+    *,
+    start_pos: float | None = None,
+    lightweight: bool = False,
+    user_id_override: str = "",
+) -> dict:
     """
     Build a playback item for smart/jellyfin paths.
     If the URL looks like Jellyfin media, enrich title/thumbnail/resume from Jellyfin APIs.
@@ -2445,8 +2476,10 @@ def smart_item_from_url(url: str, *, start_pos: float | None = None, lightweight
         origin = url_origin(shared)
         server_url = origin or str(st.get("server_url") or "")
         link_api_key = _extract_api_key_from_url(shared)
-        token = link_api_key or access_token()
-        pref_audio_idx, pref_sub_idx = preferred_stream_indices(item_id)
+        token = link_api_key or catalog_token()
+        pref_audio_idx, pref_sub_idx = preferred_stream_indices(
+            item_id, user_id_override=user_id_override
+        )
         normalized_url = normalize_source_url(shared, server_url=server_url, api_key=token)
         normalized_url = apply_stream_params(
             normalized_url,
@@ -2477,6 +2510,7 @@ def smart_item_from_url(url: str, *, start_pos: float | None = None, lightweight
             audio_stream_index=pref_audio_idx,
             subtitle_stream_index=pref_sub_idx,
             settings=settings_snapshot,
+            user_id_override=user_id_override,
         )
         normalized_url = normalize_source_url(
             str(selected.get("url") or normalized_url),
@@ -2492,13 +2526,24 @@ def smart_item_from_url(url: str, *, start_pos: float | None = None, lightweight
         )
         item: dict[str, object] = {
             "url": normalized_url,
+            "title": f"Jellyfin item {item_id}",
             "provider": "jellyfin",
             "jellyfin_item_id": item_id,
+            **(
+                {"_jellyfin_metadata_user_id": user_id_override}
+                if user_id_override
+                else {}
+            ),
             **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
             "jellyfin_stream_mode": str(selected.get("mode") or "direct"),
             "jellyfin_stream_reason": str(selected.get("reason") or ""),
         }
-        meta = jellyfin_receiver.get_item_metadata(item_id, token_override=token, server_url_override=server_url)
+        meta = jellyfin_receiver.get_item_metadata(
+            item_id,
+            token_override=token,
+            server_url_override=server_url,
+            user_id_override=user_id_override,
+        )
         if isinstance(meta, dict):
             title = str(meta.get("title") or "").strip()
             channel = str(meta.get("channel") or "").strip()
@@ -2609,7 +2654,14 @@ def should_suppress_duplicate_ui_action(command: str, item_id: str, resume_pos: 
         return suppressed
 
 
-def _playlist_entry_display_fields(entry: dict, iid: str, *, api_key: str, server_url: str) -> dict[str, str]:
+def _playlist_entry_display_fields(
+    entry: dict,
+    iid: str,
+    *,
+    api_key: str,
+    server_url: str,
+    user_id_override: str = "",
+) -> dict[str, str]:
     """
     Return display metadata (title/channel/thumbnail) for a playlist queue
     entry. Playlist payloads (series play-all, Jellyfin app casts) often carry
@@ -2620,7 +2672,12 @@ def _playlist_entry_display_fields(entry: dict, iid: str, *, api_key: str, serve
     thumbnail = ""
     if not title:
         try:
-            meta = jellyfin_receiver.get_item_metadata(iid, token_override=api_key, server_url_override=server_url)
+            meta = jellyfin_receiver.get_item_metadata(
+                iid,
+                token_override=api_key,
+                server_url_override=server_url,
+                user_id_override=user_id_override,
+            )
         except Exception:
             meta = None
         if isinstance(meta, dict):
@@ -2665,6 +2722,14 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
             return True
 
     action = normalize_action(req.action, req.payload)
+    command_user_id = ""
+    if isinstance(req.payload, dict):
+        command_user_id = _first_nonempty_str(
+            [
+                req.payload.get("ControllingUserId"),
+                req.payload.get("controlling_user_id"),
+            ]
+        )
     jellyfin_receiver.mark_command(action)
     jellyfin_receiver.mark_heartbeat()
     command_id = extract_command_id(req)
@@ -2690,12 +2755,16 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 settings_snapshot = state.get_settings()
             except Exception:
                 settings_snapshot = {}
-            auth_token = access_token()
+            auth_token = catalog_token()
             pref_audio_idx = ""
             pref_sub_idx = ""
             resolved_detail: dict[str, object] = {}
             if item_id:
-                resolved_item = resolve_playable_item(item_id, media_source_id=media_source_id)
+                resolved_item = resolve_playable_item(
+                    item_id,
+                    media_source_id=media_source_id,
+                    user_id_override=command_user_id,
+                )
                 item_id = str(resolved_item.get("item_id") or item_id).strip()
                 resolved_detail = resolved_item.get("detail") if isinstance(resolved_item.get("detail"), dict) else {}
                 media_source_id = _first_nonempty_str([
@@ -2711,12 +2780,24 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                             "id": item_id,
                             "media_source_id": media_source_id or str(playlist_items[0].get("media_source_id") or "").strip(),
                         }
-                pref_audio_idx, pref_sub_idx = preferred_stream_indices(item_id)
+                pref_audio_idx, pref_sub_idx = (
+                    preferred_stream_indices(
+                        item_id, user_id_override=command_user_id
+                    )
+                    if command_user_id
+                    else preferred_stream_indices(item_id)
+                )
                 if not media_source_id:
                     detail = resolved_detail if isinstance(resolved_detail, dict) else {}
                     if not detail:
                         try:
-                            detail = jellyfin_receiver.get_item_detail(item_id)
+                            detail = (
+                                jellyfin_receiver.get_item_detail(
+                                    item_id, user_id_override=command_user_id
+                                )
+                                if command_user_id
+                                else jellyfin_receiver.get_item_detail(item_id)
+                            )
                         except Exception:
                             detail = {}
                     media_source_id = _first_nonempty_str(
@@ -2760,6 +2841,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     audio_stream_index=audio_stream_index,
                     subtitle_stream_index=subtitle_stream_index,
                     settings=settings_snapshot,
+                    user_id_override=command_user_id,
                 )
                 source_url = normalize_source_url(
                     str(selected_stream.get("url") or source_url),
@@ -2871,13 +2953,20 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                         audio_stream_index=audio_stream_index,
                         subtitle_stream_index=subtitle_stream_index,
                         settings=settings_snapshot,
+                        user_id_override=command_user_id,
                     )
                     source_for_queue = normalize_source_url(
                         str(selected_queue.get("url") or source_for_queue),
                         server_url=str(st.get("server_url") or ""),
                         api_key=auth_token,
                     )
-                    q_item = smart_item_from_url(source_for_queue)
+                    q_item = (
+                        smart_item_from_url(
+                            source_for_queue, user_id_override=command_user_id
+                        )
+                        if command_user_id
+                        else smart_item_from_url(source_for_queue)
+                    )
                     q_title = str(q_item.get("title") or "") if isinstance(q_item, dict) else ""
                     q_channel = str(q_item.get("channel") or "") if isinstance(q_item, dict) else ""
                     source_media_source_id = _first_nonempty_str(
@@ -2907,7 +2996,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     iid = str(entry.get("id") or "").strip()
                     if not iid:
                         continue
-                    q_audio_idx, q_sub_idx = preferred_stream_indices(iid)
+                    q_audio_idx, q_sub_idx = (
+                        preferred_stream_indices(iid, user_id_override=command_user_id)
+                        if command_user_id
+                        else preferred_stream_indices(iid)
+                    )
                     if explicit_audio_idx:
                         q_audio_idx = explicit_audio_idx
                     if explicit_sub_idx:
@@ -2931,6 +3024,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                         audio_stream_index=q_audio_idx,
                         subtitle_stream_index=q_sub_idx,
                         settings=settings_snapshot,
+                        user_id_override=command_user_id,
                     )
                     qurl = normalize_source_url(
                         str(selected_q.get("url") or qurl),
@@ -2943,7 +3037,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     if _seen(iid, qurl, q_media_source_id):
                         continue
                     q_display = _playlist_entry_display_fields(
-                        entry, iid, api_key=auth_token, server_url=str(st.get("server_url") or "")
+                        entry,
+                        iid,
+                        api_key=auth_token,
+                        server_url=str(st.get("server_url") or ""),
+                        user_id_override=command_user_id,
                     )
                     queued.append(
                         {
@@ -3032,7 +3130,15 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 logger.info("jellyfin_command_discarded action=play reason=session_retired")
                 return {"ok": False, "action": "play", "reason": "session_retired"}
             playback_service.suppress_auto_next(2.0)
-            play_item_payload = smart_item_from_url(source_url, start_pos=start_sec)
+            play_item_payload = (
+                smart_item_from_url(
+                    source_url,
+                    start_pos=start_sec,
+                    user_id_override=command_user_id,
+                )
+                if command_user_id
+                else smart_item_from_url(source_url, start_pos=start_sec)
+            )
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
             now = playback_service.play_now(
                 play_target,
@@ -3060,7 +3166,13 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     if play_session_id:
                         now["jellyfin_play_session_id"] = play_session_id
                     try:
-                        detail = jellyfin_receiver.get_item_detail(item_id)
+                        detail = (
+                            jellyfin_receiver.get_item_detail(
+                                item_id, user_id_override=command_user_id
+                            )
+                            if command_user_id
+                            else jellyfin_receiver.get_item_detail(item_id)
+                        )
                     except Exception:
                         detail = {}
                     now = enrich_now_stream_metadata(
@@ -3118,7 +3230,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     iid = str(entry.get("id") or "").strip()
                     if not iid:
                         continue
-                    q_audio_idx, q_sub_idx = preferred_stream_indices(iid)
+                    q_audio_idx, q_sub_idx = (
+                        preferred_stream_indices(iid, user_id_override=command_user_id)
+                        if command_user_id
+                        else preferred_stream_indices(iid)
+                    )
                     if explicit_audio_idx:
                         q_audio_idx = explicit_audio_idx
                     if explicit_sub_idx:
@@ -3143,6 +3259,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                         audio_stream_index=q_audio_idx,
                         subtitle_stream_index=q_sub_idx,
                         settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
+                        user_id_override=command_user_id,
                     )
                     qurl = normalize_source_url(
                         str(selected_q.get("url") or qurl),
@@ -3159,7 +3276,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     if _seen(iid, qurl, q_media_source_id):
                         continue
                     q_display = _playlist_entry_display_fields(
-                        entry, iid, api_key=auth_token, server_url=str(st.get("server_url") or "")
+                        entry,
+                        iid,
+                        api_key=auth_token,
+                        server_url=str(st.get("server_url") or ""),
+                        user_id_override=command_user_id,
                     )
                     queued.append(
                         {

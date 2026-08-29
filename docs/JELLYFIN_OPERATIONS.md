@@ -160,23 +160,85 @@ Shared URL behavior:
   - TV episodes: `title = Series Name`, `channel = SxxExx · Episode Name`
   - Movies: `title = Movie Name`, `channel = Movie · Year`
 
+## Shared Cast Target Authentication
+
+RelayTV Settings requires an explicit **Cast target identity** choice:
+
+- **Shared cast target (server API key)** advertises one userless device to
+  every Jellyfin user whose policy allows shared-device control.
+- **User-scoped cast target (username and password)** owns the control session
+  and catalog as the one stored Jellyfin account.
+
+For shared mode, create a key in the Jellyfin admin dashboard under
+**Advanced → API Keys**, select shared mode, paste the key, and apply. Name the
+key **RelayTV** if you want Jellyfin's cast menu to label the target as
+`<configured device name> - RelayTV`.
+
+The API key owns RelayTV's control plane:
+
+- cast websocket;
+- capability registration and session readback;
+- playing, progress, and stopped reports.
+
+This registers RelayTV as a userless shared device. The same selected API key
+is used for control and catalog/media requests; stored username/password
+credentials are inactive while shared mode is selected. Jellyfin API keys are
+administrator-level credentials. RelayTV stores the value server-side, returns
+only `jellyfin_api_key_configured` to the Settings UI, and never includes the
+key in status responses or logs. Leaving the field blank preserves the stored
+key; use **Clear stored API key** to remove it explicitly.
+
+Jellyfin still applies its own user policy. The target is available to all
+users whose policy allows shared-device control; RelayTV cannot make it appear
+for a user whose Jellyfin **shared device control** permission is disabled.
+
+Jellyfin Web reserves the cast menu's second row for an authenticated session
+user. A shared API-key target is intentionally userless, so its API-key name is
+shown as the client suffix on the first row instead. Assigning a user merely to
+populate that second row would make the target user-scoped again.
+
+In user-login mode, the login-session token is used for both control and
+catalog/media requests; a stored API key is inactive. Other users may not see
+or control that session unless their Jellyfin policies permit remote control
+of another user's session. Retaining inactive credentials makes switching
+modes reversible, but RelayTV never silently combines the two identities.
+
+An API-key-only configuration can run the shared cast target without a
+username or password. For catalog browsing in that mode, set a preferred user
+ID when user-specific catalog routes are required.
+
+### Caller-specific watch state
+
+A command from another Jellyfin user reaches the shared target, including its
+`ControllingUserId`, but RelayTV does not yet use that identity to change the
+catalog profile or attribute playback reports. The on-device catalog continues
+to use the configured preferred user when one is set, and resume/played state
+is not guaranteed to update for the person who initiated a remote cast.
+User-login mode is one fixed operator-configured account, not per-browser
+caller identity. Dynamically attributing shared casts to the initiating caller
+remains a follow-up.
+
 ## Required Environment
 
 - `RELAYTV_JELLYFIN_ENABLED=1`
 - `RELAYTV_JELLYFIN_SERVER_URL=http://<jellyfin-host>:8096`
 
-Preferred authentication:
+Shared cast-target authentication:
+
+- `RELAYTV_JELLYFIN_API_KEY=<token>`
+  - Equivalent to the Server API key field in Settings.
+  - Preferred for a Jellyfin target shared across permitted users.
+  - An environment-provided API key implies shared mode for backward
+    compatibility; the explicit selector is persisted when configured in the UI.
+
+User-scoped cast-target authentication:
 
 - `RELAYTV_JELLYFIN_AUTH_ENABLED=1` (default enabled)
 - `RELAYTV_JELLYFIN_USERNAME=<jellyfin-user>`
 - `RELAYTV_JELLYFIN_PASSWORD=<jellyfin-password>`
 
-Optional fallback authentication:
-
-- `RELAYTV_JELLYFIN_API_KEY=<token>`
-  - Supported for compatibility and for API-key-only deployments.
-  - The Settings UI path prefers username/password auth and masks the password
-    on reads.
+- Select **User-scoped cast target** in Settings. Username/password without an
+  API key also defaults to user-login mode for backward compatibility.
 
 Optional identity:
 
@@ -216,6 +278,11 @@ The integration is wire-compatible with Emby: point `jellyfin_server_url` (or
 `RELAYTV_JELLYFIN_SERVER_URL`) at an Emby base URL and everything else works
 unchanged — auth (username/password or API key), catalog browsing, playback,
 track selection, and progress/stopped reporting.
+
+The shared/userless session behavior and per-user shared-device permission
+described above are verified against Jellyfin. Emby accepts the same API-key
+transport, but operators should validate cast-target visibility for their Emby
+version and user-policy configuration.
 
 Server-type detection:
 
@@ -313,6 +380,12 @@ Episode adjacency resilience:
 - `connected`
 - `last_error`
 - `api_key_configured`
+- `auth_mode` (`shared_api_key` or `user_login`)
+- `control_auth_source` (`api_key`, `user_session`, or `none`)
+- `cast_target_scope` (`shared`, `user_scoped`, or `unavailable`)
+- `cast_target_ready`
+- `catalog_auth_source` (`user_session`, `api_key`, or `none`)
+- `catalog_ready`
 - `last_register_ts`, `last_register_ok`, `last_register_error`
 - `last_progress_ts`, `last_progress_ok`, `last_progress_error`
 - `register_retry_failures`
@@ -321,7 +394,6 @@ Episode adjacency resilience:
 - `media_control_verified` (session readback; `null` until attempted)
 - `last_register_reason` (why registration was last invalidated)
 - `last_playing_ts`, `last_playing_ok`, `last_playing_error`
-- `cast_target_ready`
 - `ws_enabled`, `ws_available`, `ws_connected`
 - `ws_last_connect_ts`, `ws_last_error`, `ws_reconnects`, `ws_keepalive_sec`
 - `ws_commands_received`, `ws_commands_dropped`
@@ -345,8 +417,8 @@ Discovery runtime status:
 
 1. Registration failing repeatedly:
    - Verify `RELAYTV_JELLYFIN_SERVER_URL` is reachable from container.
-   - Verify username/password auth is valid, or verify
-     `RELAYTV_JELLYFIN_API_KEY` when using the optional fallback.
+   - Verify `RELAYTV_JELLYFIN_API_KEY` for shared mode, or verify the
+     username/password login for user-login mode.
    - Check `last_register_error` and `register_retry_failures` in status.
 2. Connected flips false after startup:
    - Inspect `last_progress_error`; progress posts can mark receiver disconnected on transport errors.
@@ -354,6 +426,21 @@ Discovery runtime status:
 3. Commands arrive but playback does not start:
    - Check RelayTV `/status` (`player_runtime_engine`, `backend_ready`).
    - Check `/integrations/jellyfin/command` response body for `reason` or suppression flags.
+4. RelayTV appears for its configured account but not other users:
+   - Check `auth_mode` and `cast_target_scope`; `user_scoped` is intentionally
+     limited to the stored login identity.
+   - Select shared mode, add a Server API key in RelayTV Settings, and wait for
+     `cast_target_scope: shared` and `cast_target_ready: true`.
+   - In Jellyfin, enable shared-device control for each user who should see the
+     target.
+5. The wrong identity appears active:
+   - Check `auth_mode`, `control_auth_source`, and `catalog_auth_source`.
+   - Both auth-source fields must match the selected mode; inactive stored
+     credentials are never used as fallback.
+6. Rotating the API key:
+   - Create the replacement key in Jellyfin first.
+   - Apply it in RelayTV Settings and wait for `cast_target_ready: true`.
+   - Revoke the previous key only after the replacement target is healthy.
 
 ## Quick Verification
 
@@ -365,6 +452,17 @@ curl -sS -X POST http://127.0.0.1:8787/integrations/jellyfin/heartbeat
 curl -sS -X POST http://127.0.0.1:8787/smart \
   -H 'content-type: application/json' \
   -d '{"url":"http://<jellyfin>/Videos/<item-id>/stream?static=true"}'
+```
+
+For a shared target, the status response should include:
+
+```json
+{
+  "api_key_configured": true,
+  "control_auth_source": "api_key",
+  "cast_target_scope": "shared",
+  "cast_target_ready": true
+}
 ```
 
 ## Deprecated Legacy Endpoint

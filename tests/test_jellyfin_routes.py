@@ -735,7 +735,17 @@ def test_status_route_exposes_jellyfin_server_type(monkeypatch) -> None:
     monkeypatch.setattr(
         routes.jellyfin_receiver,
         "status",
-        lambda: {"enabled": True, "running": True, "server_type": "emby", "server_url": "http://emby.local:8096"},
+        lambda: {
+            "enabled": True,
+            "running": True,
+            "server_type": "emby",
+            "server_url": "http://emby.local:8096",
+            "control_auth_source": "api_key",
+            "cast_target_scope": "shared",
+            "cast_target_ready": True,
+            "catalog_auth_source": "user_session",
+            "catalog_ready": True,
+        },
     )
 
     client = TestClient(create_app(testing=True))
@@ -745,3 +755,8 @@ def test_status_route_exposes_jellyfin_server_type(monkeypatch) -> None:
     body = response.json()
     assert body["jellyfin_server_type"] == "emby"
     assert body["jellyfin_server_url_configured"] is True
+    assert body["jellyfin_control_auth_source"] == "api_key"
+    assert body["jellyfin_cast_target_scope"] == "shared"
+    assert body["jellyfin_cast_target_ready"] is True
+    assert body["jellyfin_catalog_auth_source"] == "user_session"
+    assert body["jellyfin_catalog_ready"] is True

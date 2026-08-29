@@ -708,7 +708,9 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "native_qt_mpv_runtime_duration": qt_runtime_telemetry.get("mpv_runtime_duration"),
         "native_qt_mpv_runtime_volume": qt_runtime_telemetry.get("mpv_runtime_volume"),
         "native_qt_mpv_runtime_mute": qt_runtime_telemetry.get("mpv_runtime_mute"),
-        "native_qt_mpv_runtime_path": str(qt_runtime_telemetry.get("mpv_runtime_path") or ""),
+        "native_qt_mpv_runtime_path": public_media.sanitize_public_url(
+            qt_runtime_telemetry.get("mpv_runtime_path")
+        ),
         "native_qt_mpv_runtime_current_vo": str(qt_runtime_telemetry.get("mpv_runtime_current_vo") or ""),
         "native_qt_mpv_runtime_current_ao": str(qt_runtime_telemetry.get("mpv_runtime_current_ao") or ""),
         "native_qt_mpv_runtime_aid": qt_runtime_telemetry.get("mpv_runtime_aid"),
@@ -2550,7 +2552,7 @@ def _first_nonempty_str(values: list[object]) -> str:
 # Pure Jellyfin helpers (docs/ARCHITECTURE.md)
 # live in integrations/jellyfin_service.py. These aliases keep the routes
 # compatibility surface and existing monkeypatch targets stable.
-_jellyfin_access_token = jellyfin_service.access_token
+_jellyfin_catalog_token = jellyfin_service.catalog_token
 _extract_jellyfin_play_url = jellyfin_service.extract_play_url
 _extract_jellyfin_item_id = jellyfin_service.extract_item_id
 _canonical_jellyfin_item_id = jellyfin_service.canonical_item_id
@@ -3255,6 +3257,12 @@ def _status_payload() -> dict[str, object]:
         playing = False
         transitioning_between_items = False
     runtime = _runtime_capabilities(playing=playing)
+    # Treat the status assembler as the final trust boundary too. Runtime
+    # adapters need the signed playback URL internally, but no adapter or test
+    # double should be able to publish its credential-bearing form.
+    runtime["native_qt_mpv_runtime_path"] = public_media.sanitize_public_url(
+        runtime.get("native_qt_mpv_runtime_path")
+    )
     effective_ytdlp_format = None
     try:
         effective_ytdlp_format = str(getattr(player, "_effective_ytdl_format", lambda s=None: "")(settings_snapshot) or "")
@@ -3350,6 +3358,11 @@ def _status_payload() -> dict[str, object]:
     jf_running = bool(jf_status.get("running"))
     jf_connected = bool(jf_status.get("connected"))
     jf_authenticated = bool(jf_status.get("authenticated"))
+    jf_control_auth_source = str(jf_status.get("control_auth_source") or "none")
+    jf_cast_target_scope = str(jf_status.get("cast_target_scope") or "unavailable")
+    jf_cast_target_ready = bool(jf_status.get("cast_target_ready"))
+    jf_catalog_auth_source = str(jf_status.get("catalog_auth_source") or "none")
+    jf_catalog_ready = bool(jf_status.get("catalog_ready"))
     jf_sync_health = str(jf_status.get("sync_health") or "")
     jf_sync_health_reason = str(jf_status.get("sync_health_reason") or "")
     jf_last_sync_age_sec = jf_status.get("last_sync_age_sec")
@@ -3432,6 +3445,11 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_running": jf_running,
         "jellyfin_connected": jf_connected,
         "jellyfin_authenticated": jf_authenticated,
+        "jellyfin_control_auth_source": jf_control_auth_source,
+        "jellyfin_cast_target_scope": jf_cast_target_scope,
+        "jellyfin_cast_target_ready": jf_cast_target_ready,
+        "jellyfin_catalog_auth_source": jf_catalog_auth_source,
+        "jellyfin_catalog_ready": jf_catalog_ready,
         "jellyfin_sync_health": jf_sync_health,
         "jellyfin_sync_health_reason": jf_sync_health_reason,
         "jellyfin_last_sync_age_sec": jf_last_sync_age_sec,
@@ -4548,28 +4566,58 @@ def ui():
         </div>
 
         <div class="fieldRow">
-          <label class="fieldLbl">Username</label>
-          <input id="setJfUsername" class="input" placeholder="server username" />
+          <label class="fieldLbl" for="setJfAuthMode">Cast target identity</label>
+          <select id="setJfAuthMode" class="input">
+            <option value="shared_api_key">Shared cast target (server API key)</option>
+            <option value="user_login">User-scoped cast target (username and password)</option>
+          </select>
+          <div class="hint" id="setJfAuthModeHint"></div>
+        </div>
+
+        <div id="setJfSharedAuthFields">
+          <div class="fieldRow">
+            <label class="fieldLbl">Server API key</label>
+            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            <div class="hint">Makes RelayTV a shared cast target for every Jellyfin user allowed to control shared devices. API keys are administrator-level secrets.</div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Clear stored API key</div>
+                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
+                <input type="checkbox" id="setJfClearApiKey" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint" id="setJfApiKeyState"></div>
+          </div>
+        </div>
+
+        <div id="setJfUserAuthFields">
+          <div class="fieldRow">
+            <label class="fieldLbl">Username</label>
+            <input id="setJfUsername" class="input" placeholder="server username" />
+          </div>
+          <div class="fieldRow">
+            <label class="fieldLbl">Password</label>
+            <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Clear stored password</div>
+                <div class="toggleHint">Remove the saved server password on the next apply.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
+                <input type="checkbox" id="setJfClearPassword" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint" id="setJfPasswordState"></div>
+          </div>
         </div>
         <div class="fieldRow">
           <label class="fieldLbl">Preferred user ID (optional)</label>
           <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
-          <div class="hint">Optional profile override for catalog browsing on this TV. Leave blank to use the authenticated user.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Password</label>
-          <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-          <div class="toggleRow">
-            <div class="toggleCopy">
-              <div class="toggleTitle">Clear stored password</div>
-              <div class="toggleHint">Remove the saved server password on the next apply.</div>
-            </div>
-            <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
-              <input type="checkbox" id="setJfClearPassword" />
-              <span class="toggleTrack" aria-hidden="true"></span>
-            </label>
-          </div>
-          <div class="hint" id="setJfPasswordState"></div>
+          <div class="hint">Optional profile override for catalog browsing on this TV. In user-login mode, leave blank to use the authenticated user.</div>
         </div>
         <div class="fieldRow">
           <label class="fieldLbl">Preferred audio language</label>

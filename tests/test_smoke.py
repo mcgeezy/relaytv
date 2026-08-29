@@ -197,9 +197,16 @@ def test_ui_smoke() -> None:
     assert 'id="setYtUseInvidious"' in response.text
     assert 'id="setIdleQrEnabled"' in response.text
     assert 'id="setJfEnabled"' in response.text
+    assert 'id="setJfAuthMode"' in response.text
+    assert 'value="shared_api_key"' in response.text
+    assert 'value="user_login"' in response.text
+    assert 'id="setJfApiKey"' in response.text
+    assert 'id="setJfClearApiKey"' in response.text
+    assert js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
+    assert js.count("jellyfin_auth_mode: jfAuthMode") == 2
     assert 'id="setJfClearPassword"' in response.text
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
-    assert "jfBadge.textContent = enabled ? (up ? 'Connected' : 'Down') : 'Disabled';" in js
+    assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in js
     assert 'class="toggleSwitch"' in response.text
     assert 'data-idle-enable="${key}"' in js
     assert 'class="chk"' not in response.text
@@ -1698,6 +1705,34 @@ def test_jellyfin_plugin_ingress_is_deprecated() -> None:
     assert response.json() == {
         'detail': 'jellyfin plugin ingress deprecated; use RelayTV native Jellyfin client or /integrations/jellyfin/command'
     }
+
+
+def test_jellyfin_resume_metadata_keeps_the_casting_user_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_metadata(
+        item_id,
+        *,
+        token_override="",
+        server_url_override="",
+        user_id_override="",
+    ):
+        calls.append((item_id, user_id_override))
+        return {"title": "Visible Movie"}
+
+    monkeypatch.setattr(player.jellyfin_receiver, "get_item_metadata", fake_metadata)
+
+    hydrated = player._hydrate_jellyfin_resume_metadata(
+        {
+            "url": "http://jf.local/Videos/movie-id/master.m3u8?api_key=signed",
+            "title": "http://jf.local/Videos/movie-id/master.m3u8?api_key=signed",
+            "jellyfin_item_id": "movie-id",
+            "_jellyfin_metadata_user_id": "gavin-user-id",
+        }
+    )
+
+    assert calls == [("movie-id", "gavin-user-id")]
+    assert hydrated["title"] == "Visible Movie"
 
 
 def test_jellyfin_subtitle_options_include_off_row(monkeypatch: pytest.MonkeyPatch) -> None:

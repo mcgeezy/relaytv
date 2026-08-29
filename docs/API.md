@@ -674,6 +674,8 @@ native Qt control surface.
     - `uploads`
     - `jellyfin_enabled`
     - `jellyfin_server_url`
+    - `jellyfin_api_key` (write-only; blank preserves the stored key)
+    - `jellyfin_auth_mode` (`shared_api_key | user_login`)
     - `jellyfin_username`
     - `jellyfin_password`
     - `jellyfin_user_id`

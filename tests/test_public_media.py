@@ -110,6 +110,31 @@ def test_status_payload_redacts_runtime_media_without_mutating_state(monkeypatch
     assert item["_resolved_stream"].endswith("token=secret")
 
 
+def test_status_redacts_signed_urls_in_titles_and_runtime_telemetry(monkeypatch) -> None:
+    signed = "https://media.example/master.m3u8?api_key=secret&quality=1080"
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {"provider": "jellyfin", "title": signed, "url": signed},
+        raising=False,
+    )
+    monkeypatch.setattr(routes.state, "QUEUE", [], raising=False)
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "closed", raising=False)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    monkeypatch.setattr(
+        routes,
+        "_runtime_capabilities",
+        lambda playing=None: {"native_qt_mpv_runtime_path": signed},
+    )
+
+    payload = routes._status_payload()
+    serialized = json.dumps(payload)
+
+    assert payload["now_playing"]["title"] == "https://media.example/master.m3u8?quality=1080"
+    assert payload["native_qt_mpv_runtime_path"] == "https://media.example/master.m3u8?quality=1080"
+    assert "secret" not in serialized
+
+
 def _secret_item() -> dict:
     return {
         "title": "Movie",

@@ -55,7 +55,9 @@ class _RequestContext:
     client_version: str
     username: str
     password: str
-    token: str
+    auth_mode: str
+    control_token: str
+    catalog_token: str
     catalog_user_id: str
     authenticated: bool
     connected: bool
@@ -80,6 +82,7 @@ _STATUS: dict[str, object] = {
     "last_detect_ok": None,
     "last_detect_error": None,
     "api_key_configured": False,
+    "auth_mode": "user_login",
     "connected": False,
     "last_heartbeat_ts": None,
     "last_command": None,
@@ -129,6 +132,7 @@ _STATUS: dict[str, object] = {
 }
 
 _API_KEY: str = ""
+_AUTH_MODE: str = "user_login"
 _AUTH_USERNAME: str = ""
 _AUTH_PASSWORD: str = ""
 _ACCESS_TOKEN: str = ""
@@ -324,18 +328,27 @@ def derive_device_id() -> str:
 def _read_config() -> dict[str, object]:
     configured_name = ""
     configured_server_type = ""
+    configured_auth_mode = ""
     try:
         from .. import state as _state
 
         s = _state.get_settings() if hasattr(_state, "get_settings") else {}
         configured_name = str((s or {}).get("device_name") or "").strip()
         configured_server_type = str((s or {}).get("jellyfin_server_type") or "").strip().lower()
+        configured_auth_mode = str((s or {}).get("jellyfin_auth_mode") or "").strip().lower()
     except Exception:
         configured_name = ""
         configured_server_type = ""
+        configured_auth_mode = ""
     server_type = configured_server_type or (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_TYPE") or "").strip().lower()
     if server_type not in ("jellyfin", "emby"):
         server_type = "jellyfin"
+    if configured_auth_mode not in ("shared_api_key", "user_login"):
+        configured_auth_mode = (
+            "shared_api_key"
+            if str(runtime_config.snapshot().raw("RELAYTV_JELLYFIN_API_KEY") or "").strip()
+            else "user_login"
+        )
     device_name = (
         configured_name
         or (runtime_config.snapshot().raw("RELAYTV_DEVICE_NAME") or "").strip()
@@ -353,6 +366,7 @@ def _read_config() -> dict[str, object]:
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
         "server_type": server_type,
+        "auth_mode": configured_auth_mode,
     }
 
 
@@ -386,7 +400,7 @@ def start() -> None:
 
 def _start_locked() -> None:
     """Initialize Jellyfin receiver runtime state (network wiring added later)."""
-    global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+    global _API_KEY, _AUTH_MODE, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     cfg = _read_config()
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
@@ -398,6 +412,8 @@ def _start_locked() -> None:
         _STATUS["client_version"] = str(cfg["client_version"])
         _STATUS["heartbeat_sec"] = int(cfg["heartbeat_sec"])
         _STATUS["server_type"] = str(cfg["server_type"])
+        _AUTH_MODE = str(cfg["auth_mode"])
+        _STATUS["auth_mode"] = _AUTH_MODE
         _API_KEY = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_API_KEY") or "").strip()
         _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
         _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
@@ -490,6 +506,28 @@ def mark_heartbeat() -> None:
 def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     out = dict(raw)
     now_ts = int(time.time())
+    auth_mode = str(out.get("auth_mode") or "user_login")
+    if auth_mode == "shared_api_key" and bool(out.get("api_key_configured")):
+        out["control_auth_source"] = "api_key"
+        out["cast_target_scope"] = "shared"
+    elif auth_mode == "user_login" and bool(out.get("authenticated")):
+        out["control_auth_source"] = "user_session"
+        out["cast_target_scope"] = "user_scoped"
+    else:
+        out["control_auth_source"] = "none"
+        out["cast_target_scope"] = "unavailable"
+    if auth_mode == "user_login" and bool(out.get("authenticated")):
+        out["catalog_auth_source"] = "user_session"
+    elif auth_mode == "shared_api_key" and bool(out.get("api_key_configured")):
+        out["catalog_auth_source"] = "api_key"
+    else:
+        out["catalog_auth_source"] = "none"
+    out["catalog_ready"] = bool(
+        out.get("enabled")
+        and out.get("running")
+        and str(out.get("server_url") or "").strip()
+        and out.get("catalog_auth_source") != "none"
+    )
     catalog_user_id, catalog_user_source = _effective_catalog_user(raw)
     out["catalog_user_id"] = catalog_user_id
     out["catalog_user_source"] = catalog_user_source
@@ -537,16 +575,21 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
         out["sync_health"] = "error"
         out["sync_health_reason"] = "register_failed"
         return out
-    if bool(out.get("auth_user_configured")) and bool(out.get("last_auth_ok")) is False:
+    if auth_mode == "user_login" and bool(out.get("auth_user_configured")) and bool(out.get("last_auth_ok")) is False:
         out["sync_health"] = "error"
         out["sync_health_reason"] = "auth_failed"
         return out
 
-    if auth_ts == 0 and bool(out.get("auth_user_configured")):
+    if auth_mode == "user_login" and auth_ts == 0 and bool(out.get("auth_user_configured")):
         out["sync_health"] = "degraded"
         out["sync_health_reason"] = "awaiting_auth"
         return out
-    if register_ts == 0 and bool(out.get("api_key_configured") or out.get("authenticated")):
+    active_credential = (
+        bool(out.get("api_key_configured"))
+        if auth_mode == "shared_api_key"
+        else bool(out.get("authenticated"))
+    )
+    if register_ts == 0 and active_credential:
         out["sync_health"] = "degraded"
         out["sync_health_reason"] = "awaiting_register"
         return out
@@ -699,7 +742,9 @@ def _request_context() -> _RequestContext:
             client_version=str(_STATUS.get("client_version") or "1.0"),
             username=str(_AUTH_USERNAME or ""),
             password=str(_AUTH_PASSWORD or ""),
-            token=str(_ACCESS_TOKEN or _API_KEY or ""),
+            auth_mode=str(_AUTH_MODE or "user_login"),
+            control_token=str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN),
+            catalog_token=str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN),
             catalog_user_id=catalog_user_id,
             authenticated=bool(_STATUS.get("authenticated")),
             connected=bool(_STATUS.get("connected")),
@@ -776,7 +821,7 @@ def _maybe_retry_detection() -> None:
     _run_detection(context.server_url, generation=context.generation)
 
 
-def connect(*, server_url: str, api_key: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
+def connect(*, server_url: str, api_key: str | None = None, auth_mode: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
     """Configure and enable Jellyfin receiver runtime."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
@@ -787,12 +832,13 @@ def connect(*, server_url: str, api_key: str | None = None, device_name: str | N
     # heartbeat from reopening it to the old server mid-transaction.
     with _control_socket_suspended():
         return _connect_locked(
-            server_url=server_url, api_key=api_key, device_name=device_name, heartbeat_sec=heartbeat_sec
+            server_url=server_url, api_key=api_key, auth_mode=auth_mode,
+            device_name=device_name, heartbeat_sec=heartbeat_sec
         )
 
 
-def _connect_locked(*, server_url: str, api_key: str | None, device_name: str | None, heartbeat_sec: int | None) -> dict[str, object]:
-    global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+def _connect_locked(*, server_url: str, api_key: str | None, auth_mode: str | None, device_name: str | None, heartbeat_sec: int | None) -> dict[str, object]:
+    global _API_KEY, _AUTH_MODE, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
         _STATUS["enabled"] = True
@@ -806,6 +852,15 @@ def _connect_locked(*, server_url: str, api_key: str | None, device_name: str | 
             _STATUS["heartbeat_sec"] = max(2, int(heartbeat_sec))
         if api_key is not None:
             _API_KEY = str(api_key or "").strip()
+        selected_mode = str(auth_mode or "").strip().lower()
+        if not selected_mode and api_key is not None:
+            selected_mode = "shared_api_key" if _API_KEY else "user_login"
+        if not selected_mode:
+            selected_mode = str(_AUTH_MODE or "").strip().lower()
+        if selected_mode not in ("shared_api_key", "user_login"):
+            selected_mode = "shared_api_key" if _API_KEY else "user_login"
+        _AUTH_MODE = selected_mode
+        _STATUS["auth_mode"] = _AUTH_MODE
         _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
         _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
         _ACCESS_TOKEN = ""
@@ -956,16 +1011,50 @@ def api_key() -> str:
         return str(_API_KEY or "")
 
 
-def _active_token() -> str:
+def control_token() -> str:
+    """Return the credential selected for the receiver control plane."""
     with _LOCK:
-        if _ACCESS_TOKEN:
-            return str(_ACCESS_TOKEN)
-        return str(_API_KEY or "")
+        return str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN)
 
 
-def active_token() -> str:
-    """Public accessor used by route helpers."""
-    return _active_token()
+def control_socket_identity_headers(status_snapshot: dict[str, object] | None = None) -> dict[str, str]:
+    """Identify the cast device during the websocket HTTP handshake.
+
+    The socket URL carries the credential, while this token-free header gives
+    Jellyfin the configured display name. Without it, an API-key websocket is
+    created as the server itself and falls back to DeviceId for its name, so
+    the cast menu shows e.g. ``Jellyfin Server - relaytv-...``.
+
+    Jellyfin deliberately owns the API-key session's client label (the API key
+    name) and keeps the session userless. Keeping the token out of this header
+    preserves that shared-session behavior and avoids duplicating the secret.
+    """
+    st = status_snapshot if isinstance(status_snapshot, dict) else status()
+
+    def _component(key: str, fallback: str) -> str:
+        value = str(st.get(key) or fallback).strip() or fallback
+        # Jellyfin URL-decodes authorization components. Encoding here keeps a
+        # display name containing quotes or commas from changing header fields.
+        return _urlparse.quote(value, safe="")
+
+    client_name = _component("client_name", "RelayTV")
+    device_name = _component("device_name", "RelayTV")
+    device_id = _component("device_id", "relaytv")
+    client_version = _component("client_version", "1.0")
+    return {
+        "Authorization": (
+            f'MediaBrowser Client="{client_name}", '
+            f'Device="{device_name}", '
+            f'DeviceId="{device_id}", '
+            f'Version="{client_version}"'
+        )
+    }
+
+
+def catalog_token() -> str:
+    """Return the credential selected for catalog and media work."""
+    with _LOCK:
+        return str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN)
 
 
 def session_token() -> str:
@@ -1020,14 +1109,20 @@ def _build_emby_headers(*, token: str = "") -> dict[str, str]:
     return out
 
 
-def get_item_metadata(item_id: str, *, token_override: str = "", server_url_override: str = "") -> dict[str, object]:
+def get_item_metadata(
+    item_id: str,
+    *,
+    token_override: str = "",
+    server_url_override: str = "",
+    user_id_override: str = "",
+) -> dict[str, object]:
     iid = str(item_id or "").strip()
     context = _request_context()
     base = str(server_url_override or context.server_url or "").strip().rstrip("/")
     if not iid or not base:
         return {}
-    token = str(token_override or context.token or "").strip()
-    user_id = context.catalog_user_id
+    token = str(token_override or context.catalog_token or "").strip()
+    user_id = str(user_id_override or context.catalog_user_id or "").strip()
     token_key = hashlib.sha1(token.encode("utf-8", "ignore")).hexdigest()[:12] if token else "-"
     cache_key = f"meta:{base}:{user_id}:{iid}:{token_key}"
     cached = _catalog_cache_get(cache_key)
@@ -1462,12 +1557,15 @@ def _extract_total_count(payload: object, default_count: int = 0) -> int:
 
 def _catalog_base_token_user() -> tuple[str, str, str]:
     context = _request_context()
-    return context.server_url, context.token, context.catalog_user_id
+    return context.server_url, context.catalog_token, context.catalog_user_id
 
 
-def get_item_detail(item_id: str, *, refresh: bool = False) -> dict[str, object]:
+def get_item_detail(
+    item_id: str, *, refresh: bool = False, user_id_override: str = ""
+) -> dict[str, object]:
     iid = str(item_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
+    user_id = str(user_id_override or user_id or "").strip()
     if not iid or not base:
         return {}
     cache_key = f"detail:{base}:{user_id}:{iid}"
@@ -1515,6 +1613,7 @@ def resolve_playback_url(
     subtitle_stream_index: str = "",
     max_height: int | None = None,
     max_streaming_bitrate: int | None = None,
+    user_id_override: str = "",
 ) -> dict[str, object]:
     """
     Ask Jellyfin for a playable URL for an item, preferring transcode when requested.
@@ -1522,6 +1621,7 @@ def resolve_playback_url(
     """
     iid = str(item_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
+    user_id = str(user_id_override or user_id or "").strip()
     if not iid or not base:
         return {"url": "", "method": "none", "media_source_id": ""}
     mid = str(media_source_id or "").strip()
@@ -2493,9 +2593,11 @@ def list_series_episodes(
     season_id: str = "",
     season_number: int | None = None,
     refresh: bool = False,
+    user_id_override: str = "",
 ) -> dict[str, object]:
     sid = str(series_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
+    user_id = str(user_id_override or user_id or "").strip()
     if not sid or not base:
         return {"series_id": sid, "season_id": str(season_id or "").strip(), "season_number": season_number, "episodes": [], "count": 0}
 
@@ -2634,8 +2736,8 @@ def _context_url(context: _RequestContext, path: str) -> str:
 
 
 def _context_headers(context: _RequestContext) -> dict[str, str]:
-    """Authentication headers derived entirely from one request context."""
-    token = context.token.strip()
+    """Control-plane authentication captured in one request context."""
+    token = context.control_token.strip()
     out: dict[str, str] = {}
     if token:
         out["X-Emby-Token"] = token
@@ -2785,7 +2887,8 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
             _STATUS["last_auth_ts"] = int(time.time())
             _STATUS["last_auth_ok"] = True
             _STATUS["last_auth_error"] = None
-            _STATUS["last_error"] = None
+            if not _API_KEY:
+                _STATUS["last_error"] = None
 
         if not _publish(generation, _apply):
             logger.info("jellyfin_auth_discarded reason=config_changed")
@@ -2802,7 +2905,8 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
             _STATUS["last_auth_ts"] = int(time.time())
             _STATUS["last_auth_ok"] = False
             _STATUS["last_auth_error"] = msg
-            _STATUS["last_error"] = msg
+            if not _API_KEY:
+                _STATUS["last_error"] = msg
 
         if not _publish(generation, _apply_failure):
             return {"ok": False, "reason": "config_changed"}
@@ -3073,7 +3177,7 @@ def _ensure_registration(now_ts: float | None = None) -> None:
         return
     if not context.server_url:
         return
-    if not context.token:
+    if not context.control_token:
         return
 
     now_val = float(now_ts if now_ts is not None else time.time())
@@ -3184,6 +3288,8 @@ def _ensure_authentication() -> None:
     if not runtime_config.snapshot().flag("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
         return
     context = _request_context()
+    if context.auth_mode != "user_login":
+        return
     if not context.enabled or not context.running:
         return
     if context.authenticated:
