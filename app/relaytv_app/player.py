@@ -669,6 +669,52 @@ def start_cec_monitor() -> None:
 
 MPV_PROC: subprocess.Popen | None = None
 MPV_LOCK = threading.Lock()
+
+# --- playback intent ---------------------------------------------------------
+#
+# Resolving a URL takes seconds and deliberately runs outside MPV_LOCK, so a
+# newer Play can supersede a slow older one. Nothing tracked *which* play was
+# still wanted, though, so whichever resolve finished last won: a Play issued
+# during a slow resolve could be overwritten by the older one, and a Stop
+# issued during a resolve was undone the moment that resolve completed —
+# playback restarting seconds after the user stopped it.
+#
+# Every play claims a generation before it resolves. Terminal transitions
+# claim one too, which retires whatever is in flight. Ownership is rechecked
+# before each irreversible effect: loading media into mpv, publishing the
+# relay, inserting history, and writing session state.
+_INTENT_LOCK = threading.Lock()
+_PLAYBACK_INTENT = 0
+
+
+def claim_playback_intent() -> int:
+    """Reserve the newest playback intent, retiring any older unresolved one."""
+    global _PLAYBACK_INTENT
+    with _INTENT_LOCK:
+        _PLAYBACK_INTENT += 1
+        return _PLAYBACK_INTENT
+
+
+def playback_intent_current(intent: int) -> bool:
+    """Return True while ``intent`` is still the newest claimed play."""
+    with _INTENT_LOCK:
+        return intent == _PLAYBACK_INTENT
+
+
+def retire_playback_intents(reason: str = "") -> int:
+    """Retire every unresolved play. Called by Stop, Close, and resume-clear.
+
+    Returns the new generation, which no in-flight play owns, so each will
+    abandon itself at its next ownership check.
+    """
+    intent = claim_playback_intent()
+    debug_log("player", f"playback_intents_retired reason={reason or 'unspecified'} intent={intent}")
+    return intent
+
+
+class _PlaybackSuperseded(Exception):
+    """Raised inside play_item when a newer intent has taken over."""
+
 IPC_PATH = os.getenv("MPV_IPC_PATH", "/tmp/mpv.sock")
 SPLASH_PROC: subprocess.Popen | None = None
 SPLASH_LOCK = threading.Lock()
@@ -2438,6 +2484,17 @@ def _persist_runtime_volume_before_stop() -> None:
 
 
 def stop_mpv(*, restart_splash: bool = True):
+    """Tear down the mpv process.
+
+    Deliberately does *not* retire playback intents. start_mpv calls this to
+    clear the previous process before starting the new one, as do its
+    video-output fallbacks, so retiring here made every cold start supersede
+    itself: the play that had just loaded found it no longer owned the intent
+    and published nothing — no history, no now_playing, no watchdog.
+
+    Retirement belongs to the transitions that mean "the user is done with
+    this item", which live in playback_service.
+    """
     global MPV_PROC
     _persist_runtime_volume_before_stop()
     _stop_qt_shell()
@@ -4967,6 +5024,70 @@ def _runtime_gap_completion_plausible(now: dict | None) -> bool:
 
 def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mode: str, start_pos: float | None = None):
     """Play a queue item dict or a raw shared URL/text."""
+    # Claim before any resolving, IPTV lookup, relay preparation, or
+    # availability wait, so this play both supersedes older ones and can be
+    # superseded itself.
+    intent = claim_playback_intent()
+    try:
+        return _play_item_owned(
+            item_or_text,
+            intent,
+            use_resolver=use_resolver,
+            cec=cec,
+            clear_queue=clear_queue,
+            mode=mode,
+            start_pos=start_pos,
+        )
+    except _PlaybackSuperseded as exc:
+        # A newer Play, or a Stop/Close, took over while this one was still
+        # resolving. Report whatever actually owns playback now rather than
+        # this call's stale intention.
+        logger.info("play_item_superseded stage=%s intent=%d mode=%s", exc, intent, mode)
+        current = state.NOW_PLAYING
+        return current if isinstance(current, dict) else {}
+
+
+def _play_item_owned(
+    item_or_text,
+    intent: int,
+    *,
+    use_resolver: bool,
+    cec: bool,
+    clear_queue: bool,
+    mode: str,
+    start_pos: float | None = None,
+):
+    """play_item's body, guarded by ``intent`` at every irreversible effect."""
+
+    def _require_owned(stage: str, *, relay_stream: str = "") -> None:
+        if playback_intent_current(intent):
+            return
+        if relay_stream:
+            # Retired work releases what it prepared: a relay left running
+            # would keep a yt-dlp and an ffmpeg alive against a play nobody
+            # is waiting for.
+            token = _relay_token_from_url(relay_stream)
+            if token:
+                try:
+                    postlive_relay.close_session(token, reason="playback superseded")
+                except Exception:
+                    pass
+        raise _PlaybackSuperseded(stage)
+
+    def _run_owned(stage: str, effect):
+        """Run a short irreversible effect atomically with intent ownership.
+
+        A plain check immediately before clearing the queue still leaves a
+        check/act window in which a newer Play can claim the generation. Keep
+        only the short mutation itself under the intent lock; resolution and
+        availability waits remain fully concurrent.
+        """
+        with _INTENT_LOCK:
+            if intent != _PLAYBACK_INTENT:
+                raise _PlaybackSuperseded(stage)
+            return effect()
+
+    _require_owned("pre_history_update")
     update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
     _mark_playback_transition()
     if isinstance(item_or_text, dict):
@@ -4979,13 +5100,16 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
 
         item = iptv_service.resolve_queue_item(item)
 
+    # make_item and IPTV catalog resolution may both block. Nothing below may
+    # touch device or queue state until the result is known to belong to the
+    # still-current Play.
+    _require_owned("post_item_prepare")
     raw = validate_user_url(item["url"])
     item["url"] = raw
     title = item.get("title") or raw
     provider = item.get("provider") or provider_from_url(raw)
     http_headers = _item_http_headers(item)
     play_t0 = time.monotonic()
-    note_playback_started(start_pos)
     debug_log("player", f"play_item start mode={mode} provider={provider} use_resolver={use_resolver}")
     if provider == "iptv":
         debug_log(
@@ -5000,11 +5124,14 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     ours = _our_phys_addr() or ""
     should_take_over = _setting_enabled("tv_takeover_enabled", True) and (not ours or active_src != ours)
     if cec_auto_on_switch(cec) and should_take_over:
-        tv_on_and_switch()
+        _run_owned("pre_cec_takeover", tv_on_and_switch)
 
     if clear_queue:
-        with state.QUEUE_LOCK:
-            state.QUEUE.clear()
+        def _clear_queue() -> None:
+            with state.QUEUE_LOCK:
+                state.QUEUE.clear()
+
+        _run_owned("pre_queue_clear", _clear_queue)
         state.persist_queue()
 
     stream, audio = (raw, None)
@@ -5138,8 +5265,16 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         else {}
     )
     http_header_kwargs = {"http_headers": http_headers} if http_headers else {}
+    # Resolution is done. Everything past this point changes what the TV is
+    # doing, so nothing proceeds unless this play still owns the intent.
+    _require_owned("post_resolve", relay_stream=stream if relay_playback else "")
     _wait_for_resolved_media_availability(item)
+    _require_owned("post_availability_wait", relay_stream=stream if relay_playback else "")
     with MPV_LOCK:
+        # Rechecked under the lock: a Stop can land between the wait above and
+        # acquiring it, and loading media is the point of no return.
+        _require_owned("pre_load", relay_stream=stream if relay_playback else "")
+        note_playback_started(start_pos)
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
         # immediately before the playback handoff so background idle workers do
@@ -5200,6 +5335,8 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
             f"{int((time.monotonic() - t_mpv) * 1000)}ms",
         )
 
+    _require_owned("post_load")
+
     if relay_playback:
         # Once the relay's mux finalizes the spool file, swap mpv onto the
         # local file for a real timeline (seeking, known duration).
@@ -5255,14 +5392,20 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     else:
         now["_playback_started_pos"] = 0.0
 
-    _add_history_entry(now)
-    state.update_session(
-        now_playing=now,
-        session_state="playing",
-        pause_reason=None,
-        session_position=float(start_pos) if start_pos is not None else 0.0,
-    )
+    # Publishing must be one owned effect, not a check followed by mutations.
+    # Stop/Close retire intents without MPV_LOCK, so either this complete
+    # history/session publication wins first and the terminal transition
+    # overwrites it, or retirement wins and none of it lands.
+    def _publish_playback() -> None:
+        _add_history_entry(now)
+        state.update_session(
+            now_playing=now,
+            session_state="playing",
+            pause_reason=None,
+            session_position=float(start_pos) if start_pos is not None else 0.0,
+        )
 
+    _run_owned("publish", _publish_playback)
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.
@@ -5271,6 +5414,7 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     except Exception:
         pass
 
+    _require_owned("pre_watchdog")
     _arm_playback_start_watchdog(now)
 
     debug_log("player", f"play_item complete in {int((time.monotonic() - play_t0) * 1000)}ms title={title!r}")

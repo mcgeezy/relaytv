@@ -208,6 +208,10 @@ def stop_all(*, restart_splash: bool | None = None) -> None:
     keep ``player.stop_mpv``'s own default authoritative and because existing
     test doubles for it don't all accept the parameter.
     """
+    # Terminal: a play still resolving must not load into the runtime this is
+    # tearing down. Retiring here rather than inside player.stop_mpv keeps
+    # start_mpv's internal teardown from superseding the play it is starting.
+    player.retire_playback_intents("stop_all")
     if restart_splash is None:
         player.stop_mpv()
     else:
@@ -216,6 +220,7 @@ def stop_all(*, restart_splash: bool | None = None) -> None:
 
 def stop_keep_shell() -> bool:
     """Stop playback while keeping the Qt shell alive for the idle surface."""
+    player.retire_playback_intents("stop_keep_shell")
     return player.stop_playback_keep_qt_shell()
 
 
@@ -451,6 +456,7 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
     the transition outcome; response shaping and notification/Jellyfin side
     effects stay with the caller.
     """
+    player.retire_playback_intents("close_current")
     # Prevent the autoplay worker from immediately advancing.
     suppress_auto_next(3600 * 24)
     discard_interrupted_playback_state("close")
@@ -591,6 +597,9 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
 
 def clear_session() -> None:
     """Reset the session to idle: no current item, no resume position."""
+    # Terminal transition: a play still resolving must not republish over the
+    # idle session this is establishing.
+    player.retire_playback_intents("clear_session")
     state.update_session(now_playing=None, session_position=None, session_state="idle")
     try:
         state.persist_queue()
@@ -630,6 +639,7 @@ def stop_current() -> dict[str, Any]:
     Mirrors ``close_current``'s split: the transition core lives here, the
     caller owns response shaping and the Jellyfin stopped hint.
     """
+    player.retire_playback_intents("stop_current")
     suppress_auto_next(3600 * 24)
     discard_interrupted_playback_state("stop")
 
