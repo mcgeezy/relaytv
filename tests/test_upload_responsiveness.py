@@ -9,6 +9,7 @@ stopped making progress for the duration.
 import asyncio
 import inspect
 import os
+import threading
 import time
 
 import pytest
@@ -80,6 +81,70 @@ def test_cleanup_does_not_delete_an_active_progressive_upload(uploads_root) -> N
     result = upload_store.cleanup_uploads()
     assert result["deleted_uploads"] == 1
     assert upload_store.load_metadata(upload_id) is None
+
+
+@pytest.mark.anyio
+async def test_active_upload_registration_does_not_block_the_event_loop(
+    uploads_root,
+    monkeypatch,
+) -> None:
+    """Drive the real route while cleanup owns the active-upload lock."""
+    import httpx
+
+    holder_started = threading.Event()
+    holder_acquired = threading.Event()
+    cleanup_calls = 0
+
+    def hold_cleanup_lock() -> None:
+        if not holder_started.wait(5.0):
+            return
+        with upload_store._UPLOAD_LOCK:
+            holder_acquired.set()
+            time.sleep(0.6)
+
+    holder = threading.Thread(target=hold_cleanup_lock, daemon=True)
+    holder.start()
+
+    def coordinated_cleanup(settings=None):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            holder_started.set()
+            assert holder_acquired.wait(5.0)
+        return {"deleted_uploads": 0, "queue_removed": 0}
+
+    async def fake_play(item, *, mode):
+        return dict(item)
+
+    monkeypatch.setattr(upload_store, "cleanup_uploads", coordinated_cleanup)
+    monkeypatch.setattr(uploads, "_play_uploaded_item", fake_play)
+
+    gaps: list[float] = []
+    ticking = True
+
+    async def ticker() -> None:
+        previous = time.monotonic()
+        while ticking:
+            await asyncio.sleep(0.02)
+            now = time.monotonic()
+            gaps.append(now - previous)
+            previous = now
+
+    transport = httpx.ASGITransport(app=create_app(testing=True))
+    async with httpx.AsyncClient(transport=transport, base_url="http://tv.local") as client:
+        ticker_task = asyncio.create_task(ticker())
+        response = await client.post(
+            "/ingest/media/play",
+            files={"file": ("clip.mp4", b"q" * 4096, "video/mp4")},
+        )
+        ticking = False
+        await ticker_task
+
+    holder.join(timeout=2.0)
+    assert not holder.is_alive()
+    assert response.status_code == 200, response.text
+    assert gaps
+    assert max(gaps) < 0.2, gaps
 
 
 @pytest.mark.anyio

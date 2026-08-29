@@ -236,6 +236,51 @@ def test_retired_session_callback_does_not_reach_the_live_queue(monkeypatch) -> 
     discovery_mdns.stop_browse()
 
 
+def test_retired_removed_callback_does_not_erase_live_discovery(monkeypatch) -> None:
+    """A cancelled browser can report Removed after its replacement starts."""
+    removed = object()
+
+    class _ServiceStateChange:
+        Removed = removed
+
+    monkeypatch.setattr(discovery_mdns, "Zeroconf", lambda: _FakeZeroconf())
+    monkeypatch.setattr(discovery_mdns, "ServiceBrowser", lambda *a, **k: object())
+    monkeypatch.setattr(discovery_mdns, "ServiceStateChange", _ServiceStateChange)
+
+    discovery_mdns.start_browse()
+    old = discovery_mdns._BROWSE_SESSION
+    discovery_mdns.stop_browse()
+    discovery_mdns.start_browse()
+    live = discovery_mdns._BROWSE_SESSION
+    service_name = "peer._relaytv._tcp.local."
+    with discovery_mdns._BROWSE_LOCK:
+        discovery_mdns._DISCOVERED[service_name] = {
+            "service_name": service_name,
+            "last_seen_at": time.time(),
+        }
+
+    discovery_mdns._handle_service_state_change(
+        old,
+        "_relaytv._tcp.local.",
+        service_name,
+        removed,
+    )
+
+    with discovery_mdns._BROWSE_LOCK:
+        assert service_name in discovery_mdns._DISCOVERED
+
+    # The same callback from the live generation still removes the peer.
+    discovery_mdns._handle_service_state_change(
+        live,
+        "_relaytv._tcp.local.",
+        service_name,
+        removed,
+    )
+    with discovery_mdns._BROWSE_LOCK:
+        assert service_name not in discovery_mdns._DISCOVERED
+    discovery_mdns.stop_browse()
+
+
 def test_resolution_that_finishes_after_browse_stop_is_not_published(monkeypatch) -> None:
     """A blocking lookup must re-check ownership at the cache publication."""
     entered = threading.Event()
