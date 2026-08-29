@@ -13,7 +13,7 @@ import threading
 
 import pytest
 
-from relaytv_app import state
+from relaytv_app import playback_service, player, state
 
 
 @pytest.fixture
@@ -194,6 +194,41 @@ def test_update_session_can_skip_persistence(state_dir, monkeypatch) -> None:
 
     assert state.SESSION_STATE == "playing"
     assert writes == []
+
+
+@pytest.mark.parametrize("transition", ["stop_current", "close_current"])
+def test_terminal_transition_publishes_one_composite_session(
+    state_dir,
+    monkeypatch,
+    transition,
+) -> None:
+    updates: list[dict[str, object]] = []
+    now = {"title": "Movie", "resume_pos": 1.0}
+    monkeypatch.setattr(state, "NOW_PLAYING", now, raising=False)
+    monkeypatch.setattr(state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(state, "SESSION_POSITION", 1.0, raising=False)
+    monkeypatch.setattr(state, "update_session", lambda **values: updates.append(values) or True)
+    monkeypatch.setattr(player, "native_qt_playback_explicitly_ended", lambda: False)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 42.0 if prop == "time-pos" else 100.0)
+    monkeypatch.setattr(player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(playback_service, "can_preserve_closed_session", lambda: True)
+    monkeypatch.setattr(playback_service, "suppress_auto_next", lambda seconds: None)
+    monkeypatch.setattr(playback_service, "discard_interrupted_playback_state", lambda reason: None)
+    monkeypatch.setattr(playback_service, "stop_all", lambda **kwargs: None)
+
+    if transition == "close_current":
+        playback_service.close_current(
+            idle_surface_enabled=False,
+            keep_shell_allowed=False,
+        )
+    else:
+        playback_service.stop_current()
+
+    assert len(updates) == 1
+    assert updates[0]["session_state"] == "closed"
+    assert updates[0]["session_position"] == 42.0
+    assert updates[0]["now_playing"]["resume_pos"] == 42.0
+    assert updates[0]["now_playing"]["closed"] is True
 
 
 # --- failure is observable ---------------------------------------------------

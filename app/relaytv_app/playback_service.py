@@ -469,6 +469,9 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
             preserve_resume = False
     except Exception:
         pass
+    session_update: dict[str, object] = {
+        "session_state": "closed" if preserve_resume else "idle",
+    }
     if preserve_resume:
         with player.MPV_LOCK:
             try:
@@ -482,9 +485,9 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
         if pos is None and isinstance(state.NOW_PLAYING, dict):
             pos = state.NOW_PLAYING.get("resume_pos")
         try:
-            state.set_session_position(float(pos) if pos is not None else None)
+            session_update["session_position"] = float(pos) if pos is not None else None
         except Exception:
-            state.set_session_position(None)
+            session_update["session_position"] = None
 
         try:
             if isinstance(state.NOW_PLAYING, dict) and pos is not None:
@@ -492,20 +495,14 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
                 np["resume_pos"] = float(pos)
                 np["closed"] = True
                 np["closed_at"] = int(time.time())
-                state.set_now_playing(np)
+                session_update["now_playing"] = np
         except Exception:
             pass
     elif getattr(state, "SESSION_STATE", "idle") != "closed":
-        try:
-            state.set_now_playing(None)
-        except Exception:
-            pass
-        try:
-            state.set_session_position(None)
-        except Exception:
-            pass
+        session_update["now_playing"] = None
+        session_update["session_position"] = None
 
-    state.set_session_state("closed" if preserve_resume else "idle")
+    state.update_session(**session_update)
     keep_qt_shell = bool(preserve_resume and idle_surface_enabled and keep_shell_allowed)
     stopped_in_place = False
     if keep_qt_shell:
@@ -646,14 +643,17 @@ def stop_current() -> dict[str, Any]:
     pos = None
     dur = None
     preserve_resume = can_preserve_closed_session()
+    session_update: dict[str, object] = {
+        "session_state": "closed" if preserve_resume else "idle",
+    }
     if preserve_resume:
         with player.MPV_LOCK:
             pos = player.mpv_get("time-pos")
             dur = player.mpv_get("duration")
         try:
-            state.set_session_position(float(pos) if pos is not None else None)
+            session_update["session_position"] = float(pos) if pos is not None else None
         except Exception:
-            state.set_session_position(None)
+            session_update["session_position"] = None
 
     if preserve_resume:
         try:
@@ -663,21 +663,16 @@ def stop_current() -> dict[str, Any]:
                     np["resume_pos"] = float(pos)
                 np["closed"] = True
                 np["closed_at"] = int(time.time())
-                state.set_now_playing(np)
+                session_update["now_playing"] = np
         except Exception:
             pass
     elif getattr(state, "SESSION_STATE", "idle") != "closed":
-        try:
-            state.set_now_playing(None)
-        except Exception:
-            pass
-        try:
-            state.set_session_position(None)
-        except Exception:
-            pass
+        session_update["now_playing"] = None
+        session_update["session_position"] = None
+
+    state.update_session(**session_update)
 
     if preserve_resume:
-        state.set_session_state("closed")
         with player.MPV_LOCK:
             stop_all()
         player.update_history_progress(
@@ -688,16 +683,6 @@ def stop_current() -> dict[str, Any]:
         )
         return {"preserve_resume": True, "position": pos, "duration": dur}
 
-    if getattr(state, "SESSION_STATE", "idle") != "closed":
-        try:
-            state.set_now_playing(None)
-        except Exception:
-            pass
-        try:
-            state.set_session_position(None)
-        except Exception:
-            pass
-    state.set_session_state("idle")
     with player.MPV_LOCK:
         stop_all()
     return {"preserve_resume": False, "position": pos, "duration": dur}

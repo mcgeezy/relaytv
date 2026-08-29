@@ -2643,8 +2643,7 @@ def test_playback_state_uses_ipc_when_qt_runtime_first_reports_playing(monkeypat
 
 
 def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    now_values: list[object] = []
-    session_values: list[str] = []
+    session_updates: list[dict[str, object]] = []
     stop_shell_calls: list[bool] = []
     stop_mpv_calls: list[bool] = []
 
@@ -2657,9 +2656,7 @@ def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkey
     monkeypatch.setattr(routes.player, 'stop_mpv', lambda restart_splash=True: stop_mpv_calls.append(bool(restart_splash)))
     monkeypatch.setattr(routes, '_jellyfin_emit_stopped_hint', lambda pos, dur: None)
     monkeypatch.setattr(routes.state, 'NOW_PLAYING', {'title': 'Clip', 'url': 'https://example.com/video.mp4'}, raising=False)
-    monkeypatch.setattr(routes.state, 'set_now_playing', lambda value: now_values.append(value))
-    monkeypatch.setattr(routes.state, 'set_session_state', lambda value: session_values.append(value))
-    monkeypatch.setattr(routes.state, 'set_session_position', lambda value: None)
+    monkeypatch.setattr(routes.state, 'update_session', lambda **values: session_updates.append(values) or True)
 
     out = routes.close()
 
@@ -2668,9 +2665,10 @@ def test_close_preserves_now_playing_and_keeps_qt_shell_when_idle_enabled(monkey
     assert out['kept_player_shell'] is True
     assert stop_shell_calls == [True]
     assert stop_mpv_calls == []
-    assert session_values == ['closed']
-    assert now_values[-1]['closed'] is True
-    assert now_values[-1]['resume_pos'] == 12.5
+    assert len(session_updates) == 1
+    assert session_updates[0]['session_state'] == 'closed'
+    assert session_updates[0]['now_playing']['closed'] is True
+    assert session_updates[0]['now_playing']['resume_pos'] == 12.5
 
 
 def test_close_discards_temporary_restore_stack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3529,7 +3527,7 @@ def test_auto_next_unconfirmed_playlist_handoff_is_retired_after_eof(monkeypatch
     monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_URL', 'https://example.com/next.mp4', raising=False)
     monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_AT', 123.0, raising=False)
     monkeypatch.setattr(player, 'mpv_command', lambda command: commands.append(list(command)) or {'error': 'success'})
-    monkeypatch.setattr(player, 'mpv_get_many', lambda props: {'playlist-pos': 0, 'playlist-count': 2, 'time-pos': None, 'path': '', 'pause': False})
+    monkeypatch.setattr(player, 'mpv_get_many', lambda props, **kwargs: {'playlist-pos': 0, 'playlist-count': 2, 'time-pos': None, 'path': '', 'pause': False})
 
     method = player._attempt_playlist_next_handoff(poll_sleep=lambda _seconds: None)
 
@@ -3555,7 +3553,11 @@ def test_auto_next_delayed_playlist_handoff_stays_seamless(monkeypatch: pytest.M
     monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_URL', 'https://example.com/next.mp4', raising=False)
     monkeypatch.setattr(player, '_MPV_UPNEXT_ARMED_AT', 123.0, raising=False)
     monkeypatch.setattr(player, 'mpv_command', lambda command: commands.append(list(command)) or {'error': 'success'})
-    monkeypatch.setattr(player, 'mpv_get_many', lambda props: next(samples))
+    def fresh_sample(props, *, fresh=False):
+        assert fresh is True
+        return next(samples)
+
+    monkeypatch.setattr(player, 'mpv_get_many', fresh_sample)
     monkeypatch.setattr(
         player,
         '_consume_mpv_queued_next_if_started',
@@ -3593,7 +3595,7 @@ def test_auto_next_unconfirmed_playlist_handoff_falls_back_without_looping(monke
     monkeypatch.setattr(
         player,
         'mpv_get_many',
-        lambda props: {
+        lambda props, **kwargs: {
             'playlist-pos': -1,
             'playlist-count': 2,
             'time-pos': None,
@@ -3650,6 +3652,39 @@ def test_session_tracker_serializes_playlist_handoff_consumption(monkeypatch: py
         player._session_tracker_tick()
 
     assert advance_lock.active is False
+
+
+def test_session_tracker_discards_sample_for_replaced_playback(monkeypatch: pytest.MonkeyPatch) -> None:
+    old = {"url": "https://example.com/old.mp4", "history_id": "old", "started": 1}
+    new = {"url": "https://example.com/new.mp4", "history_id": "new", "started": 2, "resume_pos": 0.0}
+    monkeypatch.setattr(player.state, "NOW_PLAYING", old, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player, "_is_playing", lambda: True)
+
+    def sample(props):
+        player.state.NOW_PLAYING = new
+        return {
+            "time-pos": 598.0,
+            "duration": 600.0,
+            "pause": False,
+            "playlist-pos": 0,
+            "playlist-count": 1,
+            "path": old["url"],
+            "core-idle": False,
+            "eof-reached": False,
+        }
+
+    monkeypatch.setattr(player, "mpv_get_many", sample)
+    monkeypatch.setattr(player, "_consume_mpv_queued_next_if_started", lambda props: False)
+    monkeypatch.setattr(
+        player.state,
+        "update_session",
+        lambda **values: (_ for _ in ()).throw(AssertionError(f"stale publication: {values}")),
+    )
+
+    player._session_tracker_tick()
+
+    assert player.state.NOW_PLAYING == new
 
 
 def test_auto_next_resumes_interrupted_item_without_dropping_queue_tail(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3517,8 +3517,12 @@ def mpv_get(prop: str):
 
 
 
-def mpv_get_many(props: list[str]) -> dict[str, Any]:
-    """Get multiple mpv properties in one IPC connection."""
+def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
+    """Get multiple mpv properties in one IPC connection.
+
+    ``fresh`` bypasses both short-lived and stale-cache fallbacks for decisions
+    that must observe an effect issued immediately beforehand.
+    """
     normalized = [str(p or "").strip() for p in list(props or []) if str(p or "").strip()]
     if not normalized:
         return {}
@@ -3528,7 +3532,12 @@ def mpv_get_many(props: list[str]) -> dict[str, Any]:
     if prefer_host and (not live_ipc_required) and all(host.get(p) is not None for p in normalized):
         _mpv_cache_update(host)
         return host
-    if prefer_host and (not live_ipc_required) and all(_qt_shell_runtime_supports_mpv_property(p) for p in normalized):
+    if (
+        not fresh
+        and prefer_host
+        and (not live_ipc_required)
+        and all(_qt_shell_runtime_supports_mpv_property(p) for p in normalized)
+    ):
         stale = _mpv_cache_get_many(
             normalized,
             max_age_sec=_mpv_poll_cache_stale_sec(),
@@ -3541,7 +3550,7 @@ def mpv_get_many(props: list[str]) -> dict[str, Any]:
         if all(out.get(p) is not None for p in normalized):
             _mpv_cache_update(out)
             return out
-    if not prefer_host and (not live_ipc_required):
+    if not fresh and not prefer_host and (not live_ipc_required):
         cache_ttl = _mpv_poll_cache_ttl_sec()
         if cache_ttl > 0:
             cached = _mpv_cache_get_many(normalized, max_age_sec=cache_ttl, project_playback=True)
@@ -3555,6 +3564,8 @@ def mpv_get_many(props: list[str]) -> dict[str, Any]:
         if any(v is not None for v in fallback_host.values()):
             _mpv_cache_update(fallback_host)
             return fallback_host
+        if fresh:
+            return {}
         stale = _mpv_cache_get_many(
             normalized,
             max_age_sec=_mpv_poll_cache_stale_sec(),
@@ -4222,7 +4233,10 @@ def _attempt_playlist_next_handoff(*, poll_sleep: Callable[[float], None] | None
     last_props: dict[str, Any] = {}
     for i in range(confirm_polls):
         try:
-            sample = mpv_get_many(["playlist-pos", "playlist-count", "time-pos", "path", "pause"])
+            sample = mpv_get_many(
+                ["playlist-pos", "playlist-count", "time-pos", "path", "pause"],
+                fresh=True,
+            )
             last_props = sample if isinstance(sample, dict) else {}
             if _consume_mpv_queued_next_if_started(last_props, force_playlist_advance=True):
                 return "mpv_playlist_next"
@@ -6329,37 +6343,63 @@ def _session_tracker_tick() -> None:
     if str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower() == "closed":
         _reset_mpv_up_next_state()
         return
+    sampled_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    sampled_identity = (
+        str(sampled_now.get("history_id") or ""),
+        sampled_now.get("started"),
+        str(sampled_now.get("url") or ""),
+    ) if sampled_now else None
     props = mpv_get_many(["time-pos", "duration", "pause", "playlist-pos", "playlist-count", "path", "core-idle", "eof-reached"])
     # Queue advance owns the decision between consuming a confirmed seamless
     # handoff and retiring it for dequeue/play_item fallback. Do not let this
     # telemetry path consume the queue between the advance path's final sample
     # and its stale-playlist cleanup.
+    persist_session = False
     with state.ADVANCE_LOCK:
-        _consume_mpv_queued_next_if_started(props)
-    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
-    if not now:
-        if _repair_orphan_runtime_playback(props):
+        consumed = _consume_mpv_queued_next_if_started(props)
+        now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        current_identity = (
+            str(now.get("history_id") or ""),
+            now.get("started"),
+            str(now.get("url") or ""),
+        ) if now else None
+        if not consumed and sampled_identity != current_identity:
+            logger.info("session_tracker_sample_retired reason=playback_changed")
             return
-        _prime_mpv_up_next_from_queue()
-        return
-    pos = props.get("time-pos")
-    paused = bool(props.get("pause"))
-    if pos is not None:
-        pos_f = float(pos)
-        updated = dict(now)
-        updated["resume_pos"] = pos_f
-        try:
-            duration_f = float(props.get("duration"))
-            if duration_f > 0:
-                updated["duration_sec"] = duration_f
-        except Exception:
-            pass
-        state.set_now_playing(updated)
-        state.set_session_position(pos_f)
-        state.set_session_state("paused" if paused else "playing")
+        if not now:
+            if _repair_orphan_runtime_playback(props):
+                return
+            _prime_mpv_up_next_from_queue()
+            return
+        pos = props.get("time-pos")
+        paused = bool(props.get("pause"))
+        updated = None
+        if pos is not None:
+            pos_f = float(pos)
+            updated = dict(now)
+            updated["resume_pos"] = pos_f
+            try:
+                duration_f = float(props.get("duration"))
+                if duration_f > 0:
+                    updated["duration_sec"] = duration_f
+            except Exception:
+                pass
+            session_update = {
+                "now_playing": updated,
+                "session_position": pos_f,
+                "session_state": "paused" if paused else "playing",
+            }
+            if not paused:
+                session_update["pause_reason"] = None
+            state.update_session(**session_update, persist=False)
+            persist_session = True
+        elif not paused:
+            state.update_session(pause_reason=None, persist=False)
+            persist_session = True
+    if persist_session:
+        state.persist_session()
+    if updated is not None:
         update_history_progress(updated)
-    if not paused:
-        state.set_pause_reason(None)
     _prime_mpv_up_next_from_queue()
 
 

@@ -37,14 +37,17 @@ _WRITE_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "NOW_PLAYING": (
         re.compile(_STATE + r"NOW_PLAYING\s*=(?!=)"),
         re.compile(_STATE + r"set_now_playing\("),
+        re.compile(_STATE + r"update_session\("),
     ),
     "SESSION_STATE": (
         re.compile(_STATE + r"SESSION_STATE\s*=(?!=)"),
         re.compile(_STATE + r"set_session_state\("),
+        re.compile(_STATE + r"update_session\("),
     ),
     "SESSION_POSITION": (
         re.compile(_STATE + r"SESSION_POSITION\s*=(?!=)"),
         re.compile(_STATE + r"set_session_position\("),
+        re.compile(_STATE + r"update_session\("),
     ),
     "AUTO_NEXT_SUPPRESS_UNTIL": (
         re.compile(_STATE + r"AUTO_NEXT_SUPPRESS_UNTIL\s*=(?!=)"),
