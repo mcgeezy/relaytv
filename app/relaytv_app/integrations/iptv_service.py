@@ -12,6 +12,7 @@ import uuid
 import urllib.error
 import urllib.request
 from collections import Counter
+from collections.abc import Callable
 from urllib.parse import urljoin, urlsplit
 
 from fastapi import HTTPException
@@ -19,7 +20,7 @@ from fastapi import HTTPException
 from .. import playback_service
 from ..config import env_int, env_str, runtime_config
 from ..debug import get_logger
-from .iptv_store import IptvStore
+from .iptv_store import CatalogPublishRetired, IptvStore
 
 
 logger = get_logger("iptv")
@@ -538,7 +539,16 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
         raise ValueError(f"playlist fetch failed ({type(exc).__name__})") from exc
 
 
-def refresh_source(source_id: str) -> dict[str, object]:
+def _retired_refresh(source_id: str) -> dict[str, object]:
+    logger.info("iptv_refresh_retired source_id=%s", source_id)
+    return {"ok": False, "source_id": source_id, "retired": True}
+
+
+def refresh_source(
+    source_id: str,
+    *,
+    publish_guard: Callable[[], bool] | None = None,
+) -> dict[str, object]:
     source = store().get_source(source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="IPTV source not found")
@@ -549,20 +559,32 @@ def refresh_source(source_id: str) -> dict[str, object]:
     if not source_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="IPTV source refresh already running")
     try:
+        if publish_guard is not None and not publish_guard():
+            return _retired_refresh(source_id)
         store().mark_refresh_attempt(source_id)
         text, etag, last_modified, not_modified, final_url = _fetch_source(source)
+        if publish_guard is not None and not publish_guard():
+            return _retired_refresh(source_id)
         if not_modified:
             return {"ok": True, "source_id": source_id, "not_modified": True}
         base_url = final_url or str(source.get("location") or "")
         entries = parse_m3u(text, base_url=base_url)
         channels = _assign_channel_ids(source_id, entries, store().channel_identities(source_id))
         result = store().replace_catalog(
-            source_id, channels, etag=etag, last_modified=last_modified
+            source_id,
+            channels,
+            etag=etag,
+            last_modified=last_modified,
+            publish_guard=publish_guard,
         )
         return {"ok": True, "source_id": source_id, "not_modified": False, **result}
+    except CatalogPublishRetired:
+        return _retired_refresh(source_id)
     except HTTPException:
         raise
     except Exception as exc:
+        if publish_guard is not None and not publish_guard():
+            return _retired_refresh(source_id)
         if isinstance(exc, ValueError):
             message = str(exc or "invalid IPTV playlist")[:500]
         else:
@@ -672,7 +694,12 @@ def channel_action(source_id: str, channel_id: str, command: str) -> dict[str, o
         raise
 
 
-def check_channel(source_id: str, channel_id: str) -> dict[str, object]:
+def check_channel(
+    source_id: str,
+    channel_id: str,
+    *,
+    publish_guard: Callable[[], bool] | None = None,
+) -> dict[str, object]:
     channel = store().get_channel(source_id, channel_id)
     if channel is None:
         raise HTTPException(status_code=404, detail="IPTV channel not found")
@@ -691,7 +718,20 @@ def check_channel(source_id: str, channel_id: str) -> dict[str, object]:
             available = 200 <= status_code < 400 and bool(sample)
     except Exception:
         available = False
-    updated = store().mark_channel_check(source_id, channel_id, available=available)
+    try:
+        updated = store().mark_channel_check(
+            source_id,
+            channel_id,
+            available=available,
+            publish_guard=publish_guard,
+        )
+    except CatalogPublishRetired:
+        logger.info(
+            "iptv_channel_check_retired source_id=%s channel_id=%s",
+            source_id,
+            channel_id,
+        )
+        return {"source_id": source_id, "channel_id": channel_id, "retired": True}
     assert updated is not None
     return updated
 
@@ -702,22 +742,33 @@ def remove_unavailable(*, source_id: str = "") -> int:
     return store().remove_unavailable(source_id=source_id)
 
 
-def _check_due_favorites() -> None:
+def _check_due_favorites(stop: threading.Event | None = None) -> None:
     interval = env_int("RELAYTV_IPTV_CHECK_INTERVAL_SEC", 21600, minimum=300, maximum=604800)
     batch = env_int("RELAYTV_IPTV_CHECK_BATCH", 3, minimum=1, maximum=20)
     due = store().channels_due_for_check(before=time.time() - interval, limit=batch)
     for channel in due:
+        if stop is not None and stop.is_set():
+            return
         try:
-            check_channel(str(channel["source_id"]), str(channel["channel_id"]))
+            if stop is None:
+                check_channel(str(channel["source_id"]), str(channel["channel_id"]))
+            else:
+                check_channel(
+                    str(channel["source_id"]),
+                    str(channel["channel_id"]),
+                    publish_guard=lambda stop=stop: not stop.is_set(),
+                )
         except Exception:
             pass
 
 
-def _refresh_due_sources() -> None:
+def _refresh_due_sources(stop: threading.Event | None = None) -> None:
     if not enabled():
         return
     now = time.time()
     for source in store().list_sources():
+        if stop is not None and stop.is_set():
+            return
         if not bool(source.get("enabled")):
             continue
         last = float(source.get("last_attempt_at") or 0.0)
@@ -729,7 +780,13 @@ def _refresh_due_sources() -> None:
         if last and (now - last) < interval:
             continue
         try:
-            refresh_source(str(source["id"]))
+            if stop is None:
+                refresh_source(str(source["id"]))
+            else:
+                refresh_source(
+                    str(source["id"]),
+                    publish_guard=lambda stop=stop: not stop.is_set(),
+                )
         except Exception:
             pass
 
@@ -745,9 +802,9 @@ def start_worker() -> None:
             # Closes over its own flag, so a later start cannot revive it and a
             # retired generation cannot outlive its stop.
             while not stop.wait(60.0):
-                _refresh_due_sources()
+                _refresh_due_sources(stop)
                 if enabled():
-                    _check_due_favorites()
+                    _check_due_favorites(stop)
 
         thread = threading.Thread(target=_run, name="relaytv-iptv-refresh", daemon=True)
         _WORKER_STOP = stop

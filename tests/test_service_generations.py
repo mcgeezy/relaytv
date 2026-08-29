@@ -236,6 +236,43 @@ def test_retired_session_callback_does_not_reach_the_live_queue(monkeypatch) -> 
     discovery_mdns.stop_browse()
 
 
+def test_resolution_that_finishes_after_browse_stop_is_not_published(monkeypatch) -> None:
+    """A blocking lookup must re-check ownership at the cache publication."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _Info:
+        port = 8787
+        properties = {b"id": b"peer-id", b"name": b"Peer"}
+
+        @staticmethod
+        def parsed_addresses():
+            return ["192.0.2.10"]
+
+    class _BlockingZeroconf(_FakeZeroconf):
+        def get_service_info(self, *args, **kwargs):
+            entered.set()
+            assert release.wait(5.0)
+            return _Info()
+
+    session = discovery_mdns._BrowseSession(101)
+    session.zeroconf = _BlockingZeroconf()
+    session.queue.put(("_relaytv._tcp.local.", "peer._relaytv._tcp.local."))
+    monkeypatch.setattr(discovery_mdns, "_BROWSE_SESSION", session, raising=False)
+
+    worker = threading.Thread(target=discovery_mdns._resolve_worker, args=(session,), daemon=True)
+    worker.start()
+    assert entered.wait(5.0)
+
+    session.stop.set()
+    monkeypatch.setattr(discovery_mdns, "_BROWSE_SESSION", None, raising=False)
+    release.set()
+    worker.join(timeout=5.0)
+
+    assert not worker.is_alive()
+    assert discovery_mdns.discovered() == []
+
+
 # --- F06: IPTV refresh worker ------------------------------------------------
 
 
@@ -282,6 +319,140 @@ def test_iptv_double_start_does_not_stack_workers() -> None:
     assert iptv_service._WORKER_THREAD is first
 
     iptv_service.stop_worker()
+
+
+def test_iptv_refresh_result_is_discarded_after_worker_stop(monkeypatch) -> None:
+    """A fetch already on the network cannot publish for a retired worker."""
+    entered = threading.Event()
+    release = threading.Event()
+    stop = threading.Event()
+    replaced: list[list[dict[str, object]]] = []
+
+    class _Store:
+        @staticmethod
+        def get_source(source_id):
+            return {
+                "id": source_id,
+                "enabled": True,
+                "kind": "url",
+                "location": "https://example.test/list.m3u",
+            }
+
+        @staticmethod
+        def mark_refresh_attempt(source_id):
+            return None
+
+        @staticmethod
+        def channel_identities(source_id):
+            return []
+
+        @staticmethod
+        def replace_catalog(source_id, channels, **kwargs):
+            replaced.append(channels)
+            return {"active": len(channels), "inserted": len(channels), "inactive": 0}
+
+        @staticmethod
+        def mark_refresh_error(source_id, message):
+            raise AssertionError("a retired refresh published an error")
+
+    def _blocking_fetch(source):
+        entered.set()
+        assert release.wait(5.0)
+        return (
+            "#EXTM3U\n#EXTINF:-1,One\nhttps://media.example.test/one.m3u8\n",
+            "",
+            "",
+            False,
+            source["location"],
+        )
+
+    monkeypatch.setattr(iptv_service, "store", lambda: _Store())
+    monkeypatch.setattr(iptv_service, "_fetch_source", _blocking_fetch)
+    result: list[dict[str, object]] = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            iptv_service.refresh_source("source-1", publish_guard=lambda: not stop.is_set())
+        ),
+        daemon=True,
+    )
+    worker.start()
+    assert entered.wait(5.0)
+
+    stop.set()
+    release.set()
+    worker.join(timeout=5.0)
+
+    assert not worker.is_alive()
+    assert result == [{"ok": False, "source_id": "source-1", "retired": True}]
+    assert replaced == []
+
+
+def test_iptv_probe_result_is_discarded_after_worker_stop(monkeypatch) -> None:
+    """Favorite availability probes have the same late-result boundary."""
+    entered = threading.Event()
+    release = threading.Event()
+    stop = threading.Event()
+    published: list[bool] = []
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, size):
+            entered.set()
+            assert release.wait(5.0)
+            return b"media"
+
+    class _Opener:
+        @staticmethod
+        def open(request, timeout):
+            return _Response()
+
+    class _Store:
+        @staticmethod
+        def get_channel(source_id, channel_id):
+            return {
+                "source_id": source_id,
+                "channel_id": channel_id,
+                "stream_url": "https://media.example.test/live",
+            }
+
+        @staticmethod
+        def mark_channel_check(source_id, channel_id, *, available, publish_guard=None):
+            if publish_guard is not None and not publish_guard():
+                raise iptv_service.CatalogPublishRetired(source_id)
+            published.append(available)
+            return {"source_id": source_id, "channel_id": channel_id, "available": available}
+
+    monkeypatch.setattr(iptv_service, "store", lambda: _Store())
+    monkeypatch.setattr(iptv_service, "_FETCH_OPENER", _Opener())
+    monkeypatch.setattr(iptv_service, "_assert_fetch_target_allowed", lambda url: None)
+    result: list[dict[str, object]] = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            iptv_service.check_channel(
+                "source-1",
+                "channel-1",
+                publish_guard=lambda: not stop.is_set(),
+            )
+        ),
+        daemon=True,
+    )
+    worker.start()
+    assert entered.wait(5.0)
+
+    stop.set()
+    release.set()
+    worker.join(timeout=5.0)
+
+    assert not worker.is_alive()
+    assert result == [{"source_id": "source-1", "channel_id": "channel-1", "retired": True}]
+    assert published == []
 
 
 # --- F12: post-live relay ----------------------------------------------------

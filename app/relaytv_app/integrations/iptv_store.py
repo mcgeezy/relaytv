@@ -11,12 +11,17 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
 SCHEMA_VERSION = 1
 RANK_STEP = 1024
+
+
+class CatalogPublishRetired(RuntimeError):
+    """Raised to roll back a catalog write owned by a retired worker."""
 
 
 class IptvStore:
@@ -257,9 +262,15 @@ class IptvStore:
         *,
         etag: str = "",
         last_modified: str = "",
+        publish_guard: Callable[[], bool] | None = None,
     ) -> dict[str, int]:
+        def _require_publishable() -> None:
+            if publish_guard is not None and not publish_guard():
+                raise CatalogPublishRetired(source_id)
+
         now = time.time()
         with self._lock, self._connect() as conn:
+            _require_publishable()
             conn.execute("BEGIN IMMEDIATE")
             before = conn.execute(
                 "SELECT COUNT(*) AS n FROM iptv_channels WHERE source_id = ? AND active = 1",
@@ -274,6 +285,7 @@ class IptvStore:
             conn.execute("UPDATE iptv_channels SET active = 0 WHERE source_id = ?", (source_id,))
             inserted = 0
             for entry in channels:
+                _require_publishable()
                 existing = conn.execute(
                     "SELECT manual_rank FROM iptv_channels WHERE source_id = ? AND channel_id = ?",
                     (source_id, entry["channel_id"]),
@@ -325,6 +337,7 @@ class IptvStore:
                     ),
                 )
             count = len(channels)
+            _require_publishable()
             conn.execute(
                 """
                 UPDATE iptv_sources
@@ -334,6 +347,7 @@ class IptvStore:
                 """,
                 (now, etag, last_modified, count, now, source_id),
             )
+            _require_publishable()
             conn.commit()
         return {
             "active": count,
@@ -580,10 +594,20 @@ class IptvStore:
         return True
 
     def mark_channel_check(
-        self, source_id: str, channel_id: str, *, available: bool
+        self,
+        source_id: str,
+        channel_id: str,
+        *,
+        available: bool,
+        publish_guard: Callable[[], bool] | None = None,
     ) -> dict[str, object] | None:
+        def _require_publishable() -> None:
+            if publish_guard is not None and not publish_guard():
+                raise CatalogPublishRetired(source_id)
+
         now = time.time()
         with self._lock, self._connect() as conn:
+            _require_publishable()
             row = conn.execute(
                 """
                 SELECT consecutive_failures FROM iptv_channels
@@ -601,6 +625,7 @@ class IptvStore:
                 failures = int(row["consecutive_failures"] or 0) + 1
                 state = "unavailable" if failures >= 3 else "suspect"
                 last_available = None
+            _require_publishable()
             conn.execute(
                 """
                 UPDATE iptv_channels

@@ -47,22 +47,56 @@ the repository instructions:
 | ID | Priority | Area | Finding | User/operator impact | Status |
 | --- | --- | --- | --- | --- | --- |
 | F01 | High | Playback | A resolver started by an older Play can finish after Stop or a newer Play and still load media and publish session state. | Playback can restart after Stop or select the wrong item. | In review (#74) |
-| F02 | High | API auth | `GET /share` starts playback and clears the queue, and `GET /snapshot` commands mpv, while the token middleware exempts all GET requests. | Token-enabled installations retain unauthenticated control paths. | In review (#68) |
-| F03 | High | URL/public state | Input validation accepts malformed host/port forms that later make public URL serialization raise. | One poisoned queue item can repeatedly break queue/status/realtime snapshots. | In review (#70) |
-| F04 | High | Persistence | Settings, queue, and history snapshots can be written out of order; session fields do not share one mutation/publish lock. | A successful newer mutation can disappear after restart, and persisted session fields can be incoherent. | In review (#73) |
-| F05 | High | mDNS | Advertisement startup can self-deadlock, late registration can publish after Stop, failed startup can leak Zeroconf (the `except` closes the global, still `None`, not the local it built — found while fixing, not in the original review), and browse generations reuse a stop event. | Discovery can hang, leak resources, or revive retired workers. | In review (#72) |
-| F06 | Medium-high | IPTV | The refresh worker reuses a module stop event and Stop neither joins nor retires the active generation. | A refresh can survive shutdown and run concurrently with its replacement. | In review (#72) |
-| F07 | Medium-high | Browser UI | The shared control helper treats any completed HTTP response as success without checking `response.ok`. | Rejected Play/Pause, Next, Close, seek, volume, and queue commands appear to succeed. | In review (#69) |
-| F08 | Medium-high | Uploads | Async upload endpoints perform synchronous writes, cleanup scans, JSON persistence, and repeated `fsync()` calls. | Large uploads can stall HTTP controls and realtime connections. | In review (#75) |
+| F02 | High | API auth | `GET /share` starts playback and clears the queue, and `GET /snapshot` commands mpv, while the token middleware exempts all GET requests. | Token-enabled installations retain unauthenticated control paths. | Merged (#68); F17 residual documented |
+| F03 | High | URL/public state | Input validation accepts malformed host/port forms that later make public URL serialization raise. | One poisoned queue item can repeatedly break queue/status/realtime snapshots. | Merged (#70) |
+| F04 | High | Persistence | Settings, queue, and history snapshots can be written out of order; session fields do not share one mutation/publish lock. | A successful newer mutation can disappear after restart, and persisted session fields can be incoherent. | Merged (#73); F20 in review (#83) |
+| F05 | High | mDNS | Advertisement startup can self-deadlock, late registration can publish after Stop, failed startup can leak Zeroconf (the `except` closes the global, still `None`, not the local it built — found while fixing, not in the original review), and browse generations reuse a stop event. | Discovery can hang, leak resources, or revive retired workers. | Merged (#72); F21 in review (#80) |
+| F06 | Medium-high | IPTV | The refresh worker reuses a module stop event and Stop neither joins nor retires the active generation. | A refresh can survive shutdown and run concurrently with its replacement. | Merged (#72); F21 in review (#80) |
+| F07 | Medium-high | Browser UI | The shared control helper treats any completed HTTP response as success without checking `response.ok`. | Rejected Play/Pause, Next, Close, seek, volume, and queue commands appear to succeed. | Merged (#69) |
+| F08 | Medium-high | Uploads | Async upload endpoints perform synchronous writes, cleanup scans, JSON persistence, and repeated `fsync()` calls. | Large uploads can stall HTTP controls and realtime connections. | Merged (#75); F18/F22 in review (#81) |
 | F09 | Product gap | Jellyfin | Shared/API-key cast-target settings are absent from the release, and the first implementation implicitly combines API-key control with login-session catalog access. | Operators cannot configure the intended all-user target or tell which stored identity is active. | In review (#77) |
-| F10 | Medium | Thumbnail/cache | Thumbnail jobs are unbounded and not deduplicated; failed images can be queued repeatedly. The yt-dlp metadata cache is also unbounded and unlocked. | Long-running processes can accumulate memory/work and repeatedly hit failing providers. | In review (#76) |
-| F11 | Medium | Snapshot | Snapshot creation ignores the mpv result and returns before the image is known to exist. | Clients receive `ok: true` followed by an immediate 404 or a permanently missing image. | In review (#69) |
-| F12 | Medium | Post-live relay | Concurrent session creation can publish more than one supposedly single-player relay pipeline. | Duplicate yt-dlp/ffmpeg pipelines consume CPU, disk, and network until reaped. | In review (#72 / #74) |
-| F13 | Medium | Upload boundary | Upload IDs are joined to the upload root without canonical format or containment validation after URL decoding. | Crafted legacy/public paths can address metadata/session paths outside the intended upload root when matching files exist. | In review (#71) |
-| F14 | Medium | Provider matching | Provider classification uses netloc substring checks rather than hostname label boundaries. | Lookalike domains can select the wrong resolver strategy. | In review (#70) |
+| F10 | Medium | Thumbnail/cache | Thumbnail jobs are unbounded and not deduplicated; failed images can be queued repeatedly. The yt-dlp metadata cache is also unbounded and unlocked. | Long-running processes can accumulate memory/work and repeatedly hit failing providers. | Merged (#76); F23 in review (#81) |
+| F11 | Medium | Snapshot | Snapshot creation ignores the mpv result and returns before the image is known to exist. | Clients receive `ok: true` followed by an immediate 404 or a permanently missing image. | Merged (#69) |
+| F12 | Medium | Post-live relay | Concurrent session creation can publish more than one supposedly single-player relay pipeline. | Duplicate yt-dlp/ffmpeg pipelines consume CPU, disk, and network until reaped. | Relay merged (#72); playback in review (#74) |
+| F13 | Medium | Upload boundary | Upload IDs are joined to the upload root without canonical format or containment validation after URL decoding. | Crafted legacy/public paths can address metadata/session paths outside the intended upload root when matching files exist. | Merged (#71) |
+| F14 | Medium | Provider matching | Provider classification uses netloc substring checks rather than hostname label boundaries. | Lookalike domains can select the wrong resolver strategy. | Merged (#70) |
+
+### Post-merge combined-review findings
+
+The 2026-08-28 review was repeated after PRs #66 and #68-#78 began merging.
+Green CI did not cover the following narrower publication and lifecycle
+windows. A merged PR's follow-up must use a fresh branch; only F15 belongs on
+the still-open PR #74.
+
+| ID | Priority | Area | Finding | Delivery |
+| --- | --- | --- | --- | --- |
+| F15 | High | Playback intent | Final history/session publication is a check followed by mutations, so Stop can retire between them and be overwritten. | Update open #74 |
+| F16 | High | Queue handoff | ARM confirmation polls can reuse the pre-command one-second mpv cache for their entire 0.95-second window and clear a handoff that succeeded. | In review (#83) |
+| F17 | High | API auth | The cross-site mutating-GET guard cannot classify a headerless request when API-token authentication is disabled. | Accepted residual under the tokenless local-first compatibility contract; #82 closed unmerged |
+| F18 | High | Uploads | Cleanup treats a metadata-bearing upload whose file is not open yet as unavailable and can delete the active request's directory. | In review (#81) |
+| F19 | Medium-high | Playback telemetry | The tracker samples before `ADVANCE_LOCK`, then can write the old item's position into a newly published item. | In review (#83) |
+| F20 | Medium-high | Persistence | Stop and Close still call individual composite-session setters, durably publishing intermediate states. | In review (#83) |
+| F21 | Medium-high | Service lifecycle | mDNS resolution and IPTV refresh/probe work can return from a blocking network call after Stop and publish for a retired generation. | In review (#80) |
+| F22 | Medium | Upload responsiveness | Progressive readiness directly reads up to 4 MiB from the async handler and escapes the source-scan test's narrow call list. | In review (#81) |
+| F23 | Medium | Thumbnail cache | `ensure_cached_sync` bypasses the in-flight claim and failure backoff used by the worker path. | In review (#81) |
 
 The realtime WebSocket/SSE hub and current Jellyfin socket-generation ownership
 were also reviewed. No new blocking defect was found in those implementations.
+
+### F17 — Tokenless headerless snapshot ambiguity
+
+PR #68 protects compatibility GET controls when a configured API token is
+missing and rejects cross-site browser requests when `Origin` or `Referer`
+identifies them. A request with neither provenance header is indistinguishable
+from a legacy local API client, however. Rejecting that request only for
+`GET /snapshot` would change tokenless API behavior, violating the explicit
+local-first compatibility contract that `RELAYTV_API_TOKEN` is opt-in.
+
+The attempted fail-closed follow-up in #82 was therefore closed without merge.
+Operators who need an authenticated boundary must configure
+`RELAYTV_API_TOKEN`; tokenless installations accept the residual risk for
+headerless compatibility requests. Revisit this only as a separately announced
+breaking API migration with a companion-client deprecation path.
 
 ## Acceptance Criteria by Finding
 
@@ -651,6 +685,9 @@ playback-intent generation unless its public response contract changes.
 | 2026-08-28 | Fleet verification on a combined branch | `test/audit-combined` on Living Room (x86_64) and Mark's Room (aarch64) | Found and fixed a regression in #74 that the 752-test suite missed: retiring intents inside `player.stop_mpv` made every cold start supersede itself, because `start_mpv` calls `stop_mpv` to clear the previous process. Only a seamless replace survived. Retirement moved to the `playback_service` terminal transitions; two tests added, both confirmed to fail against the reverted fix. Cross-device discovery, mDNS restart cycles, and the Jellyfin socket all verified. Per-PR results and remaining checks are recorded in each PR. |
 | 2026-08-28 | Review findings remediated and integration stack rebuilt | #68, #72, #73, #74, #76, #77; `test/audit-combined` at `bb6ecbb` | Closed the cross-site snapshot, lifecycle deadlock/leak, stale publication, late playback side-effect, cache publication, and implicit Jellyfin identity gaps with revert-proven tests. The pushed combined branch includes open runtime PRs #66 and #68-#77 plus the #78 test instructions; 948 Python and 24 JavaScript tests pass with all syntax, lint, inventory, and diff gates clean. |
 | 2026-08-28 | Shared Jellyfin second-user soak completed | #77 at `43f0e1a`; `test/audit-combined` at `f5dab00` | A real cast from Gavin to the userless shared target found two preview defects: metadata requests lacked caller context, and a failed lookup could expose a signed stream URL through public title/runtime telemetry. Four revert-proven regressions now cover command-user propagation, user-scoped metadata lookup, delayed hydration, and final status redaction. Live title/artwork, pause, resume, stop, 36 successful progress reports, and one successful stopped report passed with zero failures or dropped commands; Jellyfin logged no new empty-Guid exception. The combined stack passes 951 Python and 24 JavaScript tests. |
+| 2026-08-28 | Post-merge review roadmap reconciled; retired network results guarded | PRs #66-#73 and #75-#76 merged; `fix/audit-lifecycle-followups` | Added F15-F23 from the repeated combined review. mDNS cache publication now checks the live browse session after resolution, and IPTV catalog/probe writes carry the worker guard into the SQLite publication boundary. Blocking-network regressions cover both paths. Full branch gates: 923 Python and 24 JavaScript tests, ruff and diff checks clean. |
+| 2026-08-29 | Tokenless API boundary reconciled | #82 closed unmerged | A headerless tokenless request cannot be distinguished from a legacy local client. F17 is recorded as an accepted compatibility residual; authenticated installations remain protected by `RELAYTV_API_TOKEN`, and any fail-closed tokenless change requires a separately announced migration. |
+| 2026-08-29 | Post-merge follow-ups assigned | #80, #81, #83 | Retired service publications, active upload/cache ownership, fresh handoff telemetry, stale tracker samples, and atomic Stop/Close publication now each have a clean PR against current `main`; the roadmap no longer carries placeholder delivery branches. |
 
 Update this log only at completed milestones. Detailed investigation and soak
 logs belong in PR descriptions and git history rather than growing this file
