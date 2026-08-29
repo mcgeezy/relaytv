@@ -50,10 +50,36 @@ def test_no_blocking_io_remains_on_the_event_loop() -> None:
                 "upload_store.write_metadata(",
                 "upload_store.cleanup_uploads(",
                 "upload_store.delete_upload(",
+                "upload_store.progressive_start_ready(",
             ):
                 if call in stripped:
                     offenders.append(f"{name}: {stripped}")
     assert not offenders, offenders
+
+
+def test_cleanup_does_not_delete_an_active_progressive_upload(uploads_root) -> None:
+    upload_id = upload_store.new_upload_id()
+    meta = {
+        "id": upload_id,
+        "stored_name": "clip.mp4",
+        "filename": "clip.mp4",
+        "mime_type": "video/mp4",
+        "size_bytes": 0,
+        "created_unix": time.time(),
+    }
+    upload_store.write_metadata(upload_id, meta)
+    upload_store.write_session(upload_id, upload_store.new_play_session(meta))
+    upload_store.register_active_upload(upload_id)
+    try:
+        result = upload_store.cleanup_uploads()
+        assert result["deleted_uploads"] == 0
+        assert upload_store.load_metadata(upload_id) == meta
+    finally:
+        upload_store.unregister_active_upload(upload_id)
+
+    result = upload_store.cleanup_uploads()
+    assert result["deleted_uploads"] == 1
+    assert upload_store.load_metadata(upload_id) is None
 
 
 @pytest.mark.anyio

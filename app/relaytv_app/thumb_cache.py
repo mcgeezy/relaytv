@@ -356,7 +356,24 @@ def ensure_cached_sync(thumb_id: str, timeout_s: float = 3.0) -> bool:
     src = get_thumb_src(thumb_id)
     if not src:
         return False
-    # Try a direct, synchronous download + normalize (no queue) so first request can succeed.
+    if not _claim_thumb(thumb_id):
+        # Another worker already owns this id, or a recent failure is in
+        # backoff. Wait only for a real in-flight owner; never start a duplicate
+        # download and never bypass the failure budget.
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        while True:
+            if os.path.exists(p) and os.path.getsize(p) > 0:
+                _touch(p)
+                return True
+            with _INFLIGHT_LOCK:
+                in_flight = thumb_id in _INFLIGHT
+            if not in_flight or time.monotonic() >= deadline:
+                return False
+            time.sleep(0.025)
+
+    # Try a direct, synchronous download + normalize so a first request can
+    # succeed, while owning the same claim/backoff state as the queue worker.
+    failed = True
     try:
         _ensure_dir()
         with tempfile.TemporaryDirectory() as td:
@@ -370,6 +387,9 @@ def ensure_cached_sync(thumb_id: str, timeout_s: float = 3.0) -> bool:
                 _commit_file(raw_fp, p)
         _touch(p)
         _prune_thumb_dir()
-        return os.path.exists(p) and os.path.getsize(p) > 0
+        failed = not (os.path.exists(p) and os.path.getsize(p) > 0)
+        return not failed
     except Exception:
         return False
+    finally:
+        _release_thumb(thumb_id, failed=failed)
