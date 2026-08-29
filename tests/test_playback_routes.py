@@ -402,17 +402,14 @@ def test_play_now_non_botcheck_failure_does_not_toast(monkeypatch) -> None:
 
 
 def test_close_route_preserves_queue_and_returns_closed_session(monkeypatch) -> None:
-    now_values: list[object] = []
-    session_values: list[str] = []
+    session_updates: list[dict[str, object]] = []
     stop_shell_calls: list[bool] = []
     stop_mpv_calls: list[bool] = []
     queue = [{"url": "https://example.com/next.mp4", "title": "Next"}]
 
     monkeypatch.setattr(routes.state, "QUEUE", queue, raising=False)
     monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.com/current.mp4", "title": "Current"}, raising=False)
-    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: now_values.append(value) or setattr(routes.state, "NOW_PLAYING", value))
-    monkeypatch.setattr(routes.state, "set_session_position", lambda value: setattr(routes.state, "SESSION_POSITION", value))
-    monkeypatch.setattr(routes.state, "set_session_state", lambda value: session_values.append(value) or setattr(routes.state, "SESSION_STATE", value))
+    monkeypatch.setattr(routes.state, "update_session", lambda **values: session_updates.append(values) or True)
     monkeypatch.setattr(routes.player, "native_qt_playback_explicitly_ended", lambda: False)
     monkeypatch.setattr(routes.player, "_idle_dashboard_enabled", lambda: True)
     monkeypatch.setattr(routes.player, "_qt_shell_backend_enabled", lambda: True)
@@ -430,9 +427,10 @@ def test_close_route_preserves_queue_and_returns_closed_session(monkeypatch) -> 
     assert response.json()["resume_available"] is True
     assert response.json()["kept_player_shell"] is True
     assert routes.state.QUEUE == queue
-    assert now_values[-1]["closed"] is True
-    assert now_values[-1]["resume_pos"] == 42.0
-    assert session_values[-1] == "closed"
+    assert len(session_updates) == 1
+    assert session_updates[0]["now_playing"]["closed"] is True
+    assert session_updates[0]["now_playing"]["resume_pos"] == 42.0
+    assert session_updates[0]["session_state"] == "closed"
     assert stop_shell_calls == [True]
     assert stop_mpv_calls == []
 
@@ -512,9 +510,7 @@ def test_clear_resumable_session_route_stops_and_clears_state(monkeypatch) -> No
 
 
 def test_stop_route_preserves_resumable_current_item(monkeypatch) -> None:
-    now_values: list[object] = []
-    session_positions: list[object] = []
-    session_states: list[str] = []
+    session_updates: list[dict[str, object]] = []
     stop_calls: list[bool] = []
     history_calls: list[dict[str, object]] = []
     jellyfin_calls: list[tuple[object, object]] = []
@@ -537,9 +533,7 @@ def test_stop_route_preserves_resumable_current_item(monkeypatch) -> None:
         {"url": "https://example.com/current.mp4", "title": "Current", "jellyfin_item_id": "jf-1"},
         raising=False,
     )
-    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: now_values.append(value) or setattr(routes.state, "NOW_PLAYING", value))
-    monkeypatch.setattr(routes.state, "set_session_position", lambda value: session_positions.append(value))
-    monkeypatch.setattr(routes.state, "set_session_state", lambda value: session_states.append(value) or setattr(routes.state, "SESSION_STATE", value))
+    monkeypatch.setattr(routes.state, "update_session", lambda **values: session_updates.append(values) or True)
 
     client = TestClient(create_app(testing=True))
     response = client.post("/stop")
@@ -549,10 +543,11 @@ def test_stop_route_preserves_resumable_current_item(monkeypatch) -> None:
     assert body["status"] == "stopped"
     assert body["resume_available"] is True
     assert body["position"] == 31.5
-    assert now_values[-1]["closed"] is True
-    assert now_values[-1]["resume_pos"] == 31.5
-    assert session_positions == [31.5]
-    assert session_states == ["closed"]
+    assert len(session_updates) == 1
+    assert session_updates[0]["now_playing"]["closed"] is True
+    assert session_updates[0]["now_playing"]["resume_pos"] == 31.5
+    assert session_updates[0]["session_position"] == 31.5
+    assert session_updates[0]["session_state"] == "closed"
     assert stop_calls == [True]
     assert history_calls[-1]["position_sec"] == 31.5
     assert history_calls[-1]["duration_sec"] == 120.0
