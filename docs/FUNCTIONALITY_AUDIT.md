@@ -47,7 +47,7 @@ the repository instructions:
 | ID | Priority | Area | Finding | User/operator impact | Status |
 | --- | --- | --- | --- | --- | --- |
 | F01 | High | Playback | A resolver started by an older Play can finish after Stop or a newer Play and still load media and publish session state. | Playback can restart after Stop or select the wrong item. | In review (#74) |
-| F02 | High | API auth | `GET /share` starts playback and clears the queue, and `GET /snapshot` commands mpv, while the token middleware exempts all GET requests. | Token-enabled installations retain unauthenticated control paths. | Merged (#68); F17 follow-up open |
+| F02 | High | API auth | `GET /share` starts playback and clears the queue, and `GET /snapshot` commands mpv, while the token middleware exempts all GET requests. | Token-enabled installations retain unauthenticated control paths. | Merged (#68); F17 residual documented |
 | F03 | High | URL/public state | Input validation accepts malformed host/port forms that later make public URL serialization raise. | One poisoned queue item can repeatedly break queue/status/realtime snapshots. | Merged (#70) |
 | F04 | High | Persistence | Settings, queue, and history snapshots can be written out of order; session fields do not share one mutation/publish lock. | A successful newer mutation can disappear after restart, and persisted session fields can be incoherent. | Merged (#73); F20 follow-up open |
 | F05 | High | mDNS | Advertisement startup can self-deadlock, late registration can publish after Stop, failed startup can leak Zeroconf (the `except` closes the global, still `None`, not the local it built — found while fixing, not in the original review), and browse generations reuse a stop event. | Discovery can hang, leak resources, or revive retired workers. | Merged (#72); F21 follow-up in progress |
@@ -72,7 +72,7 @@ the still-open PR #74.
 | --- | --- | --- | --- | --- |
 | F15 | High | Playback intent | Final history/session publication is a check followed by mutations, so Stop can retire between them and be overwritten. | Update open #74 |
 | F16 | High | Queue handoff | ARM confirmation polls can reuse the pre-command one-second mpv cache for their entire 0.95-second window and clear a handoff that succeeded. | Fresh playback follow-up PR |
-| F17 | High | API auth | The cross-site mutating-GET guard fails open when both optional browser provenance headers are absent. | Fresh API-boundary PR |
+| F17 | High | API auth | The cross-site mutating-GET guard cannot classify a headerless request when API-token authentication is disabled. | Accepted residual under the tokenless local-first compatibility contract; #82 closed unmerged |
 | F18 | High | Uploads | Cleanup treats a metadata-bearing upload whose file is not open yet as unavailable and can delete the active request's directory. | Fresh upload/cache PR |
 | F19 | Medium-high | Playback telemetry | The tracker samples before `ADVANCE_LOCK`, then can write the old item's position into a newly published item. | Fresh playback follow-up PR |
 | F20 | Medium-high | Persistence | Stop and Close still call individual composite-session setters, durably publishing intermediate states. | Fresh playback follow-up PR |
@@ -82,6 +82,21 @@ the still-open PR #74.
 
 The realtime WebSocket/SSE hub and current Jellyfin socket-generation ownership
 were also reviewed. No new blocking defect was found in those implementations.
+
+### F17 — Tokenless headerless snapshot ambiguity
+
+PR #68 protects compatibility GET controls when a configured API token is
+missing and rejects cross-site browser requests when `Origin` or `Referer`
+identifies them. A request with neither provenance header is indistinguishable
+from a legacy local API client, however. Rejecting that request only for
+`GET /snapshot` would change tokenless API behavior, violating the explicit
+local-first compatibility contract that `RELAYTV_API_TOKEN` is opt-in.
+
+The attempted fail-closed follow-up in #82 was therefore closed without merge.
+Operators who need an authenticated boundary must configure
+`RELAYTV_API_TOKEN`; tokenless installations accept the residual risk for
+headerless compatibility requests. Revisit this only as a separately announced
+breaking API migration with a companion-client deprecation path.
 
 ## Acceptance Criteria by Finding
 
@@ -671,6 +686,7 @@ playback-intent generation unless its public response contract changes.
 | 2026-08-28 | Review findings remediated and integration stack rebuilt | #68, #72, #73, #74, #76, #77; `test/audit-combined` at `bb6ecbb` | Closed the cross-site snapshot, lifecycle deadlock/leak, stale publication, late playback side-effect, cache publication, and implicit Jellyfin identity gaps with revert-proven tests. The pushed combined branch includes open runtime PRs #66 and #68-#77 plus the #78 test instructions; 948 Python and 24 JavaScript tests pass with all syntax, lint, inventory, and diff gates clean. |
 | 2026-08-28 | Shared Jellyfin second-user soak completed | #77 at `43f0e1a`; `test/audit-combined` at `f5dab00` | A real cast from Gavin to the userless shared target found two preview defects: metadata requests lacked caller context, and a failed lookup could expose a signed stream URL through public title/runtime telemetry. Four revert-proven regressions now cover command-user propagation, user-scoped metadata lookup, delayed hydration, and final status redaction. Live title/artwork, pause, resume, stop, 36 successful progress reports, and one successful stopped report passed with zero failures or dropped commands; Jellyfin logged no new empty-Guid exception. The combined stack passes 951 Python and 24 JavaScript tests. |
 | 2026-08-28 | Post-merge review roadmap reconciled; retired network results guarded | PRs #66-#73 and #75-#76 merged; `fix/audit-lifecycle-followups` | Added F15-F23 from the repeated combined review. mDNS cache publication now checks the live browse session after resolution, and IPTV catalog/probe writes carry the worker guard into the SQLite publication boundary. Blocking-network regressions cover both paths. Full branch gates: 923 Python and 24 JavaScript tests, ruff and diff checks clean. |
+| 2026-08-29 | Tokenless API boundary reconciled | #82 closed unmerged | A headerless tokenless request cannot be distinguished from a legacy local client. F17 is recorded as an accepted compatibility residual; authenticated installations remain protected by `RELAYTV_API_TOKEN`, and any fail-closed tokenless change requires a separately announced migration. |
 
 Update this log only at completed milestones. Detailed investigation and soak
 logs belong in PR descriptions and git history rather than growing this file
