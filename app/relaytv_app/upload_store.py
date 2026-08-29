@@ -19,6 +19,7 @@ from .debug import get_logger
 logger = get_logger("uploads")
 
 _UPLOAD_LOCK = threading.Lock()
+_ACTIVE_UPLOADS_LOCK = threading.Lock()
 _ACTIVE_UPLOADS: set[str] = set()
 _CLEANUP_WORKER_STARTED = False
 _UPLOADS_ROOT = os.getenv("RELAYTV_UPLOADS_DIR", "/data/uploads").strip() or "/data/uploads"
@@ -82,13 +83,18 @@ def uploads_root() -> str:
 
 def register_active_upload(upload_id: str) -> None:
     """Protect an in-process upload from retention/capacity cleanup."""
-    with _UPLOAD_LOCK:
+    with _ACTIVE_UPLOADS_LOCK:
         _ACTIVE_UPLOADS.add(str(upload_id or "").strip())
 
 
 def unregister_active_upload(upload_id: str) -> None:
-    with _UPLOAD_LOCK:
+    with _ACTIVE_UPLOADS_LOCK:
         _ACTIVE_UPLOADS.discard(str(upload_id or "").strip())
+
+
+def _upload_is_active(upload_id: str) -> bool:
+    with _ACTIVE_UPLOADS_LOCK:
+        return str(upload_id or "").strip() in _ACTIVE_UPLOADS
 
 
 # Upload ids are generated, never supplied: new_upload_id() has produced
@@ -637,7 +643,7 @@ def cleanup_uploads(settings_payload: dict | None = None) -> dict[str, int]:
         total_bytes = sum(int(meta.get("size_bytes") or 0) for meta in metas if meta.get("available"))
         for meta in list(metas):
             upload_id = str(meta.get("id") or "").strip()
-            if upload_id in _ACTIVE_UPLOADS:
+            if _upload_is_active(upload_id):
                 continue
             created_unix = float(meta.get("created_unix") or 0.0)
             available = bool(meta.get("available"))
@@ -655,7 +661,7 @@ def cleanup_uploads(settings_payload: dict | None = None) -> dict[str, int]:
                 upload_id = str(meta.get("id") or "").strip()
                 if not upload_id:
                     continue
-                if upload_id in _ACTIVE_UPLOADS:
+                if _upload_is_active(upload_id):
                     continue
                 delete_upload(upload_id)
                 deleted += 1

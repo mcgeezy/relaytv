@@ -93,6 +93,20 @@ milestone logs live in git history.
   caller session; dynamic caller attribution remains an open product follow-up.
 - `scripts/`: install, doctor, host operations, and release support.
 
+## Concurrency Boundaries
+
+- Background services own a per-generation stop signal and publish only while
+  they still own the live service slot. The ownership check belongs at the
+  publication boundary after blocking network work, and applies to destructive
+  callbacks such as mDNS removal as well as successful results.
+- Async route handlers keep blocking filesystem work and synchronization that
+  can wait behind storage maintenance in a worker thread. Upload cleanup and
+  active-upload ownership are one coordinated boundary: cleanup must not
+  delete an in-flight request, and waiting for that coordination must not
+  stall unrelated HTTP or realtime work.
+- Tests for lifecycle and concurrency fixes drive the real interleaving and
+  must fail when the production ownership or offload guard is reverted.
+
 ## Machine-Checked Guardrails
 
 Each boundary above is pinned by a test; three of them regenerate a
@@ -123,6 +137,14 @@ returned by `/settings`, never logged). Reads — health, status, assets,
 UI — stay open. See `app/relaytv_app/api_auth.py` and
 `tests/test_api_auth.py` for the contract.
 
+Compatibility GET controls reject a cross-site browser request when `Origin`
+or `Referer` proves it is foreign, and require bearer authentication whenever
+`RELAYTV_API_TOKEN` is configured. With the token unset, a request carrying
+neither provenance header is indistinguishable from a legacy local API client;
+that is an accepted consequence of the tokenless local-first contract. A
+fail-closed default would be a breaking API migration requiring a documented
+companion-client deprecation path.
+
 ## Realtime Compatibility Boundary
 
 The versioned WebSocket routes are read-only notification channels. Playback,
@@ -145,19 +167,16 @@ indefinitely is preferable to breaking slowly updated companion installations.
 
 Carried from the review, in rough value order:
 
-1. Complete the temporary application-wide functionality remediation tracked
-   in `FUNCTIONALITY_AUDIT.md`, then remove that working document and retain
-   only genuinely open architecture follow-ups here.
-2. Extend the checked-in browser smoke beyond the Jellyfin, IPTV, and
+1. Extend the checked-in browser smoke beyond the Jellyfin, IPTV, and
    send-to-device shells to settings, general queue actions, and the remaining
    `/ui` surfaces.
-3. Versioned models for queue/history/session/settings — migrations
+2. Versioned models for queue/history/session/settings — migrations
    remain implicit.
-4. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle
+3. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle
    behavior, status payload construction).
-5. Consolidate provider/URL classification, still duplicated between
+4. Consolidate provider/URL classification, still duplicated between
    resolver and player paths.
-6. Keep splitting `test_smoke.py` by behavior.
+5. Keep splitting `test_smoke.py` by behavior.
 
 ## Non-Goals
 
