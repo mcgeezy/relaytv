@@ -14,6 +14,7 @@ import pytest
 
 from relaytv_app import discovery_mdns, postlive_relay
 from relaytv_app.integrations import iptv_service
+from relaytv_app.integrations.iptv_store import IptvStore
 
 
 class _FakeZeroconf:
@@ -384,7 +385,7 @@ def test_iptv_refresh_result_is_discarded_after_worker_stop(monkeypatch) -> None
             }
 
         @staticmethod
-        def mark_refresh_attempt(source_id):
+        def mark_refresh_attempt(source_id, **kwargs):
             return None
 
         @staticmethod
@@ -430,6 +431,74 @@ def test_iptv_refresh_result_is_discarded_after_worker_stop(monkeypatch) -> None
     assert not worker.is_alive()
     assert result == [{"ok": False, "source_id": "source-1", "retired": True}]
     assert replaced == []
+
+
+def test_iptv_retirement_while_attempt_waits_for_store_lock_does_not_publish(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Retire after the outer check but before the actual database update."""
+    catalog = IptvStore(str(tmp_path / "iptv.sqlite3"))
+    source_id = "source-retired-at-attempt"
+    catalog.create_source(
+        source_id=source_id,
+        name="Retirement test",
+        kind="url",
+        location="https://example.test/list.m3u",
+    )
+
+    guard_entered = threading.Event()
+    release_guard = threading.Event()
+    attempt_entered = threading.Event()
+    stop = threading.Event()
+    guard_calls = 0
+    results: list[dict[str, object]] = []
+
+    original_mark = catalog.mark_refresh_attempt
+
+    def observed_mark(source_id, **kwargs):
+        attempt_entered.set()
+        return original_mark(source_id, **kwargs)
+
+    def publish_guard() -> bool:
+        nonlocal guard_calls
+        guard_calls += 1
+        if guard_calls == 1:
+            guard_entered.set()
+            assert release_guard.wait(5.0)
+        return not stop.is_set()
+
+    monkeypatch.setattr(catalog, "mark_refresh_attempt", observed_mark)
+    monkeypatch.setattr(iptv_service, "store", lambda: catalog)
+    monkeypatch.setattr(
+        iptv_service,
+        "_fetch_source",
+        lambda source: ("#EXTM3U\n", "", "", False, source["location"]),
+    )
+
+    worker = threading.Thread(
+        target=lambda: results.append(
+            iptv_service.refresh_source(source_id, publish_guard=publish_guard)
+        ),
+        daemon=True,
+    )
+    worker.start()
+    assert guard_entered.wait(5.0), "refresh never reached its initial ownership check"
+
+    # Hold the real store lock while the live check completes, then retire the
+    # worker only after mark_refresh_attempt is genuinely waiting to publish.
+    catalog._lock.acquire()
+    try:
+        release_guard.set()
+        assert attempt_entered.wait(5.0), "refresh never reached attempt publication"
+        stop.set()
+    finally:
+        catalog._lock.release()
+
+    worker.join(timeout=5.0)
+    assert not worker.is_alive()
+    assert results == [{"ok": False, "source_id": source_id, "retired": True}]
+    assert catalog.get_source(source_id)["last_attempt_at"] is None
 
 
 def test_iptv_probe_result_is_discarded_after_worker_stop(monkeypatch) -> None:

@@ -6453,6 +6453,53 @@ def test_a_failed_play_records_a_reason_and_a_finished_one_clears_it(monkeypatch
     assert player.last_playback_error() is None
 
 
+def test_idle_without_an_item_does_not_inherit_an_mpv_startup_error(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """An idle runtime has no playback attempt to which a log line can belong."""
+    from relaytv_app import player
+
+    log = tmp_path / "mpv.log"
+    log.write_text(
+        "[ 0.10][e][cplayer] Error opening/initializing the VO window.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MPV_LOG_FILE", str(log))
+    monkeypatch.setattr(player, "_PLAYBACK_LOG_OFFSET", 0, raising=False)
+    monkeypatch.setattr(player, "_PLAYBACK_STARTED_POS", 0.0, raising=False)
+    player.set_last_playback_error(None)
+
+    assert player.note_playback_failure_if_no_progress(None) == ""
+    assert player.last_playback_error() is None
+
+
+def test_queue_empty_natural_end_records_failure_once(monkeypatch) -> None:
+    """The queue-empty handler owns diagnostics; natural_end must not duplicate it."""
+    from relaytv_app import playback_service, player, state
+
+    now = {"title": "Ended", "resume_pos": 0.0}
+    seen: list[object] = []
+    monkeypatch.setattr(state, "NOW_PLAYING", now, raising=False)
+    monkeypatch.setattr(state, "QUEUE", [], raising=False)
+    monkeypatch.setattr(player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(player, "_session_already_idle_without_queue", lambda: False)
+    monkeypatch.setattr(
+        player,
+        "note_playback_failure_if_no_progress",
+        lambda item: seen.append(item) or "",
+    )
+    monkeypatch.setattr(
+        player,
+        "_handle_playback_idle_no_queue",
+        lambda: player.note_playback_failure_if_no_progress(state.NOW_PLAYING),
+    )
+
+    assert playback_service.natural_end() == "idle"
+    assert seen == [now]
+
+
 def test_the_image_version_probe_ignores_the_persisted_install(monkeypatch) -> None:
     """Stripping PATH alone cannot see the image's yt-dlp.
 
