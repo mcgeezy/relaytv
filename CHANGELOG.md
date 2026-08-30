@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.10.1](https://github.com/mcgeezy/relaytv/compare/v0.10.0...v0.10.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* bound thumbnail and metadata caches ([#76](https://github.com/mcgeezy/relaytv/issues/76)) ([16aa93e](https://github.com/mcgeezy/relaytv/commit/16aa93e21aeae0bccfe45e6bb1eefcb3d9e643dc))
+* canonicalize URL host parsing ([#70](https://github.com/mcgeezy/relaytv/issues/70)) ([1f46673](https://github.com/mcgeezy/relaytv/commit/1f46673ace1b577563c064753237bac6bbdea737))
+* close post-audit concurrency gaps ([#85](https://github.com/mcgeezy/relaytv/issues/85)) ([fc4f669](https://github.com/mcgeezy/relaytv/commit/fc4f6697823d78e1dba426abc50237e307311041))
+* configure shared Jellyfin cast identity ([e4b847c](https://github.com/mcgeezy/relaytv/commit/e4b847cb84ea7ccfaf2b27fe0888716d6311e5f3))
+* contain upload identifiers ([#71](https://github.com/mcgeezy/relaytv/issues/71)) ([b159fee](https://github.com/mcgeezy/relaytv/commit/b159feed9c9efa086221c52f91a2d1c1b4e53923))
+* enforce latest playback intent ([#74](https://github.com/mcgeezy/relaytv/issues/74)) ([4880bc6](https://github.com/mcgeezy/relaytv/commit/4880bc68c7d67b65ea39a6036b1a5070548f342e))
+* fall back after stalled queue handoff ([#66](https://github.com/mcgeezy/relaytv/issues/66)) ([1569aab](https://github.com/mcgeezy/relaytv/commit/1569aab68a9a4b8509202890e419ca51cbdb7a10))
+* order durable state publication ([#73](https://github.com/mcgeezy/relaytv/issues/73)) ([415fbe2](https://github.com/mcgeezy/relaytv/commit/415fbe21b178f65702c20093d038c07467559454))
+* own background service generations ([#72](https://github.com/mcgeezy/relaytv/issues/72)) ([51ac707](https://github.com/mcgeezy/relaytv/commit/51ac707fad5f6ba927410830aeab8100915b02a8))
+* protect active media work ([#81](https://github.com/mcgeezy/relaytv/issues/81)) ([b31e568](https://github.com/mcgeezy/relaytv/commit/b31e56840d0551f40bdd0e0c6866e4661ba7b918))
+* reject retired service results ([#80](https://github.com/mcgeezy/relaytv/issues/80)) ([fc89141](https://github.com/mcgeezy/relaytv/commit/fc89141b0940ac9085aab58a9de37575050ff0eb))
+* reject stale playback telemetry ([#83](https://github.com/mcgeezy/relaytv/issues/83)) ([6ad0932](https://github.com/mcgeezy/relaytv/commit/6ad093246ad4fcb3c9aaea14e643e97df618edeb))
+* remove unauthenticated control side effects from GET ([#68](https://github.com/mcgeezy/relaytv/issues/68)) ([47d7e60](https://github.com/mcgeezy/relaytv/commit/47d7e60367fa0c5015c20aa506c5efa9fd891e7e))
+* report control and snapshot failures honestly ([#69](https://github.com/mcgeezy/relaytv/issues/69)) ([29c6aaf](https://github.com/mcgeezy/relaytv/commit/29c6aaf68bee6f24040fba3c9111f911027538ad))
+
+
+### Performance Improvements
+
+* keep upload ingestion off the event loop ([#75](https://github.com/mcgeezy/relaytv/issues/75)) ([a129324](https://github.com/mcgeezy/relaytv/commit/a12932463cf19655a36e8daafe89b5dfe50a0aa4))
+
+
+### Documentation
+
+* align release highlight with patch version ([#84](https://github.com/mcgeezy/relaytv/issues/84)) ([2e6978a](https://github.com/mcgeezy/relaytv/commit/2e6978a90d35778829f3f9e2c17de8586a543c54))
+* plan functionality audit remediation ([#67](https://github.com/mcgeezy/relaytv/issues/67)) ([1db3afa](https://github.com/mcgeezy/relaytv/commit/1db3afaf16827f2c6ffa76428e1e8233a71f7150))
+* record testing gates, discipline, and device workflow in AGENTS.md ([#78](https://github.com/mcgeezy/relaytv/issues/78)) ([176c150](https://github.com/mcgeezy/relaytv/commit/176c150e408364e30b8bab8bb63f5e2d976e3dbb))
+
 ## [0.10.0](https://github.com/mcgeezy/relaytv/compare/v0.9.2...v0.10.0) (2026-08-26)
 
 
