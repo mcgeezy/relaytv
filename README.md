@@ -2,17 +2,18 @@
   <img src="docs/images/readme/relaytv-banner.png" alt="RelayTV" width="620">
 </p>
 
-<h1 align="center">Your media. Your TV. Your rules.</h1>
+<h1 align="center">Make your Linux box the TV.</h1>
 
 <p align="center">
-  Turn a Linux box into a local playback target you can control from your
-  phone, Jellyfin, Home Assistant, scripts, and companion apps.
+  RelayTV is a local-first playback endpoint for a Linux device connected over
+  HDMI. Phones, browsers, media servers, Home Assistant, and automations tell
+  the box what to do; the box does the playing.
 </p>
 
 <p align="center">
   <a href="#install-in-minutes"><strong>Install RelayTV</strong></a> ·
-  <a href="#see-it-in-action"><strong>See it in action</strong></a> ·
-  <a href="docs/README.md"><strong>Read the docs</strong></a>
+  <a href="https://relaytv.app/integrations/"><strong>Explore integrations</strong></a> ·
+  <a href="https://relaytv.app/docs/"><strong>Read the docs</strong></a>
 </p>
 
 <p align="center">
@@ -27,41 +28,41 @@
 </p>
 
 <p align="center">
-  <strong>Local-first</strong> · No RelayTV account · No tracking · No cloud
-  dependency for core playback
+  <strong>Local-first</strong> · No RelayTV account · No app telemetry · No
+  cloud dependency for core playback
 </p>
 
-## One box. Every way you watch.
+## Play. Browse. Control. Automate.
 
-### 🔗 Send it
+### ▶️ Play
 
-Paste a media URL into the Web UI from any phone or computer. For one-tap
-sharing, use **RelayTV Play** or **RelayTV Queue** from the
-[Android Companion App](https://github.com/mcgeezy/relaytv-android), or send links
-through the Home Assistant Companion app with the
-[`mobile_app.share` automation](https://github.com/mcgeezy/relaytv-ha#home-assistant-companion-app-share-automation).
+Paste a media URL into the Web UI, share a link or local audio/video file from
+[Android](https://github.com/mcgeezy/relaytv-android), or upload media through
+[Home Assistant](https://github.com/mcgeezy/relaytv-ha). RelayTV owns playback,
+durable queue advancement, history, temporary interruption/resume, and on-TV
+notifications beside the screen.
 
-### 🎬 Browse and request it
+### 🎬 Browse
 
 Explore Jellyfin or Emby from a responsive library built for phones and
 desktops, then launch playback on the connected display. Connect Seerr to
 discover upcoming movies and series, follow request status, and request them
-under an explicit administrator or caller-specific identity.
+under an explicit administrator or caller-specific identity. Bring optional
+IPTV playlists, curate **My Channels**, and favorite live sources you use.
 
-### 📺 Watch it live
+### 🎛️ Control
 
-Add IPTV playlists — M3U URLs, pasted lists, or a built-in free-provider
-directory — then curate a **My Channels** list, favorite what you watch most,
-and play a live channel straight to the TV. Opt-in and disabled by default.
+Use the responsive Web UI from any browser. The Android app adds separate Play
+and Queue share targets, native media controls, mDNS discovery, and profiles for
+multiple RelayTV screens. RelayTV devices can also send a queue or active
+playback to one another on the local network.
 
-### 🏠 Automate it
+### 🏠 Automate
 
-Control playback from Home Assistant, HTTP requests, dashboards, scripts, and
-agent workflows on your own network.
-
-RelayTV keeps the playback engine beside the TV while your phone stays a
-lightweight remote. Queues survive restarts, playback advances automatically,
-and every control surface speaks to the same local endpoint.
+Make every screen a Home Assistant `media_player`, or use the local HTTP API
+from scripts, dashboards, services, and agent workflows. Smart play, temporary
+media, overlays, snapshots, direct uploads, and synchronized multi-screen starts
+all keep the playback engine beside the TV.
 
 ## See it in action
 
@@ -109,6 +110,9 @@ RelayTV runs on the Linux device connected to the display. It owns playback,
 queue advancement, history, overlays, and the idle dashboard locally, while
 companion apps and automations remain optional ways to control it.
 
+See the [product overview](https://relaytv.app/product/) for the complete system
+model and real [cross-device workflows](https://relaytv.app/demo/).
+
 ## Install in minutes
 
 RelayTV is built for 64-bit Raspberry Pi-class devices, Intel mini PCs, NUCs,
@@ -124,7 +128,8 @@ curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | b
 Then open `http://YOUR_RELAYTV_HOST:8787/ui` from a phone or desktop browser.
 
 Need runtime choices, hardware notes, or an existing source checkout? See the
-[complete installation guide](docs/INSTALL.md).
+[complete installation guide](docs/INSTALL.md), or follow the public
+[getting-started path](https://relaytv.app/docs/getting-started/).
 
 ## Made for the stack you already own
 
@@ -136,6 +141,8 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
   search, resume, and queue workflows.
 - **Seerr** — discovery, search, request tracking, deliberately selected
   request identity, and validated playback of available Jellyfin media.
+- **IPTV / M3U** — opt-in live sources, curated My Channels, favorites, and
+  availability checks.
 - **HTTP API** — local automation from shell scripts, dashboards, services, and
   custom applications.
 
@@ -150,7 +157,8 @@ API directly to the public internet.
 | [Installation](docs/INSTALL.md) | [HTTP API](docs/API.md) |
 | [Native runtime operations](docs/NATIVE_RUNTIME_OPERATIONS.md) | [Jellyfin/Emby operations](docs/JELLYFIN_OPERATIONS.md) |
 | [IPTV operations](docs/IPTV_OPERATIONS.md) | [Seerr operations](docs/SEERR_OPERATIONS.md) |
-| [Architecture](docs/ARCHITECTURE.md) | [Release process](docs/RELEASE.md) |
+| [Device sync operations](docs/DEVICE_SYNC_OPERATIONS.md) | [Architecture](docs/ARCHITECTURE.md) |
+| [Public documentation](https://relaytv.app/docs/) | [Release process](docs/RELEASE.md) |
 
 The [documentation map](docs/README.md) links the remaining runbooks and
 machine-checked inventories.
