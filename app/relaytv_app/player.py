@@ -5595,8 +5595,14 @@ def note_playback_failure_if_no_progress(now: dict | None) -> str:
     failure rather than a finished video, and the operator deserves the reason
     in the ordinary log instead of having to enable debug and reproduce it.
     """
+    if not isinstance(now, dict) or not now:
+        # An idle Qt/mpv runtime can write harmless initialization errors before
+        # any item exists. With no item there is no playback attempt to diagnose;
+        # attributing that log tail produces a false status error on every idle
+        # autoplay tick and floods the container log.
+        return ""
     try:
-        position = float((now or {}).get("resume_pos") or 0.0)
+        position = float(now.get("resume_pos") or 0.0)
     except Exception:
         position = 0.0
     if (position - playback_started_pos()) >= 2.0:
@@ -5611,7 +5617,7 @@ def note_playback_failure_if_no_progress(now: dict | None) -> str:
     set_last_playback_error(reason)
     logger.info(
         "playback_failed title=%r reason=%s",
-        str((now or {}).get("title") or "")[:80],
+        str(now.get("title") or "")[:80],
         reason,
     )
     return reason

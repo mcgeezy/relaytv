@@ -561,7 +561,7 @@ def refresh_source(
     try:
         if publish_guard is not None and not publish_guard():
             return _retired_refresh(source_id)
-        store().mark_refresh_attempt(source_id)
+        store().mark_refresh_attempt(source_id, publish_guard=publish_guard)
         text, etag, last_modified, not_modified, final_url = _fetch_source(source)
         if publish_guard is not None and not publish_guard():
             return _retired_refresh(source_id)

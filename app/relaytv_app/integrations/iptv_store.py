@@ -241,8 +241,19 @@ class IptvStore:
             cur = conn.execute("DELETE FROM iptv_sources WHERE id = ?", (source_id,))
             return cur.rowcount > 0
 
-    def mark_refresh_attempt(self, source_id: str) -> None:
+    def mark_refresh_attempt(
+        self,
+        source_id: str,
+        *,
+        publish_guard: Callable[[], bool] | None = None,
+    ) -> None:
         with self._lock, self._connect() as conn:
+            # The caller's first ownership check happens before it can wait on
+            # this store lock. Re-check at the actual publication boundary so
+            # a worker retired during that wait cannot advance the schedule or
+            # clear the live source's error.
+            if publish_guard is not None and not publish_guard():
+                raise CatalogPublishRetired(source_id)
             conn.execute(
                 "UPDATE iptv_sources SET last_attempt_at = ?, last_error = '' WHERE id = ?",
                 (time.time(), source_id),
