@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/mcgeezy/relaytv/compare/v0.10.1...v0.10.2) (2026-08-30)
+
+
+### Documentation
+
+* align README with redesigned website ([0e7bb3e](https://github.com/mcgeezy/relaytv/commit/0e7bb3eddc404928d93ecd9979a5d86868f6124f))
+
 ## [0.10.1](https://github.com/mcgeezy/relaytv/compare/v0.10.0...v0.10.1) (2026-08-30)
 
 
