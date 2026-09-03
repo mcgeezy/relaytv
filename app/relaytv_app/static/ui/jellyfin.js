@@ -621,6 +621,16 @@ function _jfBindImageFallback(img){
   img.addEventListener('error', () => {
     if (img.dataset.jfFallback === '1') return;
     img.dataset.jfFallback = '1';
+    // A broken poster with no label is a dead end; swap in a titled tile.
+    const fallbackTitle = String(img.dataset.fallbackTitle || '').trim();
+    if (fallbackTitle && img.parentElement) {
+      const tile = document.createElement('span');
+      tile.className = 'jfThumbFallback';
+      tile.textContent = fallbackTitle;
+      img.parentElement.appendChild(tile);
+      img.remove();
+      return;
+    }
     img.classList.add('jfImageFallback');
     img.src = '/pwa/weather/not-available.svg';
   });
@@ -767,19 +777,25 @@ function _jfRenderDetail(item){
   const actions = document.createElement('div');
   actions.className = 'jfActionRow';
 
-  const mkBtn = (label, action) => {
+  const mkBtn = (label, action, cls) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'btn';
+    b.className = 'btn' + (cls ? ' ' + cls : '');
     b.textContent = label;
     b.onclick = () => jellyfinDetailAction(action);
     return b;
   };
 
-  actions.appendChild(mkBtn('Play Now', 'play_now'));
+  const resumeSec = Math.max(0, Number(item.resume_pos || 0));
+  if (resumeSec > 0) {
+    // With a resume point, "Play Now" vs "Resume" was ambiguous; spell both out.
+    actions.appendChild(mkBtn(`Resume ${_jfFmtSec(resumeSec)}`, 'resume', 'primary'));
+    actions.appendChild(mkBtn('Play from start', 'play_now'));
+  } else {
+    actions.appendChild(mkBtn('Play Now', 'play_now', 'primary'));
+  }
   actions.appendChild(mkBtn('Play Next', 'play_next'));
   actions.appendChild(mkBtn('Queue Last', 'play_last'));
-  actions.appendChild(mkBtn('Resume', 'resume'));
   host.appendChild(actions);
 
   const msg = document.createElement('div');
@@ -842,6 +858,7 @@ function _jfBuildRowItemCard(item, rowId){
   img.alt = '';
   img.loading = 'lazy';
   img.decoding = 'async';
+  img.dataset.fallbackTitle = itemType === 'episode' ? (subtitleText || titleText) : titleText;
   img.src = item.poster_local || item.poster || item.thumbnail_local || item.thumbnail || '/pwa/weather/not-available.svg';
   _jfBindImageFallback(img);
   tWrap.appendChild(img);
@@ -885,6 +902,14 @@ function _jfBuildRowItemCard(item, rowId){
   itSub.textContent = itemType === 'episode' ? titleText : subtitleText;
   meta.appendChild(itTitle);
   meta.appendChild(itSub);
+  // Library hint disambiguates same-title duplicates across libraries.
+  const libraryName = String(item.library_name || '').trim();
+  if (libraryName) {
+    const libChip = document.createElement('div');
+    libChip.className = 'jfLibChip';
+    libChip.textContent = libraryName;
+    meta.appendChild(libChip);
+  }
 
   const iType = itemType;
   if (__jfActiveTab === 'tv' && iType === 'series') {
@@ -1291,6 +1316,8 @@ function _jfRenderRows(rows){
     if (rowId === 'tv_series' || rowId === 'tv_episodes') scroller.classList.add('jfCatalogTv');
     if (rowId === 'tv_episodes') scroller.classList.add('jfCatalogEpisodes');
     if (rowId === 'tv_seasons') scroller.classList.add('jfSeasonWrap');
+    // Search reads better as a full list than a cut-off horizontal rail.
+    if (rowId === 'search') scroller.classList.add('jfSearchList');
 
     const items = Array.isArray(row.items) ? row.items : [];
     if (!items.length) {
@@ -1441,7 +1468,9 @@ async function loadJellyfinHome(force){
     const reason = String(j.last_error || '').trim();
     _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
     if (!up) _jfSetBrowseUnavailable(reason);
-    _jfSetStatus(j.connected ? 'Ready' : 'Ready (degraded)', j.connected ? 'ok' : '');
+    // A bare "Ready" under the search box read as a UI bug; only say something
+    // when the state actually needs attention.
+    _jfSetStatus(j.connected ? '' : 'Degraded — showing cached catalog', j.connected ? 'ok' : '');
   } catch (e) {
     if (_jfIsAbortError(e)) return;
     const msg = String(e?.message || e);
@@ -1477,7 +1506,7 @@ async function runJellyfinSearch(force){
     const reason = String(j.last_error || '').trim();
     _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
     if (!up) _jfSetBrowseUnavailable(reason);
-    _jfSetStatus(`${scopedItems.length} result(s)`, 'ok');
+    _jfSetStatus(`${scopedItems.length} ${scopedItems.length === 1 ? 'result' : 'results'}`, 'ok');
   } catch (e) {
     if (_jfIsAbortError(e)) return;
     _jfSetBrowseUnavailable(String(e?.message || e));

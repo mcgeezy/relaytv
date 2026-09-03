@@ -1395,6 +1395,30 @@ def _tmdb_provider_id(data: dict[str, object]) -> int | None:
     return value if 0 < value <= 2_147_483_647 else None
 
 
+def _library_label_from_path(path: object, *, title: str = "", series_name: str = "") -> str:
+    """Best-effort library hint from an item's filesystem path.
+
+    Jellyfin's item payloads carry no library name, so search results from two
+    libraries with the same title and year are indistinguishable. The segment
+    above the item's own folder is the library root on typical layouts; only
+    that single label crosses into the UI, never the full path.
+    """
+    raw = str(path or "").replace("\\", "/")
+    segs = [s for s in raw.split("/") if s]
+    if len(segs) < 2:
+        return ""
+    for name in (series_name, title):
+        n = str(name or "").strip().lower()
+        if not n:
+            continue
+        for i, seg in enumerate(segs):
+            cleaned = seg.strip().lower()
+            if cleaned == n or cleaned.startswith(f"{n} (") or cleaned.startswith(f"{n}."):
+                if i >= 1:
+                    return segs[i - 1]
+    return segs[-2]
+
+
 def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -> dict[str, object]:
     iid = str(data.get("Id") or "").strip()
     item_type = str(data.get("Type") or "").strip().lower()
@@ -1527,6 +1551,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "video_fps": video_fps,
         "video_bitrate": video_bitrate,
         "tmdb_id": _tmdb_provider_id(data),
+        "library_name": _library_label_from_path(data.get("Path"), title=title, series_name=series_name),
     }
     _attach_thumb(out)
     if out.get("thumbnail_local"):
@@ -2191,7 +2216,7 @@ def search_catalog(query: str, *, limit: int = 30, refresh: bool = False) -> dic
             "Recursive": "true",
             "Limit": str(lim),
             "IncludeItemTypes": "Movie,Episode,Series",
-            "Fields": "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber",
+            "Fields": "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber,Path",
         }
     )
     candidates: list[str] = []

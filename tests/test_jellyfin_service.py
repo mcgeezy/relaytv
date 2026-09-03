@@ -688,6 +688,44 @@ def test_normalize_catalog_item_exposes_image_roles_and_progress(monkeypatch) ->
     assert "provider_ids" not in item
 
 
+def test_normalize_catalog_item_derives_library_hint_from_path(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "_attach_thumb", lambda item: item)
+
+    item = jellyfin_receiver._normalize_catalog_item(
+        {
+            "Id": "series-1",
+            "Name": "Silo",
+            "Type": "Series",
+            "ProductionYear": 2023,
+            "Path": "/mnt/media/TV Shows 4K/Silo",
+        },
+        base="http://media.local",
+        token="",
+    )
+
+    assert item["library_name"] == "TV Shows 4K"
+    assert "Path" not in item
+
+
+def test_library_label_from_path_variants() -> None:
+    label = jellyfin_receiver._library_label_from_path
+
+    # Series folder directly under the library root.
+    assert label("/mnt/media/TV Shows/Silo", title="Silo") == "TV Shows"
+    # Windows separators and a year-suffixed folder still resolve.
+    assert label("D:\\media\\TV 4K\\Silo (2023)", title="Silo") == "TV 4K"
+    # Episodes resolve through the series folder.
+    assert (
+        label("/mnt/media/TV Shows/Silo/Season 1/ep.mkv", title="Machines", series_name="Silo")
+        == "TV Shows"
+    )
+    # Movie files fall back to the parent directory.
+    assert label("/mnt/media/Movies/Silo (2023).mkv", title="Silo") == "Movies"
+    # Junk stays quiet.
+    assert label("", title="Silo") == ""
+    assert label("movie.mkv", title="Movie") == ""
+
+
 def test_item_detail_requests_tmdb_provider_identity(monkeypatch) -> None:
     urls = []
     monkeypatch.setattr(
