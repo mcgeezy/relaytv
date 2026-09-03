@@ -177,7 +177,9 @@ function _seerrCard(item){
   meta.textContent = [item.year || '', mediaType === 'tv' ? 'Series' : 'Movie', item.rating ? `★ ${item.rating}` : ''].filter(Boolean).join(' · ');
   const state = document.createElement('span');
   state.className = 'seerrState';
-  state.textContent = String(item.status || item.media_status || 'unknown').replaceAll('_', ' ');
+  // Upstream's "unknown" means nobody asked for it; say so in human terms.
+  const rawStatus = String(item.status || item.media_status || 'unknown').replaceAll('_', ' ');
+  state.textContent = rawStatus === 'unknown' ? 'Not requested' : rawStatus;
   body.append(title, meta, state);
   button.appendChild(body);
   if (mediaId > 0 && (mediaType === 'movie' || mediaType === 'tv')) {
@@ -231,7 +233,13 @@ async function loadSeerrBrowse(options){
     __seerrPage = Number(payload.page || page) || page;
     __seerrTotalPages = Math.max(__seerrPage, Number(payload.total_pages || 1) || 1);
     _seerrRender();
-    _seerrSetStatus(`${Number(payload.total_results || __seerrItems.length)} result${Number(payload.total_results || __seerrItems.length) === 1 ? '' : 's'}`, false);
+    // The raw upstream total ("10000 results") is noise for browsed sections;
+    // counts only mean something for searches and the requests list.
+    const total = Number(payload.total_results || __seerrItems.length);
+    const statusText = __seerrQuery
+      ? `${total} result${total === 1 ? '' : 's'}`
+      : (__seerrSection === 'requests' ? `${total} request${total === 1 ? '' : 's'}` : '');
+    _seerrSetStatus(statusText, false);
   } catch (error) {
     if (error && error.name === 'AbortError') return;
     if (serial !== __seerrRequestSerial) return;

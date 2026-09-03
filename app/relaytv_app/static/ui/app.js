@@ -1960,6 +1960,24 @@ function bindHeaderMenu(){
 }
 
 function _fmtTs(ts){
+  // Compact: time-only today, short date within the year, year beyond that.
+  // The verbose locale string used to eat the whole meta line and truncate
+  // the mode suffix ("auto ne…") it shares the row with.
+  try {
+    const d = new Date((ts||0)*1000);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    }
+    if (d.getFullYear() === now.getFullYear()) {
+      return d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    }
+    return d.toLocaleString([], {month:'short', day:'numeric', year:'numeric'});
+  } catch (_) { return ''; }
+}
+
+function _fmtTsFull(ts){
   try {
     const d = new Date((ts||0)*1000);
     if (isNaN(d.getTime())) return '';
@@ -2068,6 +2086,7 @@ async function renderHistory(){
     const when = document.createElement('div');
     when.className = 'histSub';
     when.textContent = `${_fmtTs(it.ts)} · ${String(it.mode || '').replace(/_/g, ' ')}`.replace(/ · $/, '');
+    when.title = _fmtTsFull(it.ts);
 
     const tags = document.createElement('div');
     tags.className = 'histTags';
@@ -2139,6 +2158,24 @@ function bindHistoryUi(){
   if (btn) btn.onclick = openHistory;
   if (closeBtn) closeBtn.onclick = closeHistory;
   if (clearBtn) clearBtn.onclick = async () => {
+    // Two-tap guard: wiping the whole history record deserves a beat.
+    if (clearBtn.dataset.armed !== '1') {
+      clearBtn.dataset.armed = '1';
+      clearBtn.dataset.label = clearBtn.textContent;
+      clearBtn.textContent = 'Clear all?';
+      clearBtn.classList.add('armed');
+      setTimeout(() => {
+        if (clearBtn.dataset.armed === '1') {
+          delete clearBtn.dataset.armed;
+          clearBtn.textContent = clearBtn.dataset.label || 'Clear';
+          clearBtn.classList.remove('armed');
+        }
+      }, 3500);
+      return;
+    }
+    delete clearBtn.dataset.armed;
+    clearBtn.textContent = clearBtn.dataset.label || 'Clear';
+    clearBtn.classList.remove('armed');
     await fetch('/history/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
     await renderHistory();
   };

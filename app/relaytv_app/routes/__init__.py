@@ -1513,13 +1513,24 @@ def _idle_html() -> str:
     .statusWrap{
       display:grid;
       justify-items:end;
-      gap:.3125rem
+      gap:.3125rem;
+      min-width:0;
+      max-width:100%
     }
     .footerStatus{
       color:rgba(221,233,248,.7);
       font-size:.875rem;
       letter-spacing:.14em;
-      text-transform:uppercase
+      text-transform:uppercase;
+      max-width:100%;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis
+    }
+    /* Keep the status line clear of the fixed QR card */
+    body.hasQr .footer{padding-right:calc(var(--idleQrSizePx,10.5rem) + 1.5rem)}
+    @media (max-width:760px){
+      body.hasQr .footer{padding-right:calc(var(--idleQrSizeMobilePx,7.25rem) + 1.25rem)}
     }
     .footerMeta{
       color:rgba(197,214,235,.56);
@@ -1649,17 +1660,14 @@ def _idle_html() -> str:
       const img = document.getElementById('idleQrImg');
       const label = document.getElementById('idleQrLabel');
       if (!wrap || !img || !label) return;
-      if (!__idleQrEnabled || !url) {
+      const show = !!(__idleQrEnabled && url && String(url).trim());
+      document.body.classList.toggle('hasQr', show);
+      if (!show) {
         wrap.classList.add('hidden');
         wrap.setAttribute('aria-hidden', 'true');
         return;
       }
       const target = String(url || '').trim();
-      if (!target) {
-        wrap.classList.add('hidden');
-        wrap.setAttribute('aria-hidden', 'true');
-        return;
-      }
       if (__idleQrUrl !== target) {
         __idleQrUrl = target;
         img.src = `/qr/connect.svg?logo=1&u=${encodeURIComponent(target)}&ts=${Date.now()}`;
@@ -1897,7 +1905,17 @@ def _idle_html() -> str:
         }
         renderPanels(settings.idle_panels||{}, settings, weatherData);
         const np=st.now_playing||null;
-        document.getElementById('now').textContent=np ? `Now Playing: ${np.title||np.url||'Playing'}` : 'Idle';
+        // Only live sessions may say Now Playing; a retained item after close
+        // is "Ended", not something still on the screen.
+        const sessState = String(st.state || '').trim().toLowerCase();
+        const npTitle = np ? String(np.title || np.url || 'Playing') : '';
+        let nowText = 'Idle';
+        if (np && (st.playing || st.paused || sessState === 'playing' || sessState === 'paused')) {
+          nowText = `${(st.paused || sessState === 'paused') ? 'Paused' : 'Now Playing'}: ${npTitle}`;
+        } else if (np && sessState === 'closed') {
+          nowText = `Ended: ${npTitle}`;
+        }
+        document.getElementById('now').textContent = nowText;
       }catch(_e){}
     }
     setInterval(refresh,3000); refresh();
