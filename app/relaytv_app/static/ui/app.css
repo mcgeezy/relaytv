@@ -100,7 +100,7 @@
     /* Header controls share one glass-chip material */
     .jfLaunch, .hdrAddBtn, .hdrMenuBtn{
       min-height: 0 !important;
-      height: 36px;
+      height: 40px;
       width: auto !important;
       padding: 0 12px !important;
       border-radius: 12px !important;
@@ -1001,8 +1001,8 @@
     }
     .nSkipBtn,
     .nGhostBtn{
-      min-height: 0;
-      padding: 5px 12px;
+      min-height: 40px;
+      padding: 8px 16px;
       border-radius: 999px;
       font-size: 12px;
       font-weight: 700;
@@ -1409,6 +1409,7 @@
       --remote-vol-track-end: rgba(120, 165, 250, .14);
       --remote-vol-track-border: rgba(160, 200, 255, .16);
       width: 100%;
+      height: 30px;
       margin: 0;
       appearance: none;
       -webkit-appearance: none;
@@ -1652,8 +1653,8 @@
     }
     .qClearBtn{
       margin-left: auto;
-      min-height: 0;
-      padding: 5px 12px;
+      min-height: 40px;
+      padding: 8px 16px;
       border-radius: 999px;
       font-size: 12px;
       font-weight: 700;
@@ -1810,15 +1811,44 @@
     }
 
     /* Override global button sizing for compact queue controls */
+    .qMenuBtn{
+      flex: 0 0 auto;
+      align-self: center;
+      min-height: 0;
+      padding: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1;
+      border: 1px solid rgba(140,190,255,.34);
+      background: rgba(20,26,40,.60);
+      color: rgba(210,228,255,.82);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 2;
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .qMenuBtn:hover{
+      color: #eaf3ff;
+      border-color: rgba(150,210,255,.60);
+      background: rgba(34,60,120,.70);
+      transform: none;
+    }
     .qDelBtn{
       flex: 0 0 auto;
       align-self: center;
       min-height: 0;
       padding: 0;
-      width: 28px;
-      height: 28px;
+      width: 40px;
+      height: 40px;
       border-radius: 999px;
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 800;
       line-height: 1;
       border: 1px solid rgba(255, 130, 150, .42);
@@ -1841,6 +1871,104 @@
       transform: none;
     }
     .qDelBtn:active{ transform: none; }
+
+    .qTile.qPendingRemove{ opacity: .42; filter: saturate(.6); }
+    .qTile.qPendingRemove .qTitleText{ text-decoration: line-through; }
+
+    /* Anchored action menu for queue tiles */
+    .qPopBackdrop{
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      background: transparent;
+    }
+    .qPopMenu{
+      position: fixed;
+      z-index: 91;
+      min-width: 190px;
+      padding: 6px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(22,34,64,.97), rgba(12,20,42,.97));
+      border: 1px solid rgba(140,190,255,.30);
+      box-shadow: 0 18px 44px rgba(2,8,26,.55), inset 0 1px 0 rgba(190,220,255,.10);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .qPopItem{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 44px;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: #dbe7ff;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: left;
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .qPopItem svg{ width: 17px; height: 17px; flex: 0 0 auto; opacity: .85; }
+    .qPopItem:hover{ background: rgba(56,120,246,.22); transform: none; }
+    .qPopItem.danger{ color: rgba(255,170,182,.95); }
+    .qPopItem.danger:hover{ background: rgba(220,38,38,.24); }
+
+    /* Undo / status toast */
+    .qToast{
+      position: fixed;
+      left: 50%;
+      bottom: max(18px, env(safe-area-inset-bottom, 0px) + 12px);
+      transform: translateX(-50%);
+      z-index: 95;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      max-width: min(92vw, 420px);
+      padding: 10px 10px 10px 16px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(24,38,72,.97), rgba(13,22,44,.97));
+      border: 1px solid rgba(140,190,255,.32);
+      box-shadow: 0 14px 36px rgba(2,8,26,.55);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: #eaf3ff;
+      font-size: 13.5px;
+      font-weight: 600;
+      animation: qToastIn .18s ease-out;
+    }
+    @keyframes qToastIn{
+      from{ opacity: 0; transform: translateX(-50%) translateY(8px); }
+      to{ opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .qToast.warn{ border-color: rgba(255,190,110,.45); }
+    .qToastLabel{
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .qToastAction{
+      flex: 0 0 auto;
+      min-height: 36px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: #eaf3ff;
+      border: 1px solid rgba(96,170,255,.50);
+      background: linear-gradient(180deg, rgba(43,108,231,.85), rgba(22,56,142,.90));
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .qToastAction:hover{ transform: none; box-shadow: 0 0 12px rgba(72,150,255,.30); }
 
     .qBody{
       flex: 1 1 auto;

@@ -414,6 +414,12 @@ Queue endpoints:
 - `GET /queue`
 - `POST /queue/remove`
   - body: `{"index": int}`
+- `POST /queue/play`
+  - body: `{"index": int}`
+  - plays the queued item immediately, preserving current playback to the
+    front of the queue (same semantics as `POST /history/play`); the item is
+    consumed from the queue only when the play is accepted, and restored at
+    its original position when it fails
 - `POST /queue/move`
   - body: `{"from_index": int, "to_index": int}`
 - `POST /queue/dedupe`

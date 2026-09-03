@@ -646,6 +646,8 @@ function _isHiddenEl(el){
 
 function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
+  if (__queueMenuEl) return true;
+  if (__pendingRemove) return true;
   const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
@@ -664,6 +666,10 @@ function _uiPushLayer(){
 }
 
 function _uiCloseTopLayerFromNav(){
+  if (__queueMenuEl) {
+    closeQueueMenu();
+    return true;
+  }
   if (window.relaytvSeerr && window.relaytvSeerr.isDetailOpen()) {
     window.relaytvSeerr.closeDetail({fromNav:true});
     return true;
@@ -1099,6 +1105,155 @@ async function qRemove(index){
   await refresh();
 }
 
+async function qPlayNow(index){
+  try {
+    const res = await fetch('/queue/play', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index})});
+    let payload = null;
+    try { payload = await res.json(); } catch(_) {}
+    if (!res.ok) {
+      console.warn('queue/play failed', res.status, payload);
+      _showToast((payload && payload.detail) ? String(payload.detail) : 'Could not play that item', {kind:'warn'});
+    } else {
+      _applyQueueSnapshot(payload);
+    }
+  } catch (e) {
+    console.warn('queue/play error', e);
+    _showToast('Could not play that item', {kind:'warn'});
+  }
+  await refresh();
+}
+
+/* ---- queue tile action menu (Play now / Send to device / Remove) ---- */
+let __queueMenuEl = null;
+let __queueMenuBackdrop = null;
+
+function _queueMenuKeyHandler(ev){
+  if (ev.key === 'Escape') {
+    ev.stopPropagation();
+    closeQueueMenu();
+  }
+}
+
+function closeQueueMenu(){
+  if (__queueMenuBackdrop) { __queueMenuBackdrop.remove(); __queueMenuBackdrop = null; }
+  if (__queueMenuEl) { __queueMenuEl.remove(); __queueMenuEl = null; }
+  document.removeEventListener('keydown', _queueMenuKeyHandler, true);
+}
+
+function _queueMenuItem(label, svgPath, onPick, cls){
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'qPopItem' + (cls ? ' ' + cls : '');
+  btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${svgPath}" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span></span>`;
+  btn.querySelector('span').textContent = label;
+  btn.onclick = () => { closeQueueMenu(); onPick(); };
+  return btn;
+}
+
+function openQueueMenu(index, item, anchor){
+  closeQueueMenu();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'qPopBackdrop';
+  backdrop.addEventListener('pointerdown', (ev) => { ev.preventDefault(); closeQueueMenu(); });
+
+  const menu = document.createElement('div');
+  menu.className = 'qPopMenu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Queue item actions');
+  menu.appendChild(_queueMenuItem('Play now', 'M8 5.5v13l11-6.5z', () => qPlayNow(index)));
+  menu.appendChild(_queueMenuItem('Send to device', 'M4 12h13m0 0-4.5-4.5M17 12l-4.5 4.5M20 5v14', () => {
+    if (window.relaytvPeers) window.relaytvPeers.open({index, title: (item && (item.title || item.url)) || ''});
+  }));
+  menu.appendChild(_queueMenuItem('Remove', 'M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12', () => qSoftRemove(index), 'danger'));
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(menu);
+  __queueMenuBackdrop = backdrop;
+  __queueMenuEl = menu;
+  document.addEventListener('keydown', _queueMenuKeyHandler, true);
+
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  left = Math.max(8, left);
+  let top = r.bottom + 6;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  const first = menu.querySelector('button');
+  if (first) first.focus({preventScroll: true});
+}
+
+/* ---- undo toast + soft remove ---- */
+let __toastEl = null;
+let __toastTimer = null;
+
+function _hideToast(){
+  if (__toastTimer) { clearTimeout(__toastTimer); __toastTimer = null; }
+  if (__toastEl) { __toastEl.remove(); __toastEl = null; }
+}
+
+function _showToast(label, {actionLabel = null, onAction = null, duration = 4000, kind = 'info'} = {}){
+  _hideToast();
+  const el = document.createElement('div');
+  el.className = 'qToast ' + kind;
+  el.setAttribute('role', 'status');
+  const span = document.createElement('span');
+  span.className = 'qToastLabel';
+  span.textContent = label;
+  el.appendChild(span);
+  if (actionLabel && onAction) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'qToastAction';
+    btn.textContent = actionLabel;
+    btn.onclick = () => { onAction(); };
+    el.appendChild(btn);
+  }
+  document.body.appendChild(el);
+  __toastEl = el;
+  if (duration > 0) __toastTimer = setTimeout(_hideToast, duration);
+  return el;
+}
+
+/* Soft remove: the tile collapses immediately but the server delete only
+   fires when the undo window closes. If the tab goes away first, the item
+   simply stays queued — the safer failure direction. */
+let __pendingRemove = null;
+
+function _flushPendingRemove(){
+  if (!__pendingRemove) return;
+  const pending = __pendingRemove;
+  __pendingRemove = null;
+  clearTimeout(pending.timer);
+  qRemove(pending.index);
+}
+
+function qSoftRemove(index){
+  _flushPendingRemove();
+  const tile = document.querySelector(`.qTile[data-index="${index}"]`);
+  if (tile) tile.classList.add('qPendingRemove');
+  const timer = setTimeout(() => {
+    const pending = __pendingRemove;
+    __pendingRemove = null;
+    _hideToast();
+    if (pending) qRemove(pending.index);
+  }, 6000);
+  __pendingRemove = { index, timer };
+  _showToast('Removed from queue', {
+    actionLabel: 'Undo',
+    duration: 6000,
+    onAction: () => {
+      if (__pendingRemove) clearTimeout(__pendingRemove.timer);
+      __pendingRemove = null;
+      _hideToast();
+      const t = document.querySelector(`.qTile[data-index="${index}"]`);
+      if (t) t.classList.remove('qPendingRemove');
+    },
+  });
+}
+
 async function qMove(from_index, to_index){
   try {
     const res = await fetch('/queue/move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({from_index, to_index})});
@@ -1265,6 +1420,8 @@ function renderStatus(st) {
   }
 
   if (!__draggingQueue) {
+    // The re-render detaches the tile the menu was anchored to.
+    closeQueueMenu();
     ol.innerHTML = '';
     (st.queue || []).forEach((item, idx) => {
     const li = document.createElement('li');
@@ -1336,24 +1493,24 @@ function renderStatus(st) {
     del.className = 'qDelBtn';
     del.textContent = '✕';
     del.title = 'Remove from queue';
-    del.onclick = () => qRemove(idx);
+    del.setAttribute('aria-label', 'Remove from queue');
+    del.onclick = () => qSoftRemove(idx);
 
-    // Send just this item. One indirection into the device sheet keeps the tile
-    // clean; a device picker per tile would not scale.
-    const send = document.createElement('button');
-    send.className = 'qSendItemBtn';
-    send.type = 'button';
-    send.title = 'Send this item to another device';
-    send.setAttribute('aria-label', 'Send this item to another device');
-    send.textContent = '⋯';
-    send.onclick = () => {
-      if (window.relaytvPeers) window.relaytvPeers.open({index: idx, title: item.title || item.url || ''});
-    };
+    // One indirection into the tile's actions keeps the tile clean; a button
+    // per action would not scale and crams tap targets together.
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'qMenuBtn';
+    menuBtn.type = 'button';
+    menuBtn.title = 'Item actions';
+    menuBtn.setAttribute('aria-label', 'Item actions');
+    menuBtn.setAttribute('aria-haspopup', 'menu');
+    menuBtn.textContent = '⋯';
+    menuBtn.onclick = () => openQueueMenu(idx, item, menuBtn);
 
     li.appendChild(thumb);
     li.appendChild(body);
     li.appendChild(handle);
-    li.appendChild(send);
+    li.appendChild(menuBtn);
     li.appendChild(del);
     ol.appendChild(li);
   });

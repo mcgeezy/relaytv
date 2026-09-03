@@ -547,6 +547,90 @@ def queue_remove(req: QueueRemoveReq):
     }
 
 
+@router.post("/queue/play")
+def queue_play(req: QueueRemoveReq):
+    """Play a queued item immediately by index, preserving current playback.
+
+    Like ``history_play``, the index refers to the server's unredacted copy:
+    public queue payloads carry display-safe URLs, so a client cannot simply
+    repost what it rendered. The item leaves the queue only for a play the
+    server accepts — a failed play restores it at its original position,
+    matching the rollback pattern of ``advance_queue_playback``.
+    """
+    idx = int(req.index)
+    with state.QUEUE_LOCK:
+        if idx < 0 or idx >= len(state.QUEUE):
+            raise HTTPException(status_code=400, detail="index out of range")
+        item = state.QUEUE.pop(idx)
+        snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
+    try:
+        state.persist_queue_payload(snapshot)
+    except Exception as e:
+        logger.warning("queue_persist_failed route=queue_play error=%s", e)
+
+    def _restore() -> list[object]:
+        with state.QUEUE_LOCK:
+            state.QUEUE.insert(min(idx, len(state.QUEUE)), item)
+            rollback = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
+        try:
+            state.persist_queue_payload(rollback)
+        except Exception as e:
+            logger.warning("queue_persist_failed route=queue_play_restore error=%s", e)
+        return list(rollback["queue"])
+
+    if not isinstance(item, dict):
+        _restore()
+        raise HTTPException(status_code=400, detail="queue item is not playable")
+    url = item.get("url")
+    if not isinstance(url, str) or not url.strip():
+        _restore()
+        raise HTTPException(status_code=400, detail="queue item missing url")
+
+    resume_pos = None
+    try:
+        raw_resume = item.get("resume_pos")
+        resume_pos = float(raw_resume) if raw_resume is not None else None
+    except Exception:
+        resume_pos = None
+    try:
+        resolved_at = float(item.get("_resolved_at")) if item.get("_resolved_at") is not None else None
+    except Exception:
+        resolved_at = None
+    try:
+        result = _play_now_from_history(
+            {
+                "url": url.strip(),
+                "preserve_current": True,
+                "reason": "queue_play",
+                "title": str(item.get("title") or "").strip() or None,
+                "thumbnail": str(item.get("thumbnail") or "").strip() or None,
+                "resume_pos": resume_pos,
+                "history_id": str(item.get("history_id") or "").strip() or None,
+                "resolved_source_url": str(item.get("_resolved_source_url") or "").strip() or None,
+                "resolved_stream": str(item.get("_resolved_stream") or "").strip() or None,
+                "resolved_audio": str(item.get("_resolved_audio") or "").strip() or None,
+                "resolved_at": resolved_at,
+            }
+        )
+    except Exception:
+        restored = _restore()
+        _ui_event_push_queue("add", queue=restored, queue_length=len(restored), source="queue_play_restore")
+        raise
+
+    try:
+        player.prime_mpv_up_next_from_queue(force=True)
+    except Exception:
+        pass
+    with state.QUEUE_LOCK:
+        queue_snapshot = list(state.QUEUE)
+    # play_now only pushes its queue event when something was preserved or the
+    # queue is non-empty; the pop must be announced either way.
+    _ui_event_push_queue("remove", queue=queue_snapshot, queue_length=len(queue_snapshot), source="queue_play")
+    if isinstance(result, dict):
+        return {**result, "queue": _annotate_upload_items(queue_snapshot), "queue_length": len(queue_snapshot)}
+    return {"status": "playing", "queue": _annotate_upload_items(queue_snapshot), "queue_length": len(queue_snapshot)}
+
+
 def _queue_item_dedupe_key(item: object) -> tuple[str, str]:
     if not isinstance(item, dict):
         return ("raw", str(item))

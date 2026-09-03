@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from relaytv_app import routes
@@ -175,4 +176,105 @@ def test_history_clear_and_play_delegate_to_play_now(monkeypatch) -> None:
     cleared = client.post("/history/clear")
     assert cleared.status_code == 200
     assert cleared.json() == {"status": "cleared"}
+
+
+def _seed_playable_queue() -> list[dict[str, object]]:
+    items: list[dict[str, object]] = [
+        {"url": "https://example.com/a.mp4", "title": "A"},
+        {
+            "url": "https://example.com/b.mp4",
+            "title": "B",
+            "thumbnail": "https://example.com/b.jpg",
+            "resume_pos": 8.5,
+            "history_id": "hist-b",
+            "_resolved_source_url": "https://example.com/watch-b",
+            "_resolved_stream": "https://cdn.example.com/b.mp4",
+            "_resolved_audio": "https://cdn.example.com/b.m4a",
+            "_resolved_at": 99.5,
+        },
+        {"url": "https://example.com/c.mp4", "title": "C"},
+    ]
+    routes.state.QUEUE[:] = items
+    return items
+
+
+def test_queue_play_delegates_and_consumes_item(monkeypatch) -> None:
+    client, events, _ = _client_with_queue_patches(monkeypatch)
+    _seed_playable_queue()
+    play_now_requests: list[object] = []
+    monkeypatch.setattr(
+        routes,
+        "play_now",
+        lambda req: play_now_requests.append(req) or {"ok": True, "action": "played", "url": req.url},
+    )
+
+    played = client.post("/queue/play", json={"index": 1})
+
+    assert played.status_code == 200
+    assert played.json()["ok"] is True
+    assert [item["url"] for item in played.json()["queue"]] == [
+        "https://example.com/a.mp4",
+        "https://example.com/c.mp4",
+    ]
+    assert played.json()["queue_length"] == 2
+    assert [item["url"] for item in routes.state.QUEUE] == [
+        "https://example.com/a.mp4",
+        "https://example.com/c.mp4",
+    ]
+    assert len(play_now_requests) == 1
+    req = play_now_requests[0]
+    assert req.url == "https://example.com/b.mp4"
+    assert req.preserve_current is True
+    assert req.reason == "queue_play"
+    assert req.title == "B"
+    assert req.thumbnail == "https://example.com/b.jpg"
+    assert req.resume_pos == 8.5
+    assert req.history_id == "hist-b"
+    assert req.resolved_source_url == "https://example.com/watch-b"
+    assert req.resolved_stream == "https://cdn.example.com/b.mp4"
+    assert req.resolved_audio == "https://cdn.example.com/b.m4a"
+    assert req.resolved_at == 99.5
+    assert [event["action"] for event in events] == ["remove"]
+    assert events[0]["queue_length"] == 2
+
+
+def test_queue_play_restores_item_when_play_fails(monkeypatch) -> None:
+    client, events, _ = _client_with_queue_patches(monkeypatch)
+    _seed_playable_queue()
+
+    def _failing_play_now(req):
+        raise HTTPException(status_code=400, detail="cannot resolve media")
+
+    monkeypatch.setattr(routes, "play_now", _failing_play_now)
+
+    response = client.post("/queue/play", json={"index": 1})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "cannot resolve media"
+    # The failed play must not consume the item: original order is restored.
+    assert [item["url"] for item in routes.state.QUEUE] == [
+        "https://example.com/a.mp4",
+        "https://example.com/b.mp4",
+        "https://example.com/c.mp4",
+    ]
+    assert [event["action"] for event in events] == ["add"]
+    assert events[0]["queue_length"] == 3
+
+
+def test_queue_play_validates_index_and_item(monkeypatch) -> None:
+    client, events, _ = _client_with_queue_patches(monkeypatch)
+    routes.state.QUEUE[:] = [
+        {"url": "https://example.com/a.mp4", "title": "A"},
+        {"title": "no url"},
+    ]
+
+    assert client.post("/queue/play", json={"index": 5}).status_code == 400
+    assert client.post("/queue/play", json={"index": -1}).status_code == 400
+    missing_url = client.post("/queue/play", json={"index": 1})
+    assert missing_url.status_code == 400
+    assert missing_url.json()["detail"] == "queue item missing url"
+    # A rejected item must stay where it was.
+    assert len(routes.state.QUEUE) == 2
+    assert routes.state.QUEUE[1] == {"title": "no url"}
+    assert events == []
     assert routes.state.HISTORY == []
