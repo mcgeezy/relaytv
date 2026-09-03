@@ -2610,3 +2610,53 @@
   .rSeek{ min-height: 58px; }
   .remoteVolumeRow{ margin-top: 10px; }
 }
+
+/* --- UX overhaul: roomier desktop queue, consistent phone header --- */
+
+/* Phone: every integration launcher becomes the same icon-only chip so the
+   device name — the "which TV am I on?" anchor — keeps the header space. */
+@media (max-width: 680px){
+  header{ gap: 8px; }
+  .hdrRight{ gap: 7px; }
+  .jfLaunch .jfBrand{ display: none; }
+  .jfLaunch .jfDot{ width: 10px; height: 10px; }
+  .iptvLaunch span:last-child{ display: none; }
+  .iptvLaunch{ padding: 7px 12px; }
+}
+
+/* Desktop: the wrap widens past 920px and the queue column gets a floor, so
+   queue titles stop collapsing to a few characters. */
+@media (min-width: 761px){
+  .topgrid{ grid-template-columns: minmax(0,1.2fr) minmax(300px,0.8fr); }
+}
+@media (min-width: 1100px){
+  .wrap{ max-width: 1080px; }
+}
+
+/* Pointer devices: tile actions stay out of the title's way until the tile is
+   hovered or focused, then overlay its right edge. Touch layouts (hover:
+   none) keep the always-visible inline buttons. */
+@media (hover: hover) and (min-width: 761px){
+  .qTile .qHandle,
+  .qTile .qMenuBtn,
+  .qTile .qDelBtn{
+    position: absolute;
+    top: calc(50% - 20px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease;
+    z-index: 3;
+  }
+  .qTile .qHandle{ right: 98px; }
+  .qTile .qMenuBtn{ right: 54px; }
+  .qTile .qDelBtn{ right: 10px; }
+  .qTile:hover .qHandle,
+  .qTile:hover .qMenuBtn,
+  .qTile:hover .qDelBtn,
+  .qTile:focus-within .qHandle,
+  .qTile:focus-within .qMenuBtn,
+  .qTile:focus-within .qDelBtn{
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
