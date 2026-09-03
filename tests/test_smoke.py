@@ -176,7 +176,10 @@ def test_ui_smoke() -> None:
     assert 'id="nHeroArt"' in response.text
     assert 'id="nowStateDot"' in response.text
     assert 'function _isNowPlayingLive(np)' in js
-    assert "const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);" in js
+    assert "const posTxt = liveNow ? 'LIVE' : fmtTime((ended && st.position == null && resumePos != null) ? resumePos : st.position);" in js
+    assert 'id="nowUpNext"' in response.text
+    assert 'id="upNextPlayBtn"' in response.text
+    assert ".nowCard.isIdle .nIdleMsg{ display: block; }" in css
     assert ".nowCard.isLive .progress{ display: none; }" in css
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text

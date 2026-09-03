@@ -4070,6 +4070,15 @@ def ui():
 
         <div class="nIdleMsg" aria-hidden="true">Nothing playing — share a link or pick from the queue</div>
 
+        <div id="nowUpNext" class="nUpNext hidden">
+          <span class="nUpNextLabel">Up next</span>
+          <div class="nUpNextItem">
+            <span id="upNextThumb" class="nUpNextThumb" aria-hidden="true"></span>
+            <span id="upNextTitle" class="nUpNextTitle"></span>
+          </div>
+          <button id="upNextPlayBtn" class="nUpNextPlay" title="Play next in queue" aria-label="Play next in queue">Play</button>
+        </div>
+
         <div id="progress" class="progress" title="Drag to seek (or tap)">
           <div id="progFill" class="progressFill"></div>
         </div>

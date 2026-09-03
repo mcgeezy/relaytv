@@ -1350,15 +1350,25 @@ function renderStatus(st) {
   const paused = !!st.paused && hasNow;
   const activelyPlaying = !!st.playing && !st.paused && hasNow;
   const liveNow = !!hasNow && _isNowPlayingLive(np);
+  // Ended/closed: an item is still on the card but playback is down and no
+  // transition is in flight. This is the state that used to render as a live
+  // card with dead "--:--" times.
+  const ended = hasNow && !st.playing && !st.paused
+    && !st.transitioning_between_items && !st.transition_in_progress
+    && String(st.playback_runtime_state || '') !== 'buffering';
+  const resumePos = (np && typeof np.resume_pos === 'number' && Number.isFinite(np.resume_pos)) ? np.resume_pos : null;
+  const npDuration = (np && typeof np.duration_sec === 'number' && Number.isFinite(np.duration_sec) && np.duration_sec > 0) ? np.duration_sec : null;
+  const effDuration = st.duration != null ? st.duration : (ended ? npDuration : null);
   if (nowCardEl){
     nowCardEl.classList.toggle('isIdle', !hasNow);
     nowCardEl.classList.toggle('isPaused', paused);
     nowCardEl.classList.toggle('isLive', liveNow);
+    nowCardEl.classList.toggle('isEnded', ended);
   }
   const stateTag = document.getElementById('nowStateTag');
   if (stateTag) {
-    stateTag.textContent = paused ? 'Paused' : 'Live';
-    stateTag.classList.toggle('hidden', !paused && !liveNow);
+    stateTag.textContent = paused ? 'Paused' : (ended ? 'Ended' : 'Live');
+    stateTag.classList.toggle('hidden', !paused && !liveNow && !ended);
     stateTag.classList.toggle('live', liveNow && !paused);
   }
   const stateDot = document.getElementById('nowStateDot');
@@ -1367,8 +1377,8 @@ function renderStatus(st) {
     stateDot.classList.toggle('live', liveNow && activelyPlaying);
   }
 
-  const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);
-  const durTxt = liveNow ? (paused ? 'Paused' : 'Streaming') : fmtTime(st.duration);
+  const posTxt = liveNow ? 'LIVE' : fmtTime((ended && st.position == null && resumePos != null) ? resumePos : st.position);
+  const durTxt = liveNow ? (paused ? 'Paused' : 'Streaming') : fmtTime(effDuration);
 
   // Only overwrite the pos readout if not scrubbing
   if (!__scrubbing) document.getElementById('pos').textContent = posTxt;
@@ -1388,7 +1398,12 @@ function renderStatus(st) {
     if (muteLbl) muteLbl.textContent = mute ? 'Unmute' : 'Mute';
   }
   const ppb = document.getElementById('playPauseBtn');
-  if (ppb) ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
+  if (ppb) {
+    ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
+    // In the ended state the button resumes the closed session; say so.
+    const ppLbl = ppb.querySelector('.rLabel');
+    if (ppLbl) ppLbl.textContent = ended ? 'Resume' : 'Play/Pause';
+  }
   const qCount = document.getElementById('queueCount');
   if (qCount) qCount.textContent = String(st.queue_length || 0);
   const qClear = document.getElementById('queueClearBtn');
@@ -1405,10 +1420,34 @@ function renderStatus(st) {
   // progress bar fill
   if (!__scrubbing && liveNow) {
     _setProgressFill(0);
+  } else if (!__scrubbing && ended && resumePos != null && effDuration != null && effDuration > 0) {
+    // Show where a resume would pick up, not an empty bar.
+    _setProgressFill(resumePos / effDuration);
   } else if (!__scrubbing && st.position != null && st.duration != null && st.duration > 0) {
     _setProgressFill(st.position / st.duration);
   } else if (!__scrubbing && (!st.playing || st.duration == null || st.duration <= 0)) {
     _setProgressFill(0);
+  }
+
+  // up-next strip: the queue's head with a direct play action, shown whenever
+  // nothing live is on the card (ended item or empty idle card).
+  const upNextEl = document.getElementById('nowUpNext');
+  if (upNextEl) {
+    const nextItem = (Array.isArray(st.queue) && st.queue.length) ? st.queue[0] : null;
+    const showUpNext = !!nextItem && (ended || !hasNow);
+    upNextEl.classList.toggle('hidden', !showUpNext);
+    if (showUpNext) {
+      const titleEl = document.getElementById('upNextTitle');
+      if (titleEl) titleEl.textContent = nextItem.title || nextItem.url || '';
+      const thumbEl = document.getElementById('upNextThumb');
+      if (thumbEl) {
+        const tu = thumbUrl(nextItem);
+        thumbEl.style.backgroundImage = tu ? `url('${tu}')` : '';
+        thumbEl.classList.toggle('hasThumb', !!tu);
+      }
+      const playBtn = document.getElementById('upNextPlayBtn');
+      if (playBtn) playBtn.onclick = () => qPlayNow(0);
+    }
   }
 
   // queue list
