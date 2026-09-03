@@ -744,6 +744,35 @@ function _looksLikeJellyfinMediaUrl(u){
   return false;
 }
 
+const __favBrandColors = {
+  'youtube.com': '#ff0033', 'youtu.be': '#ff0033',
+  'rumble.com': '#85c742',
+  'twitch.tv': '#9146ff',
+  'vimeo.com': '#17b3e8',
+  'odysee.com': '#ef1970',
+  'dailymotion.com': '#00aaff',
+  'peertube.tv': '#f1680d',
+  'bitchute.com': '#d2441c',
+  'x.com': '#000000', 'twitter.com': '#1d9bf0',
+};
+const __favPalette = ['#2b6ce7', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#db2777', '#4f46e5'];
+
+/* Local-first provider badge: a letter tile rendered as an SVG data URI.
+   Deterministic per host, needs no network and leaks nothing to third
+   parties (the Google S2 favicon service used to see every queued domain). */
+function _letterFaviconDataUri(host){
+  const clean = String(host || '').replace(/^www\./, '');
+  const letter = (clean[0] || '?').toUpperCase();
+  let color = __favBrandColors[clean] || __favBrandColors[clean.split('.').slice(-2).join('.')] || '';
+  if (!color) {
+    let h = 0;
+    for (let i = 0; i < clean.length; i++) h = (h * 31 + clean.charCodeAt(i)) >>> 0;
+    color = __favPalette[h % __favPalette.length];
+  }
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='${color}'/><text x='32' y='43' font-family='system-ui,Segoe UI,sans-serif' font-size='32' font-weight='700' fill='#ffffff' text-anchor='middle'>${letter}</text></svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
 function faviconUrl(input){
   const obj = (input && typeof input === 'object') ? input : null;
   const u = obj ? String(obj.url || '') : String(input || '');
@@ -753,8 +782,7 @@ function faviconUrl(input){
   }
   const host = _safeUrlHost(u);
   if (!host) return '';
-  // Google S2 favicon service (works well without CORS headaches for <img>)
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+  return _letterFaviconDataUri(host);
 }
 
 function displaySub(item){
