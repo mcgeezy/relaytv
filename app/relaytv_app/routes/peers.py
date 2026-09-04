@@ -31,10 +31,13 @@ class PeerSendReq(BaseModel):
     # ``index`` predates per-item selection and is kept for companion apps.
     index: int | None = None
     indexes: list[int] | None = None
+    queue_id: str | None = None
+    queue_ids: list[str] | None = None
 
 
 class PeerHandoffReq(BaseModel):
     indexes: list[int] | None = None
+    queue_ids: list[str] | None = None
     # A handoff that keeps the local session is the "Copy" gesture: the peer
     # starts playing, this device carries on. Defaulting to False keeps the
     # original meaning of the endpoint for callers that send no body.
@@ -209,6 +212,26 @@ def _selected_indexes(queue_length: int, *, index: int | None, indexes: list[int
     return sorted(set(resolved))
 
 
+def _selected_queue_items(
+    queue: list[object],
+    *,
+    index: int | None,
+    indexes: list[int] | None,
+    queue_id: str | None = None,
+    queue_ids: list[str] | None = None,
+) -> list[object]:
+    """Select stable queue instances, with indexes retained for old callers."""
+    if queue_ids is not None or queue_id:
+        chosen = list(queue_ids) if queue_ids is not None else [str(queue_id or "")]
+        wanted = [str(value or "").strip().lower() for value in chosen if str(value or "").strip()]
+        by_id = {state.queue_item_id(item): item for item in queue if state.queue_item_id(item)}
+        if any(item_id not in by_id for item_id in wanted):
+            raise HTTPException(status_code=409, detail="queue changed; refresh and retry")
+        return [by_id[item_id] for item_id in dict.fromkeys(wanted)]
+    selection = _selected_indexes(len(queue), index=index, indexes=indexes)
+    return queue if selection is None else [queue[position] for position in selection]
+
+
 @router.post("/peers/{peer_id}/send")
 def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
     """Send the queue (or one queue item) to a peer device.
@@ -223,9 +246,15 @@ def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
         mode = "append"
 
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         queue = list(state.QUEUE)
-    selection = _selected_indexes(len(queue), index=req.index, indexes=req.indexes)
-    items: list[object] = queue if selection is None else [queue[i] for i in selection]
+    items = _selected_queue_items(
+        queue,
+        index=req.index,
+        indexes=req.indexes,
+        queue_id=req.queue_id,
+        queue_ids=req.queue_ids,
+    )
     if not items:
         raise HTTPException(status_code=400, detail="nothing selected to send")
     try:
@@ -257,9 +286,14 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
         raise HTTPException(status_code=409, detail="nothing is playing to hand off")
 
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         queue = list(state.QUEUE)
-    selection = _selected_indexes(len(queue), index=None, indexes=request.indexes)
-    items: list[object] = queue if selection is None else [queue[i] for i in selection]
+    items = _selected_queue_items(
+        queue,
+        index=None,
+        indexes=request.indexes,
+        queue_ids=request.queue_ids,
+    )
     try:
         result, accepted = peers.handoff_playback(peer_id, snapshot=snapshot, items=items)
     except peers.PeerError as exc:

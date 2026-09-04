@@ -88,6 +88,7 @@
     return {
       kind,
       index,
+      queueId: String(source.queue_id || ''),
       url,
       provider,
       title: String(source.title || source.name || url || 'Untitled'),
@@ -107,12 +108,12 @@
     if (playbackActive() && np && np.url) rows.push(itemRow(np, 'now', null));
     (Array.isArray(st.queue) ? st.queue : []).forEach((item, idx) => rows.push(itemRow(item, 'queue', idx)));
 
-    // Key by URL rather than position: auto-next advancing while the sheet is
-    // open shifts every index, and a selection must not slide onto a different
-    // item. The ordinal disambiguates the same URL queued twice.
+    // Queue instance ids survive reordering and distinguish duplicate URLs.
+    // The URL fallback keeps compatibility with an older server during a
+    // rolling upgrade.
     const seen = Object.create(null);
     rows.forEach((row) => {
-      const base = `${row.kind}:${row.url}`;
+      const base = row.queueId ? `${row.kind}:id:${row.queueId}` : `${row.kind}:${row.url}`;
       const n = (seen[base] = (seen[base] || 0) + 1);
       row.key = n === 1 ? base : `${base}#${n}`;
     });
@@ -135,6 +136,10 @@
 
   function selectedQueueIndexes(){
     return state.items.filter((row) => row.kind === 'queue' && isSelected(row)).map((row) => row.index);
+  }
+
+  function selectedQueueIds(){
+    return state.items.filter((row) => row.kind === 'queue' && isSelected(row) && row.queueId).map((row) => row.queueId);
   }
 
   function queueRowCount(){
@@ -507,10 +512,11 @@
     const id = encodeURIComponent(peer.id);
     const keepLocal = state.mode === 'copy';
     const indexes = selectedQueueIndexes();
+    const queueIds = selectedQueueIds();
     // Omitting the selection when it covers the whole queue means the server
     // reads the queue itself, which stays correct even if an item was added
     // between this render and the request.
-    const scoped = selectionCoversQueue() ? {} : {indexes};
+    const scoped = selectionCoversQueue() ? {} : (queueIds.length === indexes.length ? {queue_ids: queueIds} : {indexes});
     if (selectedNow()){
       // A session is in play, so this is the handoff payload either way; the
       // mode only decides whether this device tears down afterwards.
@@ -681,11 +687,12 @@
     state.deselected.clear();
     state.pickSignature = '';
     buildItems();
-    if (Number.isInteger(scope.index)){
+    if (Number.isInteger(scope.index) || scope.queueId){
       // Opened from one queue tile: that item is the whole point, so everything
       // else — including the session — starts excluded.
       state.items.forEach((row) => {
-        if (row.kind !== 'queue' || row.index !== scope.index) state.deselected.add(row.key);
+        const matches = scope.queueId ? row.queueId === String(scope.queueId) : row.index === scope.index;
+        if (row.kind !== 'queue' || !matches) state.deselected.add(row.key);
       });
     }
     state.lastFocus = document.activeElement;

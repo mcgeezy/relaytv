@@ -1068,8 +1068,11 @@ def _ui_event_push(event_name: str, event: dict) -> None:
 def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_length: int | None = None, source: str = "api") -> None:
     if queue is None:
         with state.QUEUE_LOCK:
+            state.ensure_queue_item_ids(state.QUEUE)
             queue = list(state.QUEUE)
-    queue = _annotate_upload_items(queue)
+    else:
+        state.ensure_queue_item_ids(queue)
+    queue = _annotate_queue_items(queue)
     qlen = int(queue_length) if queue_length is not None else len(queue)
     _ui_event_push(
         "queue",
@@ -1090,6 +1093,17 @@ def _annotate_upload_item(item: object) -> object:
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:
     return [_annotate_upload_item(item) for item in list(items or [])]
+
+
+def _annotate_queue_items(items: list[object] | None) -> list[object]:
+    annotated: list[object] = []
+    for item in list(items or []):
+        public = _annotate_upload_item(item)
+        queue_id = state.queue_item_id(item)
+        if queue_id and isinstance(public, dict):
+            public["queue_id"] = queue_id
+        annotated.append(public)
+    return annotated
 
 
 def _ui_event_push_jellyfin(
@@ -3239,6 +3253,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
 def _status_payload() -> dict[str, object]:
     settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         q = list(state.QUEUE)
     sess = getattr(state, "SESSION_STATE", "idle")
     has_now_playing = isinstance(getattr(state, "NOW_PLAYING", None), dict)
@@ -3437,7 +3452,7 @@ def _status_payload() -> dict[str, object]:
         )
     )
     annotated_now_playing = _annotate_upload_item(now_playing)
-    annotated_queue = _annotate_upload_items(q)
+    annotated_queue = _annotate_queue_items(q)
     iptv_status: dict[str, object] = {"enabled": iptv_service.enabled()}
     if iptv_status["enabled"]:
         try:

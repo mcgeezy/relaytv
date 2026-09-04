@@ -725,6 +725,36 @@ def test_send_single_index_and_unreachable_peer(client, peers_file, stub_identit
         state.QUEUE.clear()
 
 
+def test_send_single_queue_id_survives_index_shift(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    captured: dict[str, object] = {}
+
+    def _request(base_url, path, *, token="", payload=None, timeout=0.0):
+        captured["payload"] = payload
+        return {"accepted": 1, "queue_length": 1, "results": []}
+
+    monkeypatch.setattr(peers, "_request", _request)
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.extend(
+            [
+                {"url": "https://example.com/a", "title": "First"},
+                {"url": "https://example.com/b", "title": "Second"},
+                {"url": "https://example.com/c", "title": "Third"},
+            ]
+        )
+        state.ensure_queue_item_ids(state.QUEUE)
+        selected_id = state.queue_item_id(state.QUEUE[1])
+        state.QUEUE.pop(0)
+
+    response = client.post(f"/peers/{peer['id']}/send", json={"index": 1, "queue_id": selected_id})
+
+    assert response.status_code == 200
+    assert [entry["title"] for entry in captured["payload"]["items"]] == ["Second"]
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
 def _seed_queue(*titles: str) -> None:
     with state.QUEUE_LOCK:
         state.QUEUE.clear()

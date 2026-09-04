@@ -61,12 +61,17 @@ class QueueHandoffReq(BaseModel):
 
 
 class QueueRemoveReq(BaseModel):
-    index: int
+    # Index remains for companion/API compatibility. The browser sends the
+    # stable id so a delayed action cannot slide onto a different item.
+    index: int | None = None
+    queue_id: str | None = None
 
 
 class QueueMoveReq(BaseModel):
-    from_index: int
-    to_index: int
+    from_index: int | None = None
+    to_index: int | None = None
+    queue_id: str | None = None
+    to_queue_id: str | None = None
 
 
 class HistoryPlayReq(BaseModel):
@@ -124,6 +129,34 @@ def _annotate_upload_items(items: list[object] | None) -> list[object]:
     return [_annotate_upload_item(item) for item in list(items or [])]
 
 
+def _annotate_queue_item(item: object) -> object:
+    public = _annotate_upload_item(item)
+    queue_id = state.queue_item_id(item)
+    if queue_id and isinstance(public, dict):
+        public["queue_id"] = queue_id
+    return public
+
+
+def _annotate_queue_items(items: list[object] | None) -> list[object]:
+    return [_annotate_queue_item(item) for item in list(items or [])]
+
+
+def _queue_index_locked(index: int | None, queue_id: str | None, *, label: str = "index") -> int:
+    """Resolve a stable queue id, falling back to an index for legacy callers."""
+    wanted = str(queue_id or "").strip().lower()
+    if wanted:
+        for position, item in enumerate(state.QUEUE):
+            if state.queue_item_id(item) == wanted:
+                return position
+        raise HTTPException(status_code=409, detail="queue changed; refresh and retry")
+    if index is None:
+        raise HTTPException(status_code=400, detail=f"{label} or queue_id is required")
+    position = int(index)
+    if position < 0 or position >= len(state.QUEUE):
+        raise HTTPException(status_code=400, detail=f"{label} out of range")
+    return position
+
+
 @router.post("/enqueue")
 @router.post("/queue/add")
 @router.post("/api/queue/add")
@@ -144,7 +177,7 @@ def enqueue(req: EnqueueReq):
     _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="enqueue")
     return {
         "status": "queued",
-        "item": _annotate_upload_item(item),
+        "item": _annotate_queue_item(item),
         "queue_length": qlen,
         "now_playing": _annotate_upload_item(state.NOW_PLAYING),
     }
@@ -327,7 +360,7 @@ def _apply_peer_import(
         "accepted": len(accepted_items),
         "results": results,
         "queue_length": qlen,
-        "queue": _annotate_upload_items(queue_snapshot),
+        "queue": _annotate_queue_items(queue_snapshot),
         "now_playing": _annotate_upload_item(state.NOW_PLAYING),
     }
 
@@ -410,7 +443,7 @@ def queue_handoff(req: QueueHandoffReq):
         "accepted": int((imported or {}).get("accepted") or 0),
         "results": list((imported or {}).get("results") or []),
         "queue_length": len(queue_snapshot),
-        "queue": _annotate_upload_items(queue_snapshot),
+        "queue": _annotate_queue_items(queue_snapshot),
     }
 
 
@@ -431,10 +464,11 @@ def clear():
 @router.get("/queue")
 def queue():
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         q = list(state.QUEUE)
     return {
         "now_playing": _annotate_upload_item(state.NOW_PLAYING),
-        "queue": _annotate_upload_items(q),
+        "queue": _annotate_queue_items(q),
         "queue_length": len(q),
     }
 
@@ -537,9 +571,8 @@ def history_play(req: HistoryPlayReq):
 @router.post("/queue/remove")
 def queue_remove(req: QueueRemoveReq):
     with state.QUEUE_LOCK:
-        idx = int(req.index)
-        if idx < 0 or idx >= len(state.QUEUE):
-            raise HTTPException(status_code=400, detail="index out of range")
+        state.ensure_queue_item_ids(state.QUEUE)
+        idx = _queue_index_locked(req.index, req.queue_id)
         removed = state.QUEUE.pop(idx)
         snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
 
@@ -556,14 +589,14 @@ def queue_remove(req: QueueRemoveReq):
     return {
         "status": "removed",
         "removed": _annotate_upload_item(removed),
-        "queue": _annotate_upload_items(snapshot["queue"]),
+        "queue": _annotate_queue_items(snapshot["queue"]),
         "queue_length": len(snapshot["queue"]),
     }
 
 
 @router.post("/queue/play")
 def queue_play(req: QueueRemoveReq):
-    """Play a queued item immediately by index, preserving current playback.
+    """Play a queued item immediately by stable id or legacy index.
 
     Like ``history_play``, the index refers to the server's unredacted copy:
     public queue payloads carry display-safe URLs, so a client cannot simply
@@ -571,19 +604,25 @@ def queue_play(req: QueueRemoveReq):
     server accepts — a failed play restores it at its original position,
     matching the rollback pattern of ``advance_queue_playback``.
     """
-    idx = int(req.index)
     with state.QUEUE_LOCK:
-        if idx < 0 or idx >= len(state.QUEUE):
-            raise HTTPException(status_code=400, detail="index out of range")
+        state.ensure_queue_item_ids(state.QUEUE)
+        idx = _queue_index_locked(req.index, req.queue_id)
         item = state.QUEUE.pop(idx)
+        dequeued_revision = state.queue_revision()
         snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
     try:
         state.persist_queue_payload(snapshot)
     except Exception as e:
         logger.warning("queue_persist_failed route=queue_play error=%s", e)
 
-    def _restore() -> list[object]:
+    def _restore(*, owned_mutations: int = 0) -> list[object] | None:
         with state.QUEUE_LOCK:
+            if state.queue_revision() != (dequeued_revision + owned_mutations):
+                logger.info(
+                    "queue_play_restore_skipped reason=queue_changed queue_id=%s",
+                    state.queue_item_id(item),
+                )
+                return None
             state.QUEUE.insert(min(idx, len(state.QUEUE)), item)
             rollback = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
         try:
@@ -606,11 +645,16 @@ def queue_play(req: QueueRemoveReq):
         resume_pos = float(raw_resume) if raw_resume is not None else None
     except Exception:
         resume_pos = None
+    play_scope = state.queue_mutation_scope()
     try:
-        result = _play_now_queue_item(item, resume_pos=resume_pos)
+        playable_item = dict(item)
+        playable_item.pop(state.QUEUE_ITEM_ID_KEY, None)
+        with play_scope:
+            result = _play_now_queue_item(playable_item, resume_pos=resume_pos)
     except Exception:
-        restored = _restore()
-        _ui_event_push_queue("add", queue=restored, queue_length=len(restored), source="queue_play_restore")
+        restored = _restore(owned_mutations=play_scope.mutations)
+        if restored is not None:
+            _ui_event_push_queue("add", queue=restored, queue_length=len(restored), source="queue_play_restore")
         raise
 
     try:
@@ -623,8 +667,8 @@ def queue_play(req: QueueRemoveReq):
     # queue is non-empty; the pop must be announced either way.
     _ui_event_push_queue("remove", queue=queue_snapshot, queue_length=len(queue_snapshot), source="queue_play")
     if isinstance(result, dict):
-        return {**result, "queue": _annotate_upload_items(queue_snapshot), "queue_length": len(queue_snapshot)}
-    return {"status": "playing", "queue": _annotate_upload_items(queue_snapshot), "queue_length": len(queue_snapshot)}
+        return {**result, "queue": _annotate_queue_items(queue_snapshot), "queue_length": len(queue_snapshot)}
+    return {"status": "playing", "queue": _annotate_queue_items(queue_snapshot), "queue_length": len(queue_snapshot)}
 
 
 def _queue_item_dedupe_key(item: object) -> tuple[str, str]:
@@ -681,20 +725,19 @@ def queue_dedupe():
         "changed": changed,
         "removed_count": removed,
         "queue_length": len(state.QUEUE),
-        "queue": _annotate_upload_items(state.QUEUE),
+        "queue": _annotate_queue_items(state.QUEUE),
     }
 
 
 @router.post("/queue/move")
 def queue_move(req: QueueMoveReq):
-    frm = int(req.from_index)
-    to = int(req.to_index)
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         n = len(state.QUEUE)
         if n == 0:
             raise HTTPException(status_code=400, detail="queue is empty")
-        if frm < 0 or frm >= n or to < 0 or to >= n:
-            raise HTTPException(status_code=400, detail="index out of range")
+        frm = _queue_index_locked(req.from_index, req.queue_id, label="from_index")
+        to = _queue_index_locked(req.to_index, req.to_queue_id, label="to_index")
         item = state.QUEUE.pop(frm)
         state.QUEUE.insert(to, item)
         snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
@@ -709,4 +752,4 @@ def queue_move(req: QueueMoveReq):
         pass
     _ui_event_push_queue("move", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_move")
 
-    return {"status": "moved", "queue": _annotate_upload_items(snapshot["queue"]), "queue_length": len(snapshot["queue"])}
+    return {"status": "moved", "queue": _annotate_queue_items(snapshot["queue"]), "queue_length": len(snapshot["queue"])}

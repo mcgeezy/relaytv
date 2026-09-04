@@ -547,6 +547,8 @@ function bindQueuePointerDnD(){
 
   let startFrom = null;
   let overTo = null;
+  let startQueueId = '';
+  let overQueueId = '';
   let startX = 0, startY = 0;
   let active = false;
   const MOVE_PX = 4;
@@ -556,6 +558,8 @@ function bindQueuePointerDnD(){
     active = false;
     startFrom = null;
     overTo = null;
+    startQueueId = '';
+    overQueueId = '';
     __dragStartTs = 0;
     document.body.classList.remove('noScroll');
     document.querySelectorAll('.qTile.dragging').forEach(x => x.classList.remove('dragging'));
@@ -567,10 +571,12 @@ function bindQueuePointerDnD(){
   const finish = async () => {
     const from = startFrom;
     const to = overTo;
+    const fromQueueId = startQueueId;
+    const toQueueId = overQueueId;
     const didDrag = active; // capture before cleanup() resets state
     cleanup();
     if (didDrag && from != null && to != null && from !== to) {
-      await qMove(from, to);
+      await qMove(from, to, fromQueueId, toQueueId);
     }
   };
 
@@ -588,6 +594,8 @@ function bindQueuePointerDnD(){
 
     startFrom = fromIdx;
     overTo = fromIdx;
+    startQueueId = String(tile.dataset.queueId || '');
+    overQueueId = startQueueId;
     startX = e.clientX || 0;
     startY = e.clientY || 0;
     active = false;
@@ -615,6 +623,7 @@ function bindQueuePointerDnD(){
     const toIdx = parseInt(tile.dataset.index || '', 10);
     if (isNaN(toIdx)) return;
     overTo = toIdx;
+    overQueueId = String(tile.dataset.queueId || '');
 
     document.querySelectorAll('.qTile.dragOver').forEach(x => x.classList.remove('dragOver'));
     tile.classList.add('dragOver');
@@ -1117,9 +1126,11 @@ function _applyQueueSnapshot(payload){
   return true;
 }
 
-async function qRemove(index){
+async function qRemove(index, queueId){
   try {
-    const res = await fetch('/queue/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index})});
+    const request = {index};
+    if (queueId) request.queue_id = String(queueId);
+    const res = await fetch('/queue/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(request)});
     let payload = null;
     try { payload = await res.json(); } catch(_) {}
     if (!res.ok) {
@@ -1133,9 +1144,11 @@ async function qRemove(index){
   await refresh();
 }
 
-async function qPlayNow(index){
+async function qPlayNow(index, queueId){
   try {
-    const res = await fetch('/queue/play', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index})});
+    const request = {index};
+    if (queueId) request.queue_id = String(queueId);
+    const res = await fetch('/queue/play', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(request)});
     let payload = null;
     try { payload = await res.json(); } catch(_) {}
     if (!res.ok) {
@@ -1188,11 +1201,12 @@ function openQueueMenu(index, item, anchor){
   menu.className = 'qPopMenu';
   menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', 'Queue item actions');
-  menu.appendChild(_queueMenuItem('Play now', 'M8 5.5v13l11-6.5z', () => qPlayNow(index)));
+  const queueId = String((item && item.queue_id) || '');
+  menu.appendChild(_queueMenuItem('Play now', 'M8 5.5v13l11-6.5z', () => qPlayNow(index, queueId)));
   menu.appendChild(_queueMenuItem('Send to device', 'M4 12h13m0 0-4.5-4.5M17 12l-4.5 4.5M20 5v14', () => {
-    if (window.relaytvPeers) window.relaytvPeers.open({index, title: (item && (item.title || item.url)) || ''});
+    if (window.relaytvPeers) window.relaytvPeers.open({index, queueId, title: (item && (item.title || item.url)) || ''});
   }));
-  menu.appendChild(_queueMenuItem('Remove', 'M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12', () => qSoftRemove(index), 'danger'));
+  menu.appendChild(_queueMenuItem('Remove', 'M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12', () => qSoftRemove(index, queueId), 'danger'));
 
   document.body.appendChild(backdrop);
   document.body.appendChild(menu);
@@ -1253,8 +1267,12 @@ let __removeFlushPromise = null;
 
 function _commitPendingRemove(pending){
   if (!pending) return Promise.resolve();
-  const flush = Promise.resolve(qRemove(pending.index)).finally(() => {
+  const flush = Promise.resolve(qRemove(pending.index, pending.queueId)).finally(() => {
     if (__removeFlushPromise === flush) __removeFlushPromise = null;
+    if (typeof __lastStatus !== 'undefined' && __lastStatus &&
+        typeof _uiRefreshInteractionLockActive === 'function' && !_uiRefreshInteractionLockActive()) {
+      renderStatus(__lastStatus);
+    }
   });
   __removeFlushPromise = flush;
   return flush;
@@ -1269,7 +1287,7 @@ function _flushPendingRemove(){
   return _commitPendingRemove(pending);
 }
 
-function qSoftRemove(index){
+function qSoftRemove(index, queueId){
   if (__removeFlushPromise) {
     _showToast('Finishing the previous removal…', {duration: 2500});
     return;
@@ -1290,7 +1308,7 @@ function qSoftRemove(index){
     _hideToast();
     if (pending) _commitPendingRemove(pending);
   }, 6000);
-  __pendingRemove = { index, timer };
+  __pendingRemove = { index, queueId: String(queueId || ''), timer };
   _showToast('Removed from queue', {
     actionLabel: 'Undo',
     duration: 6000,
@@ -1300,13 +1318,20 @@ function qSoftRemove(index){
       _hideToast();
       const t = document.querySelector(`.qTile[data-index="${index}"]`);
       if (t) t.classList.remove('qPendingRemove');
+      if (typeof __lastStatus !== 'undefined' && __lastStatus &&
+          typeof _uiRefreshInteractionLockActive === 'function' && !_uiRefreshInteractionLockActive()) {
+        renderStatus(__lastStatus);
+      }
     },
   });
 }
 
-async function qMove(from_index, to_index){
+async function qMove(from_index, to_index, queueId, toQueueId){
   try {
-    const res = await fetch('/queue/move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({from_index, to_index})});
+    const request = {from_index, to_index};
+    if (queueId) request.queue_id = String(queueId);
+    if (toQueueId) request.to_queue_id = String(toQueueId);
+    const res = await fetch('/queue/move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(request)});
     let payload = null;
     try { payload = await res.json(); } catch(_) {}
     if (!res.ok) {
@@ -1496,7 +1521,7 @@ function renderStatus(st) {
         thumbEl.classList.toggle('hasThumb', !!tu);
       }
       const playBtn = document.getElementById('upNextPlayBtn');
-      if (playBtn) playBtn.onclick = () => qPlayNow(0);
+      if (playBtn) playBtn.onclick = () => qPlayNow(0, nextItem.queue_id);
     }
   }
 
@@ -1517,6 +1542,7 @@ function renderStatus(st) {
     li.className = 'qTile';
     if (item && item.available === false) li.classList.add('isUnavailable');
     li.dataset.index = String(idx);
+    li.dataset.queueId = String((item && item.queue_id) || '');
 
     // Contained 16:9 artwork (not a background: text stays on clean glass)
     const thumb = document.createElement('div');
@@ -1583,7 +1609,7 @@ function renderStatus(st) {
     del.textContent = '✕';
     del.title = 'Remove from queue';
     del.setAttribute('aria-label', 'Remove from queue');
-    del.onclick = () => qSoftRemove(idx);
+    del.onclick = () => qSoftRemove(idx, item && item.queue_id);
 
     // One indirection into the tile's actions keeps the tile clean; a button
     // per action would not scale and crams tap targets together.
