@@ -102,6 +102,20 @@ def _play_now_from_history(payload: dict[str, object]) -> dict:
     return play_now(PlayNowReq(**payload))
 
 
+def _play_now_queue_item(item: dict[str, object], *, resume_pos: float | None) -> dict:
+    from . import _play_now_item
+
+    url = str(item.get("url") or "").strip()
+    return _play_now_item(
+        item,
+        request_url=url,
+        preserve_current=True,
+        reason="queue_play",
+        title_hint=str(item.get("title") or "").strip() or None,
+        resume_pos=resume_pos,
+    )
+
+
 def _annotate_upload_item(item: object) -> object:
     return public_media.public_media_item(upload_store.annotate_item(item))
 
@@ -593,25 +607,7 @@ def queue_play(req: QueueRemoveReq):
     except Exception:
         resume_pos = None
     try:
-        resolved_at = float(item.get("_resolved_at")) if item.get("_resolved_at") is not None else None
-    except Exception:
-        resolved_at = None
-    try:
-        result = _play_now_from_history(
-            {
-                "url": url.strip(),
-                "preserve_current": True,
-                "reason": "queue_play",
-                "title": str(item.get("title") or "").strip() or None,
-                "thumbnail": str(item.get("thumbnail") or "").strip() or None,
-                "resume_pos": resume_pos,
-                "history_id": str(item.get("history_id") or "").strip() or None,
-                "resolved_source_url": str(item.get("_resolved_source_url") or "").strip() or None,
-                "resolved_stream": str(item.get("_resolved_stream") or "").strip() or None,
-                "resolved_audio": str(item.get("_resolved_audio") or "").strip() or None,
-                "resolved_at": resolved_at,
-            }
-        )
+        result = _play_now_queue_item(item, resume_pos=resume_pos)
     except Exception:
         restored = _restore()
         _ui_event_push_queue("add", queue=restored, queue_length=len(restored), source="queue_play_restore")

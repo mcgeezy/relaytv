@@ -103,6 +103,7 @@ from .playback import (
     SeekAbsReq as SeekAbsReq,
     SeekReq as SeekReq,
     VolumeReq as VolumeReq,
+    _play_now_item as _play_now_item,
     _preserve_current_to_queue_front as _preserve_current_to_queue_front,
     clear_now_playing as clear_now_playing,
     clear_resumable_session as clear_resumable_session,

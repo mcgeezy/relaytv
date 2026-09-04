@@ -1249,24 +1249,46 @@ function _showToast(label, {actionLabel = null, onAction = null, duration = 4000
    fires when the undo window closes. If the tab goes away first, the item
    simply stays queued — the safer failure direction. */
 let __pendingRemove = null;
+let __removeFlushPromise = null;
+
+function _commitPendingRemove(pending){
+  if (!pending) return Promise.resolve();
+  const flush = Promise.resolve(qRemove(pending.index)).finally(() => {
+    if (__removeFlushPromise === flush) __removeFlushPromise = null;
+  });
+  __removeFlushPromise = flush;
+  return flush;
+}
 
 function _flushPendingRemove(){
-  if (!__pendingRemove) return;
+  if (__removeFlushPromise) return __removeFlushPromise;
+  if (!__pendingRemove) return Promise.resolve();
   const pending = __pendingRemove;
   __pendingRemove = null;
   clearTimeout(pending.timer);
-  qRemove(pending.index);
+  return _commitPendingRemove(pending);
 }
 
 function qSoftRemove(index){
-  _flushPendingRemove();
+  if (__removeFlushPromise) {
+    _showToast('Finishing the previous removal…', {duration: 2500});
+    return;
+  }
+  if (__pendingRemove) {
+    _flushPendingRemove();
+    // The selected index came from the pre-removal queue. Do not reuse it
+    // after the first request shifts the server-side indexes; the refreshed
+    // queue will expose a safe target for the user's next action.
+    _showToast('Previous removal saved — select Remove again', {duration: 3000});
+    return;
+  }
   const tile = document.querySelector(`.qTile[data-index="${index}"]`);
   if (tile) tile.classList.add('qPendingRemove');
   const timer = setTimeout(() => {
     const pending = __pendingRemove;
     __pendingRemove = null;
     _hideToast();
-    if (pending) qRemove(pending.index);
+    if (pending) _commitPendingRemove(pending);
   }, 6000);
   __pendingRemove = { index, timer };
   _showToast('Removed from queue', {

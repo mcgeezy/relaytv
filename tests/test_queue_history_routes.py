@@ -201,11 +201,12 @@ def _seed_playable_queue() -> list[dict[str, object]]:
 def test_queue_play_delegates_and_consumes_item(monkeypatch) -> None:
     client, events, _ = _client_with_queue_patches(monkeypatch)
     _seed_playable_queue()
-    play_now_requests: list[object] = []
+    play_now_calls: list[tuple[dict[str, object], dict[str, object]]] = []
     monkeypatch.setattr(
         routes,
-        "play_now",
-        lambda req: play_now_requests.append(req) or {"ok": True, "action": "played", "url": req.url},
+        "_play_now_item",
+        lambda item, **kwargs: play_now_calls.append((item, kwargs))
+        or {"ok": True, "action": "played", "url": item["url"]},
     )
 
     played = client.post("/queue/play", json={"index": 1})
@@ -221,31 +222,69 @@ def test_queue_play_delegates_and_consumes_item(monkeypatch) -> None:
         "https://example.com/a.mp4",
         "https://example.com/c.mp4",
     ]
-    assert len(play_now_requests) == 1
-    req = play_now_requests[0]
-    assert req.url == "https://example.com/b.mp4"
-    assert req.preserve_current is True
-    assert req.reason == "queue_play"
-    assert req.title == "B"
-    assert req.thumbnail == "https://example.com/b.jpg"
-    assert req.resume_pos == 8.5
-    assert req.history_id == "hist-b"
-    assert req.resolved_source_url == "https://example.com/watch-b"
-    assert req.resolved_stream == "https://cdn.example.com/b.mp4"
-    assert req.resolved_audio == "https://cdn.example.com/b.m4a"
-    assert req.resolved_at == 99.5
+    assert len(play_now_calls) == 1
+    item, kwargs = play_now_calls[0]
+    assert item == {
+        "url": "https://example.com/b.mp4",
+        "title": "B",
+        "thumbnail": "https://example.com/b.jpg",
+        "resume_pos": 8.5,
+        "history_id": "hist-b",
+        "_resolved_source_url": "https://example.com/watch-b",
+        "_resolved_stream": "https://cdn.example.com/b.mp4",
+        "_resolved_audio": "https://cdn.example.com/b.m4a",
+        "_resolved_at": 99.5,
+    }
+    assert kwargs == {
+        "request_url": "https://example.com/b.mp4",
+        "preserve_current": True,
+        "reason": "queue_play",
+        "title_hint": "B",
+        "resume_pos": 8.5,
+    }
     assert [event["action"] for event in events] == ["remove"]
     assert events[0]["queue_length"] == 2
+
+
+def test_queue_play_preserves_opaque_provider_metadata(monkeypatch) -> None:
+    client, _, _ = _client_with_queue_patches(monkeypatch)
+    queued = {
+        "url": "https://iptv.invalid/source-1/channel-1",
+        "title": "News",
+        "provider": "iptv",
+        "iptv_source_id": "source-1",
+        "iptv_channel_id": "channel-1",
+    }
+    routes.state.QUEUE[:] = [queued]
+    played: list[dict[str, object]] = []
+
+    monkeypatch.setattr(routes.playback_service, "suppress_auto_next", lambda _seconds: None)
+    monkeypatch.setattr(routes.playback_service, "preserve_current_to_queue_front", lambda: None)
+    monkeypatch.setattr(
+        routes.playback_service,
+        "play_now",
+        lambda item, **_kwargs: played.append(item) or {"url": item["url"], "title": item["title"]},
+    )
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **_kwargs: None)
+
+    response = client.post("/queue/play", json={"index": 0})
+
+    assert response.status_code == 200
+    assert played == [queued]
+    assert played[0]["provider"] == "iptv"
+    assert played[0]["iptv_source_id"] == "source-1"
+    assert played[0]["iptv_channel_id"] == "channel-1"
+    assert routes.state.QUEUE == []
 
 
 def test_queue_play_restores_item_when_play_fails(monkeypatch) -> None:
     client, events, _ = _client_with_queue_patches(monkeypatch)
     _seed_playable_queue()
 
-    def _failing_play_now(req):
+    def _failing_play_now(_item, **_kwargs):
         raise HTTPException(status_code=400, detail="cannot resolve media")
 
-    monkeypatch.setattr(routes, "play_now", _failing_play_now)
+    monkeypatch.setattr(routes, "_play_now_item", _failing_play_now)
 
     response = client.post("/queue/play", json={"index": 1})
 
