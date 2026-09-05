@@ -4608,41 +4608,16 @@ def ui():
           <div class="hint">Use your local Jellyfin or Emby base URL, for example `http://10.0.55.2:8096`. The server type is detected automatically.</div>
         </div>
 
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setJfAuthMode">Cast target identity</label>
-          <select id="setJfAuthMode" class="input">
-            <option value="shared_api_key">Shared cast target (server API key)</option>
-            <option value="user_login">User-scoped cast target (username and password)</option>
-          </select>
-          <div class="hint" id="setJfAuthModeHint"></div>
-        </div>
-
-        <div id="setJfSharedAuthFields">
+        <div id="setJfUserAuthFields" role="group" aria-labelledby="setJfClientHeading">
+          <h3 id="setJfClientHeading">Client login</h3>
+          <div class="hint">Sign in for RelayTV’s media browser, personal library, and resume points. This login works alongside the shared cast target below.</div>
+          <div class="hint" id="setJfClientStatus" role="status"></div>
           <div class="fieldRow">
-            <label class="fieldLbl">Server API key</label>
-            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-            <div class="hint">Makes RelayTV a shared cast target for every Jellyfin user allowed to control shared devices. API keys are administrator-level secrets.</div>
-            <div class="toggleRow">
-              <div class="toggleCopy">
-                <div class="toggleTitle">Clear stored API key</div>
-                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
-              </div>
-              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
-                <input type="checkbox" id="setJfClearApiKey" />
-                <span class="toggleTrack" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="hint" id="setJfApiKeyState"></div>
-          </div>
-        </div>
-
-        <div id="setJfUserAuthFields">
-          <div class="fieldRow">
-            <label class="fieldLbl">Username</label>
+            <label class="fieldLbl" for="setJfUsername">Username</label>
             <input id="setJfUsername" class="input" placeholder="server username" />
           </div>
           <div class="fieldRow">
-            <label class="fieldLbl">Password</label>
+            <label class="fieldLbl" for="setJfPassword">Password</label>
             <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
             <div class="toggleRow">
               <div class="toggleCopy">
@@ -4660,8 +4635,41 @@ def ui():
         <div class="fieldRow">
           <label class="fieldLbl">Preferred user ID (optional)</label>
           <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
-          <div class="hint">Optional profile override for catalog browsing on this TV. In user-login mode, leave blank to use the authenticated user.</div>
+          <div class="hint">Leave blank to use the signed-in account. For API-key-only browsing, enter a server user ID. A login can only access profiles its account is allowed to read.</div>
         </div>
+
+        <div id="setJfSharedAuthFields" role="group" aria-labelledby="setJfCastHeading">
+          <h3 id="setJfCastHeading">Shared cast target</h3>
+          <div class="toggleRow">
+            <div class="toggleCopy">
+              <div class="toggleTitle">Share this cast target using an API key</div>
+              <div class="toggleHint">Let permitted Jellyfin users cast to this TV independently of the client login.</div>
+            </div>
+            <label class="toggleSwitch" for="setJfSharedCastEnabled" title="Enable shared cast target">
+              <input type="checkbox" id="setJfSharedCastEnabled" />
+              <span class="toggleTrack" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="hint" id="setJfAuthModeHint"></div>
+          <div class="hint" id="setJfCastStatus" role="status"></div>
+          <div class="fieldRow">
+            <label class="fieldLbl" for="setJfApiKey">Server API key</label>
+            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            <div class="hint">Create a key in Jellyfin Dashboard → Advanced → API Keys. It keeps the shared cast target connected while client browsing uses the login above. API keys are administrator-level secrets.</div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Clear stored API key</div>
+                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
+                <input type="checkbox" id="setJfClearApiKey" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint" id="setJfApiKeyState"></div>
+          </div>
+        </div>
+
         <div class="fieldRow">
           <label class="fieldLbl">Preferred audio language</label>
           <input id="setJfAudioLang" class="input" placeholder="e.g. en, pt-BR" />

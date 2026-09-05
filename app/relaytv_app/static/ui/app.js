@@ -2763,18 +2763,25 @@ function syncSeerrRequestModeUi(){
 }
 
 function syncJellyfinAuthModeUi(){
-  const modeSelect = document.getElementById('setJfAuthMode');
-  const mode = String(modeSelect?.value || 'user_login');
-  const sharedFields = document.getElementById('setJfSharedAuthFields');
-  const userFields = document.getElementById('setJfUserAuthFields');
+  const shared = !!document.getElementById('setJfSharedCastEnabled')?.checked;
   const hint = document.getElementById('setJfAuthModeHint');
-  if (sharedFields) sharedFields.classList.toggle('hidden', mode !== 'shared_api_key');
-  if (userFields) userFields.classList.toggle('hidden', mode !== 'user_login');
   if (hint) {
-    hint.textContent = mode === 'shared_api_key'
-      ? 'One administrator API identity advertises RelayTV to every user allowed to control shared devices.'
-      : 'The stored Jellyfin user owns the cast session and catalog; other users do not share this target identity.';
+    hint.textContent = shared
+      ? 'Requires a server API key. Client login remains active for browsing. Leave login empty for a cast-only setup.'
+      : 'Casting uses the client login’s session and server permissions. Any stored API key is retained but inactive.';
   }
+}
+
+function jellyfinCredentialsError({enabled, server, shared, apiKey, clearApiKey, apiKeyConfigured, user, password, clearPassword, passwordConfigured}){
+  if (!enabled) return '';
+  if (!server) return 'Server URL is required.';
+  const hasApiKey = !clearApiKey && (!!apiKey || apiKeyConfigured);
+  const hasPassword = !clearPassword && (!!password || passwordConfigured);
+  if (shared && !hasApiKey) return 'A server API key is required for the shared cast target.';
+  if ((!shared || user || hasPassword) && !(user && hasPassword)) {
+    return 'A username and password are required for client login. For casting only, clear the username and stored password, and enable the shared cast target.';
+  }
+  return '';
 }
 
 async function loadSettingsUi(){
@@ -2818,7 +2825,7 @@ async function loadSettingsUi(){
   const iptvEnabled = document.getElementById('setIptvEnabled');
   const jfEnabled = document.getElementById('setJfEnabled');
   const jfServerUrl = document.getElementById('setJfServerUrl');
-  const jfAuthMode = document.getElementById('setJfAuthMode');
+  const jfSharedCast = document.getElementById('setJfSharedCastEnabled');
   const jfApiKeyInput = document.getElementById('setJfApiKey');
   const jfClearApiKey = document.getElementById('setJfClearApiKey');
   const jfApiKeyState = document.getElementById('setJfApiKeyState');
@@ -2863,7 +2870,7 @@ async function loadSettingsUi(){
   );
   if (jfEnabled) jfEnabled.checked = !!cur.jellyfin_enabled;
   if (jfServerUrl) jfServerUrl.value = (cur.jellyfin_server_url || defaultJellyfinServerUrl());
-  if (jfAuthMode) jfAuthMode.value = (cur.jellyfin_auth_mode || (cur.jellyfin_api_key_configured ? 'shared_api_key' : 'user_login'));
+  if (jfSharedCast) jfSharedCast.checked = (cur.jellyfin_auth_mode || (cur.jellyfin_api_key_configured ? 'shared_api_key' : 'user_login')) === 'shared_api_key';
   syncJellyfinAuthModeUi();
   if (jfApiKeyInput) jfApiKeyInput.value = '';
   if (jfClearApiKey) jfClearApiKey.checked = false;
@@ -2883,6 +2890,22 @@ async function loadSettingsUi(){
     const hasPw = !!cur.jellyfin_password_configured;
     jfPwState.textContent = hasPw ? 'Password is stored.' : 'No password stored.';
     jfPwState.setAttribute('data-configured', hasPw ? '1' : '0');
+  }
+  const jfClientStatus = document.getElementById('setJfClientStatus');
+  const jfCastStatus = document.getElementById('setJfCastStatus');
+  if (jfClientStatus) {
+    jfClientStatus.textContent = !cur.jellyfin_enabled ? 'Client login: integration disabled.'
+      : !jfStatus ? 'Client login: status unavailable.'
+      : jfStatus.authenticated ? `Client login: connected as ${jfStatus.auth_user || cur.jellyfin_username || 'configured user'}.`
+      : jfStatus.last_auth_ok === false ? 'Client login: failed. Check the username and password.'
+      : cur.jellyfin_username ? 'Client login: waiting for sign-in.'
+      : 'Client login: not configured. Sign in above to use your personal library.';
+  }
+  if (jfCastStatus) {
+    jfCastStatus.textContent = !cur.jellyfin_enabled ? 'Cast target: integration disabled.'
+      : !jfStatus ? 'Cast target: status unavailable.'
+      : jfStatus.cast_target_ready ? `Cast target: ready (${jfStatus.cast_target_scope === 'shared' ? 'shared API key' : 'client login session'}).`
+      : 'Cast target: not ready.';
   }
   const jfBadge = document.getElementById('setJfStatus');
   if (jfBadge) {
@@ -3091,8 +3114,8 @@ function bindSettingsUi(){
   const jfApplyMsg = document.getElementById('setJfApplyResult');
   const jfCacheClearBtn = document.getElementById('setJfCacheClearBtn');
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
-  const jfAuthModeSelect = document.getElementById('setJfAuthMode');
-  if (jfAuthModeSelect) jfAuthModeSelect.onchange = syncJellyfinAuthModeUi;
+  const jfSharedCast = document.getElementById('setJfSharedCastEnabled');
+  if (jfSharedCast) jfSharedCast.onchange = syncJellyfinAuthModeUi;
   const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
   const seerrTestBtn = document.getElementById('setSeerrTestBtn');
   const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
@@ -3194,7 +3217,7 @@ function bindSettingsUi(){
     }
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
-    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
+    const jfAuthMode = document.getElementById('setJfSharedCastEnabled')?.checked ? 'shared_api_key' : 'user_login';
     const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
     const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
     const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
@@ -3208,12 +3231,14 @@ function bindSettingsUi(){
     const jfPlaybackMode = (document.getElementById('setJfPlaybackMode')?.value || 'auto').trim().toLowerCase();
     const deviceName = (document.getElementById('setDeviceName')?.value || '').trim();
 
-    if (jfEnabled) {
-      if (!jfServer) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Server URL is required.'; } return; }
-      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
-      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
-      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A server API key is required for shared cast mode.'; } return; }
-      if (jfAuthMode === 'user_login' && !hasLogin) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A username and password is required for user-scoped mode.'; } return; }
+    const jfError = jellyfinCredentialsError({
+      enabled: jfEnabled, server: jfServer, shared: jfAuthMode === 'shared_api_key',
+      apiKey: jfApiKey, clearApiKey: jfClearApiKey, apiKeyConfigured: jfApiKeyConfigured,
+      user: jfUser, password: jfPass, clearPassword: jfClearPw, passwordConfigured: jfPwConfigured,
+    });
+    if (jfError) {
+      if (jfApplyMsg) { jfApplyMsg.classList.add('err'); jfApplyMsg.textContent = jfError; }
+      return;
     }
 
     const payload = {
@@ -3371,7 +3396,7 @@ function bindSettingsUi(){
     const uploadRetentionHours = Number(document.getElementById('setUploadRetentionHours')?.value || '24');
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
-    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
+    const jfAuthMode = document.getElementById('setJfSharedCastEnabled')?.checked ? 'shared_api_key' : 'user_login';
     const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
     const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
     const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
@@ -3401,13 +3426,12 @@ function bindSettingsUi(){
       alert('Invidious server URL is required when YouTube Invidious mode is enabled.');
       return;
     }
-    if (jfEnabled) {
-      if (!jfServer) { alert(`${jfBrandName()} server URL is required.`); return; }
-      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
-      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
-      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { alert(`A ${jfBrandName()} server API key is required for shared cast mode.`); return; }
-      if (jfAuthMode === 'user_login' && !hasLogin) { alert(`A ${jfBrandName()} username and password is required for user-scoped mode.`); return; }
-    }
+    const jfError = jellyfinCredentialsError({
+      enabled: jfEnabled, server: jfServer, shared: jfAuthMode === 'shared_api_key',
+      apiKey: jfApiKey, clearApiKey: jfClearApiKey, apiKeyConfigured: jfApiKeyConfigured,
+      user: jfUser, password: jfPass, clearPassword: jfClearPw, passwordConfigured: jfPwConfigured,
+    });
+    if (jfError) { alert(jfError); return; }
     if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
     if (seerrEnabled && seerrRequestMode !== 'caller_session' && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required for shared browsing.'); return; }
 
