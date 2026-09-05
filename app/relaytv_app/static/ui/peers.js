@@ -25,10 +25,10 @@
     adopting: '',
     mode: 'send',
     items: [],
-    // Only exclusions are tracked: everything is selected by default, so an
-    // item that arrives while the sheet is open joins the send rather than
-    // being silently left out.
+    // The whole-sheet view selects new arrivals by default. A tile-scoped
+    // selection (or None) instead keeps an explicit set of selected keys.
     deselected: new Set(),
+    scopedSelection: null,
     pickSignature: '',
     lastFocus: null,
   };
@@ -123,6 +123,11 @@
     Array.from(state.deselected).forEach((key) => {
       if (!keys.has(key)) state.deselected.delete(key);
     });
+    if (state.scopedSelection !== null) {
+      rows.forEach((row) => {
+        if (!state.scopedSelection.has(row.key)) state.deselected.add(row.key);
+      });
+    }
     state.items = rows;
   }
 
@@ -140,14 +145,6 @@
 
   function selectedQueueIds(){
     return state.items.filter((row) => row.kind === 'queue' && isSelected(row) && row.queueId).map((row) => row.queueId);
-  }
-
-  function queueRowCount(){
-    return state.items.filter((row) => row.kind === 'queue').length;
-  }
-
-  function selectionCoversQueue(){
-    return selectedQueueIndexes().length === queueRowCount();
   }
 
   function syncSubtitle(){
@@ -376,12 +373,17 @@
     if (!row.sendable) return;
     if (state.deselected.has(row.key)) state.deselected.delete(row.key);
     else state.deselected.add(row.key);
+    if (state.scopedSelection !== null) {
+      if (state.deselected.has(row.key)) state.scopedSelection.delete(row.key);
+      else state.scopedSelection.add(row.key);
+    }
     setStatus('');
     render();
   }
 
   function selectAll(on){
     state.deselected.clear();
+    state.scopedSelection = on ? null : new Set();
     if (!on) state.items.forEach((row) => { if (row.sendable) state.deselected.add(row.key); });
     setStatus('');
     render();
@@ -513,10 +515,9 @@
     const keepLocal = state.mode === 'copy';
     const indexes = selectedQueueIndexes();
     const queueIds = selectedQueueIds();
-    // Omitting the selection when it covers the whole queue means the server
-    // reads the queue itself, which stays correct even if an item was added
-    // between this render and the request.
-    const scoped = selectionCoversQueue() ? {} : (queueIds.length === indexes.length ? {queue_ids: queueIds} : {indexes});
+    // Submit the displayed selection even when it currently covers every
+    // item. Items arriving after this click were never selected for transfer.
+    const scoped = queueIds.length === indexes.length ? {queue_ids: queueIds} : {indexes};
     if (selectedNow()){
       // A session is in play, so this is the handoff payload either way; the
       // mode only decides whether this device tears down afterwards.
@@ -685,14 +686,17 @@
     const scope = opts && typeof opts === 'object' ? opts : {};
     state.mode = 'send';
     state.deselected.clear();
+    state.scopedSelection = null;
     state.pickSignature = '';
     buildItems();
     if (Number.isInteger(scope.index) || scope.queueId){
+      state.scopedSelection = new Set();
       // Opened from one queue tile: that item is the whole point, so everything
       // else — including the session — starts excluded.
       state.items.forEach((row) => {
         const matches = scope.queueId ? row.queueId === String(scope.queueId) : row.index === scope.index;
         if (row.kind !== 'queue' || !matches) state.deselected.add(row.key);
+        else state.scopedSelection.add(row.key);
       });
     }
     state.lastFocus = document.activeElement;

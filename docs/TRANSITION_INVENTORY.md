@@ -95,7 +95,7 @@ The five Phase 3 review scenarios and where they are guarded at phase start:
 | --- | --- |
 | `AUTO_NEXT_SUPPRESS_UNTIL` | `playback_service.py` (2) |
 | `NOW_PLAYING` | `playback_service.py` (9)<br>`player.py` (10)<br>`routes/__init__.py` (1) |
-| `QUEUE` | `integrations/jellyfin_service.py` (4)<br>`playback_service.py` (7)<br>`player.py` (5)<br>`routes/queue.py` (8)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
+| `QUEUE` | `integrations/jellyfin_service.py` (4)<br>`playback_service.py` (8)<br>`player.py` (5)<br>`routes/queue.py` (8)<br>`routes/uploads.py` (1)<br>`upload_store.py` (1) |
 | `SESSION_POSITION` | `playback_service.py` (8)<br>`player.py` (9) |
 | `SESSION_STATE` | `playback_service.py` (8)<br>`player.py` (12)<br>`routes/__init__.py` (4) |
 | `_TEMP_PLAYBACK_STACK` | `playback_service.py` (8)<br>`routes/__init__.py` (2)<br>`routes/playback.py` (2) |

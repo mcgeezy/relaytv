@@ -27,7 +27,10 @@ Leaving the now-playing row out turns either mode into a plain queue transfer:
 That is also what happens when nothing is playing here.
 
 A `⋯` on each queue tile opens the same sheet with only that item selected, so
-one thing can be sent without deselecting everything else by hand.
+one thing can be sent without deselecting everything else by hand. New arrivals
+stay unselected in this single-item view. The queue-header sheet includes new
+arrivals while open unless you choose **None**; either way, clicking a device
+sends only the selection displayed at that moment.
 
 Nothing is sent automatically. Every transfer is an explicit action, and the
 receiving device never forwards what it was sent.
@@ -131,9 +134,10 @@ Every destructive step waits for confirmation from the other device:
   fails in transit loses nothing and leaves you watching what you were watching.
 - **Send** gives up only what the other device actually accepted. Anything it
   rejected — an unconfigured provider, say — and anything that could not travel
-  at all stays here. The items are matched by identity, not by their position
-  in the queue, so a transfer that takes a while cannot delete something that
-  moved into a sent item's slot in the meantime.
+  at all stays here. Cleanup matches stable queue IDs in one locked operation,
+  never positions or URLs. An item removed during transfer stays removed;
+  another entry with the same URL is not deleted in its place. New arrivals
+  remain local unless they were included in the submitted selection.
 - **Copy** changes nothing locally at all, so there is nothing to undo.
 - On the receiving side, a handoff takes over playback *before* importing the
   queue. A device that cannot start playing does not end up holding the items

@@ -548,7 +548,33 @@ class _RevisionedQueue(list):
     must prevent the failed play from restoring the item.
     """
 
+    def __init__(self, values=()):
+        super().__init__(self._prepare(values, ()))
+
+    @staticmethod
+    def _prepare(values, existing):
+        """Assign instance ids before entries become visible to any reader.
+
+        Writers hold QUEUE_LOCK. Preserve ids on existing entries and clone
+        repeated instances, including insertion ahead of an existing copy.
+        """
+        seen = {queue_item_id(item) for item in existing}
+        prepared = []
+        for item in values:
+            if isinstance(item, dict):
+                item_id = queue_item_id(item, create=True)
+                if item_id in seen:
+                    item = dict(item)
+                    item.pop(QUEUE_ITEM_ID_KEY, None)
+                    item_id = queue_item_id(item, create=True)
+                seen.add(item_id)
+            prepared.append(item)
+        return prepared
+
     def __setitem__(self, key, value):
+        remaining = list(self)
+        del remaining[key]
+        value = self._prepare(value, remaining) if isinstance(key, slice) else self._prepare([value], remaining)[0]
         super().__setitem__(key, value)
         _advance_queue_revision()
 
@@ -557,17 +583,15 @@ class _RevisionedQueue(list):
         _advance_queue_revision()
 
     def __iadd__(self, value):
-        result = super().__iadd__(value)
-        _advance_queue_revision()
-        return result
+        self.extend(value)
+        return self
 
     def __imul__(self, value):
-        result = super().__imul__(value)
-        _advance_queue_revision()
-        return result
+        self[:] = list(self) * value
+        return self
 
     def append(self, value) -> None:
-        super().append(value)
+        super().append(self._prepare([value], self)[0])
         _advance_queue_revision()
 
     def clear(self) -> None:
@@ -575,11 +599,11 @@ class _RevisionedQueue(list):
         _advance_queue_revision()
 
     def extend(self, values) -> None:
-        super().extend(values)
+        super().extend(self._prepare(values, self))
         _advance_queue_revision()
 
     def insert(self, index, value) -> None:
-        super().insert(index, value)
+        super().insert(index, self._prepare([value], self)[0])
         _advance_queue_revision()
 
     def pop(self, index=-1):

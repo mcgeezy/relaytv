@@ -1070,8 +1070,8 @@ def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_l
         with state.QUEUE_LOCK:
             state.ensure_queue_item_ids(state.QUEUE)
             queue = list(state.QUEUE)
-    else:
-        state.ensure_queue_item_ids(queue)
+    # Supplied snapshots already carry ids assigned at insertion under the
+    # queue lock. Publication must never mutate their shared dictionaries.
     queue = _annotate_queue_items(queue)
     qlen = int(queue_length) if queue_length is not None else len(queue)
     _ui_event_push(

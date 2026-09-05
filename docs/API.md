@@ -413,7 +413,9 @@ Queue endpoints:
   - body: `{"url"}`
 - `GET /queue`
   - queue items include an opaque `queue_id` that remains stable while the
-    item is reordered; use it for delayed or interactive mutations
+    item is reordered; use it for delayed or interactive mutations. IDs are
+    assigned before insertion becomes visible; repeated entries have distinct
+    IDs even when their URLs match
 - `POST /queue/remove`
   - preferred body: `{"queue_id": string}`; legacy `{"index": int}` remains
     supported
@@ -514,14 +516,16 @@ Send:
     drops the sent items locally, but only after the peer confirms the import,
     so a transfer that fails in transit loses nothing. Unselected items stay.
     A `move` response adds `{"moved": true, "local_queue_length"}`
-  - `move` drops only what the peer **accepted**, matched against the queue as
-    it stands when the response arrives, never by the positions captured before
-    the request. Items the peer rejected, items that could not travel (IPTV),
-    and items that shifted position while the send was in flight are all left
-    alone — a send can take tens of seconds, and reusing a stale index would
-    delete whatever had moved into that slot. If a peer reports no per-item
+  - `move` drops only what the peer **accepted**, matched atomically by stable
+    queue ID when the response arrives, never by position or URL. Accepted
+    entries are removed even if reordered; already-removed entries are ignored.
+    Rejected items, items that could not travel (IPTV), and unsent entries
+    (including duplicates of a sent URL) stay local. If a peer reports no per-item
     results and its `accepted` count does not cover everything sent, nothing is
     dropped locally
+  - the browser always submits the displayed selection explicitly, including
+    when all displayed items are selected; additions after submission are not
+    included. Omitting selectors remains supported for other API clients
   - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
   - IPTV items are reported in `rejected`, not sent: their stream URLs may
     carry credentials anywhere in the path, so no portable URL exists

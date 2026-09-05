@@ -90,6 +90,27 @@ def queue_item(item: dict) -> tuple[int, list[dict]]:
     return qlen, snapshot
 
 
+def remove_queue_items_by_id(queue_ids: set[str]) -> tuple[int, list[dict]]:
+    """Remove only the accepted queue instances after a peer transfer.
+
+    Selection and removal share one lock, including the whole-queue case.
+    Missing instances are already gone; an equal URL is never a substitute.
+    """
+    with state.QUEUE_LOCK:
+        kept = [item for item in state.QUEUE if state.queue_item_id(item) not in queue_ids]
+        removed = len(state.QUEUE) - len(kept)
+        if removed:
+            state.QUEUE[:] = kept
+        snapshot = list(state.QUEUE)
+    if removed:
+        state.persist_queue()
+        try:
+            player.prime_mpv_up_next_from_queue(force=True)
+        except Exception:
+            pass
+    return removed, snapshot
+
+
 def queue_items(items: list[dict]) -> tuple[int, list[dict]]:
     """Append several items at once, persisting and warming caches one time.
 

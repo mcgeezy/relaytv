@@ -124,74 +124,15 @@ def peers_probe_saved(peer_id: str) -> dict[str, object]:
         raise _peer_error(exc) from exc
 
 
-def _clear_local_queue() -> int:
-    """Drop the local queue after a confirmed transfer.
-
-    Delegates to the queue routes rather than touching ``state.QUEUE`` here:
-    queue writers are pinned by tests/test_transition_inventory.py, and those
-    functions already persist, re-prime mpv's up-next, and emit the UI event.
-    """
-    from .queue import clear as clear_queue
-
-    clear_queue()
-    with state.QUEUE_LOCK:
-        return len(state.QUEUE)
-
-
-def _queue_index_of(target: object) -> int | None:
-    """Locate an item in the live queue. Call with ``state.QUEUE_LOCK`` held."""
-    for index, item in enumerate(state.QUEUE):
-        if item is target:
-            return index
-    # Persisting and reloading the queue replaces the objects, so identity can
-    # legitimately miss; the URL is the next best handle on the same item.
-    url = str(target.get("url") or "") if isinstance(target, dict) else ""
-    if not url:
-        return None
-    for index, item in enumerate(state.QUEUE):
-        if isinstance(item, dict) and str(item.get("url") or "") == url:
-            return index
-    return None
-
-
 def _remove_local_queue_items(items: list[object]) -> int:
-    """Drop exactly the items the peer took, as the queue stands right now.
+    """Drop accepted queue instances atomically, ignoring any already gone."""
+    from .queue import _ui_event_push_queue
 
-    Positions from before the send are deliberately not reused. A send can take
-    tens of seconds, and auto-next or another client may have shifted the queue
-    in the meantime — reusing an index would delete whichever item had moved
-    into that slot, destroying something that was never sent. Matching the item
-    itself also leaves behind anything the peer rejected and anything that
-    could not travel at all, so giving up ownership never loses more than it
-    handed over.
-    """
-    targets = list(items or [])
-    if not targets:
-        with state.QUEUE_LOCK:
-            return len(state.QUEUE)
-
-    with state.QUEUE_LOCK:
-        current = list(state.QUEUE)
-    # The whole queue going at once is the common case; clearing keeps it to a
-    # single persist, re-prime, and UI event instead of one per item.
-    if current and len(targets) >= len(current):
-        if all(any(item is target for target in targets) for item in current):
-            return _clear_local_queue()
-
-    from .queue import QueueRemoveReq, queue_remove
-
-    for target in targets:
-        with state.QUEUE_LOCK:
-            index = _queue_index_of(target)
-        if index is None:
-            # Already gone: played out, or removed by someone else mid-transfer.
-            continue
-        try:
-            queue_remove(QueueRemoveReq(index=index))
-        except HTTPException:
-            continue
-    with state.QUEUE_LOCK:
-        return len(state.QUEUE)
+    accepted_ids = {state.queue_item_id(item) for item in items if state.queue_item_id(item)}
+    removed, snapshot = playback_service.remove_queue_items_by_id(accepted_ids)
+    if removed:
+        _ui_event_push_queue("remove", queue=snapshot, queue_length=len(snapshot), source="peer_transfer")
+    return len(snapshot)
 
 
 def _selected_indexes(queue_length: int, *, index: int | None, indexes: list[int] | None) -> list[int] | None:
