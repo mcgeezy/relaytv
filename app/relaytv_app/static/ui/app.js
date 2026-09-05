@@ -1604,13 +1604,6 @@ function renderStatus(st) {
     body.appendChild(title);
     body.appendChild(chan);
 
-    const del = document.createElement('button');
-    del.className = 'qDelBtn';
-    del.textContent = '✕';
-    del.title = 'Remove from queue';
-    del.setAttribute('aria-label', 'Remove from queue');
-    del.onclick = () => qSoftRemove(idx, item && item.queue_id);
-
     // One indirection into the tile's actions keeps the tile clean; a button
     // per action would not scale and crams tap targets together.
     const menuBtn = document.createElement('button');
@@ -1626,7 +1619,6 @@ function renderStatus(st) {
     li.appendChild(body);
     li.appendChild(handle);
     li.appendChild(menuBtn);
-    li.appendChild(del);
     ol.appendChild(li);
   });
   }

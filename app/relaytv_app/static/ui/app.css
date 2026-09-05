@@ -1922,38 +1922,6 @@
       background: rgba(34,60,120,.70);
       transform: none;
     }
-    .qDelBtn{
-      flex: 0 0 auto;
-      align-self: center;
-      min-height: 0;
-      padding: 0;
-      width: 40px;
-      height: 40px;
-      border-radius: 999px;
-      font-size: 15px;
-      font-weight: 800;
-      line-height: 1;
-      border: 1px solid rgba(255, 130, 150, .42);
-      background: rgba(20, 26, 40, .60);
-      color: rgba(255, 165, 180, .90);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      z-index: 2;
-      box-shadow: none;
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
-    }
-    .qDelBtn:hover{
-      background: rgba(220, 38, 38, .88);
-      border-color: rgba(255, 150, 165, .70);
-      color: #fff;
-      box-shadow: 0 0 12px rgba(255, 120, 140, .30);
-      transform: none;
-    }
-    .qDelBtn:active{ transform: none; }
-
     .qTile.qPendingRemove{ opacity: .42; filter: saturate(.6); }
     .qTile.qPendingRemove .qTitleText{ text-decoration: line-through; }
 
@@ -2638,8 +2606,7 @@
    none) keep the always-visible inline buttons. */
 @media (hover: hover) and (min-width: 761px){
   .qTile .qHandle,
-  .qTile .qMenuBtn,
-  .qTile .qDelBtn{
+  .qTile .qMenuBtn{
     position: absolute;
     top: calc(50% - 20px);
     opacity: 0;
@@ -2647,15 +2614,12 @@
     transition: opacity .15s ease;
     z-index: 3;
   }
-  .qTile .qHandle{ right: 98px; }
-  .qTile .qMenuBtn{ right: 54px; }
-  .qTile .qDelBtn{ right: 10px; }
+  .qTile .qHandle{ right: 54px; }
+  .qTile .qMenuBtn{ right: 10px; }
   .qTile:hover .qHandle,
   .qTile:hover .qMenuBtn,
-  .qTile:hover .qDelBtn,
   .qTile:focus-within .qHandle,
-  .qTile:focus-within .qMenuBtn,
-  .qTile:focus-within .qDelBtn{
+  .qTile:focus-within .qMenuBtn{
     opacity: 1;
     pointer-events: auto;
   }

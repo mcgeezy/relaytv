@@ -208,6 +208,8 @@ def test_ui_smoke() -> None:
     assert js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
     assert js.count("jellyfin_auth_mode: jfAuthMode") == 2
     assert 'id="setJfClearPassword"' in response.text
+    assert "menu.appendChild(_queueMenuItem('Remove'" in js
+    assert "qDelBtn" not in js
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
     assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in js
     assert 'class="toggleSwitch"' in response.text
