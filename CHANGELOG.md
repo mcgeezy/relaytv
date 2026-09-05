@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3](https://github.com/mcgeezy/relaytv/compare/v0.10.2...v0.10.3) (2026-09-05)
+
+
+### Bug Fixes
+
+* improve remote, queue, Jellyfin, and idle surfaces ([#88](https://github.com/mcgeezy/relaytv/issues/88)) ([b4d6fa8](https://github.com/mcgeezy/relaytv/commit/b4d6fa852c383ddac1b072dcc61822fa0c4a1c96))
+
 ## [0.10.2](https://github.com/mcgeezy/relaytv/compare/v0.10.1...v0.10.2) (2026-08-30)
 
 
