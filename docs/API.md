@@ -427,6 +427,9 @@ Queue endpoints:
     consumed from the queue only when the play is accepted. A failed play is
     restored at its original position unless a newer queue mutation occurred;
     in that case the newer user decision wins
+  - if Stop/Close or another Play supersedes resolution, returns `409` rather
+    than reporting a successful play. The same guarded restoration applies;
+    a concurrent queue Clear still wins
 - `POST /queue/move`
   - preferred body: `{"queue_id": string, "to_queue_id": string}`; legacy
     `{"from_index": int, "to_index": int}` remains supported
@@ -546,6 +549,11 @@ Send:
   - without `keep_local` the local session is cleared, not closed: the session
     moved to the peer, so this device returns to idle with nothing to resume
     rather than showing the item it gave away
+  - local teardown is conditional on the captured playback generation still
+    being current. If another Play or Stop/Close intervenes, the peer keeps
+    what it received but the replacement local state is untouched and
+    `local_stopped` is `false`. Otherwise any remaining local queue entries
+    become eligible for normal autoplay after teardown
   - returns `{"playing", "resume_pos", "sent", "accepted", "rejected",
     "queue_length", "local_stopped", "local_queue_length", "kept_local", "peer"}`
 

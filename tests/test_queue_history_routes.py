@@ -334,6 +334,7 @@ def test_queue_play_delegates_and_consumes_item(monkeypatch) -> None:
         "reason": "queue_play",
         "title_hint": "B",
         "resume_pos": 8.5,
+        "raise_on_superseded": True,
     }
     assert [event["action"] for event in events] == ["remove"]
     assert events[0]["queue_length"] == 2

@@ -139,6 +139,11 @@ Every destructive step waits for confirmation from the other device:
   another entry with the same URL is not deleted in its place. New arrivals
   remain local unless they were included in the submitted selection.
 - **Copy** changes nothing locally at all, so there is nothing to undo.
+- A delayed handoff cannot stop a newer local session or undo a subsequent
+  Stop/Close. Its response reports `local_stopped: false` when playback changed
+  during transfer. The peer still keeps the confirmed transfer. If the original
+  session is still current, it is cleared and the normal autoplay worker can
+  advance into any queue entries left here.
 - On the receiving side, a handoff takes over playback *before* importing the
   queue. A device that cannot start playing does not end up holding the items
   either.

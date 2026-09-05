@@ -118,6 +118,7 @@ def _play_now_queue_item(item: dict[str, object], *, resume_pos: float | None) -
         reason="queue_play",
         title_hint=str(item.get("title") or "").strip() or None,
         resume_pos=resume_pos,
+        raise_on_superseded=True,
     )
 
 
@@ -651,10 +652,12 @@ def queue_play(req: QueueRemoveReq):
         playable_item.pop(state.QUEUE_ITEM_ID_KEY, None)
         with play_scope:
             result = _play_now_queue_item(playable_item, resume_pos=resume_pos)
-    except Exception:
+    except Exception as exc:
         restored = _restore(owned_mutations=play_scope.mutations)
         if restored is not None:
             _ui_event_push_queue("add", queue=restored, queue_length=len(restored), source="queue_play_restore")
+        if isinstance(exc, player.PlaybackSupersededError):
+            raise HTTPException(status_code=409, detail="playback superseded by a newer action") from exc
         raise
 
     try:

@@ -252,7 +252,7 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
     # that is exactly right — this device continues into whatever it kept.
     result["local_queue_length"] = _remove_local_queue_items(accepted)
 
-    from .playback import clear_now_playing
+    from .playback import _idle_visual_surface_enabled_for_player
 
     stopped = False
     try:
@@ -260,11 +260,9 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
         # would leave this device showing the item it just gave away and
         # offering to resume it — playing the same thing in two rooms. The
         # session moved, so it is cleared here.
-        clear_now_playing()
-        # A handoff leaves this device available rather than deliberately
-        # parked, so the long auto-next hold that clearing applies is dropped.
-        playback_service.clear_auto_next_suppression()
-        stopped = True
+        stopped = playback_service.complete_peer_handoff(
+            snapshot, idle_surface_enabled=_idle_visual_surface_enabled_for_player(),
+        )
     except Exception as exc:  # pragma: no cover - local teardown is best effort
         logger.warning("peer_handoff_local_stop_failed error=%s", exc)
     result["local_stopped"] = stopped

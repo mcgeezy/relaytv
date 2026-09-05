@@ -6,6 +6,7 @@ and player adapters — no FastAPI route context. Route-level contract tests
 for the same behavior live in tests/test_jellyfin_routes.py.
 """
 import pytest
+import threading
 
 from relaytv_app import playback_service, player, state, video_profile
 from relaytv_app.integrations import jellyfin_receiver, jellyfin_service
@@ -35,6 +36,58 @@ def test_catalog_token_uses_receiver_selected_identity(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_receiver, "catalog_token", lambda: "selected-token")
 
     assert jellyfin_service.catalog_token() == "selected-token"
+
+
+@pytest.mark.parametrize("mutation", ["replace", "reorder", "retarget"])
+def test_preference_lookup_preserves_newer_queue_decisions(monkeypatch, mutation):
+    old = {"url": "http://jellyfin.local/Videos/old/stream", "provider": "jellyfin",
+           "jellyfin_item_id": "old", "title": "Old"}
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([old]))
+    old_id = state.queue_item_id(old)
+    monkeypatch.setattr(state, "persist_queue", lambda: True)
+    monkeypatch.setattr(player, "prime_mpv_up_next_from_queue", lambda **kw: None)
+    entered, release = threading.Event(), threading.Event()
+
+    def lookup(item_id):
+        entered.set()
+        assert release.wait(5)
+        return "1", ""
+
+    monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lookup)
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        jellyfin_service.retarget_queue_stream_preferences()
+    ), daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        with state.QUEUE_LOCK:
+            if mutation == "replace":
+                state.QUEUE.clear()
+            elif mutation == "retarget":
+                state.QUEUE[0]["url"] += "?AudioStreamIndex=2"
+            else:
+                state.QUEUE[0]["thumbnail"] = "https://example.com/new-art.jpg"
+            state.QUEUE.insert(0, {"url": "https://example.com/new", "title": "New"})
+        new_id = state.queue_item_id(state.QUEUE[0])
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert state.queue_item_id(state.QUEUE[0]) == new_id
+    if mutation == "replace":
+        assert [item["title"] for item in state.QUEUE] == ["New"]
+        assert results == [0]
+    else:
+        assert [item["title"] for item in state.QUEUE] == ["New", "Old"]
+        assert state.queue_item_id(state.QUEUE[1]) == old_id
+        if mutation == "retarget":
+            assert "AudioStreamIndex=2" in state.QUEUE[1]["url"]
+            assert results == [0]
+        else:
+            assert "audioStreamIndex=1" in state.QUEUE[1]["url"]
+            assert state.QUEUE[1]["thumbnail"] == "https://example.com/new-art.jpg"
+            assert results == [1]
 
 
 # --- command normalization -------------------------------------------------

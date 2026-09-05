@@ -26,9 +26,14 @@ milestone logs live in git history.
   (play-now, queue, close, advance, resume, natural end, stop) — the
   only writer of playback session state outside `state.py`. Also owns the
   read-only handoff snapshot (what is playing, and where) that device transfer
-  sends to a peer.
+  sends to a peer, and generation-conditional handoff completion. Local teardown
+  holds the runtime lock before the playback-intent lock; peer I/O and media
+  resolution stay outside both. Remaining local entries advance through the
+  existing autoplay worker after teardown.
 - `app/relaytv_app/player.py`: playback process/runtime adapter (mpv
-  lifecycle, Qt shell, CEC, track/property control).
+  lifecycle, Qt shell, CEC, track/property control). Queue Play-now opts into an
+  explicit superseded exception so canceled resolution can use revision-guarded
+  queue rollback; legacy player callers retain their normal return contract.
 - `app/relaytv_app/postlive_relay.py`: local relay for still-processing
   YouTube replays (see `POSTLIVE_REPLAY.md`).
 - `app/relaytv_app/state.py`: persisted queue, history, session, and
@@ -58,7 +63,9 @@ milestone logs live in git history.
 - `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin/Emby
   product behavior — command ingress, stream selection and transcode
   policy, track preferences, metadata enrichment, stopped/progress
-  payloads.
+  payloads. Slow queue preference lookups publish field updates by stable
+  queue ID only while the captured URL is still current; they never replace
+  the live queue with their earlier snapshot.
 - `app/relaytv_app/integrations/jellyfin_receiver.py`: Jellyfin/Emby
   transport, auth, server-type detection, status, catalog cache, and
   progress/stopped calls.

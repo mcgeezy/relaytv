@@ -312,6 +312,7 @@ def _play_now_item(
     reason: str | None = None,
     title_hint: str | None = None,
     resume_pos: float | None = None,
+    raise_on_superseded: bool = False,
 ) -> dict:
     """Run the play-now transition without flattening an existing item.
 
@@ -327,6 +328,7 @@ def _play_now_item(
         preserved = _preserve_current_to_queue_front()
 
     try:
+        strict_options = {"raise_on_superseded": True} if raise_on_superseded else {}
         now = playback_service.play_now(
             item_or_text,
             use_resolver=True,
@@ -334,6 +336,7 @@ def _play_now_item(
             clear_queue=False,
             mode=(reason or "play_now"),
             start_pos=resume_pos,
+            **strict_options,
         )
     except Exception as exc:
         if isinstance(exc, player.YouTubePostLiveProcessingError):

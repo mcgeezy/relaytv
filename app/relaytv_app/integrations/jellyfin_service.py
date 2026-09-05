@@ -1204,13 +1204,13 @@ def preferred_stream_indices(
 def retarget_queue_stream_preferences() -> int:
     """Best-effort: rewrite queued Jellyfin URLs using current language prefs."""
     with state.QUEUE_LOCK:
-        snapshot = list(state.QUEUE)
+        state.ensure_queue_item_ids(state.QUEUE)
+        snapshot = [dict(entry) if isinstance(entry, dict) else entry for entry in state.QUEUE]
     if not snapshot:
         return 0
 
-    changed = 0
-    updated_queue: list[object] = list(snapshot)
-    for i, entry in enumerate(snapshot):
+    updates: dict[str, tuple[str, str, str]] = {}
+    for entry in snapshot:
         if not isinstance(entry, dict):
             continue
         raw_url = str(entry.get("url") or "").strip()
@@ -1238,18 +1238,26 @@ def retarget_queue_stream_preferences() -> int:
         )
         next_url = apply_media_source_param(next_url, media_source_id=media_source_id)
         if next_url and next_url != raw_url:
-            out_entry = dict(entry)
-            out_entry["url"] = next_url
-            if item_id:
-                out_entry["jellyfin_item_id"] = item_id
-            updated_queue[i] = out_entry
-            changed += 1
+            updates[state.queue_item_id(entry)] = (raw_url, next_url, item_id)
 
-    if changed <= 0:
+    if not updates:
         return 0
 
+    changed = 0
     with state.QUEUE_LOCK:
-        state.QUEUE[:] = updated_queue
+        for i, entry in enumerate(state.QUEUE):
+            update = updates.get(state.queue_item_id(entry))
+            if not update or str(entry.get("url") or "").strip() != update[0]:
+                continue
+            out_entry = dict(entry)
+            out_entry["url"] = update[1]
+            if update[2]:
+                out_entry["jellyfin_item_id"] = update[2]
+            state.QUEUE[i] = out_entry
+            changed += 1
+    if not changed:
+        logger.info("queue_preferences_publish_skipped reason=queue_changed")
+        return 0
     try:
         state.persist_queue()
     except Exception:

@@ -50,6 +50,7 @@ def play_now(
     clear_queue: bool,
     mode: str,
     start_pos: float | None = None,
+    raise_on_superseded: bool = False,
 ):
     """Start playing an item or raw URL immediately.
 
@@ -65,6 +66,8 @@ def play_now(
     }
     if start_pos is not None:
         kwargs["start_pos"] = start_pos
+    if raise_on_superseded:
+        kwargs["raise_on_superseded"] = True
     return player.play_item(item_or_text, **kwargs)
 
 
@@ -382,6 +385,7 @@ def handoff_snapshot() -> dict[str, Any] | None:
     nothing to hand off. IPTV sessions are excluded deliberately — their stream
     URLs are re-resolved from a local catalog the other device does not have.
     """
+    intent = player.current_playback_intent()
     if not player.is_playing():
         return None
     now = state.NOW_PLAYING
@@ -412,7 +416,34 @@ def handoff_snapshot() -> dict[str, Any] | None:
         duration = float(dur) if dur is not None else None
     except Exception:
         duration = None
-    return {"item": dict(now), "position": position, "duration": duration}
+    if not player.playback_intent_current(intent):
+        return None
+    return {"item": dict(now), "position": position, "duration": duration, "playback_intent": intent}
+
+
+def complete_peer_handoff(snapshot: dict, *, idle_surface_enabled: bool) -> bool:
+    """Stop only the session we sent; leave a replacement entirely alone."""
+    intent = snapshot.get("playback_intent")
+    if not isinstance(intent, int):
+        return False
+
+    def finish() -> None:
+        discard_interrupted_playback_state("peer_handoff")
+        # Use the process adapters, not stop_all/clear_session: this callback
+        # already owns retirement under the intent lock.
+        kept_shell = idle_surface_enabled and player.stop_playback_keep_qt_shell()
+        if not kept_shell:
+            player.stop_mpv(restart_splash=idle_surface_enabled)
+        state.update_session(now_playing=None, session_position=None, session_state="idle")
+        # The autoplay worker advances remaining local entries. Do not start
+        # a resolver inside this critical section or claim a newer Play here.
+        clear_auto_next_suppression()
+
+    with player.MPV_LOCK:
+        completed = player.finish_playback_intent(intent, finish)
+    if not completed:
+        logger.info("peer_handoff_teardown_skipped reason=playback_changed")
+    return completed
 
 
 def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:
