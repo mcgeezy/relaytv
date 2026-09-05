@@ -25,10 +25,10 @@
     adopting: '',
     mode: 'send',
     items: [],
-    // Only exclusions are tracked: everything is selected by default, so an
-    // item that arrives while the sheet is open joins the send rather than
-    // being silently left out.
+    // The whole-sheet view selects new arrivals by default. A tile-scoped
+    // selection (or None) instead keeps an explicit set of selected keys.
     deselected: new Set(),
+    scopedSelection: null,
     pickSignature: '',
     lastFocus: null,
   };
@@ -88,6 +88,7 @@
     return {
       kind,
       index,
+      queueId: String(source.queue_id || ''),
       url,
       provider,
       title: String(source.title || source.name || url || 'Untitled'),
@@ -107,12 +108,12 @@
     if (playbackActive() && np && np.url) rows.push(itemRow(np, 'now', null));
     (Array.isArray(st.queue) ? st.queue : []).forEach((item, idx) => rows.push(itemRow(item, 'queue', idx)));
 
-    // Key by URL rather than position: auto-next advancing while the sheet is
-    // open shifts every index, and a selection must not slide onto a different
-    // item. The ordinal disambiguates the same URL queued twice.
+    // Queue instance ids survive reordering and distinguish duplicate URLs.
+    // The URL fallback keeps compatibility with an older server during a
+    // rolling upgrade.
     const seen = Object.create(null);
     rows.forEach((row) => {
-      const base = `${row.kind}:${row.url}`;
+      const base = row.queueId ? `${row.kind}:id:${row.queueId}` : `${row.kind}:${row.url}`;
       const n = (seen[base] = (seen[base] || 0) + 1);
       row.key = n === 1 ? base : `${base}#${n}`;
     });
@@ -122,6 +123,11 @@
     Array.from(state.deselected).forEach((key) => {
       if (!keys.has(key)) state.deselected.delete(key);
     });
+    if (state.scopedSelection !== null) {
+      rows.forEach((row) => {
+        if (!state.scopedSelection.has(row.key)) state.deselected.add(row.key);
+      });
+    }
     state.items = rows;
   }
 
@@ -137,12 +143,8 @@
     return state.items.filter((row) => row.kind === 'queue' && isSelected(row)).map((row) => row.index);
   }
 
-  function queueRowCount(){
-    return state.items.filter((row) => row.kind === 'queue').length;
-  }
-
-  function selectionCoversQueue(){
-    return selectedQueueIndexes().length === queueRowCount();
+  function selectedQueueIds(){
+    return state.items.filter((row) => row.kind === 'queue' && isSelected(row) && row.queueId).map((row) => row.queueId);
   }
 
   function syncSubtitle(){
@@ -371,12 +373,17 @@
     if (!row.sendable) return;
     if (state.deselected.has(row.key)) state.deselected.delete(row.key);
     else state.deselected.add(row.key);
+    if (state.scopedSelection !== null) {
+      if (state.deselected.has(row.key)) state.scopedSelection.delete(row.key);
+      else state.scopedSelection.add(row.key);
+    }
     setStatus('');
     render();
   }
 
   function selectAll(on){
     state.deselected.clear();
+    state.scopedSelection = on ? null : new Set();
     if (!on) state.items.forEach((row) => { if (row.sendable) state.deselected.add(row.key); });
     setStatus('');
     render();
@@ -507,10 +514,10 @@
     const id = encodeURIComponent(peer.id);
     const keepLocal = state.mode === 'copy';
     const indexes = selectedQueueIndexes();
-    // Omitting the selection when it covers the whole queue means the server
-    // reads the queue itself, which stays correct even if an item was added
-    // between this render and the request.
-    const scoped = selectionCoversQueue() ? {} : {indexes};
+    const queueIds = selectedQueueIds();
+    // Submit the displayed selection even when it currently covers every
+    // item. Items arriving after this click were never selected for transfer.
+    const scoped = queueIds.length === indexes.length ? {queue_ids: queueIds} : {indexes};
     if (selectedNow()){
       // A session is in play, so this is the handoff payload either way; the
       // mode only decides whether this device tears down afterwards.
@@ -679,13 +686,17 @@
     const scope = opts && typeof opts === 'object' ? opts : {};
     state.mode = 'send';
     state.deselected.clear();
+    state.scopedSelection = null;
     state.pickSignature = '';
     buildItems();
-    if (Number.isInteger(scope.index)){
+    if (Number.isInteger(scope.index) || scope.queueId){
+      state.scopedSelection = new Set();
       // Opened from one queue tile: that item is the whole point, so everything
       // else — including the session — starts excluded.
       state.items.forEach((row) => {
-        if (row.kind !== 'queue' || row.index !== scope.index) state.deselected.add(row.key);
+        const matches = scope.queueId ? row.queueId === String(scope.queueId) : row.index === scope.index;
+        if (row.kind !== 'queue' || !matches) state.deselected.add(row.key);
+        else state.scopedSelection.add(row.key);
       });
     }
     state.lastFocus = document.activeElement;

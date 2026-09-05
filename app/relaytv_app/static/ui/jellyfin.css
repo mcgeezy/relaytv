@@ -1749,3 +1749,89 @@
     max-height: 220px;
   }
 }
+
+/* --- UX overhaul: search list, library chip, poster fallback, primary action --- */
+
+/* Search results read as a full list instead of a cut-off horizontal rail. */
+.jfSearchList{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: visible;
+  padding-bottom: 0;
+}
+.jfSearchList .jfItem{
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding: 10px;
+  grid-template-rows: none;
+}
+.jfSearchList .jfThumb{
+  flex: 0 0 auto;
+  width: 128px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+}
+.jfSearchList .jfMeta{
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+}
+.jfSearchList .jfQuickRow{ margin-top: 8px; }
+.jfSearchList .jfQuickBtn{
+  height: 36px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+@media (max-width: 420px){
+  .jfSearchList .jfThumb{ width: 104px; }
+}
+
+/* Library hint chip: disambiguates same-title duplicates across libraries. */
+.jfLibChip{
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: rgba(159, 208, 255, .85);
+  border: 1px solid rgba(96, 170, 255, .38);
+  background: rgba(43, 108, 231, .16);
+}
+
+/* Titled tile swapped in when a poster fails to load. */
+.jfThumbFallback{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  padding: 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: rgba(214, 231, 255, .82);
+  background:
+    radial-gradient(80% 80% at 30% 20%, rgba(43, 108, 231, .30), transparent 60%),
+    linear-gradient(150deg, rgba(20, 34, 66, .90), rgba(8, 14, 30, .95));
+}
+
+/* Primary detail action (Resume / Play Now). */
+.jfActionRow .btn.primary{
+  border: 1px solid rgba(125, 211, 252, .62);
+  background: linear-gradient(180deg, rgba(56, 189, 248, .85), rgba(37, 99, 235, .80));
+  color: #f0f9ff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, .32);
+}
+.jfActionRow .btn.primary:hover{
+  background: linear-gradient(180deg, rgba(94, 207, 255, .92), rgba(59, 130, 246, .86));
+}

@@ -162,57 +162,55 @@ Shared URL behavior:
 
 ## Shared Cast Target Authentication
 
-RelayTV Settings requires an explicit **Cast target identity** choice:
+Settings separates **Client login** from **Shared cast target**:
 
-- **Shared cast target (server API key)** advertises one userless device to
-  every Jellyfin user whose policy allows shared-device control.
-- **User-scoped cast target (username and password)** owns the control session
-  and catalog as the one stored Jellyfin account.
+- **Client login** uses a username and password for RelayTV's media browser,
+  personal library, and resume points. It remains active when shared casting
+  is enabled. Leave the preferred user ID blank to use the signed-in account.
+- **Share this cast target using an API key** enables a userless cast device
+  for every Jellyfin user whose policy allows shared-device control. Create a
+  key in **Dashboard → Advanced → API Keys**, paste it, and apply. Name the key
+  **RelayTV** to label the cast target `<configured device name> - RelayTV`.
 
-For shared mode, create a key in the Jellyfin admin dashboard under
-**Advanced → API Keys**, select shared mode, paste the key, and apply. Name the
-key **RelayTV** if you want Jellyfin's cast menu to label the target as
-`<configured device name> - RelayTV`.
+Both credential sections remain visible. Use **Apply Jellyfin / Emby** or the
+main Settings **Apply** button to save both together. Blank password/key fields
+preserve stored secrets; the explicit clear switches remove them. Client login
+and cast-target status are shown separately, so failed login remains visible
+while shared casting is connected.
 
-The API key owns RelayTV's control plane:
+With shared casting enabled, the API key owns the cast websocket, capability
+registration, session readback, and playing/progress/stopped reports. Local client
+catalog/media requests use the login-session token when login is configured.
+Incoming server-socket casts resolve media with the cast API key, independently
+of the local login; their cached catalog results are kept separate from browser
+results.
 
-- cast websocket;
-- capability registration and session readback;
-- playing, progress, and stopped reports.
+The browsing login uses a separate device identity (`<device ID>-client`) so
+it does not attach a user to the shared cast device. A pending or failed login
+does not fall back to the administrator API key for catalog access.
 
-This registers RelayTV as a userless shared device. The same selected API key
-is used for control and catalog/media requests; stored username/password
-credentials are inactive while shared mode is selected. Jellyfin API keys are
-administrator-level credentials. RelayTV stores the value server-side, returns
-only `jellyfin_api_key_configured` to the Settings UI, and never includes the
-key in status responses or logs. Leaving the field blank preserves the stored
-key; use **Clear stored API key** to remove it explicitly.
+Existing API-key-only setups remain supported: leave username/password empty
+for casting only, or supply a preferred user ID for API-based catalog browsing.
+With shared casting off, the login session provides both browsing and the
+existing user-scoped cast target; a stored API key remains inactive. Other users
+can only control that session when their Jellyfin policies permit it. The
+existing `jellyfin_auth_mode` setting is retained for API compatibility and
+selects cast identity (`shared_api_key` or `user_login`).
 
-Jellyfin still applies its own user policy. The target is available to all
-users whose policy allows shared-device control; RelayTV cannot make it appear
-for a user whose Jellyfin **shared device control** permission is disabled.
+Jellyfin API keys are administrator-level credentials. RelayTV stores the key
+server-side and returns only `jellyfin_api_key_configured` to Settings. Keys and
+passwords are omitted from status responses and logs.
 
-Jellyfin Web reserves the cast menu's second row for an authenticated session
-user. A shared API-key target is intentionally userless, so its API-key name is
-shown as the client suffix on the first row instead. Assigning a user merely to
-populate that second row would make the target user-scoped again.
-
-In user-login mode, the login-session token is used for both control and
-catalog/media requests; a stored API key is inactive. Other users may not see
-or control that session unless their Jellyfin policies permit remote control
-of another user's session. Retaining inactive credentials makes switching
-modes reversible, but RelayTV never silently combines the two identities.
-
-An API-key-only configuration can run the shared cast target without a
-username or password. For catalog browsing in that mode, set a preferred user
-ID when user-specific catalog routes are required.
+Jellyfin still enforces shared-device control permissions. Its cast menu's
+second row is reserved for an authenticated session user; the shared target is
+userless, so the API-key name appears as the client suffix on the first row.
 
 ### Caller-specific watch state
 
 A command from another Jellyfin user reaches the shared target, including its
 `ControllingUserId`, but RelayTV does not yet use that identity to change the
 catalog profile or attribute playback reports. The on-device catalog continues
-to use the configured preferred user when one is set, and resume/played state
+to use the client login or configured preferred user, and resume/played state
 is not guaranteed to update for the person who initiated a remote cast.
 User-login mode is one fixed operator-configured account, not per-browser
 caller identity. Dynamically attributing shared casts to the initiating caller
@@ -229,16 +227,17 @@ Shared cast-target authentication:
   - Equivalent to the Server API key field in Settings.
   - Preferred for a Jellyfin target shared across permitted users.
   - An environment-provided API key implies shared mode for backward
-    compatibility; the explicit selector is persisted when configured in the UI.
+    compatibility; the shared cast toggle persists the explicit mode when configured in the UI.
 
-User-scoped cast-target authentication:
+Client login (also used for casting when shared casting is off):
 
 - `RELAYTV_JELLYFIN_AUTH_ENABLED=1` (default enabled)
 - `RELAYTV_JELLYFIN_USERNAME=<jellyfin-user>`
 - `RELAYTV_JELLYFIN_PASSWORD=<jellyfin-password>`
 
-- Select **User-scoped cast target** in Settings. Username/password without an
-  API key also defaults to user-login mode for backward compatibility.
+- Configure **Client login** in Settings. Username/password without an API key
+  defaults to user-login mode for backward compatibility. Enable the separate
+  shared cast toggle and add an API key to use both roles together.
 
 Optional identity:
 

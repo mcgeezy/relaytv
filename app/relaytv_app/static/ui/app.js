@@ -547,6 +547,8 @@ function bindQueuePointerDnD(){
 
   let startFrom = null;
   let overTo = null;
+  let startQueueId = '';
+  let overQueueId = '';
   let startX = 0, startY = 0;
   let active = false;
   const MOVE_PX = 4;
@@ -556,6 +558,8 @@ function bindQueuePointerDnD(){
     active = false;
     startFrom = null;
     overTo = null;
+    startQueueId = '';
+    overQueueId = '';
     __dragStartTs = 0;
     document.body.classList.remove('noScroll');
     document.querySelectorAll('.qTile.dragging').forEach(x => x.classList.remove('dragging'));
@@ -567,10 +571,12 @@ function bindQueuePointerDnD(){
   const finish = async () => {
     const from = startFrom;
     const to = overTo;
+    const fromQueueId = startQueueId;
+    const toQueueId = overQueueId;
     const didDrag = active; // capture before cleanup() resets state
     cleanup();
     if (didDrag && from != null && to != null && from !== to) {
-      await qMove(from, to);
+      await qMove(from, to, fromQueueId, toQueueId);
     }
   };
 
@@ -588,6 +594,8 @@ function bindQueuePointerDnD(){
 
     startFrom = fromIdx;
     overTo = fromIdx;
+    startQueueId = String(tile.dataset.queueId || '');
+    overQueueId = startQueueId;
     startX = e.clientX || 0;
     startY = e.clientY || 0;
     active = false;
@@ -615,6 +623,7 @@ function bindQueuePointerDnD(){
     const toIdx = parseInt(tile.dataset.index || '', 10);
     if (isNaN(toIdx)) return;
     overTo = toIdx;
+    overQueueId = String(tile.dataset.queueId || '');
 
     document.querySelectorAll('.qTile.dragOver').forEach(x => x.classList.remove('dragOver'));
     tile.classList.add('dragOver');
@@ -646,6 +655,8 @@ function _isHiddenEl(el){
 
 function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
+  if (__queueMenuEl) return true;
+  if (__pendingRemove) return true;
   const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
@@ -664,6 +675,10 @@ function _uiPushLayer(){
 }
 
 function _uiCloseTopLayerFromNav(){
+  if (__queueMenuEl) {
+    closeQueueMenu();
+    return true;
+  }
   if (window.relaytvSeerr && window.relaytvSeerr.isDetailOpen()) {
     window.relaytvSeerr.closeDetail({fromNav:true});
     return true;
@@ -738,6 +753,35 @@ function _looksLikeJellyfinMediaUrl(u){
   return false;
 }
 
+const __favBrandColors = {
+  'youtube.com': '#ff0033', 'youtu.be': '#ff0033',
+  'rumble.com': '#85c742',
+  'twitch.tv': '#9146ff',
+  'vimeo.com': '#17b3e8',
+  'odysee.com': '#ef1970',
+  'dailymotion.com': '#00aaff',
+  'peertube.tv': '#f1680d',
+  'bitchute.com': '#d2441c',
+  'x.com': '#000000', 'twitter.com': '#1d9bf0',
+};
+const __favPalette = ['#2b6ce7', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#db2777', '#4f46e5'];
+
+/* Local-first provider badge: a letter tile rendered as an SVG data URI.
+   Deterministic per host, needs no network and leaks nothing to third
+   parties (the Google S2 favicon service used to see every queued domain). */
+function _letterFaviconDataUri(host){
+  const clean = String(host || '').replace(/^www\./, '');
+  const letter = (clean[0] || '?').toUpperCase();
+  let color = __favBrandColors[clean] || __favBrandColors[clean.split('.').slice(-2).join('.')] || '';
+  if (!color) {
+    let h = 0;
+    for (let i = 0; i < clean.length; i++) h = (h * 31 + clean.charCodeAt(i)) >>> 0;
+    color = __favPalette[h % __favPalette.length];
+  }
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='${color}'/><text x='32' y='43' font-family='system-ui,Segoe UI,sans-serif' font-size='32' font-weight='700' fill='#ffffff' text-anchor='middle'>${letter}</text></svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
 function faviconUrl(input){
   const obj = (input && typeof input === 'object') ? input : null;
   const u = obj ? String(obj.url || '') : String(input || '');
@@ -747,8 +791,7 @@ function faviconUrl(input){
   }
   const host = _safeUrlHost(u);
   if (!host) return '';
-  // Google S2 favicon service (works well without CORS headaches for <img>)
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+  return _letterFaviconDataUri(host);
 }
 
 function displaySub(item){
@@ -1083,9 +1126,11 @@ function _applyQueueSnapshot(payload){
   return true;
 }
 
-async function qRemove(index){
+async function qRemove(index, queueId){
   try {
-    const res = await fetch('/queue/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index})});
+    const request = {index};
+    if (queueId) request.queue_id = String(queueId);
+    const res = await fetch('/queue/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(request)});
     let payload = null;
     try { payload = await res.json(); } catch(_) {}
     if (!res.ok) {
@@ -1099,9 +1144,194 @@ async function qRemove(index){
   await refresh();
 }
 
-async function qMove(from_index, to_index){
+async function qPlayNow(index, queueId){
   try {
-    const res = await fetch('/queue/move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({from_index, to_index})});
+    const request = {index};
+    if (queueId) request.queue_id = String(queueId);
+    const res = await fetch('/queue/play', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(request)});
+    let payload = null;
+    try { payload = await res.json(); } catch(_) {}
+    if (!res.ok) {
+      console.warn('queue/play failed', res.status, payload);
+      _showToast((payload && payload.detail) ? String(payload.detail) : 'Could not play that item', {kind:'warn'});
+    } else {
+      _applyQueueSnapshot(payload);
+    }
+  } catch (e) {
+    console.warn('queue/play error', e);
+    _showToast('Could not play that item', {kind:'warn'});
+  }
+  await refresh();
+}
+
+/* ---- queue tile action menu (Play now / Send to device / Remove) ---- */
+let __queueMenuEl = null;
+let __queueMenuBackdrop = null;
+
+function _queueMenuKeyHandler(ev){
+  if (ev.key === 'Escape') {
+    ev.stopPropagation();
+    closeQueueMenu();
+  }
+}
+
+function closeQueueMenu(){
+  if (__queueMenuBackdrop) { __queueMenuBackdrop.remove(); __queueMenuBackdrop = null; }
+  if (__queueMenuEl) { __queueMenuEl.remove(); __queueMenuEl = null; }
+  document.removeEventListener('keydown', _queueMenuKeyHandler, true);
+}
+
+function _queueMenuItem(label, svgPath, onPick, cls){
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'qPopItem' + (cls ? ' ' + cls : '');
+  btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${svgPath}" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span></span>`;
+  btn.querySelector('span').textContent = label;
+  btn.onclick = () => { closeQueueMenu(); onPick(); };
+  return btn;
+}
+
+function openQueueMenu(index, item, anchor){
+  closeQueueMenu();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'qPopBackdrop';
+  backdrop.addEventListener('pointerdown', (ev) => { ev.preventDefault(); closeQueueMenu(); });
+
+  const menu = document.createElement('div');
+  menu.className = 'qPopMenu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Queue item actions');
+  const queueId = String((item && item.queue_id) || '');
+  menu.appendChild(_queueMenuItem('Play now', 'M8 5.5v13l11-6.5z', () => qPlayNow(index, queueId)));
+  menu.appendChild(_queueMenuItem('Send to device', 'M4 12h13m0 0-4.5-4.5M17 12l-4.5 4.5M20 5v14', () => {
+    if (window.relaytvPeers) window.relaytvPeers.open({index, queueId, title: (item && (item.title || item.url)) || ''});
+  }));
+  menu.appendChild(_queueMenuItem('Remove', 'M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12', () => qSoftRemove(index, queueId), 'danger'));
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(menu);
+  __queueMenuBackdrop = backdrop;
+  __queueMenuEl = menu;
+  document.addEventListener('keydown', _queueMenuKeyHandler, true);
+
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  left = Math.max(8, left);
+  let top = r.bottom + 6;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  const first = menu.querySelector('button');
+  if (first) first.focus({preventScroll: true});
+}
+
+/* ---- undo toast + soft remove ---- */
+let __toastEl = null;
+let __toastTimer = null;
+
+function _hideToast(){
+  if (__toastTimer) { clearTimeout(__toastTimer); __toastTimer = null; }
+  if (__toastEl) { __toastEl.remove(); __toastEl = null; }
+}
+
+function _showToast(label, {actionLabel = null, onAction = null, duration = 4000, kind = 'info'} = {}){
+  _hideToast();
+  const el = document.createElement('div');
+  el.className = 'qToast ' + kind;
+  el.setAttribute('role', 'status');
+  const span = document.createElement('span');
+  span.className = 'qToastLabel';
+  span.textContent = label;
+  el.appendChild(span);
+  if (actionLabel && onAction) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'qToastAction';
+    btn.textContent = actionLabel;
+    btn.onclick = () => { onAction(); };
+    el.appendChild(btn);
+  }
+  document.body.appendChild(el);
+  __toastEl = el;
+  if (duration > 0) __toastTimer = setTimeout(_hideToast, duration);
+  return el;
+}
+
+/* Soft remove: the tile collapses immediately but the server delete only
+   fires when the undo window closes. If the tab goes away first, the item
+   simply stays queued — the safer failure direction. */
+let __pendingRemove = null;
+let __removeFlushPromise = null;
+
+function _commitPendingRemove(pending){
+  if (!pending) return Promise.resolve();
+  const flush = Promise.resolve(qRemove(pending.index, pending.queueId)).finally(() => {
+    if (__removeFlushPromise === flush) __removeFlushPromise = null;
+    if (typeof __lastStatus !== 'undefined' && __lastStatus &&
+        typeof _uiRefreshInteractionLockActive === 'function' && !_uiRefreshInteractionLockActive()) {
+      renderStatus(__lastStatus);
+    }
+  });
+  __removeFlushPromise = flush;
+  return flush;
+}
+
+function _flushPendingRemove(){
+  if (__removeFlushPromise) return __removeFlushPromise;
+  if (!__pendingRemove) return Promise.resolve();
+  const pending = __pendingRemove;
+  __pendingRemove = null;
+  clearTimeout(pending.timer);
+  return _commitPendingRemove(pending);
+}
+
+function qSoftRemove(index, queueId){
+  if (__removeFlushPromise) {
+    _showToast('Finishing the previous removal…', {duration: 2500});
+    return;
+  }
+  if (__pendingRemove) {
+    _flushPendingRemove();
+    // The selected index came from the pre-removal queue. Do not reuse it
+    // after the first request shifts the server-side indexes; the refreshed
+    // queue will expose a safe target for the user's next action.
+    _showToast('Previous removal saved — select Remove again', {duration: 3000});
+    return;
+  }
+  const tile = document.querySelector(`.qTile[data-index="${index}"]`);
+  if (tile) tile.classList.add('qPendingRemove');
+  const timer = setTimeout(() => {
+    const pending = __pendingRemove;
+    __pendingRemove = null;
+    _hideToast();
+    if (pending) _commitPendingRemove(pending);
+  }, 6000);
+  __pendingRemove = { index, queueId: String(queueId || ''), timer };
+  _showToast('Removed from queue', {
+    actionLabel: 'Undo',
+    duration: 6000,
+    onAction: () => {
+      if (__pendingRemove) clearTimeout(__pendingRemove.timer);
+      __pendingRemove = null;
+      _hideToast();
+      const t = document.querySelector(`.qTile[data-index="${index}"]`);
+      if (t) t.classList.remove('qPendingRemove');
+      if (typeof __lastStatus !== 'undefined' && __lastStatus &&
+          typeof _uiRefreshInteractionLockActive === 'function' && !_uiRefreshInteractionLockActive()) {
+        renderStatus(__lastStatus);
+      }
+    },
+  });
+}
+
+async function qMove(from_index, to_index, queueId, toQueueId){
+  try {
+    const request = {from_index, to_index};
+    if (queueId) request.queue_id = String(queueId);
+    if (toQueueId) request.to_queue_id = String(toQueueId);
+    const res = await fetch('/queue/move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(request)});
     let payload = null;
     try { payload = await res.json(); } catch(_) {}
     if (!res.ok) {
@@ -1195,15 +1425,25 @@ function renderStatus(st) {
   const paused = !!st.paused && hasNow;
   const activelyPlaying = !!st.playing && !st.paused && hasNow;
   const liveNow = !!hasNow && _isNowPlayingLive(np);
+  // Ended/closed: an item is still on the card but playback is down and no
+  // transition is in flight. This is the state that used to render as a live
+  // card with dead "--:--" times.
+  const ended = hasNow && !st.playing && !st.paused
+    && !st.transitioning_between_items && !st.transition_in_progress
+    && String(st.playback_runtime_state || '') !== 'buffering';
+  const resumePos = (np && typeof np.resume_pos === 'number' && Number.isFinite(np.resume_pos)) ? np.resume_pos : null;
+  const npDuration = (np && typeof np.duration_sec === 'number' && Number.isFinite(np.duration_sec) && np.duration_sec > 0) ? np.duration_sec : null;
+  const effDuration = st.duration != null ? st.duration : (ended ? npDuration : null);
   if (nowCardEl){
     nowCardEl.classList.toggle('isIdle', !hasNow);
     nowCardEl.classList.toggle('isPaused', paused);
     nowCardEl.classList.toggle('isLive', liveNow);
+    nowCardEl.classList.toggle('isEnded', ended);
   }
   const stateTag = document.getElementById('nowStateTag');
   if (stateTag) {
-    stateTag.textContent = paused ? 'Paused' : 'Live';
-    stateTag.classList.toggle('hidden', !paused && !liveNow);
+    stateTag.textContent = paused ? 'Paused' : (ended ? 'Ended' : 'Live');
+    stateTag.classList.toggle('hidden', !paused && !liveNow && !ended);
     stateTag.classList.toggle('live', liveNow && !paused);
   }
   const stateDot = document.getElementById('nowStateDot');
@@ -1212,8 +1452,8 @@ function renderStatus(st) {
     stateDot.classList.toggle('live', liveNow && activelyPlaying);
   }
 
-  const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);
-  const durTxt = liveNow ? (paused ? 'Paused' : 'Streaming') : fmtTime(st.duration);
+  const posTxt = liveNow ? 'LIVE' : fmtTime((ended && st.position == null && resumePos != null) ? resumePos : st.position);
+  const durTxt = liveNow ? (paused ? 'Paused' : 'Streaming') : fmtTime(effDuration);
 
   // Only overwrite the pos readout if not scrubbing
   if (!__scrubbing) document.getElementById('pos').textContent = posTxt;
@@ -1233,7 +1473,12 @@ function renderStatus(st) {
     if (muteLbl) muteLbl.textContent = mute ? 'Unmute' : 'Mute';
   }
   const ppb = document.getElementById('playPauseBtn');
-  if (ppb) ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
+  if (ppb) {
+    ppb.classList.toggle('isPlaying', !!st.playing && !st.paused);
+    // In the ended state the button resumes the closed session; say so.
+    const ppLbl = ppb.querySelector('.rLabel');
+    if (ppLbl) ppLbl.textContent = ended ? 'Resume' : 'Play/Pause';
+  }
   const qCount = document.getElementById('queueCount');
   if (qCount) qCount.textContent = String(st.queue_length || 0);
   const qClear = document.getElementById('queueClearBtn');
@@ -1250,10 +1495,34 @@ function renderStatus(st) {
   // progress bar fill
   if (!__scrubbing && liveNow) {
     _setProgressFill(0);
+  } else if (!__scrubbing && ended && resumePos != null && effDuration != null && effDuration > 0) {
+    // Show where a resume would pick up, not an empty bar.
+    _setProgressFill(resumePos / effDuration);
   } else if (!__scrubbing && st.position != null && st.duration != null && st.duration > 0) {
     _setProgressFill(st.position / st.duration);
   } else if (!__scrubbing && (!st.playing || st.duration == null || st.duration <= 0)) {
     _setProgressFill(0);
+  }
+
+  // up-next strip: the queue's head with a direct play action, shown whenever
+  // nothing live is on the card (ended item or empty idle card).
+  const upNextEl = document.getElementById('nowUpNext');
+  if (upNextEl) {
+    const nextItem = (Array.isArray(st.queue) && st.queue.length) ? st.queue[0] : null;
+    const showUpNext = !!nextItem && (ended || !hasNow);
+    upNextEl.classList.toggle('hidden', !showUpNext);
+    if (showUpNext) {
+      const titleEl = document.getElementById('upNextTitle');
+      if (titleEl) titleEl.textContent = nextItem.title || nextItem.url || '';
+      const thumbEl = document.getElementById('upNextThumb');
+      if (thumbEl) {
+        const tu = thumbUrl(nextItem);
+        thumbEl.style.backgroundImage = tu ? `url('${tu}')` : '';
+        thumbEl.classList.toggle('hasThumb', !!tu);
+      }
+      const playBtn = document.getElementById('upNextPlayBtn');
+      if (playBtn) playBtn.onclick = () => qPlayNow(0, nextItem.queue_id);
+    }
   }
 
   // queue list
@@ -1265,12 +1534,15 @@ function renderStatus(st) {
   }
 
   if (!__draggingQueue) {
+    // The re-render detaches the tile the menu was anchored to.
+    closeQueueMenu();
     ol.innerHTML = '';
     (st.queue || []).forEach((item, idx) => {
     const li = document.createElement('li');
     li.className = 'qTile';
     if (item && item.available === false) li.classList.add('isUnavailable');
     li.dataset.index = String(idx);
+    li.dataset.queueId = String((item && item.queue_id) || '');
 
     // Contained 16:9 artwork (not a background: text stays on clean glass)
     const thumb = document.createElement('div');
@@ -1332,29 +1604,21 @@ function renderStatus(st) {
     body.appendChild(title);
     body.appendChild(chan);
 
-    const del = document.createElement('button');
-    del.className = 'qDelBtn';
-    del.textContent = '✕';
-    del.title = 'Remove from queue';
-    del.onclick = () => qRemove(idx);
-
-    // Send just this item. One indirection into the device sheet keeps the tile
-    // clean; a device picker per tile would not scale.
-    const send = document.createElement('button');
-    send.className = 'qSendItemBtn';
-    send.type = 'button';
-    send.title = 'Send this item to another device';
-    send.setAttribute('aria-label', 'Send this item to another device');
-    send.textContent = '⋯';
-    send.onclick = () => {
-      if (window.relaytvPeers) window.relaytvPeers.open({index: idx, title: item.title || item.url || ''});
-    };
+    // One indirection into the tile's actions keeps the tile clean; a button
+    // per action would not scale and crams tap targets together.
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'qMenuBtn';
+    menuBtn.type = 'button';
+    menuBtn.title = 'Item actions';
+    menuBtn.setAttribute('aria-label', 'Item actions');
+    menuBtn.setAttribute('aria-haspopup', 'menu');
+    menuBtn.textContent = '⋯';
+    menuBtn.onclick = () => openQueueMenu(idx, item, menuBtn);
 
     li.appendChild(thumb);
     li.appendChild(body);
     li.appendChild(handle);
-    li.appendChild(send);
-    li.appendChild(del);
+    li.appendChild(menuBtn);
     ol.appendChild(li);
   });
   }
@@ -1736,6 +2000,24 @@ function bindHeaderMenu(){
 }
 
 function _fmtTs(ts){
+  // Compact: time-only today, short date within the year, year beyond that.
+  // The verbose locale string used to eat the whole meta line and truncate
+  // the mode suffix ("auto ne…") it shares the row with.
+  try {
+    const d = new Date((ts||0)*1000);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    }
+    if (d.getFullYear() === now.getFullYear()) {
+      return d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    }
+    return d.toLocaleString([], {month:'short', day:'numeric', year:'numeric'});
+  } catch (_) { return ''; }
+}
+
+function _fmtTsFull(ts){
   try {
     const d = new Date((ts||0)*1000);
     if (isNaN(d.getTime())) return '';
@@ -1844,6 +2126,7 @@ async function renderHistory(){
     const when = document.createElement('div');
     when.className = 'histSub';
     when.textContent = `${_fmtTs(it.ts)} · ${String(it.mode || '').replace(/_/g, ' ')}`.replace(/ · $/, '');
+    when.title = _fmtTsFull(it.ts);
 
     const tags = document.createElement('div');
     tags.className = 'histTags';
@@ -1915,6 +2198,24 @@ function bindHistoryUi(){
   if (btn) btn.onclick = openHistory;
   if (closeBtn) closeBtn.onclick = closeHistory;
   if (clearBtn) clearBtn.onclick = async () => {
+    // Two-tap guard: wiping the whole history record deserves a beat.
+    if (clearBtn.dataset.armed !== '1') {
+      clearBtn.dataset.armed = '1';
+      clearBtn.dataset.label = clearBtn.textContent;
+      clearBtn.textContent = 'Clear all?';
+      clearBtn.classList.add('armed');
+      setTimeout(() => {
+        if (clearBtn.dataset.armed === '1') {
+          delete clearBtn.dataset.armed;
+          clearBtn.textContent = clearBtn.dataset.label || 'Clear';
+          clearBtn.classList.remove('armed');
+        }
+      }, 3500);
+      return;
+    }
+    delete clearBtn.dataset.armed;
+    clearBtn.textContent = clearBtn.dataset.label || 'Clear';
+    clearBtn.classList.remove('armed');
     await fetch('/history/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
     await renderHistory();
   };
@@ -2454,18 +2755,25 @@ function syncSeerrRequestModeUi(){
 }
 
 function syncJellyfinAuthModeUi(){
-  const modeSelect = document.getElementById('setJfAuthMode');
-  const mode = String(modeSelect?.value || 'user_login');
-  const sharedFields = document.getElementById('setJfSharedAuthFields');
-  const userFields = document.getElementById('setJfUserAuthFields');
+  const shared = !!document.getElementById('setJfSharedCastEnabled')?.checked;
   const hint = document.getElementById('setJfAuthModeHint');
-  if (sharedFields) sharedFields.classList.toggle('hidden', mode !== 'shared_api_key');
-  if (userFields) userFields.classList.toggle('hidden', mode !== 'user_login');
   if (hint) {
-    hint.textContent = mode === 'shared_api_key'
-      ? 'One administrator API identity advertises RelayTV to every user allowed to control shared devices.'
-      : 'The stored Jellyfin user owns the cast session and catalog; other users do not share this target identity.';
+    hint.textContent = shared
+      ? 'Requires a server API key. Client login remains active for browsing. Leave login empty for a cast-only setup.'
+      : 'Casting uses the client login’s session and server permissions. Any stored API key is retained but inactive.';
   }
+}
+
+function jellyfinCredentialsError({enabled, server, shared, apiKey, clearApiKey, apiKeyConfigured, user, password, clearPassword, passwordConfigured}){
+  if (!enabled) return '';
+  if (!server) return 'Server URL is required.';
+  const hasApiKey = !clearApiKey && (!!apiKey || apiKeyConfigured);
+  const hasPassword = !clearPassword && (!!password || passwordConfigured);
+  if (shared && !hasApiKey) return 'A server API key is required for the shared cast target.';
+  if ((!shared || user || hasPassword) && !(user && hasPassword)) {
+    return 'A username and password are required for client login. For casting only, clear the username and stored password, and enable the shared cast target.';
+  }
+  return '';
 }
 
 async function loadSettingsUi(){
@@ -2509,7 +2817,7 @@ async function loadSettingsUi(){
   const iptvEnabled = document.getElementById('setIptvEnabled');
   const jfEnabled = document.getElementById('setJfEnabled');
   const jfServerUrl = document.getElementById('setJfServerUrl');
-  const jfAuthMode = document.getElementById('setJfAuthMode');
+  const jfSharedCast = document.getElementById('setJfSharedCastEnabled');
   const jfApiKeyInput = document.getElementById('setJfApiKey');
   const jfClearApiKey = document.getElementById('setJfClearApiKey');
   const jfApiKeyState = document.getElementById('setJfApiKeyState');
@@ -2554,7 +2862,7 @@ async function loadSettingsUi(){
   );
   if (jfEnabled) jfEnabled.checked = !!cur.jellyfin_enabled;
   if (jfServerUrl) jfServerUrl.value = (cur.jellyfin_server_url || defaultJellyfinServerUrl());
-  if (jfAuthMode) jfAuthMode.value = (cur.jellyfin_auth_mode || (cur.jellyfin_api_key_configured ? 'shared_api_key' : 'user_login'));
+  if (jfSharedCast) jfSharedCast.checked = (cur.jellyfin_auth_mode || (cur.jellyfin_api_key_configured ? 'shared_api_key' : 'user_login')) === 'shared_api_key';
   syncJellyfinAuthModeUi();
   if (jfApiKeyInput) jfApiKeyInput.value = '';
   if (jfClearApiKey) jfClearApiKey.checked = false;
@@ -2574,6 +2882,22 @@ async function loadSettingsUi(){
     const hasPw = !!cur.jellyfin_password_configured;
     jfPwState.textContent = hasPw ? 'Password is stored.' : 'No password stored.';
     jfPwState.setAttribute('data-configured', hasPw ? '1' : '0');
+  }
+  const jfClientStatus = document.getElementById('setJfClientStatus');
+  const jfCastStatus = document.getElementById('setJfCastStatus');
+  if (jfClientStatus) {
+    jfClientStatus.textContent = !cur.jellyfin_enabled ? 'Client login: integration disabled.'
+      : !jfStatus ? 'Client login: status unavailable.'
+      : jfStatus.authenticated ? `Client login: connected as ${jfStatus.auth_user || cur.jellyfin_username || 'configured user'}.`
+      : jfStatus.last_auth_ok === false ? 'Client login: failed. Check the username and password.'
+      : cur.jellyfin_username ? 'Client login: waiting for sign-in.'
+      : 'Client login: not configured. Sign in above to use your personal library.';
+  }
+  if (jfCastStatus) {
+    jfCastStatus.textContent = !cur.jellyfin_enabled ? 'Cast target: integration disabled.'
+      : !jfStatus ? 'Cast target: status unavailable.'
+      : jfStatus.cast_target_ready ? `Cast target: ready (${jfStatus.cast_target_scope === 'shared' ? 'shared API key' : 'client login session'}).`
+      : 'Cast target: not ready.';
   }
   const jfBadge = document.getElementById('setJfStatus');
   if (jfBadge) {
@@ -2782,8 +3106,8 @@ function bindSettingsUi(){
   const jfApplyMsg = document.getElementById('setJfApplyResult');
   const jfCacheClearBtn = document.getElementById('setJfCacheClearBtn');
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
-  const jfAuthModeSelect = document.getElementById('setJfAuthMode');
-  if (jfAuthModeSelect) jfAuthModeSelect.onchange = syncJellyfinAuthModeUi;
+  const jfSharedCast = document.getElementById('setJfSharedCastEnabled');
+  if (jfSharedCast) jfSharedCast.onchange = syncJellyfinAuthModeUi;
   const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
   const seerrTestBtn = document.getElementById('setSeerrTestBtn');
   const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
@@ -2885,7 +3209,7 @@ function bindSettingsUi(){
     }
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
-    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
+    const jfAuthMode = document.getElementById('setJfSharedCastEnabled')?.checked ? 'shared_api_key' : 'user_login';
     const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
     const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
     const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
@@ -2899,12 +3223,14 @@ function bindSettingsUi(){
     const jfPlaybackMode = (document.getElementById('setJfPlaybackMode')?.value || 'auto').trim().toLowerCase();
     const deviceName = (document.getElementById('setDeviceName')?.value || '').trim();
 
-    if (jfEnabled) {
-      if (!jfServer) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='Server URL is required.'; } return; }
-      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
-      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
-      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A server API key is required for shared cast mode.'; } return; }
-      if (jfAuthMode === 'user_login' && !hasLogin) { if (jfApplyMsg){ jfApplyMsg.classList.add('err'); jfApplyMsg.textContent='A username and password is required for user-scoped mode.'; } return; }
+    const jfError = jellyfinCredentialsError({
+      enabled: jfEnabled, server: jfServer, shared: jfAuthMode === 'shared_api_key',
+      apiKey: jfApiKey, clearApiKey: jfClearApiKey, apiKeyConfigured: jfApiKeyConfigured,
+      user: jfUser, password: jfPass, clearPassword: jfClearPw, passwordConfigured: jfPwConfigured,
+    });
+    if (jfError) {
+      if (jfApplyMsg) { jfApplyMsg.classList.add('err'); jfApplyMsg.textContent = jfError; }
+      return;
     }
 
     const payload = {
@@ -3062,7 +3388,7 @@ function bindSettingsUi(){
     const uploadRetentionHours = Number(document.getElementById('setUploadRetentionHours')?.value || '24');
     const jfEnabled = !!document.getElementById('setJfEnabled')?.checked;
     const jfServer = (document.getElementById('setJfServerUrl')?.value || '').trim();
-    const jfAuthMode = String(document.getElementById('setJfAuthMode')?.value || 'user_login');
+    const jfAuthMode = document.getElementById('setJfSharedCastEnabled')?.checked ? 'shared_api_key' : 'user_login';
     const jfApiKey = (document.getElementById('setJfApiKey')?.value || '').trim();
     const jfClearApiKey = !!document.getElementById('setJfClearApiKey')?.checked;
     const jfApiKeyConfigured = (document.getElementById('setJfApiKeyState')?.getAttribute('data-configured') || '') === '1';
@@ -3092,13 +3418,12 @@ function bindSettingsUi(){
       alert('Invidious server URL is required when YouTube Invidious mode is enabled.');
       return;
     }
-    if (jfEnabled) {
-      if (!jfServer) { alert(`${jfBrandName()} server URL is required.`); return; }
-      const hasApiKey = !!jfApiKey || (jfApiKeyConfigured && !jfClearApiKey);
-      const hasLogin = !!jfUser && (!!jfPass || (jfPwConfigured && !jfClearPw));
-      if (jfAuthMode === 'shared_api_key' && !hasApiKey) { alert(`A ${jfBrandName()} server API key is required for shared cast mode.`); return; }
-      if (jfAuthMode === 'user_login' && !hasLogin) { alert(`A ${jfBrandName()} username and password is required for user-scoped mode.`); return; }
-    }
+    const jfError = jellyfinCredentialsError({
+      enabled: jfEnabled, server: jfServer, shared: jfAuthMode === 'shared_api_key',
+      apiKey: jfApiKey, clearApiKey: jfClearApiKey, apiKeyConfigured: jfApiKeyConfigured,
+      user: jfUser, password: jfPass, clearPassword: jfClearPw, passwordConfigured: jfPwConfigured,
+    });
+    if (jfError) { alert(jfError); return; }
     if (seerrEnabled && !seerrServerUrl) { alert('Seerr server URL is required.'); return; }
     if (seerrEnabled && seerrRequestMode !== 'caller_session' && !seerrApiKey && (!seerrApiKeyConfigured || seerrClearApiKey)) { alert('Seerr API key is required for shared browsing.'); return; }
 

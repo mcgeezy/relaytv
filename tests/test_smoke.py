@@ -176,7 +176,10 @@ def test_ui_smoke() -> None:
     assert 'id="nHeroArt"' in response.text
     assert 'id="nowStateDot"' in response.text
     assert 'function _isNowPlayingLive(np)' in js
-    assert "const posTxt = liveNow ? 'LIVE' : fmtTime(st.position);" in js
+    assert "const posTxt = liveNow ? 'LIVE' : fmtTime((ended && st.position == null && resumePos != null) ? resumePos : st.position);" in js
+    assert 'id="nowUpNext"' in response.text
+    assert 'id="upNextPlayBtn"' in response.text
+    assert ".nowCard.isIdle .nIdleMsg{ display: block; }" in css
     assert ".nowCard.isLive .progress{ display: none; }" in css
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
@@ -197,14 +200,16 @@ def test_ui_smoke() -> None:
     assert 'id="setYtUseInvidious"' in response.text
     assert 'id="setIdleQrEnabled"' in response.text
     assert 'id="setJfEnabled"' in response.text
-    assert 'id="setJfAuthMode"' in response.text
-    assert 'value="shared_api_key"' in response.text
-    assert 'value="user_login"' in response.text
+    assert 'id="setJfSharedCastEnabled"' in response.text
+    assert 'id="setJfClientHeading"' in response.text
+    assert 'id="setJfCastHeading"' in response.text
     assert 'id="setJfApiKey"' in response.text
     assert 'id="setJfClearApiKey"' in response.text
     assert js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
     assert js.count("jellyfin_auth_mode: jfAuthMode") == 2
     assert 'id="setJfClearPassword"' in response.text
+    assert "menu.appendChild(_queueMenuItem('Remove'" in js
+    assert "qDelBtn" not in js
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
     assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in js
     assert 'class="toggleSwitch"' in response.text

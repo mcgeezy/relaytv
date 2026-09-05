@@ -701,6 +701,27 @@ def playback_intent_current(intent: int) -> bool:
         return intent == _PLAYBACK_INTENT
 
 
+def current_playback_intent() -> int:
+    with _INTENT_LOCK:
+        return _PLAYBACK_INTENT
+
+
+def finish_playback_intent(intent: int, effect: Callable[[], None]) -> bool:
+    """Retire and finish only the captured generation, as one owned effect.
+
+    Caller holds MPV_LOCK first, matching the load path's lock order. The
+    callback may stop the local runtime, but must not resolve media, perform
+    peer I/O, or call another intent-claiming transition.
+    """
+    global _PLAYBACK_INTENT
+    with _INTENT_LOCK:
+        if intent != _PLAYBACK_INTENT:
+            return False
+        _PLAYBACK_INTENT += 1
+        effect()
+        return True
+
+
 def retire_playback_intents(reason: str = "") -> int:
     """Retire every unresolved play. Called by Stop, Close, and resume-clear.
 
@@ -714,6 +735,8 @@ def retire_playback_intents(reason: str = "") -> int:
 
 class _PlaybackSuperseded(Exception):
     """Raised inside play_item when a newer intent has taken over."""
+
+PlaybackSupersededError = _PlaybackSuperseded
 
 IPC_PATH = os.getenv("MPV_IPC_PATH", "/tmp/mpv.sock")
 SPLASH_PROC: subprocess.Popen | None = None
@@ -5036,7 +5059,8 @@ def _runtime_gap_completion_plausible(now: dict | None) -> bool:
     return elapsed >= required_elapsed
 
 
-def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mode: str, start_pos: float | None = None):
+def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mode: str, start_pos: float | None = None,
+              *, raise_on_superseded: bool = False):
     """Play a queue item dict or a raw shared URL/text."""
     # Claim before any resolving, IPTV lookup, relay preparation, or
     # availability wait, so this play both supersedes older ones and can be
@@ -5057,6 +5081,8 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
         # resolving. Report whatever actually owns playback now rather than
         # this call's stale intention.
         logger.info("play_item_superseded stage=%s intent=%d mode=%s", exc, intent, mode)
+        if raise_on_superseded:
+            raise
         current = state.NOW_PLAYING
         return current if isinstance(current, dict) else {}
 

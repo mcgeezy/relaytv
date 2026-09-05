@@ -412,10 +412,27 @@ Queue endpoints:
 - `POST /v1/queue/add`
   - body: `{"url"}`
 - `GET /queue`
+  - queue items include an opaque `queue_id` that remains stable while the
+    item is reordered; use it for delayed or interactive mutations. IDs are
+    assigned before insertion becomes visible; repeated entries have distinct
+    IDs even when their URLs match
 - `POST /queue/remove`
-  - body: `{"index": int}`
+  - preferred body: `{"queue_id": string}`; legacy `{"index": int}` remains
+    supported
+- `POST /queue/play`
+  - preferred body: `{"queue_id": string}`; legacy `{"index": int}` remains
+    supported
+  - plays the queued item immediately, preserving current playback to the
+    front of the queue (same semantics as `POST /history/play`); the item is
+    consumed from the queue only when the play is accepted. A failed play is
+    restored at its original position unless a newer queue mutation occurred;
+    in that case the newer user decision wins
+  - if Stop/Close or another Play supersedes resolution, returns `409` rather
+    than reporting a successful play. The same guarded restoration applies;
+    a concurrent queue Clear still wins
 - `POST /queue/move`
-  - body: `{"from_index": int, "to_index": int}`
+  - preferred body: `{"queue_id": string, "to_queue_id": string}`; legacy
+    `{"from_index": int, "to_index": int}` remains supported
 - `POST /queue/dedupe`
 - `POST /clear`
   - clears the queue
@@ -489,32 +506,38 @@ Registry:
 Send:
 
 - `POST /peers/{peer_id}/send`
-  - body: `{"mode": "append"|"replace"|"move", "index"?, "indexes"?}`
-  - omit both selectors to send the whole queue. `indexes` sends just those
+  - body: `{"mode": "append"|"replace"|"move", "queue_id"?, "queue_ids"?,
+    "index"?, "indexes"?}`
+  - omit all selectors to send the whole queue. `indexes` sends just those
     queue positions, in queue order; `index` is the older single-item form and
-    still works. An explicit empty `indexes` is a `400`, not a no-op, and any
-    out-of-range position is a `400` before anything is sent
+    still works. New clients should use the stable id forms so a selection
+    cannot move onto another item. An explicit empty selector list is a `400`,
+    not a no-op; an unknown id is a `409`, and an out-of-range position is a
+    `400` before anything is sent
   - `append` and `replace` are copies: the sending device keeps its queue.
     `move` gives up ownership — it imports as `append` on the peer and then
     drops the sent items locally, but only after the peer confirms the import,
     so a transfer that fails in transit loses nothing. Unselected items stay.
     A `move` response adds `{"moved": true, "local_queue_length"}`
-  - `move` drops only what the peer **accepted**, matched against the queue as
-    it stands when the response arrives, never by the positions captured before
-    the request. Items the peer rejected, items that could not travel (IPTV),
-    and items that shifted position while the send was in flight are all left
-    alone — a send can take tens of seconds, and reusing a stale index would
-    delete whatever had moved into that slot. If a peer reports no per-item
+  - `move` drops only what the peer **accepted**, matched atomically by stable
+    queue ID when the response arrives, never by position or URL. Accepted
+    entries are removed even if reordered; already-removed entries are ignored.
+    Rejected items, items that could not travel (IPTV), and unsent entries
+    (including duplicates of a sent URL) stay local. If a peer reports no per-item
     results and its `accepted` count does not cover everything sent, nothing is
     dropped locally
+  - the browser always submits the displayed selection explicitly, including
+    when all displayed items are selected; additions after submission are not
+    included. Omitting selectors remains supported for other API clients
   - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
   - IPTV items are reported in `rejected`, not sent: their stream URLs may
     carry credentials anywhere in the path, so no portable URL exists
 - `POST /peers/{peer_id}/handoff`
-  - body: `{"indexes"?, "keep_local"?}`; an empty body (or none) hands over the
-    current playback plus the whole queue and stops here
-  - `indexes` restricts which queue items travel with the session; the rest stay
-    here and this device advances into them instead of going idle
+  - body: `{"queue_ids"?, "indexes"?, "keep_local"?}`; an empty body (or none)
+    hands over the current playback plus the whole queue and stops here
+  - `queue_ids` (preferred) or `indexes` restrict which queue items travel with
+    the session; the rest stay here and this device advances into them instead
+    of going idle
   - `keep_local` sends exactly the same payload but skips every local teardown,
     so both devices play the same thing from the same position. This is the UI's
     **Copy**; it defaults to `false` so an unasked-for handoff still moves the
@@ -526,6 +549,11 @@ Send:
   - without `keep_local` the local session is cleared, not closed: the session
     moved to the peer, so this device returns to idle with nothing to resume
     rather than showing the item it gave away
+  - local teardown is conditional on the captured playback generation still
+    being current. If another Play or Stop/Close intervenes, the peer keeps
+    what it received but the replacement local state is untouched and
+    `local_stopped` is `false`. Otherwise any remaining local queue entries
+    become eligible for normal autoplay after teardown
   - returns `{"playing", "resume_pos", "sent", "accepted", "rejected",
     "queue_length", "local_stopped", "local_queue_length", "kept_local", "peer"}`
 

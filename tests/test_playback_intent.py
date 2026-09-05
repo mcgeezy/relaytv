@@ -11,8 +11,11 @@ import inspect
 import threading
 
 import pytest
+from fastapi.testclient import TestClient
 
 from relaytv_app import player, state
+from relaytv_app import routes
+from relaytv_app.main import create_app
 
 
 @pytest.fixture(autouse=True)
@@ -99,6 +102,114 @@ def _play_in_thread(url, results, errors):
 
 
 # --- the primitives ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("clear_queue", [False, True])
+def test_queue_play_superseded_during_resolution(harness, monkeypatch, clear_queue):
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([
+        {"url": "https://youtu.be/slow", "title": "Selected"},
+    ]))
+    selected_id = state.queue_item_id(state.QUEUE[0])
+    monkeypatch.setattr(state, "persist_queue_payload", lambda payload: True)
+    monkeypatch.setattr(player, "is_playing", lambda: False)
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    monkeypatch.setattr(player, "prime_mpv_up_next_from_queue", lambda **kw: None)
+    monkeypatch.setattr(routes, "_ensure_notification_surface", lambda **kw: None)
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kw: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *a, **kw: None)
+    client = TestClient(create_app(testing=True))
+    responses = []
+    worker = threading.Thread(target=lambda: responses.append(client.post(
+        "/queue/play", json={"queue_id": selected_id},
+    )), daemon=True)
+    worker.start()
+    try:
+        assert harness["resolving"].wait(5)
+        assert client.post("/close").status_code == 200
+        if clear_queue:
+            assert client.post("/clear").status_code == 200
+    finally:
+        harness["gate"].set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert responses and responses[0].status_code == 409
+    assert "superseded" in responses[0].json()["detail"]
+    assert harness["loaded"] == []
+    assert [state.queue_item_id(item) for item in state.QUEUE] == ([] if clear_queue else [selected_id])
+
+
+def test_strict_play_still_loads_when_not_superseded(harness):
+    harness["gate"].set()
+    result = player.play_item(
+        {"url": "https://youtu.be/normal"}, use_resolver=True, cec=False,
+        clear_queue=False, mode="queue_play", raise_on_superseded=True,
+    )
+    assert result["url"] == "https://youtu.be/normal"
+    assert len(harness["loaded"]) == 1
+
+
+def test_handoff_teardown_serializes_with_a_new_play_claim(monkeypatch):
+    from relaytv_app import playback_service
+
+    monkeypatch.setattr(state, "NOW_PLAYING", {"url": "https://example.com/a"})
+    intent = player.claim_playback_intent()
+    entered, release, claiming, claimed = (threading.Event() for _ in range(4))
+    results = []
+
+    def stop(**kwargs):
+        entered.set()
+        assert release.wait(5)
+
+    def claim():
+        claiming.set()
+        player.claim_playback_intent()
+        claimed.set()
+
+    monkeypatch.setattr(player, "stop_mpv", stop)
+    finisher = threading.Thread(target=lambda: results.append(playback_service.complete_peer_handoff(
+        {"playback_intent": intent}, idle_surface_enabled=False,
+    )), daemon=True)
+    newcomer = threading.Thread(target=claim, daemon=True)
+    finisher.start()
+    try:
+        assert entered.wait(5)
+        newcomer.start()
+        assert claiming.wait(5)
+        assert not claimed.wait(0.05), "new playback claimed ownership during old-session teardown"
+    finally:
+        release.set()
+        finisher.join(5)
+        if newcomer.ident is not None:
+            newcomer.join(5)
+    assert not finisher.is_alive() and not newcomer.is_alive()
+    assert results == [True]
+    assert claimed.is_set()
+
+
+def test_handoff_snapshot_rejects_generation_change_during_position_read(monkeypatch):
+    from relaytv_app import playback_service
+
+    monkeypatch.setattr(state, "NOW_PLAYING", {"url": "https://example.com/a"})
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    entered, release = threading.Event(), threading.Event()
+
+    def get(prop):
+        entered.set()
+        assert release.wait(5)
+        return 10
+
+    monkeypatch.setattr(player, "mpv_get", get)
+    results = []
+    worker = threading.Thread(target=lambda: results.append(playback_service.handoff_snapshot()), daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        player.claim_playback_intent()
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert results == [None]
 
 
 def test_claiming_supersedes_the_previous_intent() -> None:

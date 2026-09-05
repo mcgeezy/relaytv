@@ -103,6 +103,7 @@ from .playback import (
     SeekAbsReq as SeekAbsReq,
     SeekReq as SeekReq,
     VolumeReq as VolumeReq,
+    _play_now_item as _play_now_item,
     _preserve_current_to_queue_front as _preserve_current_to_queue_front,
     clear_now_playing as clear_now_playing,
     clear_resumable_session as clear_resumable_session,
@@ -1067,8 +1068,11 @@ def _ui_event_push(event_name: str, event: dict) -> None:
 def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_length: int | None = None, source: str = "api") -> None:
     if queue is None:
         with state.QUEUE_LOCK:
+            state.ensure_queue_item_ids(state.QUEUE)
             queue = list(state.QUEUE)
-    queue = _annotate_upload_items(queue)
+    # Supplied snapshots already carry ids assigned at insertion under the
+    # queue lock. Publication must never mutate their shared dictionaries.
+    queue = _annotate_queue_items(queue)
     qlen = int(queue_length) if queue_length is not None else len(queue)
     _ui_event_push(
         "queue",
@@ -1089,6 +1093,17 @@ def _annotate_upload_item(item: object) -> object:
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:
     return [_annotate_upload_item(item) for item in list(items or [])]
+
+
+def _annotate_queue_items(items: list[object] | None) -> list[object]:
+    annotated: list[object] = []
+    for item in list(items or []):
+        public = _annotate_upload_item(item)
+        queue_id = state.queue_item_id(item)
+        if queue_id and isinstance(public, dict):
+            public["queue_id"] = queue_id
+        annotated.append(public)
+    return annotated
 
 
 def _ui_event_push_jellyfin(
@@ -1513,13 +1528,24 @@ def _idle_html() -> str:
     .statusWrap{
       display:grid;
       justify-items:end;
-      gap:.3125rem
+      gap:.3125rem;
+      min-width:0;
+      max-width:100%
     }
     .footerStatus{
       color:rgba(221,233,248,.7);
       font-size:.875rem;
       letter-spacing:.14em;
-      text-transform:uppercase
+      text-transform:uppercase;
+      max-width:100%;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis
+    }
+    /* Keep the status line clear of the fixed QR card */
+    body.hasQr .footer{padding-right:calc(var(--idleQrSizePx,10.5rem) + 1.5rem)}
+    @media (max-width:760px){
+      body.hasQr .footer{padding-right:calc(var(--idleQrSizeMobilePx,7.25rem) + 1.25rem)}
     }
     .footerMeta{
       color:rgba(197,214,235,.56);
@@ -1649,17 +1675,14 @@ def _idle_html() -> str:
       const img = document.getElementById('idleQrImg');
       const label = document.getElementById('idleQrLabel');
       if (!wrap || !img || !label) return;
-      if (!__idleQrEnabled || !url) {
+      const show = !!(__idleQrEnabled && url && String(url).trim());
+      document.body.classList.toggle('hasQr', show);
+      if (!show) {
         wrap.classList.add('hidden');
         wrap.setAttribute('aria-hidden', 'true');
         return;
       }
       const target = String(url || '').trim();
-      if (!target) {
-        wrap.classList.add('hidden');
-        wrap.setAttribute('aria-hidden', 'true');
-        return;
-      }
       if (__idleQrUrl !== target) {
         __idleQrUrl = target;
         img.src = `/qr/connect.svg?logo=1&u=${encodeURIComponent(target)}&ts=${Date.now()}`;
@@ -1897,7 +1920,17 @@ def _idle_html() -> str:
         }
         renderPanels(settings.idle_panels||{}, settings, weatherData);
         const np=st.now_playing||null;
-        document.getElementById('now').textContent=np ? `Now Playing: ${np.title||np.url||'Playing'}` : 'Idle';
+        // Only live sessions may say Now Playing; a retained item after close
+        // is "Ended", not something still on the screen.
+        const sessState = String(st.state || '').trim().toLowerCase();
+        const npTitle = np ? String(np.title || np.url || 'Playing') : '';
+        let nowText = 'Idle';
+        if (np && (st.playing || st.paused || sessState === 'playing' || sessState === 'paused')) {
+          nowText = `${(st.paused || sessState === 'paused') ? 'Paused' : 'Now Playing'}: ${npTitle}`;
+        } else if (np && sessState === 'closed') {
+          nowText = `Ended: ${npTitle}`;
+        }
+        document.getElementById('now').textContent = nowText;
       }catch(_e){}
     }
     setInterval(refresh,3000); refresh();
@@ -3220,6 +3253,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
 def _status_payload() -> dict[str, object]:
     settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         q = list(state.QUEUE)
     sess = getattr(state, "SESSION_STATE", "idle")
     has_now_playing = isinstance(getattr(state, "NOW_PLAYING", None), dict)
@@ -3418,7 +3452,7 @@ def _status_payload() -> dict[str, object]:
         )
     )
     annotated_now_playing = _annotate_upload_item(now_playing)
-    annotated_queue = _annotate_upload_items(q)
+    annotated_queue = _annotate_queue_items(q)
     iptv_status: dict[str, object] = {"enabled": iptv_service.enabled()}
     if iptv_status["enabled"]:
         try:
@@ -4070,6 +4104,15 @@ def ui():
 
         <div class="nIdleMsg" aria-hidden="true">Nothing playing — share a link or pick from the queue</div>
 
+        <div id="nowUpNext" class="nUpNext hidden">
+          <span class="nUpNextLabel">Up next</span>
+          <div class="nUpNextItem">
+            <span id="upNextThumb" class="nUpNextThumb" aria-hidden="true"></span>
+            <span id="upNextTitle" class="nUpNextTitle"></span>
+          </div>
+          <button id="upNextPlayBtn" class="nUpNextPlay" title="Play next in queue" aria-label="Play next in queue">Play</button>
+        </div>
+
         <div id="progress" class="progress" title="Drag to seek (or tap)">
           <div id="progFill" class="progressFill"></div>
         </div>
@@ -4565,41 +4608,16 @@ def ui():
           <div class="hint">Use your local Jellyfin or Emby base URL, for example `http://10.0.55.2:8096`. The server type is detected automatically.</div>
         </div>
 
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setJfAuthMode">Cast target identity</label>
-          <select id="setJfAuthMode" class="input">
-            <option value="shared_api_key">Shared cast target (server API key)</option>
-            <option value="user_login">User-scoped cast target (username and password)</option>
-          </select>
-          <div class="hint" id="setJfAuthModeHint"></div>
-        </div>
-
-        <div id="setJfSharedAuthFields">
+        <div id="setJfUserAuthFields" role="group" aria-labelledby="setJfClientHeading">
+          <h3 id="setJfClientHeading">Client login</h3>
+          <div class="hint">Sign in for RelayTV’s media browser, personal library, and resume points. This login works alongside the shared cast target below.</div>
+          <div class="hint" id="setJfClientStatus" role="status"></div>
           <div class="fieldRow">
-            <label class="fieldLbl">Server API key</label>
-            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-            <div class="hint">Makes RelayTV a shared cast target for every Jellyfin user allowed to control shared devices. API keys are administrator-level secrets.</div>
-            <div class="toggleRow">
-              <div class="toggleCopy">
-                <div class="toggleTitle">Clear stored API key</div>
-                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
-              </div>
-              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
-                <input type="checkbox" id="setJfClearApiKey" />
-                <span class="toggleTrack" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="hint" id="setJfApiKeyState"></div>
-          </div>
-        </div>
-
-        <div id="setJfUserAuthFields">
-          <div class="fieldRow">
-            <label class="fieldLbl">Username</label>
+            <label class="fieldLbl" for="setJfUsername">Username</label>
             <input id="setJfUsername" class="input" placeholder="server username" />
           </div>
           <div class="fieldRow">
-            <label class="fieldLbl">Password</label>
+            <label class="fieldLbl" for="setJfPassword">Password</label>
             <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
             <div class="toggleRow">
               <div class="toggleCopy">
@@ -4617,8 +4635,41 @@ def ui():
         <div class="fieldRow">
           <label class="fieldLbl">Preferred user ID (optional)</label>
           <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
-          <div class="hint">Optional profile override for catalog browsing on this TV. In user-login mode, leave blank to use the authenticated user.</div>
+          <div class="hint">Leave blank to use the signed-in account. For API-key-only browsing, enter a server user ID. A login can only access profiles its account is allowed to read.</div>
         </div>
+
+        <div id="setJfSharedAuthFields" role="group" aria-labelledby="setJfCastHeading">
+          <h3 id="setJfCastHeading">Shared cast target</h3>
+          <div class="toggleRow">
+            <div class="toggleCopy">
+              <div class="toggleTitle">Share this cast target using an API key</div>
+              <div class="toggleHint">Let permitted Jellyfin users cast to this TV independently of the client login.</div>
+            </div>
+            <label class="toggleSwitch" for="setJfSharedCastEnabled" title="Enable shared cast target">
+              <input type="checkbox" id="setJfSharedCastEnabled" />
+              <span class="toggleTrack" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="hint" id="setJfAuthModeHint"></div>
+          <div class="hint" id="setJfCastStatus" role="status"></div>
+          <div class="fieldRow">
+            <label class="fieldLbl" for="setJfApiKey">Server API key</label>
+            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            <div class="hint">Create a key in Jellyfin Dashboard → Advanced → API Keys. It keeps the shared cast target connected while client browsing uses the login above. API keys are administrator-level secrets.</div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Clear stored API key</div>
+                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
+                <input type="checkbox" id="setJfClearApiKey" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint" id="setJfApiKeyState"></div>
+          </div>
+        </div>
+
         <div class="fieldRow">
           <label class="fieldLbl">Preferred audio language</label>
           <input id="setJfAudioLang" class="input" placeholder="e.g. en, pt-BR" />

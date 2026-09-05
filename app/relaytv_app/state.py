@@ -6,6 +6,7 @@ import time
 import re
 import platform
 import tempfile
+import uuid
 from .config import (
     env_bool as _env_bool,
     normalize_optional_positive_int as _normalize_optional_positive_int,
@@ -375,6 +376,9 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "provider": provider,
     }
 
+    queue_id = queue_item_id(item)
+    if queue_id:
+        out[QUEUE_ITEM_ID_KEY] = queue_id
     for key in (
         "channel",
         "subtitle",
@@ -449,6 +453,7 @@ def _load_persisted_queue_item(item: dict) -> dict | None:
     out = _persistable_queue_item(item)
     if not isinstance(out, dict):
         return None
+    queue_item_id(out, create=True)
     return out
 
 
@@ -459,6 +464,9 @@ def _persistable_history_item(item: dict) -> dict | None:
         return None
 
     out = dict(base)
+    # Queue identity belongs to one queued instance, not to the media's
+    # history/now-playing identity.
+    out.pop(QUEUE_ITEM_ID_KEY, None)
     ts = item.get("ts")
     if ts is not None:
         try:
@@ -498,7 +506,164 @@ def _load_persisted_history_item(item: dict) -> dict | None:
 # Queue + Smart behavior
 # =========================
 
-QUEUE: list[dict] = []  # each item: {"url":..., "title":..., "provider":...}
+QUEUE_ITEM_ID_KEY = "_relaytv_queue_id"
+_QUEUE_REVISION = 0
+_QUEUE_MUTATION_LOCAL = threading.local()
+
+
+class _QueueMutationScope:
+    """Track structural mutations owned by one synchronous queue operation."""
+
+    def __init__(self) -> None:
+        self.mutations = 0
+        self._previous = None
+
+    def __enter__(self):
+        self._previous = getattr(_QUEUE_MUTATION_LOCAL, "owner", None)
+        _QUEUE_MUTATION_LOCAL.owner = self
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        _QUEUE_MUTATION_LOCAL.owner = self._previous
+
+
+def queue_mutation_scope() -> _QueueMutationScope:
+    """Return a scope whose same-thread mutations can be excluded from races."""
+    return _QueueMutationScope()
+
+
+def _advance_queue_revision() -> None:
+    global _QUEUE_REVISION
+    _QUEUE_REVISION += 1
+    owner = getattr(_QUEUE_MUTATION_LOCAL, "owner", None)
+    if isinstance(owner, _QueueMutationScope):
+        owner.mutations += 1
+
+
+class _RevisionedQueue(list):
+    """List that records every structural queue decision, including no-ops.
+
+    A clear issued while a play-now request temporarily holds the only queue
+    item still matters: the list is already empty, but that newer decision
+    must prevent the failed play from restoring the item.
+    """
+
+    def __init__(self, values=()):
+        super().__init__(self._prepare(values, ()))
+
+    @staticmethod
+    def _prepare(values, existing):
+        """Assign instance ids before entries become visible to any reader.
+
+        Writers hold QUEUE_LOCK. Preserve ids on existing entries and clone
+        repeated instances, including insertion ahead of an existing copy.
+        """
+        seen = {queue_item_id(item) for item in existing}
+        prepared = []
+        for item in values:
+            if isinstance(item, dict):
+                item_id = queue_item_id(item, create=True)
+                if item_id in seen:
+                    item = dict(item)
+                    item.pop(QUEUE_ITEM_ID_KEY, None)
+                    item_id = queue_item_id(item, create=True)
+                seen.add(item_id)
+            prepared.append(item)
+        return prepared
+
+    def __setitem__(self, key, value):
+        remaining = list(self)
+        del remaining[key]
+        value = self._prepare(value, remaining) if isinstance(key, slice) else self._prepare([value], remaining)[0]
+        super().__setitem__(key, value)
+        _advance_queue_revision()
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        _advance_queue_revision()
+
+    def __iadd__(self, value):
+        self.extend(value)
+        return self
+
+    def __imul__(self, value):
+        self[:] = list(self) * value
+        return self
+
+    def append(self, value) -> None:
+        super().append(self._prepare([value], self)[0])
+        _advance_queue_revision()
+
+    def clear(self) -> None:
+        super().clear()
+        _advance_queue_revision()
+
+    def extend(self, values) -> None:
+        super().extend(self._prepare(values, self))
+        _advance_queue_revision()
+
+    def insert(self, index, value) -> None:
+        super().insert(index, self._prepare([value], self)[0])
+        _advance_queue_revision()
+
+    def pop(self, index=-1):
+        value = super().pop(index)
+        _advance_queue_revision()
+        return value
+
+    def remove(self, value) -> None:
+        super().remove(value)
+        _advance_queue_revision()
+
+    def reverse(self) -> None:
+        super().reverse()
+        _advance_queue_revision()
+
+    def sort(self, *args, **kwargs) -> None:
+        super().sort(*args, **kwargs)
+        _advance_queue_revision()
+
+
+def queue_revision() -> int:
+    """Return the structural queue revision. Read while ``QUEUE_LOCK`` is held."""
+    return _QUEUE_REVISION
+
+
+def queue_item_id(item: object, *, create: bool = False) -> str:
+    """Return an item's opaque queue-instance id, creating it when requested."""
+    if not isinstance(item, dict):
+        return ""
+    current = str(item.get(QUEUE_ITEM_ID_KEY) or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{32}", current):
+        return current
+    if not create:
+        return ""
+    current = uuid.uuid4().hex
+    item[QUEUE_ITEM_ID_KEY] = current
+    return current
+
+
+def ensure_queue_item_ids(items: list[object]) -> None:
+    """Give every dictionary queue entry a stable opaque instance id in place."""
+    seen: dict[str, object] = {}
+    for index, original in enumerate(items):
+        item = original
+        queue_id = queue_item_id(item, create=True)
+        if not queue_id or queue_id not in seen:
+            if queue_id:
+                seen[queue_id] = item
+            continue
+        if item is seen[queue_id]:
+            # The same dictionary was appended twice. Give the later queue
+            # instance its own container so the ids can actually differ.
+            item = dict(item)
+            items[index] = item
+        item.pop(QUEUE_ITEM_ID_KEY, None)
+        queue_id = queue_item_id(item, create=True)
+        seen[queue_id] = item
+
+
+QUEUE: list[dict] = _RevisionedQueue()  # each item: {"url":..., "title":..., "provider":...}
 QUEUE_LOCK = threading.Lock()
 NOW_PLAYING: dict | None = None  # {"input","url","title","provider","stream","audio","started","mode"}
 
@@ -655,6 +820,7 @@ def _persist_queue() -> bool:
         # describes; the write itself happens outside, so no state lock is
         # ever held across disk I/O.
         version = _QUEUE_PUBLISHER.reserve()
+        ensure_queue_item_ids(QUEUE)
         queue = []
         for it in list(QUEUE):
             normalized = _persistable_queue_item(it)
@@ -730,6 +896,7 @@ def _load_persisted_state() -> None:
                 normalized = _load_persisted_queue_item(it)
                 if isinstance(normalized, dict):
                     loaded.append(normalized)
+            ensure_queue_item_ids(loaded)
             QUEUE[:] = loaded
 
     hdata = _load_json(hpath, {})

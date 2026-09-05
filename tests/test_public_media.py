@@ -105,7 +105,10 @@ def test_status_payload_redacts_runtime_media_without_mutating_state(monkeypatch
         "title": "Movie",
         "url": "https://media.example/Videos/123/stream?static=true",
     }
-    assert payload["queue"] == [payload["now_playing"]]
+    queued = dict(payload["queue"][0])
+    queue_id = queued.pop("queue_id")
+    assert len(queue_id) == 32
+    assert queued == payload["now_playing"]
     assert item["url"].endswith("api_key=secret&static=true")
     assert item["_resolved_stream"].endswith("token=secret")
 
@@ -182,7 +185,9 @@ def test_queue_remove_response_redacts_items_without_mutating_state(monkeypatch)
     assert response.status_code == 200
     body = response.json()
     assert body["removed"] == _SAFE_ITEM
-    assert body["queue"] == [_SAFE_ITEM]
+    queued = dict(body["queue"][0])
+    assert len(queued.pop("queue_id")) == 32
+    assert queued == _SAFE_ITEM
     assert "secret" not in json.dumps(body)
     assert routes.state.QUEUE[0]["_resolved_stream"].endswith("token=secret")
 

@@ -123,6 +123,7 @@ EXPECTED_ROUTES = {
     ("POST", "/queue/handoff", "queue_handoff"),
     ("POST", "/queue/import", "queue_import"),
     ("POST", "/queue/move", "queue_move"),
+    ("POST", "/queue/play", "queue_play"),
     ("POST", "/queue/remove", "queue_remove"),
     ("POST", "/resume", "resume"),
     ("POST", "/resume/clear", "clear_resumable_session"),

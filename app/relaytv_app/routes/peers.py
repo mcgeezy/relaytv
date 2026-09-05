@@ -31,10 +31,13 @@ class PeerSendReq(BaseModel):
     # ``index`` predates per-item selection and is kept for companion apps.
     index: int | None = None
     indexes: list[int] | None = None
+    queue_id: str | None = None
+    queue_ids: list[str] | None = None
 
 
 class PeerHandoffReq(BaseModel):
     indexes: list[int] | None = None
+    queue_ids: list[str] | None = None
     # A handoff that keeps the local session is the "Copy" gesture: the peer
     # starts playing, this device carries on. Defaulting to False keeps the
     # original meaning of the endpoint for callers that send no body.
@@ -121,74 +124,15 @@ def peers_probe_saved(peer_id: str) -> dict[str, object]:
         raise _peer_error(exc) from exc
 
 
-def _clear_local_queue() -> int:
-    """Drop the local queue after a confirmed transfer.
-
-    Delegates to the queue routes rather than touching ``state.QUEUE`` here:
-    queue writers are pinned by tests/test_transition_inventory.py, and those
-    functions already persist, re-prime mpv's up-next, and emit the UI event.
-    """
-    from .queue import clear as clear_queue
-
-    clear_queue()
-    with state.QUEUE_LOCK:
-        return len(state.QUEUE)
-
-
-def _queue_index_of(target: object) -> int | None:
-    """Locate an item in the live queue. Call with ``state.QUEUE_LOCK`` held."""
-    for index, item in enumerate(state.QUEUE):
-        if item is target:
-            return index
-    # Persisting and reloading the queue replaces the objects, so identity can
-    # legitimately miss; the URL is the next best handle on the same item.
-    url = str(target.get("url") or "") if isinstance(target, dict) else ""
-    if not url:
-        return None
-    for index, item in enumerate(state.QUEUE):
-        if isinstance(item, dict) and str(item.get("url") or "") == url:
-            return index
-    return None
-
-
 def _remove_local_queue_items(items: list[object]) -> int:
-    """Drop exactly the items the peer took, as the queue stands right now.
+    """Drop accepted queue instances atomically, ignoring any already gone."""
+    from .queue import _ui_event_push_queue
 
-    Positions from before the send are deliberately not reused. A send can take
-    tens of seconds, and auto-next or another client may have shifted the queue
-    in the meantime — reusing an index would delete whichever item had moved
-    into that slot, destroying something that was never sent. Matching the item
-    itself also leaves behind anything the peer rejected and anything that
-    could not travel at all, so giving up ownership never loses more than it
-    handed over.
-    """
-    targets = list(items or [])
-    if not targets:
-        with state.QUEUE_LOCK:
-            return len(state.QUEUE)
-
-    with state.QUEUE_LOCK:
-        current = list(state.QUEUE)
-    # The whole queue going at once is the common case; clearing keeps it to a
-    # single persist, re-prime, and UI event instead of one per item.
-    if current and len(targets) >= len(current):
-        if all(any(item is target for target in targets) for item in current):
-            return _clear_local_queue()
-
-    from .queue import QueueRemoveReq, queue_remove
-
-    for target in targets:
-        with state.QUEUE_LOCK:
-            index = _queue_index_of(target)
-        if index is None:
-            # Already gone: played out, or removed by someone else mid-transfer.
-            continue
-        try:
-            queue_remove(QueueRemoveReq(index=index))
-        except HTTPException:
-            continue
-    with state.QUEUE_LOCK:
-        return len(state.QUEUE)
+    accepted_ids = {state.queue_item_id(item) for item in items if state.queue_item_id(item)}
+    removed, snapshot = playback_service.remove_queue_items_by_id(accepted_ids)
+    if removed:
+        _ui_event_push_queue("remove", queue=snapshot, queue_length=len(snapshot), source="peer_transfer")
+    return len(snapshot)
 
 
 def _selected_indexes(queue_length: int, *, index: int | None, indexes: list[int] | None) -> list[int] | None:
@@ -209,6 +153,26 @@ def _selected_indexes(queue_length: int, *, index: int | None, indexes: list[int
     return sorted(set(resolved))
 
 
+def _selected_queue_items(
+    queue: list[object],
+    *,
+    index: int | None,
+    indexes: list[int] | None,
+    queue_id: str | None = None,
+    queue_ids: list[str] | None = None,
+) -> list[object]:
+    """Select stable queue instances, with indexes retained for old callers."""
+    if queue_ids is not None or queue_id:
+        chosen = list(queue_ids) if queue_ids is not None else [str(queue_id or "")]
+        wanted = [str(value or "").strip().lower() for value in chosen if str(value or "").strip()]
+        by_id = {state.queue_item_id(item): item for item in queue if state.queue_item_id(item)}
+        if any(item_id not in by_id for item_id in wanted):
+            raise HTTPException(status_code=409, detail="queue changed; refresh and retry")
+        return [by_id[item_id] for item_id in dict.fromkeys(wanted)]
+    selection = _selected_indexes(len(queue), index=index, indexes=indexes)
+    return queue if selection is None else [queue[position] for position in selection]
+
+
 @router.post("/peers/{peer_id}/send")
 def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
     """Send the queue (or one queue item) to a peer device.
@@ -223,9 +187,15 @@ def peers_send(peer_id: str, req: PeerSendReq) -> dict[str, object]:
         mode = "append"
 
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         queue = list(state.QUEUE)
-    selection = _selected_indexes(len(queue), index=req.index, indexes=req.indexes)
-    items: list[object] = queue if selection is None else [queue[i] for i in selection]
+    items = _selected_queue_items(
+        queue,
+        index=req.index,
+        indexes=req.indexes,
+        queue_id=req.queue_id,
+        queue_ids=req.queue_ids,
+    )
     if not items:
         raise HTTPException(status_code=400, detail="nothing selected to send")
     try:
@@ -257,9 +227,14 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
         raise HTTPException(status_code=409, detail="nothing is playing to hand off")
 
     with state.QUEUE_LOCK:
+        state.ensure_queue_item_ids(state.QUEUE)
         queue = list(state.QUEUE)
-    selection = _selected_indexes(len(queue), index=None, indexes=request.indexes)
-    items: list[object] = queue if selection is None else [queue[i] for i in selection]
+    items = _selected_queue_items(
+        queue,
+        index=None,
+        indexes=request.indexes,
+        queue_ids=request.queue_ids,
+    )
     try:
         result, accepted = peers.handoff_playback(peer_id, snapshot=snapshot, items=items)
     except peers.PeerError as exc:
@@ -277,7 +252,7 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
     # that is exactly right — this device continues into whatever it kept.
     result["local_queue_length"] = _remove_local_queue_items(accepted)
 
-    from .playback import clear_now_playing
+    from .playback import _idle_visual_surface_enabled_for_player
 
     stopped = False
     try:
@@ -285,11 +260,9 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
         # would leave this device showing the item it just gave away and
         # offering to resume it — playing the same thing in two rooms. The
         # session moved, so it is cleared here.
-        clear_now_playing()
-        # A handoff leaves this device available rather than deliberately
-        # parked, so the long auto-next hold that clearing applies is dropped.
-        playback_service.clear_auto_next_suppression()
-        stopped = True
+        stopped = playback_service.complete_peer_handoff(
+            snapshot, idle_surface_enabled=_idle_visual_surface_enabled_for_player(),
+        )
     except Exception as exc:  # pragma: no cover - local teardown is best effort
         logger.warning("peer_handoff_local_stop_failed error=%s", exc)
     result["local_stopped"] = stopped

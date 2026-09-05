@@ -100,7 +100,7 @@
     /* Header controls share one glass-chip material */
     .jfLaunch, .hdrAddBtn, .hdrMenuBtn{
       min-height: 0 !important;
-      height: 36px;
+      height: 40px;
       width: auto !important;
       padding: 0 12px !important;
       border-radius: 12px !important;
@@ -1001,8 +1001,8 @@
     }
     .nSkipBtn,
     .nGhostBtn{
-      min-height: 0;
-      padding: 5px 12px;
+      min-height: 40px;
+      padding: 8px 16px;
       border-radius: 999px;
       font-size: 12px;
       font-weight: 700;
@@ -1119,6 +1119,88 @@
     .nowCard.isIdle .progress,
     .nowCard.isIdle .nTimeRow{ display: none; }
     .nowCard.isIdle .nIdleMsg{ display: block; }
+    .nowCard.isEnded .nHeroArt{ filter: saturate(.55) brightness(.72); }
+    .nowCard.isEnded .nHeroFade{
+      background: linear-gradient(180deg, rgba(4,8,18,.28) 0%, rgba(4,8,18,.72) 78%, rgba(4,8,18,.88) 100%);
+    }
+
+    /* Up-next strip: sits in the now card when nothing live is on it */
+    .nUpNext{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(120,180,255,.22);
+      background: rgba(16,26,52,.48);
+    }
+    .nUpNextLabel{
+      flex: 0 0 auto;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: rgba(159,208,255,.78);
+    }
+    .nUpNextItem{
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .nUpNextThumb{
+      flex: 0 0 auto;
+      width: 56px;
+      aspect-ratio: 16 / 9;
+      border-radius: 8px;
+      background-size: cover;
+      background-position: center;
+      background-color: rgba(20,34,66,.85);
+      border: 1px solid rgba(120,180,255,.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .nUpNextThumb:not(.hasThumb)::after{
+      content: '▶';
+      font-size: 14px;
+      color: rgba(159,208,255,.55);
+    }
+    .nUpNextTitle{
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.25;
+      color: #eaf3ff;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .nUpNextPlay{
+      flex: 0 0 auto;
+      min-height: 40px;
+      padding: 8px 20px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: #f0f9ff;
+      border: 1px solid rgba(125,211,252,.55);
+      background: linear-gradient(180deg, rgba(56,189,248,.82), rgba(37,99,235,.78));
+      box-shadow: 0 4px 14px rgba(37,99,235,.30);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .nUpNextPlay:hover{
+      transform: none;
+      background: linear-gradient(180deg, rgba(94,207,255,.92), rgba(59,130,246,.85));
+      box-shadow: 0 4px 16px rgba(37,99,235,.42);
+    }
     .nowCard.isLive .progress{ display: none; }
     .nowCard.isLive .nTimeRow{ margin-top: 14px; }
     .nowCard.isLive .nTimeRow #pos{
@@ -1409,6 +1491,7 @@
       --remote-vol-track-end: rgba(120, 165, 250, .14);
       --remote-vol-track-border: rgba(160, 200, 255, .16);
       width: 100%;
+      height: 30px;
       margin: 0;
       appearance: none;
       -webkit-appearance: none;
@@ -1652,8 +1735,8 @@
     }
     .qClearBtn{
       margin-left: auto;
-      min-height: 0;
-      padding: 5px 12px;
+      min-height: 40px;
+      padding: 8px 16px;
       border-radius: 999px;
       font-size: 12px;
       font-weight: 700;
@@ -1810,20 +1893,20 @@
     }
 
     /* Override global button sizing for compact queue controls */
-    .qDelBtn{
+    .qMenuBtn{
       flex: 0 0 auto;
       align-self: center;
       min-height: 0;
       padding: 0;
-      width: 28px;
-      height: 28px;
+      width: 40px;
+      height: 40px;
       border-radius: 999px;
-      font-size: 13px;
+      font-size: 17px;
       font-weight: 800;
       line-height: 1;
-      border: 1px solid rgba(255, 130, 150, .42);
-      background: rgba(20, 26, 40, .60);
-      color: rgba(255, 165, 180, .90);
+      border: 1px solid rgba(140,190,255,.34);
+      background: rgba(20,26,40,.60);
+      color: rgba(210,228,255,.82);
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1833,14 +1916,109 @@
       backdrop-filter: none;
       -webkit-backdrop-filter: none;
     }
-    .qDelBtn:hover{
-      background: rgba(220, 38, 38, .88);
-      border-color: rgba(255, 150, 165, .70);
-      color: #fff;
-      box-shadow: 0 0 12px rgba(255, 120, 140, .30);
+    .qMenuBtn:hover{
+      color: #eaf3ff;
+      border-color: rgba(150,210,255,.60);
+      background: rgba(34,60,120,.70);
       transform: none;
     }
-    .qDelBtn:active{ transform: none; }
+    .qTile.qPendingRemove{ opacity: .42; filter: saturate(.6); }
+    .qTile.qPendingRemove .qTitleText{ text-decoration: line-through; }
+
+    /* Anchored action menu for queue tiles */
+    .qPopBackdrop{
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      background: transparent;
+    }
+    .qPopMenu{
+      position: fixed;
+      z-index: 91;
+      min-width: 190px;
+      padding: 6px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(22,34,64,.97), rgba(12,20,42,.97));
+      border: 1px solid rgba(140,190,255,.30);
+      box-shadow: 0 18px 44px rgba(2,8,26,.55), inset 0 1px 0 rgba(190,220,255,.10);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .qPopItem{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 44px;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: #dbe7ff;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: left;
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .qPopItem svg{ width: 17px; height: 17px; flex: 0 0 auto; opacity: .85; }
+    .qPopItem:hover{ background: rgba(56,120,246,.22); transform: none; }
+    .qPopItem.danger{ color: rgba(255,170,182,.95); }
+    .qPopItem.danger:hover{ background: rgba(220,38,38,.24); }
+
+    /* Undo / status toast */
+    .qToast{
+      position: fixed;
+      left: 50%;
+      bottom: max(18px, env(safe-area-inset-bottom, 0px) + 12px);
+      transform: translateX(-50%);
+      z-index: 95;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      max-width: min(92vw, 420px);
+      padding: 10px 10px 10px 16px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(24,38,72,.97), rgba(13,22,44,.97));
+      border: 1px solid rgba(140,190,255,.32);
+      box-shadow: 0 14px 36px rgba(2,8,26,.55);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: #eaf3ff;
+      font-size: 13.5px;
+      font-weight: 600;
+      animation: qToastIn .18s ease-out;
+    }
+    @keyframes qToastIn{
+      from{ opacity: 0; transform: translateX(-50%) translateY(8px); }
+      to{ opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .qToast.warn{ border-color: rgba(255,190,110,.45); }
+    .qToastLabel{
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .qToastAction{
+      flex: 0 0 auto;
+      min-height: 36px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: #eaf3ff;
+      border: 1px solid rgba(96,170,255,.50);
+      background: linear-gradient(180deg, rgba(43,108,231,.85), rgba(22,56,142,.90));
+      box-shadow: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .qToastAction:hover{ transform: none; box-shadow: 0 0 12px rgba(72,150,255,.30); }
 
     .qBody{
       flex: 1 1 auto;
@@ -2310,6 +2488,18 @@
       .queueList:empty::after{ color: rgba(30,50,100,.48); }
       .queueCard .footerRow{ color: rgba(30,50,100,.58); }
       .nIdleMsg{ color: rgba(30,50,100,.52); }
+      /* Keep the ended hero on the light fade so its dark title stays readable */
+      .nowCard.isEnded .nHeroArt{ filter: saturate(.7) brightness(.92); }
+      .nowCard.isEnded .nHeroFade{
+        background: linear-gradient(180deg, rgba(240,246,255,.18) 0%, rgba(240,246,255,.62) 62%, rgba(242,247,255,.97) 100%);
+      }
+      .nUpNext{
+        border-color: rgba(37,99,235,.22);
+        background: rgba(219,232,255,.45);
+      }
+      .nUpNextLabel{ color: rgba(30,64,175,.70); }
+      .nUpNextTitle{ color: #14295e; }
+      .nUpNextThumb{ background-color: rgba(37,99,235,.14); border-color: rgba(37,99,235,.20); }
       .nTimeRow{ color: #1d4ed8; }
       .remoteVolumeValue{ color: #1d4ed8; }
       .rVolIcon{ color: #1e3a8a; }
@@ -2387,4 +2577,50 @@
   .rTile{ min-height: 56px; padding: 12px 14px; }
   .rSeek{ min-height: 58px; }
   .remoteVolumeRow{ margin-top: 10px; }
+}
+
+/* --- UX overhaul: roomier desktop queue, consistent phone header --- */
+
+/* Phone: every integration launcher becomes the same icon-only chip so the
+   device name — the "which TV am I on?" anchor — keeps the header space. */
+@media (max-width: 680px){
+  header{ gap: 8px; }
+  .hdrRight{ gap: 7px; }
+  .jfLaunch .jfBrand{ display: none; }
+  .jfLaunch .jfDot{ width: 10px; height: 10px; }
+  .iptvLaunch span:last-child{ display: none; }
+  .iptvLaunch{ padding: 7px 12px; }
+}
+
+/* Desktop: the wrap widens past 920px and the queue column gets a floor, so
+   queue titles stop collapsing to a few characters. */
+@media (min-width: 761px){
+  .topgrid{ grid-template-columns: minmax(0,1.2fr) minmax(300px,0.8fr); }
+}
+@media (min-width: 1100px){
+  .wrap{ max-width: 1080px; }
+}
+
+/* Pointer devices: tile actions stay out of the title's way until the tile is
+   hovered or focused, then overlay its right edge. Touch layouts (hover:
+   none) keep the always-visible inline buttons. */
+@media (hover: hover) and (min-width: 761px){
+  .qTile .qHandle,
+  .qTile .qMenuBtn{
+    position: absolute;
+    top: calc(50% - 20px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease;
+    z-index: 3;
+  }
+  .qTile .qHandle{ right: 54px; }
+  .qTile .qMenuBtn{ right: 10px; }
+  .qTile:hover .qHandle,
+  .qTile:hover .qMenuBtn,
+  .qTile:focus-within .qHandle,
+  .qTile:focus-within .qMenuBtn{
+    opacity: 1;
+    pointer-events: auto;
+  }
 }

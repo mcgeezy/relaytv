@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -579,10 +580,10 @@ def test_handoff_requires_playback_and_stops_locally_after_success(
 
     monkeypatch.setattr(peers, "_request", _request)
     calls: list[str] = []
-    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: calls.append("clear_queue") or 0)
+    monkeypatch.setattr(peers_routes, "_remove_local_queue_items", lambda items: calls.append("clear_queue") or 0)
     monkeypatch.setattr(
-        "relaytv_app.routes.playback.clear_now_playing",
-        lambda: calls.append("clear_now_playing") or {"status": "cleared"},
+        "relaytv_app.playback_service.complete_peer_handoff",
+        lambda snapshot, **kw: calls.append("clear_now_playing") or True,
     )
 
     with state.QUEUE_LOCK:
@@ -631,11 +632,11 @@ def test_handoff_failure_leaves_local_playback_alone(client, peers_file, stub_id
     monkeypatch.setattr(peers, "_request", _fail)
     stopped: list[bool] = []
     monkeypatch.setattr(
-        "relaytv_app.routes.playback.clear_now_playing",
-        lambda: stopped.append(True) or {"status": "cleared"},
+        "relaytv_app.playback_service.complete_peer_handoff",
+        lambda snapshot, **kw: stopped.append(True) or True,
     )
     cleared: list[bool] = []
-    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: cleared.append(True) or 0)
+    monkeypatch.setattr(peers_routes, "_remove_local_queue_items", lambda items: cleared.append(True) or 0)
 
     response = client.post(f"/peers/{peer['id']}/handoff", json={})
     assert response.status_code == 502
@@ -725,6 +726,36 @@ def test_send_single_index_and_unreachable_peer(client, peers_file, stub_identit
         state.QUEUE.clear()
 
 
+def test_send_single_queue_id_survives_index_shift(client, peers_file, stub_identity, monkeypatch) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    captured: dict[str, object] = {}
+
+    def _request(base_url, path, *, token="", payload=None, timeout=0.0):
+        captured["payload"] = payload
+        return {"accepted": 1, "queue_length": 1, "results": []}
+
+    monkeypatch.setattr(peers, "_request", _request)
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.extend(
+            [
+                {"url": "https://example.com/a", "title": "First"},
+                {"url": "https://example.com/b", "title": "Second"},
+                {"url": "https://example.com/c", "title": "Third"},
+            ]
+        )
+        state.ensure_queue_item_ids(state.QUEUE)
+        selected_id = state.queue_item_id(state.QUEUE[1])
+        state.QUEUE.pop(0)
+
+    response = client.post(f"/peers/{peer['id']}/send", json={"index": 1, "queue_id": selected_id})
+
+    assert response.status_code == 200
+    assert [entry["title"] for entry in captured["payload"]["items"]] == ["Second"]
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
 def _seed_queue(*titles: str) -> None:
     with state.QUEUE_LOCK:
         state.QUEUE.clear()
@@ -732,9 +763,114 @@ def _seed_queue(*titles: str) -> None:
             state.QUEUE.append({"url": f"https://example.com/{title.lower()}", "title": title})
 
 
+@pytest.mark.parametrize("replacement", ["duplicate", "new_item"])
+def test_transfer_cleanup_preserves_unsent_instances(client, stub_identity, monkeypatch, replacement):
+    from relaytv_app import routes, player
+
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue())
+    monkeypatch.setattr(state, "persist_queue", lambda: None)
+    monkeypatch.setattr(state, "persist_queue_payload", lambda payload: None)
+    monkeypatch.setattr(player, "prime_mpv_up_next_from_queue", lambda **kw: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *a, **kw: None)
+    _seed_queue("Sent")
+    selected_id = state.queue_item_id(state.QUEUE[0])
+    entered, release = threading.Event(), threading.Event()
+    responses = []
+
+    def _blocked_request(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return {"accepted": 1, "queue_length": 1, "results": []}
+
+    monkeypatch.setattr(peers, "_request", _blocked_request)
+    worker = threading.Thread(target=lambda: responses.append(client.post(
+        f"/peers/{peer['id']}/send", json={"mode": "move", "queue_ids": [selected_id]}
+    )), daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        if replacement == "duplicate":
+            assert client.post("/queue/remove", json={"queue_id": selected_id}).status_code == 200
+        with state.QUEUE_LOCK:
+            state.QUEUE.append({"url": "https://example.com/sent", "title": "Unsent"})
+        unsent_id = state.queue_item_id(state.QUEUE[-1])
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert responses and responses[0].status_code == 200
+    assert _queue_titles() == ["Unsent"]
+    assert state.queue_item_id(state.QUEUE[0]) == unsent_id
+
+
 def _queue_titles() -> list[str]:
     with state.QUEUE_LOCK:
         return [str(item.get("title") or "") for item in state.QUEUE]
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_handoff_completion_owns_only_the_captured_playback(client, stub_identity, monkeypatch, replacement):
+    from relaytv_app import playback_service, player
+    from relaytv_app.routes import playback as playback_routes
+
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([
+        {"url": "https://example.com/remaining", "title": "Remaining"},
+    ]))
+    monkeypatch.setattr(state, "NOW_PLAYING", {"url": "https://example.com/a", "title": "A"})
+    monkeypatch.setattr(state, "SESSION_STATE", "playing")
+    monkeypatch.setattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 12345678900.0)
+    monkeypatch.setattr(state, "_persist_session_payload", lambda *a: True)
+    monkeypatch.setattr(state, "persist_queue", lambda: True)
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 10)
+    monkeypatch.setattr(playback_routes, "_idle_visual_surface_enabled_for_player", lambda: False)
+    stopped = []
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: stopped.append(state.NOW_PLAYING["title"]))
+    entered, release = threading.Event(), threading.Event()
+    payloads = []
+
+    def request(*args, payload=None, **kwargs):
+        payloads.append(payload)
+        entered.set()
+        assert release.wait(5)
+        return {"playing": True, "accepted": 0, "results": [], "queue_length": 0}
+
+    monkeypatch.setattr(peers, "_request", request)
+    responses = []
+    worker = threading.Thread(target=lambda: responses.append(client.post(
+        f"/peers/{peer['id']}/handoff", json={"queue_ids": []},
+    )), daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        if replacement:
+            player.claim_playback_intent()
+            state.NOW_PLAYING = {"url": "https://example.com/b", "title": "B"}
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert responses and responses[0].status_code == 200
+    assert payloads[0]["now_playing"]["title"] == "A"
+    assert "playback_intent" not in payloads[0]
+    assert responses[0].json()["local_stopped"] is not replacement
+    assert _queue_titles() == ["Remaining"]
+    if replacement:
+        assert stopped == []
+        assert state.NOW_PLAYING["title"] == "B"
+        assert state.AUTO_NEXT_SUPPRESS_UNTIL == 12345678900.0
+    else:
+        assert stopped == ["A"]
+        assert state.NOW_PLAYING is None
+        assert state.SESSION_STATE == "idle"
+        assert state.AUTO_NEXT_SUPPRESS_UNTIL == 0
+        # Remaining items are eligible for the existing autoplay worker.
+        advances = []
+        monkeypatch.setattr(playback_service, "advance_queue", lambda **kw: advances.append(kw) or {})
+        playback_service.natural_end()
+        assert len(advances) == 1
 
 
 def test_move_of_a_selection_removes_only_the_sent_items(client, peers_file, stub_identity, monkeypatch) -> None:
@@ -803,10 +939,10 @@ def test_copy_sends_the_session_but_keeps_playing_here(client, peers_file, stub_
     stopped: list[bool] = []
     cleared: list[bool] = []
     monkeypatch.setattr(
-        "relaytv_app.routes.playback.clear_now_playing",
-        lambda: stopped.append(True) or {"status": "cleared"},
+        "relaytv_app.playback_service.complete_peer_handoff",
+        lambda snapshot, **kw: stopped.append(True) or True,
     )
-    monkeypatch.setattr(peers_routes, "_clear_local_queue", lambda: cleared.append(True) or 0)
+    monkeypatch.setattr(peers_routes, "_remove_local_queue_items", lambda items: cleared.append(True) or 0)
     _seed_queue("Next up")
 
     response = client.post(f"/peers/{peer['id']}/handoff", json={"keep_local": True})
@@ -943,8 +1079,8 @@ def test_handoff_of_a_selection_leaves_the_unselected_items_here(
 
     monkeypatch.setattr(peers, "_request", _request)
     monkeypatch.setattr(
-        "relaytv_app.routes.playback.clear_now_playing",
-        lambda: {"status": "cleared"},
+        "relaytv_app.playback_service.complete_peer_handoff",
+        lambda snapshot, **kw: True,
     )
     _seed_queue("Keep me", "Take me")
 

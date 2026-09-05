@@ -350,7 +350,7 @@ def test_receiver_status_reports_shared_control_and_catalog_sources(monkeypatch)
     assert st["control_auth_source"] == "api_key"
     assert st["cast_target_scope"] == "shared"
     assert st["cast_target_ready"] is True
-    assert st["catalog_auth_source"] == "api_key"
+    assert st["catalog_auth_source"] == "user_session"
     assert st["catalog_ready"] is True
 
 
@@ -1203,7 +1203,7 @@ def test_authentication_captures_its_inputs_with_its_generation(monkeypatch) -> 
     assert jellyfin_receiver._request_context().generation != before
 
 
-def test_shared_mode_uses_only_api_key_even_when_login_token_exists(monkeypatch) -> None:
+def test_shared_mode_keeps_cast_key_separate_from_client_login(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
     monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "_ACCESS_TOKEN", "catalog-user-token")
@@ -1211,9 +1211,9 @@ def test_shared_mode_uses_only_api_key_even_when_login_token_exists(monkeypatch)
     context = jellyfin_receiver._request_context()
 
     assert context.control_token == "shared-api-key"
-    assert context.catalog_token == "shared-api-key"
+    assert context.catalog_token == "catalog-user-token"
     assert jellyfin_receiver.control_token() == "shared-api-key"
-    assert jellyfin_receiver.catalog_token() == "shared-api-key"
+    assert jellyfin_receiver.catalog_token() == "catalog-user-token"
 
 
 def test_user_login_mode_uses_only_session_even_when_api_key_is_stored(monkeypatch) -> None:

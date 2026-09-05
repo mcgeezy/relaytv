@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from contextvars import ContextVar
 from dataclasses import dataclass
 import os
 import threading
@@ -23,6 +24,10 @@ logger = get_logger("jellyfin_receiver")
 
 _LOCK = threading.Lock()
 _THREAD_LOCK = threading.Lock()
+
+# Only the authenticated server socket selects cast credentials for media work.
+# Context-local scope keeps concurrent browser requests on the client login.
+_CAST_CATALOG = ContextVar("jellyfin_cast_catalog", default=False)
 
 # Serializes whole configuration transactions (connect / disconnect / rename /
 # stop) against each other. _LOCK only guards individual _STATUS writes, which
@@ -180,6 +185,8 @@ def _catalog_cache_max_entries() -> int:
 
 
 def _catalog_cache_get(key: str) -> object | None:
+    if _CAST_CATALOG.get():
+        key = f"cast:{key}"
     now = time.time()
     with _CATALOG_CACHE_LOCK:
         item = _CATALOG_CACHE.get(key)
@@ -199,6 +206,8 @@ def _catalog_cache_get(key: str) -> object | None:
 
 
 def _catalog_cache_set(key: str, payload: object, *, ttl_sec: float) -> None:
+    if _CAST_CATALOG.get():
+        key = f"cast:{key}"
     if ttl_sec <= 0:
         return
     with _CATALOG_CACHE_LOCK:
@@ -421,7 +430,7 @@ def _start_locked() -> None:
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
         _STATUS["api_key_configured"] = bool(_API_KEY)
-        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME and _AUTH_PASSWORD)
+        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME or _AUTH_PASSWORD)
         _STATUS["authenticated"] = False
         _STATUS["auth_user"] = _AUTH_USERNAME
         _STATUS["auth_user_id"] = ""
@@ -516,9 +525,13 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     else:
         out["control_auth_source"] = "none"
         out["cast_target_scope"] = "unavailable"
-    if auth_mode == "user_login" and bool(out.get("authenticated")):
+    if bool(out.get("authenticated")):
         out["catalog_auth_source"] = "user_session"
-    elif auth_mode == "shared_api_key" and bool(out.get("api_key_configured")):
+    elif (
+        auth_mode == "shared_api_key"
+        and bool(out.get("api_key_configured"))
+        and not bool(out.get("auth_user_configured"))
+    ):
         out["catalog_auth_source"] = "api_key"
     else:
         out["catalog_auth_source"] = "none"
@@ -744,7 +757,7 @@ def _request_context() -> _RequestContext:
             password=str(_AUTH_PASSWORD or ""),
             auth_mode=str(_AUTH_MODE or "user_login"),
             control_token=str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN),
-            catalog_token=str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN),
+            catalog_token=_catalog_token_locked(),
             catalog_user_id=catalog_user_id,
             authenticated=bool(_STATUS.get("authenticated")),
             connected=bool(_STATUS.get("connected")),
@@ -867,7 +880,7 @@ def _connect_locked(*, server_url: str, api_key: str | None, auth_mode: str | No
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
         _STATUS["api_key_configured"] = bool(_API_KEY)
-        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME and _AUTH_PASSWORD)
+        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME or _AUTH_PASSWORD)
         _STATUS["authenticated"] = False
         _STATUS["auth_user"] = _AUTH_USERNAME
         _STATUS["auth_user_id"] = ""
@@ -1051,10 +1064,30 @@ def control_socket_identity_headers(status_snapshot: dict[str, object] | None = 
     }
 
 
+def _catalog_token_locked() -> str:
+    """Prefer client credentials; never elevate a pending/failed login to an API key.
+
+    Caller holds _LOCK. API-only configurations retain their existing catalog
+    access when no client credentials have been supplied.
+    """
+    if _CAST_CATALOG.get() and _AUTH_MODE == "shared_api_key":
+        return str(_API_KEY or "")
+    if _ACCESS_TOKEN or _AUTH_USERNAME or _AUTH_PASSWORD or _AUTH_MODE == "user_login":
+        return str(_ACCESS_TOKEN or "")
+    return str(_API_KEY or "")
+
+
 def catalog_token() -> str:
-    """Return the credential selected for catalog and media work."""
+    """Return the client credential for catalog and media work."""
     with _LOCK:
-        return str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN)
+        return _catalog_token_locked()
+
+
+def _catalog_device_id(context: _RequestContext, token: str) -> str:
+    device_id = context.device_id or "relaytv"
+    if context.auth_mode == "shared_api_key" and token != context.control_token:
+        return f"{device_id}-client"
+    return device_id
 
 
 def session_token() -> str:
@@ -1087,11 +1120,11 @@ def extract_item_id_from_url(url: str | None) -> str:
 
 
 def _build_emby_headers(*, token: str = "") -> dict[str, str]:
-    st = status()
-    client_name = str(st.get("client_name") or "RelayTV")
-    device_name = str(st.get("device_name") or "RelayTV")
-    device_id = str(st.get("device_id") or "relaytv")
-    client_version = str(st.get("client_version") or "1.0")
+    context = _request_context()
+    client_name = context.client_name
+    device_name = context.device_name
+    device_id = _catalog_device_id(context, token)
+    client_version = context.client_version
     out: dict[str, str] = {}
     tok = str(token or "").strip()
     if tok:
@@ -1132,7 +1165,7 @@ def get_item_metadata(
 
     client_name = context.client_name
     device_name = context.device_name
-    device_id = context.device_id or "relaytv"
+    device_id = _catalog_device_id(context, token)
     client_version = context.client_version
 
     def _headers() -> dict[str, str]:
@@ -1395,6 +1428,30 @@ def _tmdb_provider_id(data: dict[str, object]) -> int | None:
     return value if 0 < value <= 2_147_483_647 else None
 
 
+def _library_label_from_path(path: object, *, title: str = "", series_name: str = "") -> str:
+    """Best-effort library hint from an item's filesystem path.
+
+    Jellyfin's item payloads carry no library name, so search results from two
+    libraries with the same title and year are indistinguishable. The segment
+    above the item's own folder is the library root on typical layouts; only
+    that single label crosses into the UI, never the full path.
+    """
+    raw = str(path or "").replace("\\", "/")
+    segs = [s for s in raw.split("/") if s]
+    if len(segs) < 2:
+        return ""
+    for name in (series_name, title):
+        n = str(name or "").strip().lower()
+        if not n:
+            continue
+        for i, seg in enumerate(segs):
+            cleaned = seg.strip().lower()
+            if cleaned == n or cleaned.startswith(f"{n} (") or cleaned.startswith(f"{n}."):
+                if i >= 1:
+                    return segs[i - 1]
+    return segs[-2]
+
+
 def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -> dict[str, object]:
     iid = str(data.get("Id") or "").strip()
     item_type = str(data.get("Type") or "").strip().lower()
@@ -1527,6 +1584,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "video_fps": video_fps,
         "video_bitrate": video_bitrate,
         "tmdb_id": _tmdb_provider_id(data),
+        "library_name": _library_label_from_path(data.get("Path"), title=title, series_name=series_name),
     }
     _attach_thumb(out)
     if out.get("thumbnail_local"):
@@ -2191,7 +2249,7 @@ def search_catalog(query: str, *, limit: int = 30, refresh: bool = False) -> dic
             "Recursive": "true",
             "Limit": str(lim),
             "IncludeItemTypes": "Movie,Episode,Series",
-            "Fields": "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber",
+            "Fields": "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesName,ParentIndexNumber,IndexNumber,Path",
         }
     )
     candidates: list[str] = []
@@ -2714,7 +2772,11 @@ def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> 
     sink = _COMMAND_SINK
     if sink is None:
         raise RuntimeError("no jellyfin command sink registered")
-    return sink(action, payload, guard=guard)
+    scope = _CAST_CATALOG.set(True)
+    try:
+        return sink(action, payload, guard=guard)
+    finally:
+        _CAST_CATALOG.reset(scope)
 
 
 def command_sink_registered() -> bool:
@@ -2841,6 +2903,9 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
     password = context.password
     device_name = context.device_name
     device_id = context.device_id or "relaytv"
+    # The browsing login must not attach a user to the shared cast device.
+    if context.auth_mode == "shared_api_key":
+        device_id = f"{device_id}-client"
     client_name = context.client_name
     client_version = context.client_version
     if not username or not password:
@@ -2899,6 +2964,10 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
         msg = _format_http_error(e)
 
         def _apply_failure() -> None:
+            global _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+            _ACCESS_TOKEN = ""
+            _AUTH_USER_ID = ""
+            _AUTH_SESSION_ID = ""
             _STATUS["authenticated"] = False
             _STATUS["auth_user_id"] = ""
             _STATUS["auth_session_id"] = ""
@@ -2910,6 +2979,7 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
 
         if not _publish(generation, _apply_failure):
             return {"ok": False, "reason": "config_changed"}
+        _catalog_cache_clear()
         return {"ok": False, "reason": "auth_failed", "error": msg}
 
 
@@ -3288,8 +3358,6 @@ def _ensure_authentication() -> None:
     if not runtime_config.snapshot().flag("RELAYTV_JELLYFIN_AUTH_ENABLED", True):
         return
     context = _request_context()
-    if context.auth_mode != "user_login":
-        return
     if not context.enabled or not context.running:
         return
     if context.authenticated:
