@@ -1337,6 +1337,8 @@ def _default_settings() -> dict:
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
         "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
         "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
+        "plex_enabled": False,
+        "plex_server_machine_id": "",
         **seerr_defaults,
     }
 
@@ -1378,6 +1380,10 @@ def load_settings() -> None:
     )
     defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(defaults.get("jellyfin_server_type"))
     defaults["seerr_enabled"] = bool(defaults.get("seerr_enabled"))
+    defaults["plex_enabled"] = bool(defaults.get("plex_enabled"))
+    defaults["plex_server_machine_id"] = str(
+        defaults.get("plex_server_machine_id") or ""
+    ).strip()
     defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
     defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
     defaults["seerr_shared_requests_enabled"] = bool(
@@ -1446,6 +1452,8 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_playback_mode",
         "jellyfin_server_type",
         "iptv_enabled",
+        "plex_enabled",
+        "plex_server_machine_id",
         "seerr_enabled",
         "seerr_server_url",
         "seerr_api_key",
@@ -1493,6 +1501,12 @@ def update_settings(patch: dict) -> dict:
         clean["jellyfin_enabled"] = bool(clean.get("jellyfin_enabled"))
     if "iptv_enabled" in clean:
         clean["iptv_enabled"] = bool(clean.get("iptv_enabled"))
+    if "plex_enabled" in clean:
+        clean["plex_enabled"] = bool(clean.get("plex_enabled"))
+    if "plex_server_machine_id" in clean:
+        clean["plex_server_machine_id"] = str(
+            clean.get("plex_server_machine_id") or ""
+        ).strip()[:128]
     if "seerr_enabled" in clean:
         clean["seerr_enabled"] = bool(clean.get("seerr_enabled"))
     if "seerr_server_url" in clean:

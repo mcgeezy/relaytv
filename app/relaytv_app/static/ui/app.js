@@ -2776,12 +2776,86 @@ function jellyfinCredentialsError({enabled, server, shared, apiKey, clearApiKey,
   return '';
 }
 
+let __plexLinkFlowId = '';
+
+function _plexErrorMessage(body, status){
+  const detail = body && body.detail;
+  if (detail && typeof detail === 'object' && detail.message) return String(detail.message);
+  if (typeof detail === 'string' && detail) return detail;
+  return `Plex request failed (HTTP ${status || 'error'}).`;
+}
+
+function _renderPlexSettings(cur, plexStatus, plexServers){
+  const status = plexStatus && typeof plexStatus === 'object' ? plexStatus : {};
+  const linked = !!status.linked;
+  const selected = status.server && typeof status.server === 'object' ? status.server : null;
+  const servers = plexServers && Array.isArray(plexServers.servers) ? plexServers.servers : [];
+  const enabled = Object.prototype.hasOwnProperty.call(status, 'enabled')
+    ? !!status.enabled
+    : !!cur.plex_enabled;
+  const enabledInput = document.getElementById('setPlexEnabled');
+  if (enabledInput) enabledInput.checked = enabled;
+
+  const badge = document.getElementById('setPlexStatus');
+  if (badge) {
+    const reachable = !!(status.last_server_test && status.last_server_test.reachable);
+    badge.textContent = !enabled ? 'Disabled' : linked ? (selected ? (reachable ? 'Connected' : 'Configured') : 'Choose Server') : 'Link Account';
+    badge.classList.remove('up', 'down', 'warn', 'unknown');
+    badge.classList.add(!enabled ? 'unknown' : (linked && selected ? (reachable ? 'up' : 'warn') : 'warn'));
+  }
+
+  const accountStatus = document.getElementById('setPlexAccountStatus');
+  if (accountStatus) {
+    const account = status.account || {};
+    const label = account.friendly_name || account.username || 'linked account';
+    accountStatus.textContent = linked ? `Linked as ${label}.` : (__plexLinkFlowId ? 'Waiting for Plex authorization.' : 'No account linked.');
+  }
+  const linkBtn = document.getElementById('setPlexLinkBtn');
+  const linkUrl = document.getElementById('setPlexLinkUrl');
+  const pollBtn = document.getElementById('setPlexPollBtn');
+  const cancelBtn = document.getElementById('setPlexCancelBtn');
+  const unlinkBtn = document.getElementById('setPlexUnlinkBtn');
+  if (linkBtn) linkBtn.classList.toggle('hidden', linked || !!__plexLinkFlowId);
+  if (linkUrl) linkUrl.classList.toggle('hidden', linked || !__plexLinkFlowId || !linkUrl.getAttribute('href') || linkUrl.getAttribute('href') === '#');
+  if (pollBtn) pollBtn.classList.toggle('hidden', linked || !__plexLinkFlowId);
+  if (cancelBtn) cancelBtn.classList.toggle('hidden', linked || !__plexLinkFlowId);
+  if (unlinkBtn) unlinkBtn.classList.toggle('hidden', !linked);
+
+  const serverSelect = document.getElementById('setPlexServer');
+  if (serverSelect) {
+    serverSelect.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = linked ? (servers.length ? 'Choose a Plex server' : 'No direct server connection found') : 'Link an account to load servers';
+    serverSelect.appendChild(placeholder);
+    for (const server of servers) {
+      const option = document.createElement('option');
+      option.value = String(server.machine_id || '');
+      const local = Array.isArray(server.connections) && server.connections.some(connection => connection && connection.local);
+      option.textContent = `${server.name || 'Plex Media Server'}${local ? ' · local' : ''}${server.owned ? ' · owned' : ''}`;
+      serverSelect.appendChild(option);
+    }
+    serverSelect.value = String((selected && selected.machine_id) || cur.plex_server_machine_id || '');
+  }
+  const testBtn = document.getElementById('setPlexTestBtn');
+  if (testBtn) testBtn.disabled = !selected;
+  const diag = document.getElementById('setPlexDiag');
+  if (diag) {
+    const transport = selected ? [selected.local ? 'local' : 'remote', selected.secure ? 'secure' : 'HTTP'].join(', ') : '';
+    const test = status.last_server_test || {};
+    diag.textContent = selected
+      ? `${selected.name || 'Plex Media Server'} · ${transport}${test.version ? ` · PMS ${test.version}` : ''}`
+      : (linked ? 'Choose a library server to finish setup.' : 'Link a Plex account to discover its servers.');
+  }
+}
+
 async function loadSettingsUi(){
-  const [devRes, setRes, tvRes, jfRes, seerrRes, seerrUsersRes] = await Promise.all([
+  const [devRes, setRes, tvRes, jfRes, plexRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
     fetch('/settings'),
     fetch('/tv/status').catch(() => null),
     fetch('/integrations/jellyfin/status').catch(() => null),
+    fetch('/integrations/plex/status').catch(() => null),
     fetch('/integrations/seerr/status').catch(() => null),
     fetch('/integrations/seerr/users').catch(() => null)
   ]);
@@ -2789,6 +2863,12 @@ async function loadSettingsUi(){
   const cur = await setRes.json();
   const tvStatus = (tvRes && tvRes.ok) ? await tvRes.json() : null;
   const jfStatus = (jfRes && jfRes.ok) ? await jfRes.json() : null;
+  const plexStatus = (plexRes && plexRes.ok) ? await plexRes.json() : null;
+  let plexServers = null;
+  if (plexStatus && plexStatus.linked) {
+    const plexServersRes = await fetch('/plex/servers').catch(() => null);
+    plexServers = (plexServersRes && plexServersRes.ok) ? await plexServersRes.json() : null;
+  }
   const seerrStatus = (seerrRes && seerrRes.ok) ? await seerrRes.json() : null;
   const seerrUsers = (seerrUsersRes && seerrUsersRes.ok) ? await seerrUsersRes.json() : null;
   const deviceName = document.getElementById('setDeviceName');
@@ -2948,6 +3028,7 @@ async function loadSettingsUi(){
     jfCacheClearMsg.classList.remove('ok', 'err');
     jfCacheClearMsg.textContent = '';
   }
+  _renderPlexSettings(cur, plexStatus, plexServers);
   if (seerrEnabled) seerrEnabled.checked = !!cur.seerr_enabled;
   if (seerrServerUrl) seerrServerUrl.value = String(cur.seerr_server_url || '');
   if (seerrApiKey) seerrApiKey.value = '';
@@ -3108,6 +3189,15 @@ function bindSettingsUi(){
   const jfCacheClearMsg = document.getElementById('setJfCacheClearResult');
   const jfSharedCast = document.getElementById('setJfSharedCastEnabled');
   if (jfSharedCast) jfSharedCast.onchange = syncJellyfinAuthModeUi;
+  const plexApplyBtn = document.getElementById('setPlexApplyBtn');
+  const plexTestBtn = document.getElementById('setPlexTestBtn');
+  const plexLinkBtn = document.getElementById('setPlexLinkBtn');
+  const plexLinkUrl = document.getElementById('setPlexLinkUrl');
+  const plexPollBtn = document.getElementById('setPlexPollBtn');
+  const plexCancelBtn = document.getElementById('setPlexCancelBtn');
+  const plexUnlinkBtn = document.getElementById('setPlexUnlinkBtn');
+  const plexApplyMsg = document.getElementById('setPlexApplyResult');
+  const plexAccountStatus = document.getElementById('setPlexAccountStatus');
   const seerrApplyBtn = document.getElementById('setSeerrApplyBtn');
   const seerrTestBtn = document.getElementById('setSeerrTestBtn');
   const seerrApplyMsg = document.getElementById('setSeerrApplyResult');
@@ -3284,6 +3374,158 @@ function bindSettingsUi(){
 
   if (jfApplyBtn) jfApplyBtn.onclick = applyJellyfinOnly;
 
+  function setPlexMessage(text, cls){
+    if (!plexApplyMsg) return;
+    plexApplyMsg.classList.remove('ok', 'err');
+    if (cls) plexApplyMsg.classList.add(cls);
+    plexApplyMsg.textContent = text || '';
+  }
+
+  async function applyPlexOnly(){
+    const enabled = !!document.getElementById('setPlexEnabled')?.checked;
+    const machineId = String(document.getElementById('setPlexServer')?.value || '').trim();
+    if (plexApplyBtn) plexApplyBtn.disabled = true;
+    if (plexTestBtn) plexTestBtn.disabled = true;
+    setPlexMessage('Applying Plex settings…');
+    try {
+      const settingsResponse = await fetch('/settings', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({plex_enabled:enabled, apply_now:true}),
+      });
+      const settingsBody = await settingsResponse.json().catch(() => ({}));
+      if (!settingsResponse.ok) throw new Error(_plexErrorMessage(settingsBody, settingsResponse.status));
+      if (machineId) {
+        const serverResponse = await fetch('/integrations/plex/server', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({machine_id:machineId}),
+        });
+        const serverBody = await serverResponse.json().catch(() => ({}));
+        if (!serverResponse.ok) throw new Error(_plexErrorMessage(serverBody, serverResponse.status));
+      }
+      await loadSettingsUi();
+      setPlexMessage(enabled ? 'Plex settings applied.' : 'Plex disabled.', 'ok');
+      return true;
+    } catch (error) {
+      setPlexMessage(error && error.message ? error.message : 'Plex apply failed.', 'err');
+      return false;
+    } finally {
+      if (plexApplyBtn) plexApplyBtn.disabled = false;
+      if (plexTestBtn) plexTestBtn.disabled = false;
+    }
+  }
+
+  if (plexApplyBtn) plexApplyBtn.onclick = applyPlexOnly;
+
+  if (plexLinkBtn) plexLinkBtn.onclick = async () => {
+    plexLinkBtn.disabled = true;
+    setPlexMessage('Starting secure Plex link…');
+    try {
+      const response = await fetch('/integrations/plex/auth/start', {method:'POST'});
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
+      __plexLinkFlowId = String(body.flow_id || '');
+      if (!__plexLinkFlowId || !body.link_url) throw new Error('Plex returned an incomplete link response.');
+      if (plexLinkUrl) {
+        plexLinkUrl.href = String(body.link_url);
+        plexLinkUrl.classList.remove('hidden');
+      }
+      if (plexPollBtn) plexPollBtn.classList.remove('hidden');
+      if (plexCancelBtn) plexCancelBtn.classList.remove('hidden');
+      plexLinkBtn.classList.add('hidden');
+      if (plexAccountStatus) plexAccountStatus.textContent = 'Open Plex, approve RelayTV, then choose Check link.';
+      setPlexMessage('Plex link is ready.', 'ok');
+    } catch (error) {
+      setPlexMessage(error && error.message ? error.message : 'Could not start Plex linking.', 'err');
+    } finally {
+      plexLinkBtn.disabled = false;
+    }
+  };
+
+  if (plexPollBtn) plexPollBtn.onclick = async () => {
+    if (!__plexLinkFlowId) return;
+    plexPollBtn.disabled = true;
+    setPlexMessage('Checking Plex authorization…');
+    try {
+      const response = await fetch('/integrations/plex/auth/poll', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({flow_id:__plexLinkFlowId}),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
+      if (!body.linked) {
+        setPlexMessage('Still waiting for approval on Plex.', '');
+        return;
+      }
+      __plexLinkFlowId = '';
+      if (plexLinkUrl) plexLinkUrl.href = '#';
+      await loadSettingsUi();
+      setPlexMessage('Plex account linked. Choose a library server.', 'ok');
+    } catch (error) {
+      setPlexMessage(error && error.message ? error.message : 'Could not finish Plex linking.', 'err');
+    } finally {
+      plexPollBtn.disabled = false;
+    }
+  };
+
+  if (plexCancelBtn) plexCancelBtn.onclick = async () => {
+    if (!__plexLinkFlowId) return;
+    plexCancelBtn.disabled = true;
+    try {
+      const response = await fetch('/integrations/plex/auth/cancel', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({flow_id:__plexLinkFlowId}),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
+      __plexLinkFlowId = '';
+      if (plexLinkUrl) plexLinkUrl.href = '#';
+      await loadSettingsUi();
+      setPlexMessage('Plex link cancelled.');
+    } catch (error) {
+      setPlexMessage(error && error.message ? error.message : 'Could not cancel Plex linking.', 'err');
+    } finally {
+      plexCancelBtn.disabled = false;
+    }
+  };
+
+  if (plexUnlinkBtn) plexUnlinkBtn.onclick = async () => {
+    plexUnlinkBtn.disabled = true;
+    setPlexMessage('Removing the linked Plex account…');
+    try {
+      const response = await fetch('/integrations/plex/disconnect', {method:'POST'});
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
+      __plexLinkFlowId = '';
+      if (plexLinkUrl) plexLinkUrl.href = '#';
+      await loadSettingsUi();
+      setPlexMessage('Plex account unlinked.', 'ok');
+    } catch (error) {
+      setPlexMessage(error && error.message ? error.message : 'Could not unlink Plex.', 'err');
+    } finally {
+      plexUnlinkBtn.disabled = false;
+    }
+  };
+
+  if (plexTestBtn) plexTestBtn.onclick = async () => {
+    plexTestBtn.disabled = true;
+    setPlexMessage('Testing the selected Plex server…');
+    try {
+      const response = await fetch('/integrations/plex/test', {method:'POST'});
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
+      await loadSettingsUi();
+      setPlexMessage(`Connected${body.version ? ` to PMS ${body.version}` : ''}.`, 'ok');
+    } catch (error) {
+      setPlexMessage(error && error.message ? error.message : 'Plex server test failed.', 'err');
+    } finally {
+      plexTestBtn.disabled = false;
+    }
+  };
+
   async function applySeerrOnly(testAfterApply){
     if (seerrApplyMsg) { seerrApplyMsg.classList.remove('ok', 'err'); seerrApplyMsg.textContent = ''; }
     const enabled = !!document.getElementById('setSeerrEnabled')?.checked;
@@ -3400,6 +3642,7 @@ function bindSettingsUi(){
     const jfAudioLang = (document.getElementById('setJfAudioLang')?.value || '').trim().toLowerCase();
     const jfSubLang = (document.getElementById('setJfSubLang')?.value || '').trim().toLowerCase();
     const jfPlaybackMode = (document.getElementById('setJfPlaybackMode')?.value || 'auto').trim().toLowerCase();
+    const plexEnabled = !!document.getElementById('setPlexEnabled')?.checked;
     const seerrEnabled = !!document.getElementById('setSeerrEnabled')?.checked;
     const seerrServerUrl = String(document.getElementById('setSeerrServerUrl')?.value || '').trim();
     const seerrApiKey = String(document.getElementById('setSeerrApiKey')?.value || '').trim();
@@ -3461,6 +3704,7 @@ function bindSettingsUi(){
       jellyfin_audio_lang: jfAudioLang,
       jellyfin_sub_lang: jfSubLang,
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
+      plex_enabled: plexEnabled,
       seerr_enabled: seerrEnabled,
       seerr_server_url: seerrServerUrl,
       seerr_request_mode: seerrRequestMode,

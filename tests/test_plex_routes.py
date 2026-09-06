@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: GPL-3.0-only
+from fastapi.testclient import TestClient
+
+from relaytv_app.integrations import plex_auth
+from relaytv_app.main import create_app
+
+
+def test_link_routes_bind_flow_to_http_only_cookie(monkeypatch) -> None:
+    calls = []
+
+    def start(secret):
+        calls.append(("start", secret))
+        return {
+            "flow_id": "flow-1",
+            "link_url": "https://app.plex.tv/auth#?code=abc",
+            "expires_in": 1800,
+        }
+
+    def poll(flow_id, secret):
+        calls.append(("poll", flow_id, secret))
+        return {"linked": False, "pending": True, "expires_in": 1700}
+
+    monkeypatch.setattr(plex_auth.auth_manager, "start_link", start)
+    monkeypatch.setattr(plex_auth.auth_manager, "poll_link", poll)
+    client = TestClient(create_app(testing=True))
+
+    started = client.post("/integrations/plex/auth/start")
+    polled = client.post(
+        "/integrations/plex/auth/poll",
+        json={"flow_id": "flow-1"},
+    )
+
+    assert started.status_code == 200
+    assert "httponly" in started.headers["set-cookie"].lower()
+    assert "samesite=strict" in started.headers["set-cookie"].lower()
+    assert started.headers["cache-control"] == "no-store"
+    assert polled.status_code == 200
+    assert polled.headers["cache-control"] == "no-store"
+    assert calls[0][0] == "start"
+    assert calls[1] == ("poll", "flow-1", calls[0][1])
+
+
+def test_plex_status_and_servers_never_add_cacheable_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(
+        plex_auth.auth_manager,
+        "status",
+        lambda: {
+            "enabled": True,
+            "linked": True,
+            "account": {"username": "mark"},
+            "server": {"machine_id": "server-1", "name": "Home Plex"},
+        },
+    )
+    monkeypatch.setattr(
+        plex_auth.auth_manager,
+        "list_servers",
+        lambda: [{"machine_id": "server-1", "name": "Home Plex"}],
+    )
+    client = TestClient(create_app(testing=True))
+
+    status = client.get("/integrations/plex/status")
+    servers = client.get("/plex/servers")
+
+    assert status.status_code == 200
+    assert servers.status_code == 200
+    assert status.headers["cache-control"] == "no-store"
+    assert servers.headers["cache-control"] == "no-store"
+    assert "token" not in status.text.lower()
+    assert "token" not in servers.text.lower()
+
+
+def test_plex_errors_keep_upstream_secrets_out_of_route_response(monkeypatch) -> None:
+    def fail():
+        raise plex_auth.PlexAuthError(
+            "plex_auth_expired",
+            "Plex authentication has expired; link the account again",
+            status_code=401,
+            upstream_status=498,
+        )
+
+    monkeypatch.setattr(plex_auth.auth_manager, "test_selected_server", fail)
+    response = TestClient(create_app(testing=True)).post("/integrations/plex/test")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == {
+        "code": "plex_auth_expired",
+        "message": "Plex authentication has expired; link the account again",
+    }
+    assert "498" not in response.text

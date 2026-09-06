@@ -133,6 +133,7 @@ from .playback import (
     volume as volume,
 )
 from .playback import router as playback_router
+from .plex import router as plex_router
 from .postlive import router as postlive_router
 from .queue import router as queue_router
 from .realtime import router as realtime_router
@@ -166,6 +167,7 @@ router.include_router(iptv_router)
 router.include_router(jellyfin_router)
 router.include_router(peers_router)
 router.include_router(playback_router)
+router.include_router(plex_router)
 router.include_router(postlive_router)
 router.include_router(queue_router)
 router.include_router(realtime_router)
@@ -4698,6 +4700,49 @@ def ui():
           <div id="setJfCacheClearResult" class="inlineApplyMsg"></div>
         </div>
         <div id="setJfSyncDiag" class="hint"></div>
+      </div>
+    </details>
+
+    <details class="settingsGroup">
+      <summary>Plex Integration <span id="setPlexStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable Plex</div>
+            <div class="toggleHint">Use the linked Plex account and selected server for RelayTV library access.</div>
+          </div>
+          <label class="toggleSwitch" for="setPlexEnabled" title="Enable Plex integration">
+            <input type="checkbox" id="setPlexEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div role="group" aria-labelledby="setPlexAccountHeading">
+          <h3 id="setPlexAccountHeading">Plex account</h3>
+          <div class="hint">Link on Plex’s site. RelayTV never asks for or stores your Plex password.</div>
+          <div id="setPlexAccountStatus" class="hint" role="status">No account linked.</div>
+          <div class="inlineApplyRow">
+            <button type="button" id="setPlexLinkBtn" class="btn electricBlue">Link Plex account</button>
+            <a id="setPlexLinkUrl" class="btn primary hidden" href="#" target="_blank" rel="noopener noreferrer">Continue on Plex</a>
+            <button type="button" id="setPlexPollBtn" class="btn hidden">Check link</button>
+            <button type="button" id="setPlexCancelBtn" class="btn hidden">Cancel link</button>
+            <button type="button" id="setPlexUnlinkBtn" class="btn hidden">Unlink account</button>
+          </div>
+        </div>
+
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setPlexServer">Library server</label>
+          <select id="setPlexServer" class="input">
+            <option value="">Link an account to load servers</option>
+          </select>
+          <div class="hint">Local connections are preferred. Relay connections are excluded from this first integration phase.</div>
+        </div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setPlexApplyBtn" class="btn electricBlue">Apply Plex</button>
+          <button type="button" id="setPlexTestBtn" class="btn">Test server</button>
+          <div id="setPlexApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
+        </div>
+        <div id="setPlexDiag" class="hint"></div>
       </div>
     </details>
 

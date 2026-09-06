@@ -768,6 +768,31 @@ YouTube cookie helpers:
 When YouTube cookies are configured, RelayTV passes them to yt-dlp and avoids
 yt-dlp client fallbacks that do not support cookie auth.
 
+## Plex account and server setup API
+
+This phase exposes Plex account linking and server setup. See
+[Plex operations](PLEX_OPERATIONS.md). All responses on these routes use
+`Cache-Control: no-store`; account and server tokens are never returned.
+
+- `GET /integrations/plex/status`: enabled, linked-account, selected-server,
+  and most recent connection-test status
+- `POST /integrations/plex/auth/start`: starts a browser-bound Plex PIN/JWK
+  flow and returns an opaque flow ID plus the official Plex authorization URL
+- `POST /integrations/plex/auth/poll`: checks a flow ID after approval
+- `POST /integrations/plex/auth/cancel`: cancels an in-flight flow
+- `POST /integrations/plex/disconnect`: removes local Plex account and server
+  credentials
+- `GET /plex/servers`: returns sanitized directly reachable Plex servers for
+  the linked account
+- `POST /integrations/plex/server`: selects and identity-checks a server by
+  machine ID
+- `POST /integrations/plex/test`: probes the saved server and reports its PMS
+  version
+
+Plex account-link and server-selection writes use the normal optional
+`RELAYTV_API_TOKEN` guard. Catalog and playback routes are not part of this
+phase.
+
 ## Jellyfin integration and browse API
 
 Integration status and operator helpers:

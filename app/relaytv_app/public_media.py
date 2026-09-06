@@ -16,11 +16,14 @@ _PRIVATE_ITEM_KEYS = {
     "cookies",
     "headers",
     "http_headers",
+    "plex_token",
     "resolved_audio",
     "resolved_source_url",
     "resolved_stream",
     "stream",
     "token",
+    "x-plex-token",
+    "x_plex_token",
 }
 
 _SENSITIVE_QUERY_KEYS = {
@@ -43,6 +46,7 @@ _SENSITIVE_QUERY_KEYS = {
     "token",
     "x-emby-token",
     "x-jellyfin-token",
+    "x-plex-token",
 }
 
 _URL_FIELDS = {"art", "image", "input", "poster", "thumbnail", "thumbnail_local", "url"}

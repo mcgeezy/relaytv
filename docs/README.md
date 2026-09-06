@@ -15,6 +15,8 @@ release branch.
   validated Jellyfin playback, verification, and troubleshooting
 - `IPTV_OPERATIONS.md`: M3U sources, free-provider discovery, favorites,
   availability, credential handling, and troubleshooting
+- `PLEX_OPERATIONS.md`: Plex account linking, server selection, credential
+  storage, connection verification, and troubleshooting
 - `DEVICE_SYNC_OPERATIONS.md`: sending a queue or the running playback to
   another RelayTV device — adding devices, mDNS discovery requirements, peer
   token handling, what can travel between devices, and troubleshooting
