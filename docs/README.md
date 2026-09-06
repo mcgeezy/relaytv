@@ -39,6 +39,8 @@ mode after intentional changes and commit the diff):
   containment contract (`tests/test_transition_inventory.py`)
 - `JELLYFIN_INVENTORY.md`: Jellyfin route-surface inventory and
   containment contract (`tests/test_jellyfin_inventory.py`)
+- `PLEX_INVENTORY.md`: Plex route-surface inventory and containment contract
+  (`tests/test_plex_inventory.py`)
 - `OPERATIONS_TEST_MATRIX.md`: runtime profile decision table
   (`tests/test_runtime_matrix.py`; listed under Primary Docs above)
 

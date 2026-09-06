@@ -147,3 +147,51 @@ def test_upstream_auth_error_is_sanitized() -> None:
 
     assert exc_info.value.code == "plex_auth_expired"
     assert "server-secret" not in str(exc_info.value)
+
+
+def test_binary_artwork_keeps_auth_in_headers_and_checks_media_type() -> None:
+    class _ArtworkOpener:
+        def __init__(self, content_type: str):
+            self.content_type = content_type
+            self.request = None
+
+        def open(self, request, timeout):
+            self.request = request
+            response = _Response(b"image-data")
+            response.headers = email.message.Message()
+            response.headers["Content-Type"] = self.content_type
+            return response
+
+    opener = _ArtworkOpener("image/jpeg; charset=binary")
+    client = plex_client.PlexClient(
+        "https://plex.example:32400",
+        token="server-secret",
+        identity=_identity(),
+        opener=opener,
+    )
+
+    result = client.get_bytes("/library/metadata/10/thumb/1", query={"width": 800})
+
+    assert result.body == b"image-data"
+    assert result.content_type == "image/jpeg"
+    assert opener.request.get_header("X-plex-token") == "server-secret"
+    assert "server-secret" not in opener.request.full_url
+
+    invalid = _ArtworkOpener("text/html")
+    with pytest.raises(plex_client.PlexError) as exc_info:
+        plex_client.PlexClient(
+            "https://plex.example:32400",
+            token="server-secret",
+            identity=_identity(),
+            opener=invalid,
+        ).get_bytes("/library/metadata/10/thumb/1")
+    assert exc_info.value.code == "plex_invalid_response"
+
+    active = _ArtworkOpener("image/svg+xml")
+    with pytest.raises(plex_client.PlexError):
+        plex_client.PlexClient(
+            "https://plex.example:32400",
+            token="server-secret",
+            identity=_identity(),
+            opener=active,
+        ).get_bytes("/library/metadata/10/thumb/1")

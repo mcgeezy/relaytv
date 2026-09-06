@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from fastapi.testclient import TestClient
 
-from relaytv_app.integrations import plex_auth
+from relaytv_app.integrations import plex_auth, plex_service
+from relaytv_app.integrations.plex_client import PlexBinaryResponse
 from relaytv_app.main import create_app
 
 
@@ -87,3 +88,80 @@ def test_plex_errors_keep_upstream_secrets_out_of_route_response(monkeypatch) ->
         "message": "Plex authentication has expired; link the account again",
     }
     assert "498" not in response.text
+
+
+def test_plex_catalog_routes_are_bounded_and_non_cacheable(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "home",
+        lambda *, limit: calls.append(("home", limit)) or {"rows": []},
+    )
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "libraries",
+        lambda: calls.append(("libraries",)) or {"libraries": []},
+    )
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "library_items",
+        lambda library_id, **kwargs: calls.append(("items", library_id, kwargs))
+        or {"items": []},
+    )
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "search",
+        lambda query, *, limit: calls.append(("search", query, limit))
+        or {"items": []},
+    )
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "item_detail",
+        lambda item_id: calls.append(("detail", item_id)) or {"item": {}},
+    )
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "children",
+        lambda item_id, **kwargs: calls.append(("children", item_id, kwargs))
+        or {"items": []},
+    )
+    client = TestClient(create_app(testing=True))
+
+    responses = [
+        client.get("/plex/home?limit=999"),
+        client.get("/plex/libraries"),
+        client.get("/plex/libraries/library-ref/items?start=-2&limit=999&sort=added"),
+        client.get("/plex/search?q=general&limit=999"),
+        client.get("/plex/items/item-ref"),
+        client.get("/plex/items/show-ref/children?start=-1&limit=999"),
+    ]
+
+    assert all(response.status_code == 200 for response in responses)
+    assert all(response.headers["cache-control"] == "no-store" for response in responses)
+    assert calls == [
+        ("home", 50),
+        ("libraries",),
+        ("items", "library-ref", {"start": 0, "limit": 100, "sort": "added"}),
+        ("search", "general", 100),
+        ("detail", "item-ref"),
+        ("children", "show-ref", {"start": 0, "limit": 100}),
+    ]
+
+
+def test_plex_artwork_route_returns_private_nosniff_image(monkeypatch) -> None:
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "artwork",
+        lambda asset_id: PlexBinaryResponse(
+            body=f"image:{asset_id}".encode(),
+            content_type="image/jpeg",
+        ),
+    )
+
+    response = TestClient(create_app(testing=True)).get("/plex/artwork/asset-ref")
+
+    assert response.status_code == 200
+    assert response.content == b"image:asset-ref"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"

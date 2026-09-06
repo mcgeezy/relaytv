@@ -768,9 +768,10 @@ YouTube cookie helpers:
 When YouTube cookies are configured, RelayTV passes them to yt-dlp and avoids
 yt-dlp client fallbacks that do not support cookie auth.
 
-## Plex account and server setup API
+## Plex integration and browse API
 
-This phase exposes Plex account linking and server setup. See
+The current implementation exposes Plex account linking, server setup, and
+read-only personal-library browsing. See
 [Plex operations](PLEX_OPERATIONS.md). All responses on these routes use
 `Cache-Control: no-store`; account and server tokens are never returned.
 
@@ -788,10 +789,27 @@ This phase exposes Plex account linking and server setup. See
   machine ID
 - `POST /integrations/plex/test`: probes the saved server and reports its PMS
   version
+- `GET /plex/home`: returns normalized video rows from the selected server;
+  optional `limit` is bounded to 1–50 items per row
+- `GET /plex/libraries`: returns movie and TV library sections
+- `GET /plex/libraries/{library_id}/items`: paged library contents; supports
+  `start`, a `limit` bounded to 1–100, and `sort=title|added|year|rating`
+- `GET /plex/search`: searches the selected server; requires `q` and accepts a
+  `limit` bounded to 1–100
+- `GET /plex/items/{item_id}`: normalized movie, show, season, or episode detail
+- `GET /plex/items/{item_id}/children`: paged seasons for a show or episodes
+  for a season
+- `GET /plex/artwork/{asset_id}`: credentialed artwork proxy; returns an image
+  with private no-store caching and content sniffing disabled
+
+Library, item, and artwork IDs are authenticated encrypted references bound to
+the linked account and selected server. A reference stops resolving after
+either changes. Upstream Plex paths and credentials are neither exposed to nor
+accepted from browser callers.
 
 Plex account-link and server-selection writes use the normal optional
-`RELAYTV_API_TOKEN` guard. Catalog and playback routes are not part of this
-phase.
+`RELAYTV_API_TOKEN` guard. Browse routes are read-only. Playback routes are not
+part of the current phase.
 
 ## Jellyfin integration and browse API
 

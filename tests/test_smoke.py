@@ -49,9 +49,11 @@ def test_ui_smoke() -> None:
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
+    plex_css_response = client.get('/static/ui/plex.css')
     realtime_policy_response = client.get('/static/ui/realtime_transport.js')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
+    plex_js_response = client.get('/static/ui/plex.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
     iptv_js_response = client.get('/static/ui/iptv.js')
     seerr_css_response = client.get('/static/ui/seerr.css')
@@ -64,6 +66,7 @@ def test_ui_smoke() -> None:
     assert 'text/html' in response.headers['content-type']
     assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/plex\.css\?v=\d+" />', response.text)
     realtime_policy_tag = re.search(
         r'<script src="/static/ui/realtime_transport\.js\?v=\d+" defer></script>',
         response.text,
@@ -72,6 +75,7 @@ def test_ui_smoke() -> None:
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
     assert realtime_policy_tag.start() < response.text.index('<script src="/static/ui/app.js')
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
+    assert re.search(r'<script src="/static/ui/plex\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/iptv\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/seerr\.css\?v=\d+" />', response.text)
@@ -83,6 +87,7 @@ def test_ui_smoke() -> None:
     assert 'text/css' in css_response.headers['content-type']
     css = css_response.text
     assert jellyfin_css_response.status_code == 200
+    assert plex_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
     assert iptv_js_response.status_code == 200
     assert seerr_css_response.status_code == 200
@@ -98,12 +103,18 @@ def test_ui_smoke() -> None:
     assert jellyfin_js_response.status_code == 200
     assert 'javascript' in jellyfin_js_response.headers['content-type']
     jellyfin_js = jellyfin_js_response.text
+    assert plex_js_response.status_code == 200
+    assert 'javascript' in plex_js_response.headers['content-type']
+    plex_js = plex_js_response.text
     seerr_js = seerr_js_response.text
     assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
     assert 'id="jellyfinShell"' in response.text
+    assert 'id="plexOpenBtn"' in response.text
+    assert 'id="plexShell"' in response.text
+    assert 'id="plexSearchInput"' in response.text
     assert 'id="seerrOpenBtn"' in response.text
     assert 'id="seerrShell"' in response.text
     assert 'id="seerrSearchInput"' in response.text
@@ -113,6 +124,9 @@ def test_ui_smoke() -> None:
     assert 'id="setSeerrApiKey"' in response.text
     assert 'id="setSeerrClearApiKey"' in response.text
     assert 'id="setSeerrRequestMode"' in response.text
+    assert 'function loadPlexHome' in plex_js
+    assert 'function loadPlexLibraries' in plex_js
+    assert 'function openPlexDetail' in plex_js
     assert '<option value="shared_admin">Shared administrator API</option>' in response.text
     assert '<option value="caller_session">Caller-specific sign-in</option>' in response.text
     assert 'administrator API identity and may auto-approve' in js

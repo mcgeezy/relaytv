@@ -145,7 +145,7 @@ Planned modules and their current state:
 | `integrations/plex_service.py` | Planned for catalog normalization, authorization context, playback policy, queue item construction, tracks, and watch-state payloads. |
 | `integrations/plex_companion.py` | Planned optional advertising, command normalization, subscriptions, controller timeline transport, and registered command-sink integration. |
 | `routes/plex.py` | Implemented for status, linking lifecycle, server discovery/selection, connection testing, write guards, and private response handling. Catalog and playback routes remain planned. |
-| `static/ui/plex.js`, `plex.css` | Planned for the browser library. Phase 1 settings currently use the shared settings controller and styles. |
+| `static/ui/plex.js`, `plex.css` | Implemented for Home, libraries, paging, search, detail, seasons/episodes, progress display, and responsive browser layouts. Phase 1 settings remain in the shared settings controller and styles. |
 
 ```mermaid
 flowchart LR
@@ -255,7 +255,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | --- | --- | --- | --- |
 | 0 — contract and compatibility spikes | Partial | Small unshipped harness for JWT linking/refresh, server discovery, browse, media decision/part, reporting, plus independent Companion discovery probe. Record exact PMS/controller versions and sanitized fixtures. | Successful request/response evidence; verified minimum PMS/API contract; selected media-auth mechanism; receiver supported/unsupported matrix. A receiver failure does not block the library track. |
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
-| 2 — library browser | Planned | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
+| 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
 | 3 — playback and queue | Planned | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
 | 4 — compatibility and release | Planned | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
@@ -265,7 +265,7 @@ experimental if current controllers cannot reliably use it. Keep all phases
 on the unified branch and PR, with reviewable commits and explicit phase
 evidence. Split media delivery from UI work at the commit boundary when useful.
 
-### Implementation evidence recorded 2026-09-05
+### Phase 1 evidence recorded 2026-09-05
 
 Phase 1 now includes an Ed25519 device key and modern PIN/JWK linking flow,
 browser-bound expiring link sessions, serialized JWT refresh, atomic private
@@ -290,10 +290,27 @@ refresh, restart recovery, and upstream revocation are still pending. Media
 decision, authenticated playback, progress reporting, and Companion discovery
 were not exercised. These are acceptance inputs for the remaining phases.
 
+### Phase 2 evidence recorded 2026-09-06
+
+Phase 2 adds authenticated encrypted catalog and artwork references scoped to
+the linked account and selected server. The read-only browser covers Home rows, movie and
+TV libraries, bounded paging, search, movie/show/season/episode detail,
+seasons/episodes, existing resume progress, and a credentialed no-store artwork
+proxy. Account, server, or enable-setting changes retire in-flight results and
+invalidate older references. The UI participates in RelayTV's browser-back
+stack and retires a pending search when its tab changes.
+
+The live PMS returned one Home row, two video libraries, a 286-movie paged
+catalog, item detail with genres, search results, and JPEG artwork through the
+production transport and catalog service. Sanitized results contained no
+upstream `/library/` paths. Shared-account visibility, non-empty TV hierarchy,
+missing-art behavior on live data, and phone/desktop browser checks remain.
+
 ### Test and release discipline
 
 Continue focused Plex transport/auth/service/route tests, fixture-based
-protocol tests, and JavaScript interaction tests as implementation proceeds. Drive
+protocol tests, and JavaScript interaction tests as implementation proceeds.
+Drive
 blocked network calls through actual service/ASGI paths for race tests and
 perform the repository's revert proof on every lifecycle/boundary guard.
 
@@ -305,8 +322,8 @@ prove Plex credentials cannot survive a switch to unrelated media.
 
 Pin new routes in `test_route_inventory.py`; regenerate environment,
 transition, and runtime inventories only when their surfaces actually change.
-Add a Plex containment check analogous to the Jellyfin inventory once its
-modules exist. Keep transport imports independent of routes. Browser checks
+Keep the Plex containment inventory current as its route surface changes.
+Keep transport imports independent of routes. Browser checks
 cover focus restoration, double submissions, pagination, link cancellation,
 resume choices, and distinct account/server/receiver status.
 

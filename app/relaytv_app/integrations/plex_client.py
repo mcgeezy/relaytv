@@ -15,6 +15,14 @@ from .. import device_identity
 
 DEFAULT_TIMEOUT_SEC = 6.0
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_BINARY_RESPONSE_BYTES = 16 * 1024 * 1024
+SAFE_IMAGE_TYPES = {
+    "image/avif",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
 PLEX_PRODUCT = "RelayTV"
 PLEX_PLATFORM = "Linux"
 
@@ -121,6 +129,12 @@ class PlexClientIdentity:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class PlexBinaryResponse:
+    body: bytes
+    content_type: str
+
+
 class PlexClient:
     """One immutable Plex origin and credential snapshot per operation."""
 
@@ -172,6 +186,67 @@ class PlexClient:
         body: dict[str, object] | None = None,
         auth: bool = True,
     ) -> dict | list:
+        request = self._build_request(
+            method,
+            path,
+            query=query,
+            body=body,
+            auth=auth,
+            accept="application/json",
+        )
+        raw, _content_type = self._read(request, max_bytes=MAX_RESPONSE_BYTES)
+
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise PlexError(
+                "plex_invalid_response",
+                "Plex returned an invalid JSON response",
+                status_code=502,
+            ) from None
+        if not isinstance(parsed, (dict, list)):
+            raise PlexError(
+                "plex_invalid_response",
+                "Plex returned an unexpected response shape",
+                status_code=502,
+            )
+        return parsed
+
+    def get_bytes(
+        self,
+        path: str,
+        *,
+        query: dict[str, object] | None = None,
+        auth: bool = True,
+    ) -> PlexBinaryResponse:
+        request = self._build_request(
+            "GET",
+            path,
+            query=query,
+            body=None,
+            auth=auth,
+            accept="image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8",
+        )
+        raw, content_type = self._read(request, max_bytes=MAX_BINARY_RESPONSE_BYTES)
+        media_type = content_type.partition(";")[0].strip().lower()
+        if not raw or media_type not in SAFE_IMAGE_TYPES:
+            raise PlexError(
+                "plex_invalid_response",
+                "Plex returned an unexpected artwork response",
+                status_code=502,
+            )
+        return PlexBinaryResponse(body=raw, content_type=media_type)
+
+    def _build_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, object] | None,
+        body: dict[str, object] | None,
+        auth: bool,
+        accept: str,
+    ) -> urllib.request.Request:
         if auth and not self.token:
             raise PlexError(
                 "plex_not_authenticated",
@@ -206,7 +281,7 @@ class PlexClient:
             url = f"{url}?{urllib.parse.urlencode(pairs)}"
 
         request_headers = {
-            "Accept": "application/json",
+            "Accept": accept,
             "User-Agent": "RelayTV Plex Integration",
             **self.identity.headers(),
         }
@@ -216,21 +291,29 @@ class PlexClient:
         if body is not None:
             payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
             request_headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(
+        return urllib.request.Request(
             url,
             data=payload,
             headers=request_headers,
             method=str(method or "GET").upper(),
         )
+
+    def _read(
+        self,
+        request: urllib.request.Request,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
         try:
             with self._opener.open(request, timeout=self.timeout_sec) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
+                raw = response.read(max_bytes + 1)
+                if len(raw) > max_bytes:
                     raise PlexError(
                         "plex_response_too_large",
                         "Plex returned an unexpectedly large response",
                         status_code=502,
                     )
+                content_type = str(response.headers.get("Content-Type") or "")
         except PlexError:
             raise
         except urllib.error.HTTPError as exc:
@@ -248,21 +331,7 @@ class PlexClient:
                 status_code=502,
             ) from None
 
-        try:
-            parsed = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise PlexError(
-                "plex_invalid_response",
-                "Plex returned an invalid JSON response",
-                status_code=502,
-            ) from None
-        if not isinstance(parsed, (dict, list)):
-            raise PlexError(
-                "plex_invalid_response",
-                "Plex returned an unexpected response shape",
-                status_code=502,
-            )
-        return parsed
+        return raw, content_type
 
 
 def _http_error(status: int) -> PlexError:

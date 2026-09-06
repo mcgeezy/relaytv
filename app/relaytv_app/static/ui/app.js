@@ -679,6 +679,14 @@ function _uiCloseTopLayerFromNav(){
     closeQueueMenu();
     return true;
   }
+  if (window.relaytvPlex && window.relaytvPlex.isDetailOpen()) {
+    window.relaytvPlex.closeDetail({fromNav:true});
+    return true;
+  }
+  if (window.relaytvPlex && window.relaytvPlex.isOpen()) {
+    window.relaytvPlex.close({fromNav:true, force:true});
+    return true;
+  }
   if (window.relaytvSeerr && window.relaytvSeerr.isDetailOpen()) {
     window.relaytvSeerr.closeDetail({fromNav:true});
     return true;
@@ -2847,6 +2855,7 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
       ? `${selected.name || 'Plex Media Server'} · ${transport}${test.version ? ` · PMS ${test.version}` : ''}`
       : (linked ? 'Choose a library server to finish setup.' : 'Link a Plex account to discover its servers.');
   }
+  if (window.relaytvPlex) window.relaytvPlex.updateStatus({...status, enabled});
 }
 
 async function loadSettingsUi(){
@@ -3838,6 +3847,7 @@ window.addEventListener('DOMContentLoaded', () => {
   bindAddUrlUi();
   bindSeerrUi();
   bindJellyfinUi();
+  bindPlexUi();
   _jfSetShellVisible(false);
   _jfSetActiveTab('dashboard', {refresh:false});
   try { history.replaceState(Object.assign({}, history.state || {}, {relaytv_root: 1}), ''); } catch (_e) {}

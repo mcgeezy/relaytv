@@ -127,6 +127,17 @@ class _LinkFlow:
     generation: int
 
 
+@dataclass(frozen=True, slots=True)
+class PlexServerSession:
+    """Credential snapshot scoped to one account/server lifecycle generation."""
+
+    client: PlexClient
+    account_id: str
+    machine_id: str
+    generation: int
+    reference_key: bytes
+
+
 class PlexAuthManager:
     def __init__(
         self,
@@ -375,6 +386,69 @@ class PlexAuthManager:
         )
         return [self._public_server(resource) for resource in self._server_resources(resources)]
 
+    def selected_server_session(self) -> PlexServerSession:
+        settings = state.get_settings()
+        if not bool(settings.get("plex_enabled", False)):
+            raise PlexAuthError(
+                "plex_disabled",
+                "Enable Plex in Settings first",
+                status_code=503,
+            )
+        self.refresh_token(force=False)
+        with self._lock:
+            payload = self.store.load()
+            account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
+            server = payload.get("server") if isinstance(payload.get("server"), dict) else {}
+            device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+            server_url = str(server.get("server_url") or "")
+            server_token = str(server.get("access_token") or "")
+            machine_id = str(server.get("machine_id") or "")
+            if not server_url or not server_token or not machine_id:
+                raise PlexAuthError(
+                    "plex_server_not_selected",
+                    "Choose a Plex Media Server first",
+                    status_code=503,
+                )
+            try:
+                private_key = _b64url_decode(device.get("private_key"))
+            except ValueError:
+                raise PlexAuthError(
+                    "plex_auth_state_invalid",
+                    "Plex device credentials could not be read",
+                    status_code=500,
+                ) from None
+            return PlexServerSession(
+                client=self._client_factory(server_url, server_token),
+                account_id=str(account.get("id") or ""),
+                machine_id=machine_id,
+                generation=self._generation,
+                reference_key=hashlib.sha256(
+                    b"relaytv-plex-reference-v1\0" + private_key
+                ).digest(),
+            )
+
+    def assert_server_session_current(self, session: PlexServerSession) -> None:
+        if not bool(state.get_settings().get("plex_enabled", False)):
+            raise PlexAuthError(
+                "plex_credentials_changed",
+                "Plex settings changed while the request was in progress",
+                status_code=409,
+            )
+        with self._lock:
+            payload = self.store.load()
+            account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
+            server = payload.get("server") if isinstance(payload.get("server"), dict) else {}
+            if (
+                session.generation != self._generation
+                or session.account_id != str(account.get("id") or "")
+                or session.machine_id != str(server.get("machine_id") or "")
+            ):
+                raise PlexAuthError(
+                    "plex_credentials_changed",
+                    "Plex account or server changed while the request was in progress",
+                    status_code=409,
+                )
+
     def select_server(self, machine_id: str) -> dict[str, object]:
         requested = str(machine_id or "").strip()
         if not requested:
@@ -447,6 +521,7 @@ class PlexAuthManager:
                 latest = self.store.load()
                 latest["server"] = server_record
                 self.store.save(latest)
+                self._generation += 1
                 self._last_server_test = {
                     "reachable": True,
                     "version": str(container.get("version") or ""),

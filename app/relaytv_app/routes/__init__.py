@@ -3805,6 +3805,7 @@ def ui():
   <title>RelayTV</title>
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/plex.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/seerr.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/peers.css?v=__UI_ASSET_V__" />
@@ -3826,6 +3827,7 @@ def ui():
       <div class="hdrRight">
         <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
         <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
+        <button id="plexOpenBtn" class="plexLaunch" title="Open Plex" aria-label="Open Plex"><span class="plexLaunchMark" aria-hidden="true">›</span><span>Plex</span></button>
         <button id="seerrOpenBtn" class="seerrLaunch" title="Open Seerr" aria-label="Open Seerr"><span aria-hidden="true">✦</span><span>Seerr</span></button>
         <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
@@ -4335,6 +4337,30 @@ def ui():
         </div>
       </div>
     </div>
+
+    <div id="plexShell" class="plexShell hidden" aria-hidden="true">
+      <div class="plexShellInner">
+        <header class="plexShellHead">
+          <button id="plexBackBtn" class="plexBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>
+          <div class="plexIdentity"><span class="plexMark" aria-hidden="true">›</span><div><small>Personal media</small><strong>Plex</strong></div></div>
+          <div id="plexConnection" class="plexConnection" role="status" aria-live="polite">Checking…</div>
+        </header>
+        <main class="plexWorkspace">
+          <div class="plexToolbar">
+            <nav class="plexTabs" role="tablist" aria-label="Plex sections">
+              <button class="plexTab active" data-plex-view="home" role="tab" aria-selected="true">Home</button>
+              <button class="plexTab" data-plex-view="libraries" role="tab" aria-selected="false">Libraries</button>
+            </nav>
+            <label class="plexSearch"><span aria-hidden="true">⌕</span><input id="plexSearchInput" type="search" maxlength="200" placeholder="Search your Plex library…" aria-label="Search Plex" /></label>
+          </div>
+          <div id="plexBrowseStatus" class="plexBrowseStatus" role="status" aria-live="polite"></div>
+          <div id="plexContent" class="plexContent"></div>
+          <button id="plexMoreBtn" class="plexMore hidden" type="button">Load more</button>
+        </main>
+        <div id="plexDetailBackdrop" class="plexDetailBackdrop hidden" aria-hidden="true"></div>
+        <aside id="plexDetail" class="plexDetail hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="plexDetailTitle"></aside>
+      </div>
+    </div>
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
@@ -4342,6 +4368,7 @@ def ui():
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/seerr.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/plex.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/peers.js?v=__UI_ASSET_V__" defer></script>
 </body>
@@ -4810,12 +4837,14 @@ def _ui_asset_version() -> str:
     for name in (
         "app.css",
         "jellyfin.css",
+        "plex.css",
         "iptv.css",
         "seerr.css",
         "peers.css",
         "realtime_transport.js",
         "app.js",
         "jellyfin.js",
+        "plex.js",
         "iptv.js",
         "seerr.js",
         "peers.js",

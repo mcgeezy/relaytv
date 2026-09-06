@@ -7,7 +7,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
-from ..integrations import plex_auth
+from ..integrations import plex_auth, plex_service
 from ..integrations.plex_client import PlexError
 
 
@@ -132,6 +132,104 @@ def plex_servers(response: Response):
         return {"servers": plex_auth.auth_manager.list_servers()}
     except PlexError as exc:
         raise _http_error(exc) from None
+
+
+@router.get("/plex/home")
+def plex_home(response: Response, limit: int = 20):
+    _no_store(response)
+    try:
+        return plex_service.catalog_service.home(limit=max(1, min(50, int(limit))))
+    except PlexError as exc:
+        raise _http_error(exc) from None
+
+
+@router.get("/plex/libraries")
+def plex_libraries(response: Response):
+    _no_store(response)
+    try:
+        return plex_service.catalog_service.libraries()
+    except PlexError as exc:
+        raise _http_error(exc) from None
+
+
+@router.get("/plex/libraries/{library_id}/items")
+def plex_library_items(
+    library_id: str,
+    response: Response,
+    start: int = 0,
+    limit: int = 60,
+    sort: str = "title",
+):
+    _no_store(response)
+    try:
+        return plex_service.catalog_service.library_items(
+            library_id,
+            start=max(0, int(start)),
+            limit=max(1, min(100, int(limit))),
+            sort=str(sort or "title"),
+        )
+    except PlexError as exc:
+        raise _http_error(exc) from None
+
+
+@router.get("/plex/search")
+def plex_search(response: Response, q: str = "", limit: int = 40):
+    _no_store(response)
+    query = str(q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q is required")
+    if len(query) > 200:
+        raise HTTPException(status_code=400, detail="q is too long")
+    try:
+        return plex_service.catalog_service.search(
+            query,
+            limit=max(1, min(100, int(limit))),
+        )
+    except PlexError as exc:
+        raise _http_error(exc) from None
+
+
+@router.get("/plex/items/{item_id}")
+def plex_item_detail(item_id: str, response: Response):
+    _no_store(response)
+    try:
+        return plex_service.catalog_service.item_detail(item_id)
+    except PlexError as exc:
+        raise _http_error(exc) from None
+
+
+@router.get("/plex/items/{item_id}/children")
+def plex_item_children(
+    item_id: str,
+    response: Response,
+    start: int = 0,
+    limit: int = 60,
+):
+    _no_store(response)
+    try:
+        return plex_service.catalog_service.children(
+            item_id,
+            start=max(0, int(start)),
+            limit=max(1, min(100, int(limit))),
+        )
+    except PlexError as exc:
+        raise _http_error(exc) from None
+
+
+@router.get("/plex/artwork/{asset_id}")
+def plex_artwork(asset_id: str):
+    try:
+        artwork = plex_service.catalog_service.artwork(asset_id)
+    except PlexError as exc:
+        raise _http_error(exc) from None
+    return Response(
+        content=artwork.body,
+        media_type=artwork.content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/integrations/plex/server")

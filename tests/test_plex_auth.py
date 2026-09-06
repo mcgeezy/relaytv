@@ -6,7 +6,7 @@ import time
 import jwt
 import pytest
 
-from relaytv_app.integrations import plex_auth
+from relaytv_app.integrations import plex_auth, plex_service
 
 
 class _FakeClient:
@@ -181,6 +181,60 @@ def test_select_server_prefers_local_non_relay_and_verifies_identity(manager) ->
     assert tested["reachable"] is True
     assert tested["version"] == "1.43.3.10828"
     assert "server-secret" not in repr(auth.status())
+
+
+def test_server_reselection_rejects_a_blocked_catalog_result(manager) -> None:
+    auth, factory = manager
+    started = auth.start_link("browser-a")
+    factory.pin_claimed = True
+    auth.poll_link(started["flow_id"], "browser-a")
+    auth.select_server("server-123")
+    entered = threading.Event()
+    release = threading.Event()
+    original_response = factory.response
+
+    def blocked_response(method, base_url, path, payload, token):
+        if method == "GET" and path == "/hubs":
+            entered.set()
+            assert release.wait(2)
+            return {
+                "MediaContainer": {
+                    "Hub": [
+                        {
+                            "title": "Recently Added",
+                            "Metadata": [
+                                {
+                                    "key": "/library/metadata/10",
+                                    "type": "movie",
+                                    "title": "Stale Movie",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        return original_response(method, base_url, path, payload, token)
+
+    factory.response = blocked_response
+    failures = []
+
+    def browse():
+        try:
+            plex_service.PlexCatalogService(auth).home()
+        except Exception as exc:  # noqa: BLE001 - captured for thread assertion
+            failures.append(exc)
+
+    worker = threading.Thread(target=browse)
+    worker.start()
+    assert entered.wait(2)
+    auth.select_server("server-123")
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert len(failures) == 1
+    assert isinstance(failures[0], plex_auth.PlexAuthError)
+    assert failures[0].code == "plex_credentials_changed"
 
 
 def test_disconnect_invalidates_a_blocked_link_completion(
