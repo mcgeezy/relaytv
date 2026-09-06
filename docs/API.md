@@ -805,6 +805,8 @@ personal-library browsing, direct playback, and server transcoding. See
   `command=play_now|resume|play_next|play_last`; immediate actions start the
   item and queue actions store a durable Plex reference. An optional encrypted
   `version_id` selects one of the item's advertised accessible media parts.
+  Optional encrypted `audio_id` and `subtitle_id` values select tracks that
+  the chosen version advertises; RelayTV revalidates both against that version.
 - `GET /plex/stream/{stream_id}`: loopback media relay used by the player;
   forwards a single byte range for direct playback or a session-bound Plex
   Matroska transcode. Transcode credentials, item paths, and session parameters
@@ -827,7 +829,10 @@ decisions and the cap. Transcode mode
 requires PMS conversion and fails before the active playback transition when
 PMS cannot prepare it. Resume offsets are sent to PMS in seconds. RelayTV owns
 the transient session and stops it on disconnect, playback stop/replacement,
-natural end, or application shutdown.
+natural end, or application shutdown. An explicit audio or subtitle choice
+uses PMS conversion so the result behaves consistently across RelayTV player
+backends; subtitles are burned into the converted video. Direct mode rejects
+an explicit track choice with a clear client error.
 
 Plex account-link, server-selection, and playback writes use the normal
 optional `RELAYTV_API_TOKEN` guard. Browse routes are read-only.

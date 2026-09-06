@@ -170,3 +170,58 @@ test('multi-version Plex details expose explicit media choices', () => {
     {value:'part-two', label:'720 · MP4 · H264'},
   ]);
 });
+
+test('Plex track choices follow the selected version and reach playback actions', async () => {
+  const state = fixture();
+  const selectors = state.evaluate(`(() => {
+    _plexRenderDetail({
+      id:'opaque-item', type:'movie', title:'A Movie', summary:'Summary',
+      children_available:false,
+      versions:[
+        {
+          id:'part-one', label:'1080 · MKV · H264',
+          audio_tracks:[{id:'audio-one', label:'English'}, {id:'audio-two', label:'Spanish'}],
+          subtitle_tracks:[{id:'subtitle-one', label:'English (SRT)'}],
+        },
+        {
+          id:'part-two', label:'720 · MP4 · H264',
+          audio_tracks:[{id:'audio-three', label:'Commentary'}],
+          subtitle_tracks:[{id:'subtitle-two', label:'French (SRT)'}],
+        },
+      ]
+    });
+    const detail = document.getElementById('plexDetail');
+    const actions = detail.children[1].children.find(child => child.className === 'plexActions');
+    const version = actions.children.find(child => child.className === 'plexVersion').children[1];
+    const tracks = actions.children.filter(child => child.className === 'plexTrack').map(child => child.children[1]);
+    version.value = 'part-two';
+    version.onchange();
+    return {
+      audio:tracks[0].children.map(option => ({value:option.value, label:option.textContent})),
+      subtitles:tracks[1].children.map(option => ({value:option.value, label:option.textContent})),
+    };
+  })()`);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(selectors)), {
+    audio:[{value:'', label:'Plex default'}, {value:'audio-three', label:'Commentary'}],
+    subtitles:[{value:'', label:'Off'}, {value:'subtitle-two', label:'French (SRT)'}],
+  });
+
+  await state.evaluate(`(() => {
+    fetch = async(_url, options) => {
+      globalThis.__plexActionBody = JSON.parse(options.body);
+      return {ok:true, status:200, json:async() => ({ok:true})};
+    };
+    return _plexRunAction(
+      {id:'opaque-item'}, 'play_next', null,
+      'part-two', 'audio-three', 'subtitle-two'
+    );
+  })()`);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(state.evaluate('__plexActionBody'))),
+    {
+      item_id:'opaque-item', command:'play_next', version_id:'part-two',
+      audio_id:'audio-three', subtitle_id:'subtitle-two',
+    },
+  );
+});

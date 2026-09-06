@@ -99,6 +99,40 @@ class _CatalogClient:
                                             "key": "/library/parts/10/file.mp4",
                                             "accessible": True,
                                             "exists": True,
+                                            "Stream": [
+                                                {
+                                                    "id": "101",
+                                                    "streamType": 1,
+                                                    "codec": "h264",
+                                                },
+                                                {
+                                                    "id": "201",
+                                                    "streamType": 2,
+                                                    "codec": "aac",
+                                                    "language": "English",
+                                                    "languageCode": "eng",
+                                                    "extendedDisplayTitle": "English (AAC Stereo)",
+                                                    "channels": 2,
+                                                    "default": True,
+                                                },
+                                                {
+                                                    "id": "202",
+                                                    "streamType": 2,
+                                                    "codec": "ac3",
+                                                    "language": "Spanish",
+                                                    "languageCode": "spa",
+                                                    "extendedDisplayTitle": "Spanish (AC3 5.1)",
+                                                    "channels": 6,
+                                                },
+                                                {
+                                                    "id": "301",
+                                                    "streamType": 3,
+                                                    "codec": "srt",
+                                                    "language": "English",
+                                                    "languageCode": "eng",
+                                                    "extendedDisplayTitle": "English (SRT)",
+                                                },
+                                            ],
                                         }
                                     ],
                                 },
@@ -112,6 +146,15 @@ class _CatalogClient:
                                             "key": "/library/parts/10/alternate.mp4",
                                             "accessible": True,
                                             "exists": True,
+                                            "Stream": [
+                                                {
+                                                    "id": "401",
+                                                    "streamType": 2,
+                                                    "codec": "aac",
+                                                    "language": "English",
+                                                    "languageCode": "eng",
+                                                }
+                                            ],
                                         }
                                     ],
                                 },
@@ -481,6 +524,113 @@ def test_selected_media_version_is_kept_separate_and_revalidated(service) -> Non
     stream_id = resolved["url"].rsplit("/", 1)[-1]
     reference = catalog._resolve(_auth.session, stream_id, expected_kind="stream")
     assert reference["path"] == "/library/parts/10/alternate.mp4"
+
+
+def test_track_choices_are_opaque_and_drive_plex_conversion(service, monkeypatch) -> None:
+    catalog, auth = service
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "auto"},
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    detail = catalog.item_detail(item_id)["item"]
+    version = detail["versions"][0]
+    audio = version["audio_tracks"][1]
+    subtitle = version["subtitle_tracks"][0]
+
+    durable = catalog.durable_item(
+        item_id,
+        version_id=version["id"],
+        audio_id=audio["id"],
+        subtitle_id=subtitle["id"],
+    )
+    resolved = catalog.resolve_playback_item(durable)
+
+    assert audio == {
+        "id": audio["id"],
+        "label": "Spanish (AC3 5.1)",
+        "language": "Spanish",
+        "language_code": "spa",
+        "codec": "ac3",
+        "channels": 6,
+        "default": False,
+        "forced": False,
+    }
+    assert durable["plex_audio_id"] == audio["id"]
+    assert durable["plex_subtitle_id"] == subtitle["id"]
+    assert resolved["plex_stream_mode"] == "transcode"
+    decision = next(
+        call for call in auth.client.calls if call[0] == plex_service.TRANSCODE_DECISION_PATH
+    )
+    assert decision[1]["directPlay"] == 0
+    assert decision[1]["audioStreamID"] == "202"
+    assert decision[1]["subtitleStreamID"] == "301"
+    assert decision[1]["subtitles"] == "burn"
+    assert decision[1]["advancedSubtitles"] == "text"
+    assert "/library/streams/" not in repr(detail) + repr(durable) + repr(resolved)
+    for opaque_id in (audio["id"], subtitle["id"]):
+        decoded = base64.urlsafe_b64decode(
+            opaque_id + ("=" * (-len(opaque_id) % 4))
+        )
+        assert b"/library/streams/" not in decoded
+    assert plex_service.stop_transcode_stream(resolved["url"]) is True
+
+
+def test_track_choice_is_revalidated_for_selected_media_version(service) -> None:
+    catalog, _auth = service
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    versions = catalog.item_detail(item_id)["item"]["versions"]
+
+    with pytest.raises(PlexError) as exc_info:
+        catalog.durable_item(
+            item_id,
+            version_id=versions[1]["id"],
+            audio_id=versions[0]["audio_tracks"][0]["id"],
+        )
+
+    assert exc_info.value.code == "plex_track_unavailable"
+    assert exc_info.value.status_code == 409
+
+
+def test_direct_play_mode_rejects_explicit_track_selection(service, monkeypatch) -> None:
+    catalog, _auth = service
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "direct"},
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    version = catalog.item_detail(item_id)["item"]["versions"][0]
+    with pytest.raises(PlexError) as exc_info:
+        catalog.durable_item(
+            item_id,
+            audio_id=version["audio_tracks"][1]["id"],
+        )
+
+    assert exc_info.value.code == "plex_track_requires_transcode"
+    assert exc_info.value.status_code == 400
+
+
+def test_queued_track_is_rechecked_after_switching_to_direct_mode(
+    service,
+    monkeypatch,
+) -> None:
+    catalog, _auth = service
+    settings = {"plex_playback_mode": "auto"}
+    monkeypatch.setattr(plex_service.state, "get_settings", lambda: settings)
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    version = catalog.item_detail(item_id)["item"]["versions"][0]
+    durable = catalog.durable_item(
+        item_id,
+        subtitle_id=version["subtitle_tracks"][0]["id"],
+    )
+    settings["plex_playback_mode"] = "direct"
+
+    with pytest.raises(PlexError) as exc_info:
+        catalog.resolve_playback_item(durable)
+
+    assert exc_info.value.code == "plex_track_requires_transcode"
 
 
 def test_playback_actions_use_durable_items_and_explicit_resume(service, monkeypatch) -> None:

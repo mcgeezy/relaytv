@@ -26,6 +26,10 @@ playback of movie and episode media that the selected server exposes.
 11. If Plex exposes more than one media version, choose the intended resolution
    and container before starting or queueing it. RelayTV remembers that
    encrypted version reference with the item.
+12. When a version exposes multiple audio tracks or subtitles, choose the
+    intended audio language and optional subtitle before starting or queueing.
+    **Plex default** leaves audio selection to the server; **Off** requests no
+    subtitles. Changing the version refreshes its available track choices.
 
 RelayTV uses Plex's Ed25519 device-key and PIN flow. It does not collect a Plex
 password. Server discovery prefers direct local connections, with verified
@@ -49,8 +53,12 @@ file. The optional 4, 8, 12, or 20 Mbps maximum is sent to PMS with Automatic
 and Always-transcode decisions. RelayTV sends resume
 offsets to the transcoder in seconds and reports playing, paused, and stopped
 positions to Plex in milliseconds. Stop, replacement, natural end, HTTP close,
-and process shutdown all retire the transient PMS session. Track and subtitle
-selection remain follow-up work.
+and process shutdown all retire the transient PMS session. Explicit audio or
+subtitle selection uses Plex conversion in Automatic and Always transcode
+modes, and burned subtitles provide the same result on every RelayTV player
+backend. Direct play rejects an explicit track choice because it bypasses
+conversion. Track references are encrypted, version-scoped, and persisted with
+the item so queued and interrupted playback keeps the requested choice.
 
 ## Credential storage and backup
 
@@ -94,6 +102,9 @@ create its own device identity and Plex authorization.
 - **Transcoding fails before playback starts:** confirm the Plex server can run
   a transcode and has free temporary storage, then retry. Choosing **Direct
   play** is useful when RelayTV can decode the original file itself.
+- **A track choice requires conversion:** switch from **Direct play** to
+  **Automatic** or **Always transcode**. RelayTV asks Plex to produce the
+  selected audio and burn the selected subtitle into the video.
 
 ## Exercised contract
 
@@ -119,7 +130,12 @@ in 1.25 seconds, and RelayTV observed successful PMS cleanup. A live 4 Mbps
 decision kept a 1,092 Kbps HEVC file direct and selected transcoding for a
 21,516 Kbps file. Full screen/audio
 playback, remux-only media, arbitrary seek, and Plex controller behavior are
-not yet claimed. Timeline request shape,
+not yet claimed. Audio/subtitle selection and version revalidation are
+fixture-tested. A later live probe against PMS `1.43.3.10896-cb3ebc72d`
+selected one embedded subtitle, received a conversion stream, and read its
+first 262,144 bytes before RelayTV closed and cleaned up the session.
+Alternate-audio, external-subtitle, and screen/audio acceptance remain.
+Timeline request shape,
 throttling, and lifecycle ordering are fixture-tested; a live watch-history
 mutation was deliberately left for playback acceptance.
 

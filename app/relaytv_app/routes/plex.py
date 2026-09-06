@@ -34,6 +34,8 @@ class PlexItemActionReq(BaseModel):
     item_id: str
     command: str = "play_now"
     version_id: str = ""
+    audio_id: str = ""
+    subtitle_id: str = ""
 
 
 def _http_error(exc: PlexError) -> HTTPException:
@@ -271,6 +273,8 @@ def plex_item_action(req: PlexItemActionReq, response: Response):
             item_id,
             req.command,
             version_id=str(req.version_id or "").strip(),
+            audio_id=str(req.audio_id or "").strip(),
+            subtitle_id=str(req.subtitle_id or "").strip(),
         )
     except PlexError as exc:
         raise _http_error(exc) from None

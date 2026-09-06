@@ -358,6 +358,8 @@ def preserve_current_to_queue_front() -> dict | None:
         preserved["plex_item_id"] = plex_item_id
         for key in (
             "plex_part_id",
+            "plex_audio_id",
+            "plex_subtitle_id",
             "plex_server_machine_id",
             "plex_stream_mode",
             "plex_container",

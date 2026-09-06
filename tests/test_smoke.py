@@ -3342,6 +3342,8 @@ def test_plex_history_and_interrupt_preserve_opaque_item_reference(
         'mode': 'plex_play',
         'plex_item_id': 'opaque-item-reference',
         'plex_part_id': 'opaque-part-reference',
+        'plex_audio_id': 'opaque-audio-reference',
+        'plex_subtitle_id': 'opaque-subtitle-reference',
         'plex_server_machine_id': 'server-1',
         'plex_stream_mode': 'direct',
         'type': 'movie',
@@ -3362,9 +3364,13 @@ def test_plex_history_and_interrupt_preserve_opaque_item_reference(
 
     assert history[0]['url'] == 'https://plex.invalid/item'
     assert history[0]['plex_item_id'] == 'opaque-item-reference'
+    assert history[0]['plex_audio_id'] == 'opaque-audio-reference'
+    assert history[0]['plex_subtitle_id'] == 'opaque-subtitle-reference'
     assert preserved is not None
     assert preserved['url'] == 'https://plex.invalid/item'
     assert preserved['plex_item_id'] == 'opaque-item-reference'
+    assert preserved['plex_audio_id'] == 'opaque-audio-reference'
+    assert preserved['plex_subtitle_id'] == 'opaque-subtitle-reference'
     assert preserved['resume_pos'] == 41.0
     assert 'temporary-stream' not in repr(history + persisted)
 
@@ -3393,6 +3399,8 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
         'provider': 'plex',
         'plex_item_id': 'opaque-item-reference',
         'plex_part_id': 'opaque-part-reference',
+        'plex_audio_id': 'opaque-audio-reference',
+        'plex_subtitle_id': 'opaque-subtitle-reference',
         'plex_server_machine_id': 'server-1',
         'thumbnail': '/plex/artwork/opaque-art-reference',
     })
@@ -3401,6 +3409,8 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
     assert persisted['url'] == 'https://plex.invalid/item'
     assert persisted['plex_item_id'] == 'opaque-item-reference'
     assert persisted['plex_part_id'] == 'opaque-part-reference'
+    assert persisted['plex_audio_id'] == 'opaque-audio-reference'
+    assert persisted['plex_subtitle_id'] == 'opaque-subtitle-reference'
     assert persisted['thumbnail'] == '/plex/artwork/opaque-art-reference'
     assert 'temporary-stream' not in repr(persisted)
 
@@ -3409,6 +3419,8 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
     assert loaded['url'] == 'https://plex.invalid/item'
     assert loaded['plex_item_id'] == 'opaque-item-reference'
     assert loaded['plex_part_id'] == 'opaque-part-reference'
+    assert loaded['plex_audio_id'] == 'opaque-audio-reference'
+    assert loaded['plex_subtitle_id'] == 'opaque-subtitle-reference'
     assert routes.state.queue_item_id(loaded)
 
 

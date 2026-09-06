@@ -294,7 +294,14 @@ class PlexCatalogService:
         self.auth_manager.assert_server_session_current(session)
         return result
 
-    def durable_item(self, item_id: str, *, version_id: str = "") -> dict[str, object]:
+    def durable_item(
+        self,
+        item_id: str,
+        *,
+        version_id: str = "",
+        audio_id: str = "",
+        subtitle_id: str = "",
+    ) -> dict[str, object]:
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         raw = self._fetch_item_record(session, reference["path"])
@@ -312,13 +319,45 @@ class PlexCatalogService:
                 status_code=400,
             )
         selected_part_id = str(version_id or "").strip()
+        selected_part_path = ""
         if selected_part_id:
             selected_reference = self._resolve(
                 session,
                 selected_part_id,
                 expected_kind="part",
             )
-            self._select_direct_part(raw, part_path=selected_reference["path"])
+            selected_part_path = selected_reference["path"]
+        selected_part, _selected_media = self._select_direct_part(
+            raw,
+            part_path=selected_part_path,
+        )
+        selected_audio_id = str(audio_id or "").strip()
+        selected_subtitle_id = str(subtitle_id or "").strip()
+        if selected_audio_id:
+            self._selected_stream_id(
+                session,
+                selected_audio_id,
+                selected_part,
+                stream_type=2,
+            )
+        if selected_subtitle_id:
+            self._selected_stream_id(
+                session,
+                selected_subtitle_id,
+                selected_part,
+                stream_type=3,
+            )
+        configured_mode = str(
+            state.get_settings().get("plex_playback_mode") or "auto"
+        ).strip().lower()
+        if configured_mode == "direct" and (
+            selected_audio_id or selected_subtitle_id
+        ):
+            raise PlexError(
+                "plex_track_requires_transcode",
+                "Plex track selection requires Automatic or Always transcode playback",
+                status_code=400,
+            )
         durable = {
             "url": "https://plex.invalid/item",
             "provider": "plex",
@@ -327,6 +366,12 @@ class PlexCatalogService:
             "plex_server_machine_id": session.machine_id,
             "type": str(item.get("type") or ""),
             **({"plex_part_id": selected_part_id} if selected_part_id else {}),
+            **({"plex_audio_id": selected_audio_id} if selected_audio_id else {}),
+            **(
+                {"plex_subtitle_id": selected_subtitle_id}
+                if selected_subtitle_id
+                else {}
+            ),
             **({"thumbnail": item["poster_url"]} if item.get("poster_url") else {}),
         }
         view_offset = max(0, _integer(item.get("view_offset_ms")))
@@ -367,12 +412,34 @@ class PlexCatalogService:
                 "Plex did not return a playable media part",
                 status_code=502,
             )
+        selected_audio = ""
+        selected_subtitle = ""
+        if item.get("plex_audio_id"):
+            selected_audio = self._selected_stream_id(
+                session,
+                str(item["plex_audio_id"]),
+                part,
+                stream_type=2,
+            )
+        if item.get("plex_subtitle_id"):
+            selected_subtitle = self._selected_stream_id(
+                session,
+                str(item["plex_subtitle_id"]),
+                part,
+                stream_type=3,
+            )
         settings = state.get_settings()
         configured_mode = str(settings.get("plex_playback_mode") or "auto").strip().lower()
         playback_mode = configured_mode if configured_mode in PLEX_PLAYBACK_MODES else "auto"
         max_bitrate = _integer(settings.get("plex_max_bitrate"))
         if max_bitrate not in {4000, 8000, 12000, 20000}:
             max_bitrate = 0
+        if playback_mode == "direct" and (selected_audio or selected_subtitle):
+            raise PlexError(
+                "plex_track_requires_transcode",
+                "Plex track selection requires Automatic or Always transcode playback",
+                status_code=400,
+            )
         stream_mode = "direct"
         stream_path = part_path
         stream_kind = "stream"
@@ -384,9 +451,15 @@ class PlexCatalogService:
                 part_index=part_index,
                 session_id=session_id,
                 start_pos=start_pos,
-                direct_play=playback_mode == "auto",
+                direct_play=(
+                    playback_mode == "auto"
+                    and not selected_audio
+                    and not selected_subtitle
+                ),
                 media=media,
                 max_bitrate=max_bitrate,
+                audio_stream_id=selected_audio,
+                subtitle_stream_id=selected_subtitle,
             )
             decision = self._playback_decision(session, decision_query)
             if decision != "direct":
@@ -500,6 +573,8 @@ class PlexCatalogService:
         direct_play: bool,
         media: dict[str, Any],
         max_bitrate: int,
+        audio_stream_id: str,
+        subtitle_stream_id: str,
     ) -> dict[str, object]:
         query: dict[str, object] = {
             "path": item_path,
@@ -510,7 +585,7 @@ class PlexCatalogService:
             "directPlay": 1 if direct_play else 0,
             "directStream": 1 if direct_play else 0,
             "directStreamAudio": 1 if direct_play else 0,
-            "subtitles": "none",
+            "subtitles": "burn" if subtitle_stream_id else "none",
             "location": "lan",
             "session": session_id,
             "hasMDE": 1,
@@ -526,6 +601,11 @@ class PlexCatalogService:
             query["offset"] = round(offset, 3)
         if max_bitrate:
             query["maxVideoBitrate"] = max_bitrate
+        if audio_stream_id:
+            query["audioStreamID"] = audio_stream_id
+        if subtitle_stream_id:
+            query["subtitleStreamID"] = subtitle_stream_id
+            query["advancedSubtitles"] = "text"
         if direct_play:
             container = self._profile_value(media.get("container"))
             video_codec = self._profile_value(media.get("videoCodec"))
@@ -592,6 +672,8 @@ class PlexCatalogService:
         command: str,
         *,
         version_id: str = "",
+        audio_id: str = "",
+        subtitle_id: str = "",
     ) -> dict[str, object]:
         action = str(command or "play_now").strip().lower()
         if action not in {"play_now", "play_next", "play_last", "resume"}:
@@ -600,7 +682,12 @@ class PlexCatalogService:
                 "Choose a supported Plex playback action",
                 status_code=400,
             )
-        item = self.durable_item(item_id, version_id=version_id)
+        item = self.durable_item(
+            item_id,
+            version_id=version_id,
+            audio_id=audio_id,
+            subtitle_id=subtitle_id,
+        )
         if action == "play_next":
             queue_length, _snapshot = playback_service.queue_item_next(item)
             return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
@@ -842,9 +929,92 @@ class PlexCatalogService:
                         "width": _integer(media.get("width")) or None,
                         "height": _integer(media.get("height")) or None,
                         "size": _integer(part.get("size")) or None,
+                        "audio_tracks": self._track_options(
+                            session,
+                            part,
+                            stream_type=2,
+                        ),
+                        "subtitle_tracks": self._track_options(
+                            session,
+                            part,
+                            stream_type=3,
+                        ),
                     }
                 )
         return versions
+
+    def _track_options(
+        self,
+        session: plex_auth.PlexServerSession,
+        part: dict[str, Any],
+        *,
+        stream_type: int,
+    ) -> list[dict[str, object]]:
+        values: list[dict[str, object]] = []
+        streams = part.get("Stream") if isinstance(part.get("Stream"), list) else []
+        kind = "audio_track" if stream_type == 2 else "subtitle_track"
+        for stream in streams:
+            if not isinstance(stream, dict) or _integer(stream.get("streamType")) != stream_type:
+                continue
+            stream_id = str(stream.get("id") or "").strip()
+            if re.fullmatch(r"\d+", stream_id) is None:
+                continue
+            language = str(
+                stream.get("language") or stream.get("languageCode") or ""
+            ).strip()
+            codec = str(stream.get("codec") or "").strip()
+            label = str(
+                stream.get("extendedDisplayTitle")
+                or stream.get("displayTitle")
+                or stream.get("title")
+                or language
+                or codec.upper()
+                or ("Audio track" if stream_type == 2 else "Subtitle track")
+            ).strip()
+            values.append(
+                {
+                    "id": self._reference(
+                        session,
+                        kind,
+                        f"/library/streams/{stream_id}",
+                        "audio" if stream_type == 2 else "subtitle",
+                    ),
+                    "label": label,
+                    "language": language,
+                    "language_code": str(stream.get("languageCode") or "").strip(),
+                    "codec": codec,
+                    "channels": _integer(stream.get("channels")) or None,
+                    "default": _integer(stream.get("default")) == 1,
+                    "forced": _integer(stream.get("forced")) == 1,
+                }
+            )
+        return values
+
+    def _selected_stream_id(
+        self,
+        session: plex_auth.PlexServerSession,
+        value: str,
+        part: dict[str, Any],
+        *,
+        stream_type: int,
+    ) -> str:
+        kind = "audio_track" if stream_type == 2 else "subtitle_track"
+        reference = self._resolve(session, value, expected_kind=kind)
+        match = re.fullmatch(r"/library/streams/(\d+)", reference["path"])
+        selected_id = match.group(1) if match else ""
+        streams = part.get("Stream") if isinstance(part.get("Stream"), list) else []
+        if selected_id and any(
+            isinstance(stream, dict)
+            and _integer(stream.get("streamType")) == stream_type
+            and str(stream.get("id") or "").strip() == selected_id
+            for stream in streams
+        ):
+            return selected_id
+        raise PlexError(
+            "plex_track_unavailable",
+            "The selected Plex media track is no longer available",
+            status_code=409,
+        )
 
     def _asset_url(
         self,

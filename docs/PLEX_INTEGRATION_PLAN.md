@@ -1,12 +1,12 @@
 # Plex integration findings and implementation plan
 
 Status: implementation in progress on `feat/plex-account-foundation` in PR
-#93. The original review used RelayTV `main` at `5a671f3` (0.10.3). Phase 1's
-account and server foundation is implemented; the library, playback, and
-optional controller phases remain. Live checks on 2026-09-05 exercised a local
-Plex Media Server and the start of Plex's current PIN/JWK flow, as recorded
-below. Full account approval, media playback, and controller compatibility
-remain to be demonstrated.
+#93. The original review used RelayTV `main` at `5a671f3` (0.10.3). The account,
+browser, direct-play, transcoding, quality, and track foundations are
+implemented; hardware acceptance, recovery, and the optional controller phase
+remain. Live checks on 2026-09-05 and 2026-09-06 exercised a local Plex Media
+Server and the start of Plex's current PIN/JWK flow, as recorded below. Full
+account approval and controller compatibility remain to be demonstrated.
 
 This document is retained at the maintainer's explicit request. It tracks the
 remaining work and evidence; [PLEX_OPERATIONS.md](PLEX_OPERATIONS.md) documents
@@ -142,10 +142,10 @@ Planned modules and their current state:
 | --- | --- |
 | `integrations/plex_client.py` | Implemented for bounded HTTP requests, verified server connections, safe Plex errors, and response parsing. |
 | `integrations/plex_auth.py` | Implemented for durable device keys and credentials, PIN flow, refresh, and account lifecycle. |
-| `integrations/plex_service.py` | Planned for catalog normalization, authorization context, playback policy, queue item construction, tracks, and watch-state payloads. |
+| `integrations/plex_service.py` | Implemented for catalog normalization, scoped references, playback policy, queue items, media decisions, conversion sessions, tracks, and watch-state payloads. |
 | `integrations/plex_companion.py` | Planned optional advertising, command normalization, subscriptions, controller timeline transport, and registered command-sink integration. |
-| `routes/plex.py` | Implemented for status, linking lifecycle, server discovery/selection, connection testing, write guards, and private response handling. Catalog and playback routes remain planned. |
-| `static/ui/plex.js`, `plex.css` | Implemented for Home, libraries, paging, search, detail, seasons/episodes, progress display, and responsive browser layouts. Phase 1 settings remain in the shared settings controller and styles. |
+| `routes/plex.py` | Implemented for status, linking lifecycle, server discovery/selection, connection testing, catalog, artwork/media relays, playback actions, write guards, and private response handling. |
+| `static/ui/plex.js`, `plex.css` | Implemented for Home, libraries, paging, search, detail, seasons/episodes, progress display, version/track choices, playback actions, and responsive browser layouts. Settings remain in the shared settings controller and styles. |
 
 ```mermaid
 flowchart LR
@@ -257,7 +257,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
 | 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
 | 3 — playback and queue | Partial — direct playback, queue, and timeline reporting implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
-| 4 — compatibility and release | Partial — media-version, server transcoding, and bitrate controls implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
+| 4 — compatibility and release | Partial — media-version, server transcoding, bitrate, and embedded-track controls implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
 Phases 1–4 form the first library release. Phase 5 can ship later or remain
@@ -341,8 +341,8 @@ runtime untouched. Persisted and interrupted items reload from their encrypted
 item references, and repeated Plex entries retain distinct queue instance IDs.
 The remaining Phase 3 work is a live mixed-provider queue plus full
 screen/audio cold and seamless hardware playback checks. Phase 4 still owns
-media decisions, remux/transcode lifecycle, track and quality selection, and
-recovery behavior.
+remux-only behavior, selected-track live acceptance, arbitrary seeking, and
+recovery across a PMS restart.
 
 ### Phase 4 media-version slice recorded 2026-09-06
 
@@ -377,7 +377,28 @@ a 21,516 Kbps source. The local PMS returned
 a forced H.264/AAC `video/x-matroska` stream; stock mpv
 decoded its first frame through an isolated RelayTV route in 1.25 seconds, and
 the explicit stop completed successfully. Remux-only media, arbitrary seeks,
-tracks and failure recovery across a PMS restart remain.
+and failure recovery across a PMS restart remain.
+
+### Phase 4 media-track slice recorded 2026-09-06
+
+Item detail now normalizes numeric audio and subtitle streams for each media
+version into authenticated encrypted references. The browser offers **Plex
+default** audio and **Off** subtitles, refreshes the lists when the selected
+version changes, and sends only opaque choices back to the action route. The
+service resolves and revalidates each choice against the freshly fetched media
+part before it enters durable queue or playback state, which prevents a stale
+track from silently applying to another version.
+
+Explicit audio or subtitle selection forces PMS conversion in Automatic and
+Always transcode modes; selected subtitles are burned for consistent output
+across mpv and the Qt shell. Direct mode returns a clear error because it
+bypasses conversion. Fixture coverage verifies decision parameters, stale
+version rejection, opaque browser and persisted state, UI request flow, and
+queue/history/interrupt restoration. A live probe on PMS
+`1.43.3.10896-cb3ebc72d` selected the embedded subtitle on the first checked
+title, received a transcode decision, and read the first 262,144 bytes through
+the private stream before closing and cleaning up the session. Alternate-audio,
+external-subtitle, and full screen/audio acceptance remain.
 
 ### Test and release discipline
 

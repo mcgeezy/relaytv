@@ -453,6 +453,47 @@ function _plexRenderDetail(item){
       versionLabel.append(versionTitle, versionSelect);
       actions.appendChild(versionLabel);
     }
+    const versionTracks = version => ({
+      audio: Array.isArray(version && version.audio_tracks) ? version.audio_tracks.filter(track => track && track.id) : [],
+      subtitle: Array.isArray(version && version.subtitle_tracks) ? version.subtitle_tracks.filter(track => track && track.id) : [],
+    });
+    const selectedVersion = () => versions.find(version => String(version.id) === String(versionSelect ? versionSelect.value : '')) || versions[0] || null;
+    const trackSelector = (title, ariaLabel, emptyLabel) => {
+      const label = document.createElement('label');
+      label.className = 'plexTrack';
+      const heading = document.createElement('span');
+      heading.textContent = title;
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', ariaLabel);
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = emptyLabel;
+      select.appendChild(empty);
+      label.append(heading, select);
+      actions.appendChild(label);
+      return select;
+    };
+    const hasAudioChoices = versions.some(version => versionTracks(version).audio.length > 1);
+    const hasSubtitleChoices = versions.some(version => versionTracks(version).subtitle.length > 0);
+    const audioSelect = hasAudioChoices ? trackSelector('Audio', 'Plex audio track', 'Plex default') : null;
+    const subtitleSelect = hasSubtitleChoices ? trackSelector('Subtitles', 'Plex subtitle track', 'Off') : null;
+    const refreshTrackSelectors = () => {
+      const tracks = versionTracks(selectedVersion());
+      [[audioSelect, tracks.audio], [subtitleSelect, tracks.subtitle]].forEach(([select, values]) => {
+        if (!select) return;
+        const empty = select.children[0];
+        select.replaceChildren(empty);
+        values.forEach(track => {
+          const option = document.createElement('option');
+          option.value = String(track.id);
+          option.textContent = String(track.label || 'Media track');
+          select.appendChild(option);
+        });
+        select.value = '';
+      });
+    };
+    refreshTrackSelectors();
+    if (versionSelect) versionSelect.onchange = refreshTrackSelectors;
     const choices = [['Play now', 'play_now']];
     if (Number(item.view_offset_ms || 0) > 0) choices.push(['Resume', 'resume']);
     choices.push(['Play next', 'play_next'], ['Add to queue', 'play_last']);
@@ -461,7 +502,14 @@ function _plexRenderDetail(item){
       button.type = 'button';
       button.className = `plexAction${index === 0 ? ' primary' : ''}`;
       button.textContent = label;
-      button.onclick = () => _plexRunAction(item, command, button, versionSelect ? versionSelect.value : '');
+      button.onclick = () => _plexRunAction(
+        item,
+        command,
+        button,
+        versionSelect ? versionSelect.value : '',
+        audioSelect ? audioSelect.value : '',
+        subtitleSelect ? subtitleSelect.value : '',
+      );
       actions.appendChild(button);
     });
     const result = document.createElement('span');
@@ -473,7 +521,7 @@ function _plexRenderDetail(item){
   detail.append(hero, body);
 }
 
-async function _plexRunAction(item, command, source, versionId){
+async function _plexRunAction(item, command, source, versionId, audioId, subtitleId){
   const actions = source && source.parentElement;
   const result = actions && actions.querySelector('.plexActionResult');
   const buttons = actions ? Array.from(actions.querySelectorAll('button')) : [];
@@ -484,7 +532,13 @@ async function _plexRunAction(item, command, source, versionId){
       method:'POST',
       cache:'no-store',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({item_id:String(item.id || ''), command, version_id:String(versionId || '')}),
+      body:JSON.stringify({
+        item_id:String(item.id || ''),
+        command,
+        version_id:String(versionId || ''),
+        audio_id:String(audioId || ''),
+        subtitle_id:String(subtitleId || ''),
+      }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(_plexBrowseErrorMessage(body, response.status));

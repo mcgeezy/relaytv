@@ -4952,6 +4952,8 @@ def _add_history_entry(now: dict) -> None:
         "jellyfin_media_source_id",
         "plex_item_id",
         "plex_part_id",
+        "plex_audio_id",
+        "plex_subtitle_id",
         "plex_server_machine_id",
         "plex_stream_mode",
         "plex_container",
@@ -5438,6 +5440,12 @@ def _play_item_owned(
         **({"iptv_channel_id": item.get("iptv_channel_id")} if item.get("iptv_channel_id") else {}),
         **({"plex_item_id": item.get("plex_item_id")} if item.get("plex_item_id") else {}),
         **({"plex_part_id": item.get("plex_part_id")} if item.get("plex_part_id") else {}),
+        **({"plex_audio_id": item.get("plex_audio_id")} if item.get("plex_audio_id") else {}),
+        **(
+            {"plex_subtitle_id": item.get("plex_subtitle_id")}
+            if item.get("plex_subtitle_id")
+            else {}
+        ),
         **({"plex_server_machine_id": item.get("plex_server_machine_id")} if item.get("plex_server_machine_id") else {}),
         **({"plex_stream_mode": item.get("plex_stream_mode")} if item.get("plex_stream_mode") else {}),
         **({"plex_container": item.get("plex_container")} if item.get("plex_container") else {}),
