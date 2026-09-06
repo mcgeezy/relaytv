@@ -1,12 +1,16 @@
 # Plex integration findings and implementation plan
 
-Status: proposed; research only. Reviewed 2026-09-05 against RelayTV `main`
-at `5a671f3` (0.10.3). No Plex account, server, or controller was connected
-during this review. API availability is documented evidence; interoperability
-and hardware behavior remain to be demonstrated.
+Status: implementation in progress on `feat/plex-account-foundation` in PR
+#93. The original review used RelayTV `main` at `5a671f3` (0.10.3). Phase 1's
+account and server foundation is implemented; the library, playback, and
+optional controller phases remain. Live checks on 2026-09-05 exercised a local
+Plex Media Server and the start of Plex's current PIN/JWK flow, as recorded
+below. Full account approval, media playback, and controller compatibility
+remain to be demonstrated.
 
-This document is retained at the maintainer's explicit request. It is a
-planning reference, not an operator guide for an available integration.
+This document is retained at the maintainer's explicit request. It tracks the
+remaining work and evidence; [PLEX_OPERATIONS.md](PLEX_OPERATIONS.md) documents
+the account and server settings that are already implemented.
 
 ## Recommended product scope
 
@@ -132,16 +136,16 @@ service and prevent old queued references from resolving as the new user.
 
 ### Modules and data flow
 
-Proposed modules (none exist yet):
+Planned modules and their current state:
 
-| Module | Responsibility |
+| Module | Current state and responsibility |
 | --- | --- |
-| `integrations/plex_client.py` | Bounded HTTP requests, verified server connections, safe Plex errors, response parsing. |
-| `integrations/plex_auth.py` | Durable device keys and credentials, PIN flow, refresh, account lifecycle. |
-| `integrations/plex_service.py` | Catalog normalization, authorization context, playback policy, queue item construction, tracks and watch-state payloads. |
-| `integrations/plex_companion.py` | Optional advertising, command normalization, subscriptions, controller timeline transport; invokes a registered command sink. |
-| `routes/plex.py` | Typed RelayTV request models, auth guards, response models, event publication, and service delegation. |
-| `static/ui/plex.js`, `plex.css` | Browser library experience and settings status. |
+| `integrations/plex_client.py` | Implemented for bounded HTTP requests, verified server connections, safe Plex errors, and response parsing. |
+| `integrations/plex_auth.py` | Implemented for durable device keys and credentials, PIN flow, refresh, and account lifecycle. |
+| `integrations/plex_service.py` | Planned for catalog normalization, authorization context, playback policy, queue item construction, tracks, and watch-state payloads. |
+| `integrations/plex_companion.py` | Planned optional advertising, command normalization, subscriptions, controller timeline transport, and registered command-sink integration. |
+| `routes/plex.py` | Implemented for status, linking lifecycle, server discovery/selection, connection testing, write guards, and private response handling. Catalog and playback routes remain planned. |
+| `static/ui/plex.js`, `plex.css` | Planned for the browser library. Phase 1 settings currently use the shared settings controller and styles. |
 
 ```mermaid
 flowchart LR
@@ -247,23 +251,49 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 
 ## Delivery phases and acceptance gates
 
-| Phase | Deliverable | Exit evidence |
-| --- | --- | --- |
-| 0 — contract and compatibility spikes | Small unshipped harness for JWT linking/refresh, server discovery, browse, media decision/part, reporting, plus independent Companion discovery probe. Record exact PMS/controller versions and sanitized fixtures. | Successful request/response evidence; verified minimum PMS/API contract; selected media-auth mechanism; receiver supported/unsupported matrix. A receiver failure does not block the library track. |
-| 1 — account and server foundation | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
-| 2 — library browser | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
-| 3 — playback and queue | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
-| 4 — compatibility and release | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
-| 5 — optional Companion receiver | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
+| Phase | Status | Deliverable | Exit evidence |
+| --- | --- | --- | --- |
+| 0 — contract and compatibility spikes | Partial | Small unshipped harness for JWT linking/refresh, server discovery, browse, media decision/part, reporting, plus independent Companion discovery probe. Record exact PMS/controller versions and sanitized fixtures. | Successful request/response evidence; verified minimum PMS/API contract; selected media-auth mechanism; receiver supported/unsupported matrix. A receiver failure does not block the library track. |
+| 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
+| 2 — library browser | Planned | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
+| 3 — playback and queue | Planned | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
+| 4 — compatibility and release | Planned | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
+| 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
 Phases 1–4 form the first library release. Phase 5 can ship later or remain
-experimental if current controllers cannot reliably use it. Each phase should
-be reviewable as a separate PR; split media delivery from UI work when needed.
+experimental if current controllers cannot reliably use it. Keep all phases
+on the unified branch and PR, with reviewable commits and explicit phase
+evidence. Split media delivery from UI work at the commit boundary when useful.
+
+### Implementation evidence recorded 2026-09-05
+
+Phase 1 now includes an Ed25519 device key and modern PIN/JWK linking flow,
+browser-bound expiring link sessions, serialized JWT refresh, atomic private
+state persistence with mode 0600, safe resource discovery, verified server
+selection, settings UI, no-store integration routes, and an operator runbook.
+Unit, route, JavaScript, redaction, concurrency, and lifecycle coverage passed
+with the repository's complete quality gates. Revert proofs confirmed that
+the link-generation and refresh-serialization tests fail when their production
+guards are removed.
+
+A local `lscr.io/linuxserver/plex` server running PMS
+`1.43.3.10828-00f62d37d` returned identity, movie/show library sections,
+media providers, and one owned server resource. RelayTV selected a secure
+local `plex.direct` connection and verified its machine identifier. Plex's
+cloud service accepted two modern strong-PIN/JWK starts and returned the
+expected 1800-second flow expiry. An isolated RelayTV runtime completed a
+start/cancel request through HTTP, set an HttpOnly/SameSite browser cookie,
+and wrote the private auth state with mode 0600.
+
+The Plex account approval page was not completed, so live JWT issuance,
+refresh, restart recovery, and upstream revocation are still pending. Media
+decision, authenticated playback, progress reporting, and Companion discovery
+were not exercised. These are acceptance inputs for the remaining phases.
 
 ### Test and release discipline
 
-Create focused Plex transport/auth/service/route tests, fixture-based protocol
-tests, and JavaScript interaction tests when implementation begins. Drive
+Continue focused Plex transport/auth/service/route tests, fixture-based
+protocol tests, and JavaScript interaction tests as implementation proceeds. Drive
 blocked network calls through actual service/ASGI paths for race tests and
 perform the repository's revert proof on every lifecycle/boundary guard.
 
@@ -286,10 +316,9 @@ documented bind mount where dependencies are unchanged; use an image with the
 new crypto dependencies installed when applicable. Preserve per-device
 compose overrides and report runtime state through HTTP.
 
-Update this plan with phase evidence and write `PLEX_OPERATIONS.md` before
-release. Normal Release Please flow owns versions and changelogs. This planning
-PR is `docs:` with no highlight; the eventual first usable integration is a
-`feat:` and should be reviewed for a release highlight.
+Update this plan with phase evidence as work proceeds. Normal Release Please
+flow owns versions and changelogs. The first usable integration is a `feat:`
+and should be reviewed for a release highlight before the unified PR merges.
 
 ## Open decisions and required test inputs
 
@@ -306,6 +335,6 @@ PR is `docs:` with no highlight; the eventual first usable integration is a
 | Cross-device transfer | A later peer contract exchanges durable item IDs and resolves with the destination's own account. No token transfer; access failure preserves source playback. |
 | Seerr bridge | Add Plex resolution only after server/item identity is stable; the existing bridge is Jellyfin-specific. |
 
-No live compatibility or playback result is claimed by this plan. These inputs
-are needed to implement and validate the proposed integration, not to finish
-the documentation task.
+The live account approval, playback, and controller results described above
+remain open. Do not claim those capabilities until their phase evidence has
+been recorded here.

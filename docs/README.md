@@ -48,8 +48,9 @@ The public route surface is pinned directly in
 ## Rule
 
 The maintainer-requested [Plex integration plan](PLEX_INTEGRATION_PLAN.md)
-is an explicit exception to the rule below. It records research, proposed
-phases, and validation gates; Plex integration is not yet available.
+is an explicit exception to the rule below. It records research, implementation
+status, proposed phases, and validation gates while the integration is built
+in the unified Plex PR.
 
 Development history, migration notes, roadmaps, deep validation notes, and
 engineering-only guidance stay out of the public documentation tree (they
