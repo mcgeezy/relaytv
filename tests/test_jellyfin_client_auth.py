@@ -29,6 +29,10 @@ def shared_client(monkeypatch):
     monkeypatch.setattr(state, "get_settings", lambda: {})
     monkeypatch.setattr(receiver, "_preferred_catalog_user_id", lambda: "")
     monkeypatch.setattr(receiver, "_control_socket_status", lambda: {})
+    # Keep the auth interleaving isolated from the asynchronous thumbnail
+    # worker, which also uses urllib.request and can otherwise append a later
+    # unrelated request to this fixture's shared recorder.
+    monkeypatch.setattr(receiver, "attach_local_thumbnail", lambda item: item)
     runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1")
     receiver._catalog_cache_clear()
     requests = []
