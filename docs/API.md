@@ -803,7 +803,8 @@ personal-library browsing, and direct playback actions. See
   with private no-store caching and content sniffing disabled
 - `POST /plex/items/action`: accepts an encrypted `item_id` and
   `command=play_now|resume|play_next|play_last`; immediate actions start the
-  item and queue actions store a durable Plex reference
+  item and queue actions store a durable Plex reference. An optional encrypted
+  `version_id` selects one of the item's advertised accessible media parts.
 - `GET /plex/stream/{stream_id}`: loopback media relay used by the player;
   forwards a single byte range and the safe media response headers needed for
   seekable direct playback

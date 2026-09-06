@@ -17,6 +17,9 @@ playback of movie and episode media that the selected server exposes.
 8. Open a movie or episode and choose **Play now**, **Resume**, **Play next**,
    or **Add to queue**. Resume appears when Plex reports saved progress; Play
    now starts over.
+9. If Plex exposes more than one media version, choose the intended resolution
+   and container before starting or queueing it. RelayTV remembers that
+   encrypted version reference with the item.
 
 RelayTV uses Plex's Ed25519 device-key and PIN flow. It does not collect a Plex
 password. Server discovery prefers direct local connections, with verified

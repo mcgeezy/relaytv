@@ -147,3 +147,26 @@ test('playable Plex details offer start, resume, and queue actions', () => {
     'Play now', 'Resume', 'Play next', 'Add to queue',
   ]);
 });
+
+test('multi-version Plex details expose explicit media choices', () => {
+  const state = fixture();
+  const result = state.evaluate(`(() => {
+    _plexRenderDetail({
+      id:'opaque', type:'movie', title:'A Movie', summary:'Summary',
+      children_available:false,
+      versions:[
+        {id:'part-one', label:'1080 · MKV · H264'},
+        {id:'part-two', label:'720 · MP4 · H264'},
+      ]
+    });
+    const detail = document.getElementById('plexDetail');
+    const actions = detail.children[1].children.find(child => child.className === 'plexActions');
+    const selector = actions.children.find(child => child.className === 'plexVersion').children[1];
+    return selector.children.map(option => ({value:option.value, label:option.textContent}));
+  })()`);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), [
+    {value:'part-one', label:'1080 · MKV · H264'},
+    {value:'part-two', label:'720 · MP4 · H264'},
+  ]);
+});

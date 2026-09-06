@@ -33,6 +33,7 @@ class PlexItemActionReq(BaseModel):
 
     item_id: str
     command: str = "play_now"
+    version_id: str = ""
 
 
 def _http_error(exc: PlexError) -> HTTPException:
@@ -266,7 +267,11 @@ def plex_item_action(req: PlexItemActionReq, response: Response):
     if not item_id:
         raise HTTPException(status_code=400, detail="item_id is required")
     try:
-        return plex_service.catalog_service.action(item_id, req.command)
+        return plex_service.catalog_service.action(
+            item_id,
+            req.command,
+            version_id=str(req.version_id or "").strip(),
+        )
     except PlexError as exc:
         raise _http_error(exc) from None
 

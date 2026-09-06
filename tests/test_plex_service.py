@@ -101,7 +101,20 @@ class _CatalogClient:
                                             "exists": True,
                                         }
                                     ],
-                                }
+                                },
+                                {
+                                    "container": "mp4",
+                                    "videoResolution": "720",
+                                    "videoCodec": "h264",
+                                    "audioCodec": "aac",
+                                    "Part": [
+                                        {
+                                            "key": "/library/parts/10/alternate.mp4",
+                                            "accessible": True,
+                                            "exists": True,
+                                        }
+                                    ],
+                                },
                             ],
                         }
                     ]
@@ -224,6 +237,11 @@ def test_library_detail_children_and_artwork_use_scoped_references(service) -> N
     detail = catalog.item_detail(page["items"][0]["id"])
     assert detail["item"]["summary"] == "A safe summary."
     assert detail["item"]["genres"] == ["Drama"]
+    assert [version["label"] for version in detail["item"]["versions"]] == [
+        "MP4 · H264",
+        "720 · MP4 · H264",
+    ]
+    assert "/library/parts/" not in repr(detail)
 
     show_id = catalog._reference(
         _auth.session,
@@ -307,6 +325,22 @@ def test_playback_reference_resolves_to_private_range_stream(service) -> None:
     stream = catalog.media_stream(stream_id, range_header="bytes=0-4")
     assert b"".join(stream.iter_bytes()) == b"media"
     assert auth.client.calls[-1] == ("/library/parts/10/file.mp4", "bytes=0-4", True)
+
+
+def test_selected_media_version_is_kept_separate_and_revalidated(service) -> None:
+    catalog, _auth = service
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    detail = catalog.item_detail(item_id)["item"]
+    second_version = detail["versions"][1]
+
+    durable = catalog.durable_item(item_id, version_id=second_version["id"])
+    resolved = catalog.resolve_playback_item(durable)
+
+    assert durable["plex_part_id"] == second_version["id"]
+    assert resolved["plex_container"] == "mp4"
+    stream_id = resolved["url"].rsplit("/", 1)[-1]
+    reference = catalog._resolve(_auth.session, stream_id, expected_kind="stream")
+    assert reference["path"] == "/library/parts/10/alternate.mp4"
 
 
 def test_playback_actions_use_durable_items_and_explicit_resume(service, monkeypatch) -> None:

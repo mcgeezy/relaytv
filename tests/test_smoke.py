@@ -3341,6 +3341,7 @@ def test_plex_history_and_interrupt_preserve_opaque_item_reference(
         'provider': 'plex',
         'mode': 'plex_play',
         'plex_item_id': 'opaque-item-reference',
+        'plex_part_id': 'opaque-part-reference',
         'plex_server_machine_id': 'server-1',
         'plex_stream_mode': 'direct',
         'type': 'movie',
@@ -3391,6 +3392,7 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
         'title': 'A Movie',
         'provider': 'plex',
         'plex_item_id': 'opaque-item-reference',
+        'plex_part_id': 'opaque-part-reference',
         'plex_server_machine_id': 'server-1',
         'thumbnail': '/plex/artwork/opaque-art-reference',
     })
@@ -3398,6 +3400,7 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
     assert persisted is not None
     assert persisted['url'] == 'https://plex.invalid/item'
     assert persisted['plex_item_id'] == 'opaque-item-reference'
+    assert persisted['plex_part_id'] == 'opaque-part-reference'
     assert persisted['thumbnail'] == '/plex/artwork/opaque-art-reference'
     assert 'temporary-stream' not in repr(persisted)
 
@@ -3405,6 +3408,7 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
     assert loaded is not None
     assert loaded['url'] == 'https://plex.invalid/item'
     assert loaded['plex_item_id'] == 'opaque-item-reference'
+    assert loaded['plex_part_id'] == 'opaque-part-reference'
     assert routes.state.queue_item_id(loaded)
 
 

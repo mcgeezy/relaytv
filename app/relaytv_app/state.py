@@ -400,6 +400,7 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "iptv_source_id",
         "iptv_channel_id",
         "plex_item_id",
+        "plex_part_id",
         "plex_server_machine_id",
         "plex_stream_mode",
         "plex_container",

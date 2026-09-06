@@ -287,7 +287,7 @@ class PlexCatalogService:
         self.auth_manager.assert_server_session_current(session)
         return result
 
-    def durable_item(self, item_id: str) -> dict[str, object]:
+    def durable_item(self, item_id: str, *, version_id: str = "") -> dict[str, object]:
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         raw = self._fetch_item_record(session, reference["path"])
@@ -304,6 +304,14 @@ class PlexCatalogService:
                 "Choose a Plex movie or episode to play",
                 status_code=400,
             )
+        selected_part_id = str(version_id or "").strip()
+        if selected_part_id:
+            selected_reference = self._resolve(
+                session,
+                selected_part_id,
+                expected_kind="part",
+            )
+            self._select_direct_part(raw, part_path=selected_reference["path"])
         durable = {
             "url": "https://plex.invalid/item",
             "provider": "plex",
@@ -311,6 +319,7 @@ class PlexCatalogService:
             "plex_item_id": item_id,
             "plex_server_machine_id": session.machine_id,
             "type": str(item.get("type") or ""),
+            **({"plex_part_id": selected_part_id} if selected_part_id else {}),
             **({"thumbnail": item["poster_url"]} if item.get("poster_url") else {}),
         }
         view_offset = max(0, _integer(item.get("view_offset_ms")))
@@ -327,7 +336,15 @@ class PlexCatalogService:
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         raw = self._fetch_item_record(session, reference["path"])
-        part, media = self._select_direct_part(raw)
+        selected_part_path = ""
+        selected_part_id = str(item.get("plex_part_id") or "").strip()
+        if selected_part_id:
+            selected_part_path = self._resolve(
+                session,
+                selected_part_id,
+                expected_kind="part",
+            )["path"]
+        part, media = self._select_direct_part(raw, part_path=selected_part_path)
         part_path = _safe_upstream_path(part.get("key"))
         if not part_path or not part_path.startswith("/library/parts/"):
             raise PlexError(
@@ -364,7 +381,13 @@ class PlexCatalogService:
         self.auth_manager.assert_server_session_current(session)
         return stream
 
-    def action(self, item_id: str, command: str) -> dict[str, object]:
+    def action(
+        self,
+        item_id: str,
+        command: str,
+        *,
+        version_id: str = "",
+    ) -> dict[str, object]:
         action = str(command or "play_now").strip().lower()
         if action not in {"play_now", "play_next", "play_last", "resume"}:
             raise PlexError(
@@ -372,7 +395,7 @@ class PlexCatalogService:
                 "Choose a supported Plex playback action",
                 status_code=400,
             )
-        item = self.durable_item(item_id)
+        item = self.durable_item(item_id, version_id=version_id)
         if action == "play_next":
             queue_length, _snapshot = playback_service.queue_item_next(item)
             return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
@@ -459,7 +482,12 @@ class PlexCatalogService:
         return records[0]
 
     @staticmethod
-    def _select_direct_part(raw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _select_direct_part(
+        raw: dict[str, Any],
+        *,
+        part_path: str = "",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        requested_path = _safe_upstream_path(part_path) if part_path else ""
         media_values = raw.get("Media") if isinstance(raw.get("Media"), list) else []
         for media in media_values:
             if not isinstance(media, dict):
@@ -470,7 +498,8 @@ class PlexCatalogService:
                     continue
                 if part.get("accessible") is False or part.get("exists") is False:
                     continue
-                if _safe_upstream_path(part.get("key")):
+                candidate_path = _safe_upstream_path(part.get("key"))
+                if candidate_path and (not requested_path or candidate_path == requested_path):
                     return part, media
         raise PlexError(
             "plex_media_unavailable",
@@ -556,9 +585,50 @@ class PlexCatalogService:
                     "studio": str(raw.get("studio") or ""),
                     "originally_available_at": str(raw.get("originallyAvailableAt") or ""),
                     "genres": genres,
+                    "versions": self._media_versions(session, raw),
                 }
             )
         return item
+
+    def _media_versions(
+        self,
+        session: plex_auth.PlexServerSession,
+        raw: dict[str, Any],
+    ) -> list[dict[str, object]]:
+        versions: list[dict[str, object]] = []
+        media_values = raw.get("Media") if isinstance(raw.get("Media"), list) else []
+        for media in media_values:
+            if not isinstance(media, dict):
+                continue
+            parts = media.get("Part") if isinstance(media.get("Part"), list) else []
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("accessible") is False or part.get("exists") is False:
+                    continue
+                part_path = _safe_upstream_path(part.get("key"))
+                if not part_path or not part_path.startswith("/library/parts/"):
+                    continue
+                resolution = str(media.get("videoResolution") or "").strip().upper()
+                container = str(media.get("container") or part.get("container") or "").strip()
+                video_codec = str(media.get("videoCodec") or "").strip()
+                audio_codec = str(media.get("audioCodec") or "").strip()
+                label_parts = [value for value in (resolution, container.upper()) if value]
+                if video_codec:
+                    label_parts.append(video_codec.upper())
+                versions.append(
+                    {
+                        "id": self._reference(session, "part", part_path, "media"),
+                        "label": " · ".join(label_parts) or f"Version {len(versions) + 1}",
+                        "container": container,
+                        "video_codec": video_codec,
+                        "audio_codec": audio_codec,
+                        "width": _integer(media.get("width")) or None,
+                        "height": _integer(media.get("height")) or None,
+                        "size": _integer(part.get("size")) or None,
+                    }
+                )
+        return versions
 
     def _asset_url(
         self,

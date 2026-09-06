@@ -257,7 +257,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
 | 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
 | 3 — playback and queue | Partial — direct playback, queue, and timeline reporting implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
-| 4 — compatibility and release | Planned | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
+| 4 — compatibility and release | Partial — explicit media-version selection implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
 Phases 1–4 form the first library release. Phase 5 can ship later or remain
@@ -343,6 +343,17 @@ The remaining Phase 3 work is a live mixed-provider queue plus full
 screen/audio cold and seamless hardware playback checks. Phase 4 still owns
 media decisions, remux/transcode lifecycle, track and quality selection, and
 recovery behavior.
+
+### Phase 4 media-version slice recorded 2026-09-06
+
+Item detail now normalizes each accessible Plex media part into a safe version
+choice showing resolution, container, and video codec. The browser displays a
+selector only when multiple versions exist. The selected part is stored as a
+second authenticated encrypted reference, separate from the item ID, and is
+revalidated against the item's current media list before playback. It survives
+queue, history, interrupt, and restart persistence without exposing a Plex
+part path. The local 100-movie sample contained one version per title, so the
+multi-version path is fixture-tested but awaits a live multi-version title.
 
 ### Test and release discipline
 

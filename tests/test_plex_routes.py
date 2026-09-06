@@ -212,16 +212,16 @@ def test_plex_action_route_dispatches_opaque_item(monkeypatch) -> None:
     monkeypatch.setattr(
         plex_service.catalog_service,
         "action",
-        lambda item_id, command: calls.append((item_id, command))
+        lambda item_id, command, *, version_id="": calls.append((item_id, command, version_id))
         or {"ok": True, "action": command},
     )
 
     response = TestClient(create_app(testing=True)).post(
         "/plex/items/action",
-        json={"item_id": "opaque-item", "command": "play_next"},
+        json={"item_id": "opaque-item", "command": "play_next", "version_id": "opaque-part"},
     )
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json() == {"ok": True, "action": "play_next"}
-    assert calls == [("opaque-item", "play_next")]
+    assert calls == [("opaque-item", "play_next", "opaque-part")]

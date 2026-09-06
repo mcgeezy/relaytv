@@ -435,6 +435,24 @@ function _plexRenderDetail(item){
   } else if (item.type === 'movie' || item.type === 'episode') {
     const actions = document.createElement('div');
     actions.className = 'plexActions';
+    const versions = Array.isArray(item.versions) ? item.versions.filter(version => version && version.id) : [];
+    let versionSelect = null;
+    if (versions.length > 1) {
+      const versionLabel = document.createElement('label');
+      versionLabel.className = 'plexVersion';
+      const versionTitle = document.createElement('span');
+      versionTitle.textContent = 'Version';
+      versionSelect = document.createElement('select');
+      versionSelect.setAttribute('aria-label', 'Plex media version');
+      versions.forEach(version => {
+        const option = document.createElement('option');
+        option.value = String(version.id);
+        option.textContent = String(version.label || 'Media version');
+        versionSelect.appendChild(option);
+      });
+      versionLabel.append(versionTitle, versionSelect);
+      actions.appendChild(versionLabel);
+    }
     const choices = [['Play now', 'play_now']];
     if (Number(item.view_offset_ms || 0) > 0) choices.push(['Resume', 'resume']);
     choices.push(['Play next', 'play_next'], ['Add to queue', 'play_last']);
@@ -443,7 +461,7 @@ function _plexRenderDetail(item){
       button.type = 'button';
       button.className = `plexAction${index === 0 ? ' primary' : ''}`;
       button.textContent = label;
-      button.onclick = () => _plexRunAction(item, command, button);
+      button.onclick = () => _plexRunAction(item, command, button, versionSelect ? versionSelect.value : '');
       actions.appendChild(button);
     });
     const result = document.createElement('span');
@@ -455,7 +473,7 @@ function _plexRenderDetail(item){
   detail.append(hero, body);
 }
 
-async function _plexRunAction(item, command, source){
+async function _plexRunAction(item, command, source, versionId){
   const actions = source && source.parentElement;
   const result = actions && actions.querySelector('.plexActionResult');
   const buttons = actions ? Array.from(actions.querySelectorAll('button')) : [];
@@ -466,7 +484,7 @@ async function _plexRunAction(item, command, source){
       method:'POST',
       cache:'no-store',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({item_id:String(item.id || ''), command}),
+      body:JSON.stringify({item_id:String(item.id || ''), command, version_id:String(versionId || '')}),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(_plexBrowseErrorMessage(body, response.status));
