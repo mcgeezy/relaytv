@@ -98,3 +98,9 @@ expected content range. Cold playback on RelayTV hardware, remux/transcode,
 and Plex controller behavior are not yet claimed. Timeline request shape,
 throttling, and lifecycle ordering are fixture-tested; a live watch-history
 mutation was deliberately left for playback acceptance.
+
+An isolated RelayTV process also accepted an item reference minted by a second
+process and served the movie to stock mpv. A cold, null-output first-frame
+decode completed in 0.92 seconds without warnings. The active TV session was
+left untouched, so screen/audio output and seamless replacement still require
+device acceptance.

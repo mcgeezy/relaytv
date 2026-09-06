@@ -3401,6 +3401,28 @@ def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
     assert persisted['thumbnail'] == '/plex/artwork/opaque-art-reference'
     assert 'temporary-stream' not in repr(persisted)
 
+    loaded = routes.state._load_persisted_queue_item(persisted)
+    assert loaded is not None
+    assert loaded['url'] == 'https://plex.invalid/item'
+    assert loaded['plex_item_id'] == 'opaque-item-reference'
+    assert routes.state.queue_item_id(loaded)
+
+
+def test_repeated_plex_queue_items_keep_distinct_queue_instance_ids() -> None:
+    item = {
+        'url': 'https://plex.invalid/item',
+        'title': 'A Movie',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item-reference',
+    }
+    queue = [dict(item), dict(item)]
+
+    routes.state.ensure_queue_item_ids(queue)
+
+    assert routes.state.queue_item_id(queue[0])
+    assert routes.state.queue_item_id(queue[1])
+    assert routes.state.queue_item_id(queue[0]) != routes.state.queue_item_id(queue[1])
+
 
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
     persisted: list[dict] = []

@@ -436,6 +436,45 @@ def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) ->
     assert timelines[0][1]["playback_state"] == "playing"
 
 
+def test_failed_plex_resolution_leaves_existing_queue_and_runtime_untouched(
+    harness,
+    monkeypatch,
+) -> None:
+    from relaytv_app.integrations import plex_service
+    from relaytv_app.integrations.plex_client import PlexError
+
+    winner = {"url": "https://example.com/keep.mp4", "title": "Keep queued"}
+    state.QUEUE[:] = [winner]
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "resolve_playback_item",
+        lambda _item: (_ for _ in ()).throw(
+            PlexError(
+                "plex_media_unavailable",
+                "Plex did not return a playable media part",
+                status_code=502,
+            )
+        ),
+    )
+
+    with pytest.raises(PlexError):
+        player.play_item(
+            {
+                "url": "https://plex.invalid/item",
+                "provider": "plex",
+                "plex_item_id": "opaque-item",
+            },
+            use_resolver=False,
+            cec=False,
+            clear_queue=True,
+            mode="plex_play",
+        )
+
+    assert state.QUEUE == [winner]
+    assert harness["loaded"] == []
+    assert state.NOW_PLAYING is None
+
+
 def test_superseded_play_reports_the_winner(harness, monkeypatch) -> None:
     results: list[dict] = []
     errors: list[BaseException] = []

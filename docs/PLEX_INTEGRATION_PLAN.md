@@ -321,6 +321,14 @@ on PMS `1.43.3.10828-00f62d37d`. PMS returned `206`, the exact content range,
 and 1,024 bytes; the normalized playback result remained free of tokens and
 raw `/library/` paths.
 
+An isolated RelayTV process then loaded the same temporary private state on a
+separate port. An encrypted item reference minted in a second process resolved
+through its HTTP media route, and stock mpv completed a cold, null-output
+first-frame decode in 0.92 seconds with no warnings. This demonstrates
+cross-process reference stability, route-level range delivery, and decoder
+compatibility without interrupting the active TV session. It does not replace
+a full screen/audio device check.
+
 Timeline reports now follow start, pause/resume, periodic playback samples,
 queue transitions, stop, and natural end. Positions and durations are converted
 to Plex milliseconds. Reports are serialized and throttled, and a newer state
@@ -328,8 +336,11 @@ retires an older queued report for the same playback. The ordering guard has a
 revert-proof lifecycle test. Live watch-history mutation remains part of
 playback acceptance rather than the non-mutating transport check.
 
-The remaining Phase 3 work is failed-play rollback and restart/mixed-queue
-acceptance plus cold/seamless hardware playback checks. Phase 4 still owns
+Failed direct-part resolution is fixture-tested to leave the current queue and
+runtime untouched. Persisted and interrupted items reload from their encrypted
+item references, and repeated Plex entries retain distinct queue instance IDs.
+The remaining Phase 3 work is a live mixed-provider queue plus full
+screen/audio cold and seamless hardware playback checks. Phase 4 still owns
 media decisions, remux/transcode lifecycle, track and quality selection, and
 recovery behavior.
 
