@@ -2803,6 +2803,8 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
     : !!cur.plex_enabled;
   const enabledInput = document.getElementById('setPlexEnabled');
   if (enabledInput) enabledInput.checked = enabled;
+  const playbackMode = document.getElementById('setPlexPlaybackMode');
+  if (playbackMode) playbackMode.value = ['direct', 'transcode'].includes(cur.plex_playback_mode) ? cur.plex_playback_mode : 'auto';
 
   const badge = document.getElementById('setPlexStatus');
   if (badge) {
@@ -3393,6 +3395,7 @@ function bindSettingsUi(){
   async function applyPlexOnly(){
     const enabled = !!document.getElementById('setPlexEnabled')?.checked;
     const machineId = String(document.getElementById('setPlexServer')?.value || '').trim();
+    const playbackMode = String(document.getElementById('setPlexPlaybackMode')?.value || 'auto').trim().toLowerCase();
     if (plexApplyBtn) plexApplyBtn.disabled = true;
     if (plexTestBtn) plexTestBtn.disabled = true;
     setPlexMessage('Applying Plex settings…');
@@ -3400,7 +3403,11 @@ function bindSettingsUi(){
       const settingsResponse = await fetch('/settings', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({plex_enabled:enabled, apply_now:true}),
+        body:JSON.stringify({
+          plex_enabled:enabled,
+          plex_playback_mode:['direct', 'transcode'].includes(playbackMode) ? playbackMode : 'auto',
+          apply_now:true,
+        }),
       });
       const settingsBody = await settingsResponse.json().catch(() => ({}));
       if (!settingsResponse.ok) throw new Error(_plexErrorMessage(settingsBody, settingsResponse.status));
@@ -3652,6 +3659,7 @@ function bindSettingsUi(){
     const jfSubLang = (document.getElementById('setJfSubLang')?.value || '').trim().toLowerCase();
     const jfPlaybackMode = (document.getElementById('setJfPlaybackMode')?.value || 'auto').trim().toLowerCase();
     const plexEnabled = !!document.getElementById('setPlexEnabled')?.checked;
+    const plexPlaybackMode = String(document.getElementById('setPlexPlaybackMode')?.value || 'auto').trim().toLowerCase();
     const seerrEnabled = !!document.getElementById('setSeerrEnabled')?.checked;
     const seerrServerUrl = String(document.getElementById('setSeerrServerUrl')?.value || '').trim();
     const seerrApiKey = String(document.getElementById('setSeerrApiKey')?.value || '').trim();
@@ -3714,6 +3722,7 @@ function bindSettingsUi(){
       jellyfin_sub_lang: jfSubLang,
       jellyfin_playback_mode: (jfPlaybackMode === 'direct' || jfPlaybackMode === 'transcode') ? jfPlaybackMode : 'auto',
       plex_enabled: plexEnabled,
+      plex_playback_mode: (plexPlaybackMode === 'direct' || plexPlaybackMode === 'transcode') ? plexPlaybackMode : 'auto',
       seerr_enabled: seerrEnabled,
       seerr_server_url: seerrServerUrl,
       seerr_request_mode: seerrRequestMode,

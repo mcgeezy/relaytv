@@ -10,11 +10,12 @@ import threading
 import time
 from typing import Any
 import urllib.parse
+import uuid
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-from .. import config, playback_service
+from .. import config, playback_service, state
 from . import plex_auth
 from .plex_client import PlexBinaryResponse, PlexError, PlexStreamResponse
 
@@ -37,6 +38,12 @@ _TIMELINE_LOCK = threading.RLock()
 _TIMELINE_SEND_LOCK = threading.Lock()
 _TIMELINE_LAST: dict[tuple[str, str], tuple[float, str, float, int]] = {}
 _TIMELINE_SEQUENCE = 0
+_TRANSCODE_LOCK = threading.RLock()
+_TRANSCODE_SESSIONS: dict[str, tuple[plex_auth.PlexServerSession, str]] = {}
+PLEX_PLAYBACK_MODES = {"auto", "direct", "transcode"}
+TRANSCODE_START_PATH = "/video/:/transcode/universal/start.mkv"
+TRANSCODE_STOP_PATH = "/video/:/transcode/universal/stop"
+TRANSCODE_DECISION_PATH = "/video/:/transcode/universal/decision"
 
 
 def _b64encode(raw: bytes) -> str:
@@ -331,7 +338,12 @@ class PlexCatalogService:
         self.auth_manager.assert_server_session_current(session)
         return durable
 
-    def resolve_playback_item(self, item: dict[str, object]) -> dict[str, object]:
+    def resolve_playback_item(
+        self,
+        item: dict[str, object],
+        *,
+        start_pos: float | None = None,
+    ) -> dict[str, object]:
         item_id = str(item.get("plex_item_id") or "").strip()
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
@@ -344,7 +356,10 @@ class PlexCatalogService:
                 selected_part_id,
                 expected_kind="part",
             )["path"]
-        part, media = self._select_direct_part(raw, part_path=selected_part_path)
+        part, media, media_index, part_index = self._select_playback_part(
+            raw,
+            part_path=selected_part_path,
+        )
         part_path = _safe_upstream_path(part.get("key"))
         if not part_path or not part_path.startswith("/library/parts/"):
             raise PlexError(
@@ -352,14 +367,40 @@ class PlexCatalogService:
                 "Plex did not return a playable media part",
                 status_code=502,
             )
-        stream_id = self._reference(session, "stream", part_path, "media")
+        configured_mode = str(
+            state.get_settings().get("plex_playback_mode") or "auto"
+        ).strip().lower()
+        playback_mode = configured_mode if configured_mode in PLEX_PLAYBACK_MODES else "auto"
+        stream_mode = "direct"
+        stream_path = part_path
+        stream_kind = "stream"
+        if playback_mode != "direct":
+            session_id = str(uuid.uuid4())
+            decision_query = self._transcode_query(
+                reference["path"],
+                media_index=media_index,
+                part_index=part_index,
+                session_id=session_id,
+                start_pos=start_pos,
+                direct_play=playback_mode == "auto",
+                media=media,
+            )
+            decision = self._playback_decision(session, decision_query)
+            if decision != "direct":
+                stream_mode = decision
+                stream_kind = "transcode_stream"
+                stream_path = f"{TRANSCODE_START_PATH}?{urllib.parse.urlencode(decision_query)}"
+        stream_id = self._reference(session, stream_kind, stream_path, "media")
         self.auth_manager.assert_server_session_current(session)
+        if stream_kind == "transcode_stream":
+            with _TRANSCODE_LOCK:
+                _TRANSCODE_SESSIONS[stream_id] = (session, session_id)
         return {
             **item,
             "url": f"http://127.0.0.1:{config.server_port()}/plex/stream/{stream_id}",
             "provider": "plex",
             "plex_server_machine_id": session.machine_id,
-            "plex_stream_mode": "direct",
+            "plex_stream_mode": stream_mode,
             "plex_container": str(media.get("container") or part.get("container") or ""),
             "plex_video_codec": str(media.get("videoCodec") or ""),
             "plex_audio_codec": str(media.get("audioCodec") or ""),
@@ -367,19 +408,163 @@ class PlexCatalogService:
 
     def media_stream(self, stream_id: str, *, range_header: str) -> PlexStreamResponse:
         session = self.auth_manager.selected_server_session()
-        reference = self._resolve(session, stream_id, expected_kind="stream")
-        if not str(reference["path"]).startswith("/library/parts/"):
+        transcode = False
+        try:
+            reference = self._resolve(session, stream_id, expected_kind="stream")
+        except PlexError as direct_error:
+            try:
+                reference = self._resolve(
+                    session,
+                    stream_id,
+                    expected_kind="transcode_stream",
+                )
+                transcode = True
+            except PlexError:
+                raise direct_error from None
+        path = str(reference["path"])
+        if not transcode and not path.startswith("/library/parts/"):
             raise PlexError(
                 "plex_invalid_reference",
                 "The Plex stream reference is no longer valid",
                 status_code=404,
             )
-        stream = session.client.open_stream(
-            reference["path"],
-            range_header=range_header,
-        )
-        self.auth_manager.assert_server_session_current(session)
+        if transcode:
+            parsed = urllib.parse.urlsplit(path)
+            query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+            session_id = str(query.get("session") or "")
+            if (
+                parsed.path != TRANSCODE_START_PATH
+                or not re.fullmatch(r"[0-9a-fA-F-]{36}", session_id)
+            ):
+                raise PlexError(
+                    "plex_invalid_reference",
+                    "The Plex stream reference is no longer valid",
+                    status_code=404,
+                )
+            with _TRANSCODE_LOCK:
+                registered = _TRANSCODE_SESSIONS.get(stream_id)
+            if registered != (session, session_id):
+                raise PlexError(
+                    "plex_stream_expired",
+                    "The Plex transcoded stream has expired",
+                    status_code=404,
+                )
+            try:
+                stream = session.client.open_stream(
+                    parsed.path,
+                    query=query,
+                    on_close=lambda: stop_transcode_stream(stream_id),
+                )
+            except Exception:
+                stop_transcode_stream(stream_id)
+                raise
+        else:
+            stream = session.client.open_stream(path, range_header=range_header)
+        try:
+            self.auth_manager.assert_server_session_current(session)
+        except Exception:
+            stream.close()
+            raise
         return stream
+
+    @staticmethod
+    def _stop_transcode(
+        session: plex_auth.PlexServerSession,
+        session_id: str,
+    ) -> None:
+        try:
+            session.client.request_no_content(
+                "GET",
+                TRANSCODE_STOP_PATH,
+                query={"session": session_id},
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _profile_value(value: object) -> str:
+        candidate = str(value or "").strip().lower()
+        return candidate if re.fullmatch(r"[a-z0-9_.-]+", candidate) else ""
+
+    def _transcode_query(
+        self,
+        item_path: str,
+        *,
+        media_index: int,
+        part_index: int,
+        session_id: str,
+        start_pos: float | None,
+        direct_play: bool,
+        media: dict[str, Any],
+    ) -> dict[str, object]:
+        query: dict[str, object] = {
+            "path": item_path,
+            "mediaIndex": media_index,
+            "partIndex": part_index,
+            "protocol": "http",
+            "fastSeek": 1,
+            "directPlay": 1 if direct_play else 0,
+            "directStream": 1 if direct_play else 0,
+            "directStreamAudio": 1 if direct_play else 0,
+            "subtitles": "none",
+            "location": "lan",
+            "session": session_id,
+            "hasMDE": 1,
+            "copyts": 1,
+            "mediaBufferSize": 20971,
+            "X-Plex-Client-Profile-Name": "Generic" if direct_play else "Chrome",
+        }
+        try:
+            offset = max(0.0, float(start_pos)) if start_pos is not None else 0.0
+        except (TypeError, ValueError):
+            offset = 0.0
+        if offset:
+            query["offset"] = round(offset, 3)
+        if direct_play:
+            container = self._profile_value(media.get("container"))
+            video_codec = self._profile_value(media.get("videoCodec"))
+            audio_codec = self._profile_value(media.get("audioCodec"))
+            if container and (video_codec or audio_codec):
+                query["X-Plex-Client-Profile-Extra"] = (
+                    "add-direct-play-profile(type=videoProfile"
+                    f"&container={container}"
+                    f"&videoCodec={video_codec or '*'}"
+                    f"&audioCodec={audio_codec or '*'}"
+                    "&subtitleCodec=*)"
+                )
+        return query
+
+    def _playback_decision(
+        self,
+        session: plex_auth.PlexServerSession,
+        query: dict[str, object],
+    ) -> str:
+        payload = session.client.get(TRANSCODE_DECISION_PATH, query=query)
+        container = self._container(payload)
+        direct_code = _integer(container.get("directPlayDecisionCode"), -1)
+        if bool(_integer(query.get("directPlay"))) and direct_code == 1000:
+            return "direct"
+        records = self._records(container, "Metadata") or self._records(
+            container,
+            "Video",
+        )
+        media = self._records(records[0], "Media") if records else []
+        parts = self._records(media[0], "Part") if media else []
+        if not parts or str(parts[0].get("decision") or "").lower() not in {
+            "copy",
+            "transcode",
+        }:
+            raise PlexError(
+                "plex_media_incompatible",
+                "Plex could not prepare this item for playback",
+                status_code=502,
+            )
+        stream_decisions = {
+            str(stream.get("decision") or "").lower()
+            for stream in self._records(parts[0], "Stream")
+            if _integer(stream.get("streamType")) in {1, 2}
+        }
+        return "remux" if stream_decisions and stream_decisions <= {"copy"} else "transcode"
 
     def action(
         self,
@@ -487,20 +672,31 @@ class PlexCatalogService:
         *,
         part_path: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        part, media, _media_index, _part_index = (
+            PlexCatalogService._select_playback_part(raw, part_path=part_path)
+        )
+        return part, media
+
+    @staticmethod
+    def _select_playback_part(
+        raw: dict[str, Any],
+        *,
+        part_path: str = "",
+    ) -> tuple[dict[str, Any], dict[str, Any], int, int]:
         requested_path = _safe_upstream_path(part_path) if part_path else ""
         media_values = raw.get("Media") if isinstance(raw.get("Media"), list) else []
-        for media in media_values:
+        for media_index, media in enumerate(media_values):
             if not isinstance(media, dict):
                 continue
             parts = media.get("Part") if isinstance(media.get("Part"), list) else []
-            for part in parts:
+            for part_index, part in enumerate(parts):
                 if not isinstance(part, dict):
                     continue
                 if part.get("accessible") is False or part.get("exists") is False:
                     continue
                 candidate_path = _safe_upstream_path(part.get("key"))
                 if candidate_path and (not requested_path or candidate_path == requested_path):
-                    return part, media
+                    return part, media, media_index, part_index
         raise PlexError(
             "plex_media_unavailable",
             "Plex did not return a playable media part",
@@ -722,6 +918,46 @@ class PlexCatalogService:
 
 
 catalog_service = PlexCatalogService()
+
+
+def _stream_id(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme or parsed.netloc:
+        if parsed.path.startswith("/plex/stream/"):
+            return parsed.path.rsplit("/", 1)[-1]
+        return ""
+    return raw.rsplit("/", 1)[-1]
+
+
+def stop_transcode_stream(value: object) -> bool:
+    stream_id = _stream_id(value)
+    if not stream_id:
+        return False
+    with _TRANSCODE_LOCK:
+        entry = _TRANSCODE_SESSIONS.pop(stream_id, None)
+    if entry is None:
+        return False
+    session, session_id = entry
+    PlexCatalogService._stop_transcode(session, session_id)
+    return True
+
+
+def stop_transcode_for_now(now: dict[str, object] | None) -> bool:
+    if not isinstance(now, dict) or str(now.get("provider") or "").lower() != "plex":
+        return False
+    return stop_transcode_stream(now.get("stream") or now.get("url"))
+
+
+def stop_all_transcodes() -> int:
+    with _TRANSCODE_LOCK:
+        entries = list(_TRANSCODE_SESSIONS.values())
+        _TRANSCODE_SESSIONS.clear()
+    for session, session_id in entries:
+        PlexCatalogService._stop_transcode(session, session_id)
+    return len(entries)
 
 
 def emit_timeline_hint(

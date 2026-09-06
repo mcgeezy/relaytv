@@ -268,3 +268,41 @@ def test_media_stream_forwards_one_range_without_exposing_token() -> None:
             range_header="bytes=0-1,10-11",
         )
     assert exc_info.value.code == "plex_invalid_range"
+
+
+def test_media_stream_close_runs_transcode_cleanup_once() -> None:
+    class _StreamResponse(_Response):
+        status = 200
+
+        def __init__(self):
+            super().__init__(b"transcoded")
+            self.headers = email.message.Message()
+            self.headers["Content-Type"] = "video/x-matroska"
+
+        def getcode(self):
+            return self.status
+
+    opener = _RecordingOpener({})
+    opener.open = lambda request, timeout: (
+        opener.requests.append(request) or _StreamResponse()
+    )
+    closed = []
+    client = plex_client.PlexClient(
+        "https://plex.example:32400",
+        token="server-secret",
+        identity=_identity(),
+        opener=opener,
+    )
+
+    stream = client.open_stream(
+        "/video/:/transcode/universal/start.mkv",
+        query={"session": "session-1", "path": "/library/metadata/10"},
+        on_close=lambda: closed.append(True),
+    )
+    assert b"".join(stream.iter_bytes()) == b"transcoded"
+    stream.close()
+
+    assert closed == [True]
+    assert "session=session-1" in opener.requests[0].full_url
+    assert "path=%2Flibrary%2Fmetadata%2F10" in opener.requests[0].full_url
+    assert opener.requests[0].get_header("X-plex-token") == "server-secret"

@@ -4764,6 +4764,15 @@ def ui():
           </select>
           <div class="hint">Local connections are preferred. Relay connections are excluded from this first integration phase.</div>
         </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setPlexPlaybackMode">Playback mode</label>
+          <select id="setPlexPlaybackMode" class="input">
+            <option value="auto">Automatic</option>
+            <option value="direct">Direct play</option>
+            <option value="transcode">Always transcode</option>
+          </select>
+          <div class="hint">Automatic prefers the original file and asks Plex to convert it when direct playback is unavailable.</div>
+        </div>
         <div class="inlineApplyRow">
           <button type="button" id="setPlexApplyBtn" class="btn electricBlue">Apply Plex</button>
           <button type="button" id="setPlexTestBtn" class="btn">Test server</button>

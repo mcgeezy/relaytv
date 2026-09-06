@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import json
 import re
 import socket
-from typing import Any
+from typing import Any, Callable
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -141,6 +141,8 @@ class PlexStreamResponse:
     status_code: int
     headers: dict[str, str]
     _response: Any = field(repr=False)
+    _on_close: Callable[[], None] | None = field(default=None, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def iter_bytes(self, chunk_size: int = 256 * 1024):
         try:
@@ -150,7 +152,17 @@ class PlexStreamResponse:
                     break
                 yield chunk
         finally:
+            self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
             self._response.close()
+        finally:
+            if self._on_close is not None:
+                self._on_close()
 
 
 class PlexClient:
@@ -278,6 +290,8 @@ class PlexClient:
         path: str,
         *,
         range_header: str = "",
+        query: dict[str, object] | None = None,
+        on_close: Callable[[], None] | None = None,
     ) -> PlexStreamResponse:
         byte_range = str(range_header or "").strip()
         if byte_range and re.fullmatch(r"bytes=(?:\d+-\d*|\d*-\d+)", byte_range) is None:
@@ -289,7 +303,7 @@ class PlexClient:
         request = self._build_request(
             "GET",
             path,
-            query=None,
+            query=query,
             body=None,
             auth=True,
             accept="video/*,audio/*,application/octet-stream",
@@ -327,7 +341,12 @@ class PlexClient:
             if value and "\r" not in value and "\n" not in value:
                 safe_headers[name] = value
         status = int(getattr(response, "status", 0) or response.getcode() or 200)
-        return PlexStreamResponse(status_code=status, headers=safe_headers, _response=response)
+        return PlexStreamResponse(
+            status_code=status,
+            headers=safe_headers,
+            _response=response,
+            _on_close=on_close,
+        )
 
     def _build_request(
         self,

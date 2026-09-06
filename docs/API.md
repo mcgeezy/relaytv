@@ -771,7 +771,7 @@ yt-dlp client fallbacks that do not support cookie auth.
 ## Plex integration and browse API
 
 The current implementation exposes Plex account linking, server setup,
-personal-library browsing, and direct playback actions. See
+personal-library browsing, direct playback, and server transcoding. See
 [Plex operations](PLEX_OPERATIONS.md). All responses on these routes use
 `Cache-Control: no-store`; account and server tokens are never returned.
 
@@ -806,8 +806,9 @@ personal-library browsing, and direct playback actions. See
   item and queue actions store a durable Plex reference. An optional encrypted
   `version_id` selects one of the item's advertised accessible media parts.
 - `GET /plex/stream/{stream_id}`: loopback media relay used by the player;
-  forwards a single byte range and the safe media response headers needed for
-  seekable direct playback
+  forwards a single byte range for direct playback or a session-bound Plex
+  Matroska transcode. Transcode credentials, item paths, and session parameters
+  remain inside the encrypted stream reference.
 
 Library, item, artwork, and media IDs are authenticated encrypted references
 bound to the linked account and selected server. A reference stops resolving
@@ -815,6 +816,15 @@ after either changes. Upstream Plex paths and credentials are neither exposed
 to nor accepted from browser callers. Persistent queues and history keep the
 encrypted item reference and resolve a fresh media part at playback time; a
 temporary relay URL is never written as the durable source.
+
+`plex_playback_mode=auto|direct|transcode` is stored with ordinary settings.
+Automatic mode asks PMS for a media decision, prefers direct playback when the
+selected version matches RelayTV's mpv profile, and uses a single-stream HTTP
+transcode otherwise. Direct mode bypasses media decisions. Transcode mode
+requires PMS conversion and fails before the active playback transition when
+PMS cannot prepare it. Resume offsets are sent to PMS in seconds. RelayTV owns
+the transient session and stops it on disconnect, playback stop/replacement,
+natural end, or application shutdown.
 
 Plex account-link, server-selection, and playback writes use the normal
 optional `RELAYTV_API_TOKEN` guard. Browse routes are read-only.

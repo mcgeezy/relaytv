@@ -136,6 +136,37 @@ class _CatalogClient:
                     ],
                 }
             }
+        if path == plex_service.TRANSCODE_DECISION_PATH:
+            if query.get("directPlay") == 1:
+                return {"MediaContainer": {"directPlayDecisionCode": 1000}}
+            return {
+                "MediaContainer": {
+                    "directPlayDecisionCode": 3000,
+                    "Metadata": [
+                        {
+                            "Media": [
+                                {
+                                    "Part": [
+                                        {
+                                            "decision": "transcode",
+                                            "Stream": [
+                                                {
+                                                    "streamType": 1,
+                                                    "decision": "transcode",
+                                                },
+                                                {
+                                                    "streamType": 2,
+                                                    "decision": "transcode",
+                                                },
+                                            ],
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
         raise AssertionError((path, query, auth))
 
     def get_bytes(self, path, *, query=None, auth=True):
@@ -144,8 +175,8 @@ class _CatalogClient:
         assert query["width"] == 1000
         return PlexBinaryResponse(body=b"jpeg-data", content_type="image/jpeg")
 
-    def open_stream(self, path, *, range_header=""):
-        self.calls.append((path, range_header, True))
+    def open_stream(self, path, *, range_header="", query=None, on_close=None):
+        self.calls.append((path, range_header, query, True))
 
         class _Response:
             def __init__(self):
@@ -162,6 +193,7 @@ class _CatalogClient:
             status_code=206,
             headers={"Content-Type": "video/mp4", "Content-Range": "bytes 0-4/9"},
             _response=_Response(),
+            _on_close=on_close,
         )
 
     def request_no_content(self, method, path, *, query=None, auth=True):
@@ -324,7 +356,78 @@ def test_playback_reference_resolves_to_private_range_stream(service) -> None:
     stream_id = resolved["url"].rsplit("/", 1)[-1]
     stream = catalog.media_stream(stream_id, range_header="bytes=0-4")
     assert b"".join(stream.iter_bytes()) == b"media"
-    assert auth.client.calls[-1] == ("/library/parts/10/file.mp4", "bytes=0-4", True)
+    assert auth.client.calls[-1] == (
+        "/library/parts/10/file.mp4",
+        "bytes=0-4",
+        None,
+        True,
+    )
+
+
+def test_forced_transcode_reuses_decision_session_and_cleans_up(
+    service,
+    monkeypatch,
+) -> None:
+    catalog, auth = service
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "transcode"},
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+
+    resolved = catalog.resolve_playback_item(
+        catalog.durable_item(item_id),
+        start_pos=61.25,
+    )
+
+    assert resolved["plex_stream_mode"] == "transcode"
+    assert "/video/:/transcode/" not in resolved["url"]
+    stream_id = resolved["url"].rsplit("/", 1)[-1]
+    reference = catalog._resolve(
+        auth.session,
+        stream_id,
+        expected_kind="transcode_stream",
+    )
+    parsed = plex_service.urllib.parse.urlsplit(reference["path"])
+    start_query = dict(plex_service.urllib.parse.parse_qsl(parsed.query))
+    decision_call = next(
+        call for call in auth.client.calls if call[0] == plex_service.TRANSCODE_DECISION_PATH
+    )
+    assert parsed.path == plex_service.TRANSCODE_START_PATH
+    assert start_query["session"] == decision_call[1]["session"]
+    assert start_query["offset"] == "61.25"
+    assert start_query["directPlay"] == "0"
+
+    stream = catalog.media_stream(stream_id, range_header="")
+    assert b"".join(stream.iter_bytes()) == b"media"
+    assert auth.client.calls[-1] == (
+        "GET",
+        plex_service.TRANSCODE_STOP_PATH,
+        {"session": start_query["session"]},
+        True,
+    )
+
+
+def test_forced_transcode_ignores_downstream_byte_range(service, monkeypatch) -> None:
+    catalog, _auth = service
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "transcode"},
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    resolved = catalog.resolve_playback_item(catalog.durable_item(item_id))
+
+    stream = catalog.media_stream(
+        resolved["url"].rsplit("/", 1)[-1],
+        range_header="bytes=0-4",
+    )
+    assert b"".join(stream.iter_bytes()) == b"media"
+    start_call = next(
+        call for call in _auth.client.calls if call[0] == plex_service.TRANSCODE_START_PATH
+    )
+    assert start_call[1] == ""
 
 
 def test_selected_media_version_is_kept_separate_and_revalidated(service) -> None:

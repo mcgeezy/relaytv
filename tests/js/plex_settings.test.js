@@ -91,12 +91,13 @@ test('Apply Plex saves the enable switch and selected server separately', async(
   const f = fixture();
   f.element('setPlexEnabled').checked = true;
   f.element('setPlexServer').value = 'server-1';
+  f.element('setPlexPlaybackMode').value = 'transcode';
 
   const result = await f.element('setPlexApplyBtn').onclick();
 
   assert.equal(result, true);
   assert.deepEqual(f.requests, [
-    {url:'/settings', body:{plex_enabled:true, apply_now:true}},
+    {url:'/settings', body:{plex_enabled:true, plex_playback_mode:'transcode', apply_now:true}},
     {url:'/integrations/plex/server', body:{machine_id:'server-1'}},
   ]);
   assert.match(f.element('setPlexApplyResult').textContent, /settings applied/i);

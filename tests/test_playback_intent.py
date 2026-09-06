@@ -399,7 +399,7 @@ def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) ->
     resolved = []
     timelines = []
 
-    def _resolve(item):
+    def _resolve(item, *, start_pos=None):
         resolved.append(dict(item))
         return {
             **item,
@@ -448,7 +448,7 @@ def test_failed_plex_resolution_leaves_existing_queue_and_runtime_untouched(
     monkeypatch.setattr(
         plex_service.catalog_service,
         "resolve_playback_item",
-        lambda _item: (_ for _ in ()).throw(
+        lambda _item, **_kwargs: (_ for _ in ()).throw(
             PlexError(
                 "plex_media_unavailable",
                 "Plex did not return a playable media part",
@@ -473,6 +473,36 @@ def test_failed_plex_resolution_leaves_existing_queue_and_runtime_untouched(
     assert state.QUEUE == [winner]
     assert harness["loaded"] == []
     assert state.NOW_PLAYING is None
+
+
+def test_plex_stopped_transition_releases_transcode_session(monkeypatch) -> None:
+    from relaytv_app.integrations import plex_service
+
+    stopped = []
+    stream_id = "opaque-transcode-stream"
+    session = object()
+    with plex_service._TRANSCODE_LOCK:
+        plex_service._TRANSCODE_SESSIONS.clear()
+        plex_service._TRANSCODE_SESSIONS[stream_id] = (session, "session-1")
+    monkeypatch.setattr(plex_service, "emit_timeline_hint", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        plex_service.PlexCatalogService,
+        "_stop_transcode",
+        staticmethod(lambda current, session_id: stopped.append((current, session_id))),
+    )
+
+    player._emit_plex_timeline_from_now(
+        {
+            "provider": "plex",
+            "plex_item_id": "opaque-item",
+            "stream": f"http://127.0.0.1:8787/plex/stream/{stream_id}",
+        },
+        "stopped",
+    )
+
+    assert stopped == [(session, "session-1")]
+    with plex_service._TRANSCODE_LOCK:
+        assert stream_id not in plex_service._TRANSCODE_SESSIONS
 
 
 def test_superseded_play_reports_the_winner(harness, monkeypatch) -> None:

@@ -5161,7 +5161,10 @@ def _play_item_owned(
     if str(item.get("provider") or "").strip().lower() == "plex" and item.get("plex_item_id"):
         from .integrations import plex_service
 
-        item = plex_service.catalog_service.resolve_playback_item(item)
+        item = plex_service.catalog_service.resolve_playback_item(
+            item,
+            start_pos=start_pos,
+        )
 
     # make_item and catalog resolution may block. Nothing below may touch
     # device or queue state until the result is known to belong to the
@@ -6189,6 +6192,8 @@ def _emit_plex_timeline_from_now(
             position_sec=position_sec,
             duration_sec=duration_sec,
         )
+        if playback_state == "stopped":
+            plex_service.stop_transcode_for_now(now)
     except Exception:
         pass
 

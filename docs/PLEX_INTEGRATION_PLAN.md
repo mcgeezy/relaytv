@@ -257,7 +257,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
 | 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
 | 3 — playback and queue | Partial — direct playback, queue, and timeline reporting implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
-| 4 — compatibility and release | Partial — explicit media-version selection implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
+| 4 — compatibility and release | Partial — media-version selection and server transcoding implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
 Phases 1–4 form the first library release. Phase 5 can ship later or remain
@@ -354,6 +354,26 @@ revalidated against the item's current media list before playback. It survives
 queue, history, interrupt, and restart persistence without exposing a Plex
 part path. The local 100-movie sample contained one version per title, so the
 multi-version path is fixture-tested but awaits a live multi-version title.
+
+### Phase 4 media-decision and transcode slice recorded 2026-09-06
+
+Settings now separate Automatic, Direct play, and Always transcode behavior.
+Automatic asks PMS to evaluate the selected media and RelayTV's exact
+container/video/audio profile, then keeps the existing credentialed direct-file
+relay when PMS accepts it. Direct-play mode remains available without a media
+decision. Automatic and Always transcode require a successful decision before
+the playback transition. Both the decision and start reuse one UUID,
+and resume offsets are sent to PMS in seconds.
+
+PMS's single-response HTTP Matroska transcode avoids putting credentials in mpv
+headers and avoids an HLS manifest/segment rewrite proxy. The encrypted stream
+capability and in-process registry bind the request to the selected account,
+server, and active RelayTV process. HTTP close, stopped transitions, replacement,
+natural end, and shutdown all converge on the verified universal stop endpoint.
+The local PMS returned a forced H.264/AAC `video/x-matroska` stream; stock mpv
+decoded its first frame through an isolated RelayTV route in 1.25 seconds, and
+the explicit stop completed successfully. Remux-only media, arbitrary seeks,
+tracks, quality limits, and failure recovery across a PMS restart remain.
 
 ### Test and release discipline
 

@@ -109,6 +109,13 @@ def _normalize_jellyfin_playback_mode(v: object) -> str:
     return "auto"
 
 
+def _normalize_plex_playback_mode(v: object) -> str:
+    s = str(v or "").strip().lower()
+    if s in ("direct", "transcode", "auto"):
+        return s
+    return "auto"
+
+
 def _normalize_jellyfin_auth_mode(v: object, *, api_key_configured: bool = False) -> str:
     s = str(v or "").strip().lower()
     if s in ("shared_api_key", "user_login"):
@@ -1363,6 +1370,7 @@ def _default_settings() -> dict:
         "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
         "plex_enabled": False,
         "plex_server_machine_id": "",
+        "plex_playback_mode": "auto",
         **seerr_defaults,
     }
 
@@ -1408,6 +1416,9 @@ def load_settings() -> None:
     defaults["plex_server_machine_id"] = str(
         defaults.get("plex_server_machine_id") or ""
     ).strip()
+    defaults["plex_playback_mode"] = _normalize_plex_playback_mode(
+        defaults.get("plex_playback_mode")
+    )
     defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
     defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
     defaults["seerr_shared_requests_enabled"] = bool(
@@ -1478,6 +1489,7 @@ def update_settings(patch: dict) -> dict:
         "iptv_enabled",
         "plex_enabled",
         "plex_server_machine_id",
+        "plex_playback_mode",
         "seerr_enabled",
         "seerr_server_url",
         "seerr_api_key",
@@ -1531,6 +1543,10 @@ def update_settings(patch: dict) -> dict:
         clean["plex_server_machine_id"] = str(
             clean.get("plex_server_machine_id") or ""
         ).strip()[:128]
+    if "plex_playback_mode" in clean:
+        clean["plex_playback_mode"] = _normalize_plex_playback_mode(
+            clean.get("plex_playback_mode")
+        )
     if "seerr_enabled" in clean:
         clean["seerr_enabled"] = bool(clean.get("seerr_enabled"))
     if "seerr_server_url" in clean:
