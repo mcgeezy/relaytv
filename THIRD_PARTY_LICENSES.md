@@ -54,8 +54,15 @@ inside the container or another Debian-based runtime environment.
 RelayTV includes project artwork and UI assets under:
 
 - `app/relaytv_app/static/brand/`
+- `app/relaytv_app/static/providers/`
 - `app/relaytv_app/static/weather/`
 - `docs/images/`
+
+The provider marks under `app/relaytv_app/static/providers/` are adapted from
+[Simple Icons 16.29.0](https://github.com/simple-icons/simple-icons), released
+under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The marks
+identify their respective services; all trademarks remain the property of
+their respective owners.
 
 See [ASSETS.md](ASSETS.md) for RelayTV mark and bundled asset usage rules.
 

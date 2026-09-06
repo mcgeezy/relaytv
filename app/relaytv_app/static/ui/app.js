@@ -757,14 +757,64 @@ const __favBrandColors = {
   'youtube.com': '#ff0033', 'youtu.be': '#ff0033',
   'rumble.com': '#85c742',
   'twitch.tv': '#9146ff',
+  'tiktok.com': '#000000',
   'vimeo.com': '#17b3e8',
   'odysee.com': '#ef1970',
   'dailymotion.com': '#00aaff',
   'peertube.tv': '#f1680d',
   'bitchute.com': '#d2441c',
   'x.com': '#000000', 'twitter.com': '#1d9bf0',
+  'facebook.com': '#0866ff', 'fb.watch': '#0866ff',
+  'instagram.com': '#ff0069',
+  'kick.com': '#53fc19',
 };
 const __favPalette = ['#2b6ce7', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#db2777', '#4f46e5'];
+
+const __providerIconPaths = Object.freeze({
+  youtube: '/pwa/providers/youtube.svg',
+  rumble: '/pwa/providers/rumble.svg',
+  twitch: '/pwa/providers/twitch.svg',
+  tiktok: '/pwa/providers/tiktok.svg',
+  odysee: '/pwa/providers/odysee.svg',
+  vimeo: '/pwa/providers/vimeo.svg',
+  dailymotion: '/pwa/providers/dailymotion.svg',
+  peertube: '/pwa/providers/peertube.svg',
+  x: '/pwa/providers/x.svg',
+  facebook: '/pwa/providers/facebook.svg',
+  instagram: '/pwa/providers/instagram.svg',
+  kick: '/pwa/providers/kick.svg',
+});
+
+const __providerIconDomains = Object.freeze([
+  ['youtube', ['youtube.com', 'youtu.be', 'youtube-nocookie.com', 'youtubekids.com']],
+  ['rumble', ['rumble.com']],
+  ['twitch', ['twitch.tv']],
+  ['tiktok', ['tiktok.com']],
+  ['odysee', ['odysee.com', 'lbry.tv']],
+  ['vimeo', ['vimeo.com']],
+  ['dailymotion', ['dailymotion.com', 'dai.ly']],
+  ['peertube', ['peertube.tv']],
+  ['x', ['x.com', 'twitter.com']],
+  ['facebook', ['facebook.com', 'fb.watch']],
+  ['instagram', ['instagram.com']],
+  ['kick', ['kick.com']],
+]);
+
+function _hostMatchesDomain(host, domain){
+  const candidate = String(host || '').toLowerCase().replace(/\.$/, '');
+  const expected = String(domain || '').toLowerCase().replace(/\.$/, '');
+  return !!candidate && !!expected && (candidate === expected || candidate.endsWith(`.${expected}`));
+}
+
+function _providerIconKey(provider, host){
+  let key = String(provider || '').trim().toLowerCase();
+  if (key === 'twitter') key = 'x';
+  if (__providerIconPaths[key]) return key;
+  for (const [candidate, domains] of __providerIconDomains) {
+    if (domains.some(domain => _hostMatchesDomain(host, domain))) return candidate;
+  }
+  return '';
+}
 
 /* Local-first provider badge: a letter tile rendered as an SVG data URI.
    Deterministic per host, needs no network and leaks nothing to third
@@ -785,11 +835,13 @@ function _letterFaviconDataUri(host){
 function faviconUrl(input){
   const obj = (input && typeof input === 'object') ? input : null;
   const u = obj ? String(obj.url || '') : String(input || '');
-  const provider = obj ? String(obj.provider || '').toLowerCase() : '';
+  const provider = obj ? String(obj.provider || '').trim().toLowerCase() : '';
   if (provider === 'jellyfin' || _looksLikeJellyfinMediaUrl(u)) {
     return __jfServerType === 'emby' ? '/pwa/emby.svg' : '/pwa/jellyfin.svg';
   }
   const host = _safeUrlHost(u);
+  const providerIcon = __providerIconPaths[_providerIconKey(provider, host)];
+  if (providerIcon) return providerIcon;
   if (!host) return '';
   return _letterFaviconDataUri(host);
 }
