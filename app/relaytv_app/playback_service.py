@@ -320,12 +320,20 @@ def preserve_current_to_queue_front() -> dict | None:
     iptv_sid = str(now.get("iptv_source_id") or "").strip()
     iptv_cid = str(now.get("iptv_channel_id") or "").strip()
     is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" and bool(iptv_sid) and bool(iptv_cid)
+    plex_item_id = str(now.get("plex_item_id") or "").strip()
+    is_plex = str(now.get("provider") or "").strip().lower() == "plex" and bool(plex_item_id)
 
     preserved = {
-        # IPTV keeps only the opaque catalog reference; the credential-bearing
-        # stream URL and headers are re-resolved from the catalog at replay time.
-        "url": f"https://iptv.invalid/{iptv_sid}/{iptv_cid}" if is_iptv else url.strip(),
-        "title": now.get("title") or ("IPTV channel" if is_iptv else url.strip()),
+        # Catalog providers keep only opaque references; temporary or
+        # credential-bearing stream URLs are re-resolved at replay time.
+        "url": (
+            f"https://iptv.invalid/{iptv_sid}/{iptv_cid}"
+            if is_iptv
+            else ("https://plex.invalid/item" if is_plex else url.strip())
+        ),
+        "title": now.get("title") or (
+            "IPTV channel" if is_iptv else ("Plex item" if is_plex else url.strip())
+        ),
         "provider": now.get("provider"),
         "_relaytv_interrupt_preserved": True,
         "_relaytv_interrupt_preserved_at": int(time.time()),
@@ -346,9 +354,20 @@ def preserve_current_to_queue_front() -> dict | None:
         # Carry the opaque references so replay re-resolves the stream + headers.
         preserved["iptv_source_id"] = iptv_sid
         preserved["iptv_channel_id"] = iptv_cid
+    elif is_plex:
+        preserved["plex_item_id"] = plex_item_id
+        for key in (
+            "plex_server_machine_id",
+            "plex_stream_mode",
+            "plex_container",
+            "plex_video_codec",
+            "plex_audio_codec",
+            "type",
+        ):
+            if isinstance(now.get(key), str) and now.get(key):
+                preserved[key] = now[key]
     else:
-        # Cache the resolved stream for non-IPTV so resume avoids re-resolving.
-        # (Skipped for IPTV so no credential-bearing stream is stored on disk.)
+        # Cache resolved streams only for ordinary URL providers.
         resolved_stream = str(now.get("_resolved_stream") or "").strip()
         if not resolved_stream:
             now_stream = str(now.get("stream") or "").strip()
@@ -496,6 +515,7 @@ def resume_paused_in_place() -> dict[str, Any] | None:
     # One mutation, one write: the three-setter form persisted twice through
     # combinations the session was never conceptually in.
     state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
+    player._emit_plex_timeline_from_now(resumed, "playing")
     return result
 
 
@@ -513,6 +533,7 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
     suppress_auto_next(3600 * 24)
     discard_interrupted_playback_state("close")
 
+    timeline_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     pos = None
     dur = None
     preserve_resume = can_preserve_closed_session() or isinstance(state.NOW_PLAYING, dict)
@@ -571,6 +592,12 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
             duration_sec=dur,
             force=True,
         )
+    player._emit_plex_timeline_from_now(
+        timeline_now,
+        "stopped",
+        position_sec=pos,
+        duration_sec=dur,
+    )
     return {
         "preserve_resume": preserve_resume,
         "position": pos,
@@ -666,6 +693,10 @@ def mark_paused(paused: bool, *, reason: str | None = None) -> None:
         session_state="paused" if paused else "playing",
         pause_reason=(reason if reason is not None else "user") if paused else None,
     )
+    player._emit_plex_timeline_from_now(
+        state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
+        "paused" if paused else "playing",
+    )
 
 
 def update_now_playing(now: dict) -> None:
@@ -680,6 +711,7 @@ def update_now_playing(now: dict) -> None:
 def mark_resumed_now_playing(resumed: dict) -> None:
     """Record a successfully resumed item as the playing session."""
     state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
+    player._emit_plex_timeline_from_now(resumed, "playing")
 
 
 def stop_current() -> dict[str, Any]:
@@ -692,6 +724,7 @@ def stop_current() -> dict[str, Any]:
     suppress_auto_next(3600 * 24)
     discard_interrupted_playback_state("stop")
 
+    timeline_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     pos = None
     dur = None
     preserve_resume = can_preserve_closed_session()
@@ -733,10 +766,22 @@ def stop_current() -> dict[str, Any]:
             duration_sec=dur,
             force=True,
         )
+        player._emit_plex_timeline_from_now(
+            timeline_now,
+            "stopped",
+            position_sec=pos,
+            duration_sec=dur,
+        )
         return {"preserve_resume": True, "position": pos, "duration": dur}
 
     with player.MPV_LOCK:
         stop_all()
+    player._emit_plex_timeline_from_now(
+        timeline_now,
+        "stopped",
+        position_sec=pos,
+        duration_sec=dur,
+    )
     return {"preserve_resume": False, "position": pos, "duration": dur}
 
 

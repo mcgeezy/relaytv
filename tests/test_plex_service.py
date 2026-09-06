@@ -86,6 +86,7 @@ class _CatalogClient:
                             "summary": "A safe summary.",
                             "Genre": [{"tag": "Drama"}],
                             "audienceRating": 8.2,
+                            "duration": 7200000,
                             "viewOffset": 1800000,
                             "thumb": "/library/metadata/10/thumb/1",
                             "Media": [
@@ -149,6 +150,9 @@ class _CatalogClient:
             headers={"Content-Type": "video/mp4", "Content-Range": "bytes 0-4/9"},
             _response=_Response(),
         )
+
+    def request_no_content(self, method, path, *, query=None, auth=True):
+        self.calls.append((method, path, query, auth))
 
 
 class _Auth:
@@ -328,6 +332,64 @@ def test_playback_actions_use_durable_items_and_explicit_resume(service, monkeyp
     assert calls[1][2]["start_pos"] == 1800.0
     assert calls[1][2]["use_resolver"] is False
     assert resumed["action"] == "resume"
+
+
+def test_timeline_reports_milliseconds_from_encrypted_item_reference(service) -> None:
+    catalog, auth = service
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    now = catalog.durable_item(item_id)
+
+    assert catalog.report_timeline(
+        now,
+        playback_state="paused",
+        position_sec=12.345,
+        duration_sec=7200.0,
+    ) is True
+
+    method, path, query, authenticated = auth.client.calls[-1]
+    assert (method, path, authenticated) == ("POST", "/:/timeline", True)
+    assert query == {
+        "ratingKey": "10",
+        "key": "/library/metadata/10",
+        "identifier": "com.plexapp.plugins.library",
+        "state": "paused",
+        "time": 12345,
+        "duration": 7200000,
+    }
+
+
+def test_newer_timeline_state_retires_a_queued_progress_hint(monkeypatch) -> None:
+    pending = []
+    sent = []
+
+    class _Thread:
+        def __init__(self, *, target, **_kwargs):
+            pending.append(target)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(plex_service.threading, "Thread", _Thread)
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "report_timeline",
+        lambda _now, **kwargs: sent.append(kwargs["playback_state"]),
+    )
+    with plex_service._TIMELINE_LOCK:
+        plex_service._TIMELINE_LAST.clear()
+    now = {
+        "provider": "plex",
+        "plex_item_id": "opaque-item",
+        "history_id": "playback-1",
+        "resume_pos": 10.0,
+    }
+
+    assert plex_service.emit_timeline_hint(now, playback_state="playing") is True
+    assert plex_service.emit_timeline_hint(now, playback_state="stopped") is True
+    pending[0]()
+    pending[1]()
+
+    assert sent == ["stopped"]
 
 
 def test_direct_play_rejects_items_without_an_accessible_part(service) -> None:

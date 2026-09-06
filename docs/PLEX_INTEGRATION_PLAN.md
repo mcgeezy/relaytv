@@ -256,7 +256,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | 0 — contract and compatibility spikes | Partial | Small unshipped harness for JWT linking/refresh, server discovery, browse, media decision/part, reporting, plus independent Companion discovery probe. Record exact PMS/controller versions and sanitized fixtures. | Successful request/response evidence; verified minimum PMS/API contract; selected media-auth mechanism; receiver supported/unsupported matrix. A receiver failure does not block the library track. |
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
 | 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
-| 3 — playback and queue | Partial — direct playback and queue slice implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
+| 3 — playback and queue | Partial — direct playback, queue, and timeline reporting implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
 | 4 — compatibility and release | Planned | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
@@ -321,10 +321,17 @@ on PMS `1.43.3.10828-00f62d37d`. PMS returned `206`, the exact content range,
 and 1,024 bytes; the normalized playback result remained free of tokens and
 raw `/library/` paths.
 
-The remaining Phase 3 work is Plex progress/stopped reporting, failed-play
-rollback and restart/mixed-queue acceptance, and cold/seamless hardware
-playback checks. Phase 4 still owns media decisions, remux/transcode lifecycle,
-track and quality selection, and recovery behavior.
+Timeline reports now follow start, pause/resume, periodic playback samples,
+queue transitions, stop, and natural end. Positions and durations are converted
+to Plex milliseconds. Reports are serialized and throttled, and a newer state
+retires an older queued report for the same playback. The ordering guard has a
+revert-proof lifecycle test. Live watch-history mutation remains part of
+playback acceptance rather than the non-mutating transport check.
+
+The remaining Phase 3 work is failed-play rollback and restart/mixed-queue
+acceptance plus cold/seamless hardware playback checks. Phase 4 still owns
+media decisions, remux/transcode lifecycle, track and quality selection, and
+recovery behavior.
 
 ### Test and release discipline
 

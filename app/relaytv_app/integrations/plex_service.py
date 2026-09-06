@@ -6,6 +6,8 @@ import base64
 import json
 import os
 import re
+import threading
+import time
 from typing import Any
 import urllib.parse
 
@@ -28,6 +30,13 @@ SORTS = {
     "year": "year:desc",
     "rating": "rating:desc",
 }
+TIMELINE_STATES = {"buffering", "playing", "paused", "stopped"}
+TIMELINE_INTERVAL_SEC = 10.0
+TIMELINE_SEEK_DELTA_SEC = 30.0
+_TIMELINE_LOCK = threading.RLock()
+_TIMELINE_SEND_LOCK = threading.Lock()
+_TIMELINE_LAST: dict[tuple[str, str], tuple[float, str, float, int]] = {}
+_TIMELINE_SEQUENCE = 0
 
 
 def _b64encode(raw: bytes) -> str:
@@ -307,6 +316,9 @@ class PlexCatalogService:
         view_offset = max(0, _integer(item.get("view_offset_ms")))
         if view_offset:
             durable["resume_pos"] = view_offset / 1000.0
+        duration = max(0, _integer(item.get("duration_ms")))
+        if duration:
+            durable["duration_sec"] = duration / 1000.0
         self.auth_manager.assert_server_session_current(session)
         return durable
 
@@ -380,6 +392,52 @@ class PlexCatalogService:
             start_pos=start_pos,
         )
         return {"ok": True, "action": action, "now_playing": now}
+
+    def report_timeline(
+        self,
+        now: dict[str, object],
+        *,
+        playback_state: str,
+        position_sec: float | None = None,
+        duration_sec: float | None = None,
+    ) -> bool:
+        state_name = str(playback_state or "").strip().lower()
+        if state_name not in TIMELINE_STATES:
+            raise ValueError("Unsupported Plex timeline state")
+        if str(now.get("provider") or "").strip().lower() != "plex":
+            return False
+        item_id = str(now.get("plex_item_id") or "").strip()
+        if not item_id:
+            return False
+        session = self.auth_manager.selected_server_session()
+        reference = self._resolve(session, item_id, expected_kind="item")
+        path = str(reference["path"]).partition("?")[0]
+        match = re.fullmatch(r"/library/metadata/([^/]+)", path)
+        if match is None:
+            raise PlexError(
+                "plex_invalid_reference",
+                "The Plex item reference is no longer valid",
+                status_code=404,
+            )
+        position = _number(position_sec if position_sec is not None else now.get("resume_pos"))
+        duration = _number(duration_sec if duration_sec is not None else now.get("duration_sec"))
+        time_ms = max(0, int((position or 0.0) * 1000.0))
+        duration_ms = max(0, int((duration or 0.0) * 1000.0))
+        self.auth_manager.assert_server_session_current(session)
+        session.client.request_no_content(
+            "POST",
+            "/:/timeline",
+            query={
+                "ratingKey": match.group(1),
+                "key": path,
+                "identifier": "com.plexapp.plugins.library",
+                "state": state_name,
+                "time": time_ms,
+                "duration": duration_ms,
+            },
+        )
+        self.auth_manager.assert_server_session_current(session)
+        return True
 
     def _fetch_item_record(
         self,
@@ -594,3 +652,74 @@ class PlexCatalogService:
 
 
 catalog_service = PlexCatalogService()
+
+
+def emit_timeline_hint(
+    now: dict[str, object] | None,
+    *,
+    playback_state: str,
+    position_sec: float | None = None,
+    duration_sec: float | None = None,
+) -> bool:
+    """Schedule one ordered, throttled Plex watch-state report."""
+    if not isinstance(now, dict):
+        return False
+    item_id = str(now.get("plex_item_id") or "").strip()
+    if str(now.get("provider") or "").strip().lower() != "plex" or not item_id:
+        return False
+    state_name = str(playback_state or "").strip().lower()
+    if state_name not in TIMELINE_STATES:
+        return False
+    position = _number(position_sec if position_sec is not None else now.get("resume_pos"))
+    duration = _number(duration_sec if duration_sec is not None else now.get("duration_sec"))
+    pos = max(0.0, position or 0.0)
+    identity = (item_id, str(now.get("history_id") or ""))
+    now_ts = time.monotonic()
+
+    global _TIMELINE_SEQUENCE
+    with _TIMELINE_LOCK:
+        previous = _TIMELINE_LAST.get(identity)
+        should_send = previous is None
+        if previous is not None:
+            last_ts, last_state, last_pos, _last_sequence = previous
+            should_send = (
+                state_name != last_state
+                or state_name == "stopped"
+                or (now_ts - last_ts) >= TIMELINE_INTERVAL_SEC
+                or abs(pos - last_pos) >= TIMELINE_SEEK_DELTA_SEC
+            )
+        if not should_send:
+            return False
+        _TIMELINE_SEQUENCE += 1
+        sequence = _TIMELINE_SEQUENCE
+        _TIMELINE_LAST[identity] = (now_ts, state_name, pos, sequence)
+        if len(_TIMELINE_LAST) > 256:
+            oldest = min(_TIMELINE_LAST, key=lambda key: _TIMELINE_LAST[key][0])
+            _TIMELINE_LAST.pop(oldest, None)
+        snapshot = dict(now)
+
+    def _run() -> None:
+        with _TIMELINE_SEND_LOCK:
+            with _TIMELINE_LOCK:
+                latest = _TIMELINE_LAST.get(identity)
+                if latest is None or latest[3] != sequence:
+                    return
+            try:
+                catalog_service.report_timeline(
+                    snapshot,
+                    playback_state=state_name,
+                    position_sec=pos,
+                    duration_sec=duration,
+                )
+            except (PlexError, ValueError):
+                return
+
+    try:
+        threading.Thread(
+            target=_run,
+            daemon=True,
+            name="relaytv-plex-timeline",
+        ).start()
+    except Exception:
+        return False
+    return True

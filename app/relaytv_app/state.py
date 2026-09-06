@@ -428,6 +428,15 @@ def _persistable_queue_item(item: dict) -> dict | None:
         except Exception:
             pass
 
+    duration_value = item.get("duration_sec")
+    if duration_value is not None:
+        try:
+            duration_f = float(duration_value)
+            if duration_f > 0:
+                out["duration_sec"] = duration_f
+        except Exception:
+            pass
+
     resolved_source = str(item.get("_resolved_source_url") or "").strip()
     resolved_stream = str(item.get("_resolved_stream") or "").strip()
     if resolved_source == url and resolved_stream:

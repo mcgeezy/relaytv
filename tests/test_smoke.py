@@ -3331,6 +3331,43 @@ def test_history_entry_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch)
     assert 'SECRET-CRED' not in json.dumps(persistable)
 
 
+def test_plex_history_and_interrupt_preserve_opaque_item_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream_url = 'http://127.0.0.1:8787/plex/stream/temporary-stream'
+    now = {
+        'url': stream_url,
+        'title': 'A Movie',
+        'provider': 'plex',
+        'mode': 'plex_play',
+        'plex_item_id': 'opaque-item-reference',
+        'plex_server_machine_id': 'server-1',
+        'plex_stream_mode': 'direct',
+        'type': 'movie',
+    }
+    history: list[dict] = []
+    persisted: list[dict] = []
+    monkeypatch.setattr(routes.state, 'history_contains', lambda _hid: False)
+    monkeypatch.setattr(routes.state, 'history_add', lambda entry: history.append(entry))
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 41.0 if prop == 'time-pos' else 120.0)
+    monkeypatch.setattr(routes.player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', dict(now), raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+
+    routes.player._add_history_entry(dict(now))
+    preserved = routes._preserve_current_to_queue_front()
+
+    assert history[0]['url'] == 'https://plex.invalid/item'
+    assert history[0]['plex_item_id'] == 'opaque-item-reference'
+    assert preserved is not None
+    assert preserved['url'] == 'https://plex.invalid/item'
+    assert preserved['plex_item_id'] == 'opaque-item-reference'
+    assert preserved['resume_pos'] == 41.0
+    assert 'temporary-stream' not in repr(history + persisted)
+
+
 def test_mpv_up_next_skips_catalog_references_and_header_bearing_items() -> None:
     # Catalog items need re-resolution + redaction and header-bearing items
     # need their per-channel headers, so both bypass mpv's direct handoff.

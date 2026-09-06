@@ -34,7 +34,9 @@ player reads it through a private loopback relay that forwards byte ranges to
 the selected server, so neither the browser nor persisted queue/history state
 receives a Plex token or raw media-part path. This phase supports an accessible
 direct media part. Remux/transcode selection, track selection, and Plex
-watched-progress reporting remain follow-up work.
+quality selection remain follow-up work. RelayTV reports playing, paused, and
+stopped positions to Plex in milliseconds, with periodic updates while the
+item is active.
 
 ## Credential storage and backup
 
@@ -92,5 +94,7 @@ sanitized RelayTV results contained no upstream `/library/` paths.
 
 The media relay contract was exercised against this PMS with a 1,024-byte
 range from a Matroska movie; PMS returned `206 Partial Content` and the
-expected content range. Cold playback on RelayTV hardware, progress reporting,
-remux/transcode, and Plex controller behavior are not yet claimed.
+expected content range. Cold playback on RelayTV hardware, remux/transcode,
+and Plex controller behavior are not yet claimed. Timeline request shape,
+throttling, and lifecycle ordering are fixture-tested; a live watch-history
+mutation was deliberately left for playback acceptance.

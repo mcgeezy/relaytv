@@ -397,6 +397,7 @@ def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) ->
 
     harness["gate"].set()
     resolved = []
+    timelines = []
 
     def _resolve(item):
         resolved.append(dict(item))
@@ -408,6 +409,11 @@ def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) ->
         }
 
     monkeypatch.setattr(plex_service.catalog_service, "resolve_playback_item", _resolve)
+    monkeypatch.setattr(
+        plex_service,
+        "emit_timeline_hint",
+        lambda now, **kwargs: timelines.append((dict(now), kwargs)),
+    )
 
     now = player.play_item(
         {
@@ -427,6 +433,7 @@ def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) ->
     assert now["plex_item_id"] == "opaque-item"
     assert now["plex_stream_mode"] == "direct"
     assert now["plex_container"] == "mp4"
+    assert timelines[0][1]["playback_state"] == "playing"
 
 
 def test_superseded_play_reports_the_winner(harness, monkeypatch) -> None:

@@ -195,6 +195,24 @@ class PlexClient:
     ) -> dict | list:
         return self.request_json("POST", path, query=query, body=body, auth=auth)
 
+    def request_no_content(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, object] | None = None,
+        auth: bool = True,
+    ) -> None:
+        request = self._build_request(
+            method,
+            path,
+            query=query,
+            body=None,
+            auth=auth,
+            accept="application/json",
+        )
+        self._read(request, max_bytes=1024 * 1024)
+
     def request_json(
         self,
         method: str,

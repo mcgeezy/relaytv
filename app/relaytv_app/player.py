@@ -4635,6 +4635,7 @@ def advance_queue_playback(
                 force=True,
             )
             _emit_jellyfin_stopped_from_now(prev_now)
+            _emit_plex_timeline_from_now(prev_now, "stopped")
             start_pos = next_item.get("resume_pos") if isinstance(next_item, dict) else None
             try:
                 now = play_item(
@@ -4867,6 +4868,7 @@ def _consume_mpv_queued_next_if_started(
 
     update_history_progress(prev_now, completed=_history_item_completed(prev_now), force=True)
     _emit_jellyfin_stopped_from_now(prev_now)
+    _emit_plex_timeline_from_now(prev_now, "stopped")
 
     url = _queue_item_play_url(consumed)
     title = url
@@ -4944,20 +4946,35 @@ def _add_history_entry(now: dict) -> None:
         "provider": now.get("provider"),
         "resume_pos": max(0.0, float(now.get("resume_pos") or 0.0)),
     }
-    for key in ("channel", "jellyfin_item_id", "jellyfin_media_source_id", "thumbnail", "thumbnail_local"):
+    for key in (
+        "channel",
+        "jellyfin_item_id",
+        "jellyfin_media_source_id",
+        "plex_item_id",
+        "plex_server_machine_id",
+        "plex_stream_mode",
+        "plex_container",
+        "plex_video_codec",
+        "plex_audio_codec",
+        "type",
+        "thumbnail",
+        "thumbnail_local",
+    ):
         if now.get(key):
             entry[key] = now[key]
     iptv_sid = str(now.get("iptv_source_id") or "").strip()
     iptv_cid = str(now.get("iptv_channel_id") or "").strip()
     is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" and bool(iptv_sid) and bool(iptv_cid)
+    is_plex = str(now.get("provider") or "").strip().lower() == "plex" and bool(now.get("plex_item_id"))
     if is_iptv:
         # Carry opaque catalog references so persistence redacts the credential
         # stream URL and history replay re-resolves the stream and headers.
         entry["iptv_source_id"] = iptv_sid
         entry["iptv_channel_id"] = iptv_cid
+    elif is_plex:
+        entry["url"] = "https://plex.invalid/item"
     elif now.get("_resolved_source_url") == now.get("url") and now.get("_resolved_stream"):
-        # Cache the resolved stream for non-IPTV replay. Skipped for IPTV so no
-        # credential-bearing stream is stored in history.
+        # Cache resolved streams only for ordinary URL providers.
         entry["_resolved_source_url"] = now.get("_resolved_source_url")
         entry["_resolved_stream"] = now.get("_resolved_stream")
         entry["_resolved_audio"] = now.get("_resolved_audio") or ""
@@ -5457,6 +5474,7 @@ def _play_item_owned(
         )
 
     _run_owned("publish", _publish_playback)
+    _emit_plex_timeline_from_now(now, "playing")
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.
@@ -5667,6 +5685,7 @@ def _handle_playback_idle_no_queue() -> None:
     note_playback_failure_if_no_progress(now)
     update_history_progress(now, completed=_history_item_completed(now), force=True)
     _emit_jellyfin_stopped_from_now(now)
+    _emit_plex_timeline_from_now(now, "stopped")
     # Only clear now-playing when not in a user-closed resumable session.
     if getattr(state, "SESSION_STATE", "idle") != "closed":
         state.set_now_playing(None)
@@ -6134,7 +6153,6 @@ def _emit_jellyfin_stopped_from_now(now: dict | None) -> None:
         state.set_now_playing(updated)
     except Exception:
         pass
-
     def _run() -> None:
         try:
             jellyfin_receiver.send_progress_payload_once(payload)
@@ -6147,6 +6165,28 @@ def _emit_jellyfin_stopped_from_now(now: dict | None) -> None:
 
     try:
         threading.Thread(target=_run, daemon=True, name="relaytv-jellyfin-stopped-player").start()
+    except Exception:
+        pass
+
+
+def _emit_plex_timeline_from_now(
+    now: dict | None,
+    playback_state: str,
+    *,
+    position_sec: float | None = None,
+    duration_sec: float | None = None,
+) -> None:
+    if not isinstance(now, dict) or not now.get("plex_item_id"):
+        return
+    try:
+        from .integrations import plex_service
+
+        plex_service.emit_timeline_hint(
+            now,
+            playback_state=playback_state,
+            position_sec=position_sec,
+            duration_sec=duration_sec,
+        )
     except Exception:
         pass
 
@@ -6443,6 +6483,12 @@ def _session_tracker_tick() -> None:
         state.persist_session()
     if updated is not None:
         update_history_progress(updated)
+        _emit_plex_timeline_from_now(
+            updated,
+            "paused" if paused else "playing",
+            position_sec=updated.get("resume_pos"),
+            duration_sec=updated.get("duration_sec"),
+        )
     _prime_mpv_up_next_from_queue()
 
 

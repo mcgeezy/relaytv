@@ -74,6 +74,29 @@ def test_client_keeps_token_in_header_and_sends_stable_identity() -> None:
     assert "server-secret" not in request.full_url
 
 
+def test_no_content_request_keeps_timeline_credentials_in_headers() -> None:
+    opener = _RecordingOpener({})
+    client = plex_client.PlexClient(
+        "https://plex.example:32400",
+        token="server-secret",
+        identity=_identity(),
+        opener=opener,
+    )
+
+    client.request_no_content(
+        "POST",
+        "/:/timeline",
+        query={"ratingKey": "10", "state": "playing", "time": 12000},
+    )
+
+    request = opener.requests[0]
+    assert request.method == "POST"
+    assert "ratingKey=10" in request.full_url
+    assert "state=playing" in request.full_url
+    assert request.get_header("X-plex-token") == "server-secret"
+    assert "server-secret" not in request.full_url
+
+
 def test_unauthenticated_identity_request_omits_token() -> None:
     opener = _RecordingOpener({"MediaContainer": {"machineIdentifier": "server-id"}})
     client = plex_client.PlexClient(
