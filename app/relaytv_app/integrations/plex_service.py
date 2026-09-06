@@ -367,10 +367,12 @@ class PlexCatalogService:
                 "Plex did not return a playable media part",
                 status_code=502,
             )
-        configured_mode = str(
-            state.get_settings().get("plex_playback_mode") or "auto"
-        ).strip().lower()
+        settings = state.get_settings()
+        configured_mode = str(settings.get("plex_playback_mode") or "auto").strip().lower()
         playback_mode = configured_mode if configured_mode in PLEX_PLAYBACK_MODES else "auto"
+        max_bitrate = _integer(settings.get("plex_max_bitrate"))
+        if max_bitrate not in {4000, 8000, 12000, 20000}:
+            max_bitrate = 0
         stream_mode = "direct"
         stream_path = part_path
         stream_kind = "stream"
@@ -384,6 +386,7 @@ class PlexCatalogService:
                 start_pos=start_pos,
                 direct_play=playback_mode == "auto",
                 media=media,
+                max_bitrate=max_bitrate,
             )
             decision = self._playback_decision(session, decision_query)
             if decision != "direct":
@@ -496,6 +499,7 @@ class PlexCatalogService:
         start_pos: float | None,
         direct_play: bool,
         media: dict[str, Any],
+        max_bitrate: int,
     ) -> dict[str, object]:
         query: dict[str, object] = {
             "path": item_path,
@@ -512,7 +516,7 @@ class PlexCatalogService:
             "hasMDE": 1,
             "copyts": 1,
             "mediaBufferSize": 20971,
-            "X-Plex-Client-Profile-Name": "Generic" if direct_play else "Chrome",
+            "X-Plex-Client-Profile-Name": "Chrome",
         }
         try:
             offset = max(0.0, float(start_pos)) if start_pos is not None else 0.0
@@ -520,18 +524,27 @@ class PlexCatalogService:
             offset = 0.0
         if offset:
             query["offset"] = round(offset, 3)
+        if max_bitrate:
+            query["maxVideoBitrate"] = max_bitrate
         if direct_play:
             container = self._profile_value(media.get("container"))
             video_codec = self._profile_value(media.get("videoCodec"))
             audio_codec = self._profile_value(media.get("audioCodec"))
             if container and (video_codec or audio_codec):
-                query["X-Plex-Client-Profile-Extra"] = (
+                profile = (
                     "add-direct-play-profile(type=videoProfile"
                     f"&container={container}"
                     f"&videoCodec={video_codec or '*'}"
                     f"&audioCodec={audio_codec or '*'}"
                     "&subtitleCodec=*)"
                 )
+                if max_bitrate:
+                    profile += (
+                        "+add-limitation(scope=videoCodec&scopeName=*"
+                        "&type=upperBound&name=video.bitrate"
+                        f"&value={max_bitrate}&isRequired=true&replace=true)"
+                    )
+                query["X-Plex-Client-Profile-Extra"] = profile
         return query
 
     def _playback_decision(
@@ -542,15 +555,22 @@ class PlexCatalogService:
         payload = session.client.get(TRANSCODE_DECISION_PATH, query=query)
         container = self._container(payload)
         direct_code = _integer(container.get("directPlayDecisionCode"), -1)
-        if bool(_integer(query.get("directPlay"))) and direct_code == 1000:
-            return "direct"
         records = self._records(container, "Metadata") or self._records(
             container,
             "Video",
         )
         media = self._records(records[0], "Media") if records else []
         parts = self._records(media[0], "Part") if media else []
-        if not parts or str(parts[0].get("decision") or "").lower() not in {
+        part_decision = re.sub(
+            r"[^a-z]",
+            "",
+            str(parts[0].get("decision") or "").lower() if parts else "",
+        )
+        if bool(_integer(query.get("directPlay"))) and (
+            direct_code == 1000 or part_decision == "directplay"
+        ):
+            return "direct"
+        if not parts or part_decision not in {
             "copy",
             "transcode",
         }:

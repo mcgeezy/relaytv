@@ -4773,6 +4773,17 @@ def ui():
           </select>
           <div class="hint">Automatic prefers the original file and asks Plex to convert it when direct playback is unavailable.</div>
         </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setPlexMaxBitrate">Maximum video bitrate</label>
+          <select id="setPlexMaxBitrate" class="input">
+            <option value="0">Original quality</option>
+            <option value="20000">20 Mbps</option>
+            <option value="12000">12 Mbps</option>
+            <option value="8000">8 Mbps</option>
+            <option value="4000">4 Mbps</option>
+          </select>
+          <div class="hint">Automatic converts files above this limit. Direct play always uses the original bitrate.</div>
+        </div>
         <div class="inlineApplyRow">
           <button type="button" id="setPlexApplyBtn" class="btn electricBlue">Apply Plex</button>
           <button type="button" id="setPlexTestBtn" class="btn">Test server</button>

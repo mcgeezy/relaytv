@@ -137,7 +137,7 @@ class _CatalogClient:
                 }
             }
         if path == plex_service.TRANSCODE_DECISION_PATH:
-            if query.get("directPlay") == 1:
+            if query.get("directPlay") == 1 and not query.get("maxVideoBitrate"):
                 return {"MediaContainer": {"directPlayDecisionCode": 1000}}
             return {
                 "MediaContainer": {
@@ -428,6 +428,43 @@ def test_forced_transcode_ignores_downstream_byte_range(service, monkeypatch) ->
         call for call in _auth.client.calls if call[0] == plex_service.TRANSCODE_START_PATH
     )
     assert start_call[1] == ""
+
+
+def test_automatic_quality_cap_uses_media_decision_transcode(service, monkeypatch) -> None:
+    catalog, auth = service
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "auto", "plex_max_bitrate": 4000},
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+
+    resolved = catalog.resolve_playback_item(catalog.durable_item(item_id))
+
+    assert resolved["plex_stream_mode"] == "transcode"
+    decision = next(
+        call for call in auth.client.calls if call[0] == plex_service.TRANSCODE_DECISION_PATH
+    )
+    assert decision[1]["directPlay"] == 1
+    assert decision[1]["maxVideoBitrate"] == 4000
+    assert "name=video.bitrate&value=4000" in decision[1][
+        "X-Plex-Client-Profile-Extra"
+    ]
+    assert plex_service.stop_transcode_stream(resolved["url"]) is True
+
+
+def test_media_decision_accepts_directplay_part_without_top_level_code(service) -> None:
+    catalog, auth = service
+    auth.client.get = lambda path, *, query=None, auth=True: {
+        "MediaContainer": {
+            "Metadata": [{"Media": [{"Part": [{"decision": "directplay"}]}]}]
+        }
+    }
+
+    assert catalog._playback_decision(
+        auth.session,
+        {"directPlay": 1},
+    ) == "direct"
 
 
 def test_selected_media_version_is_kept_separate_and_revalidated(service) -> None:

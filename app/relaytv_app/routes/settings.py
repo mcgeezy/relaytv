@@ -61,6 +61,7 @@ class SettingsReq(BaseModel):
     plex_enabled: bool | None = None
     plex_server_machine_id: str | None = None
     plex_playback_mode: str | None = None
+    plex_max_bitrate: int | None = None
     seerr_enabled: bool | None = None
     seerr_server_url: str | None = None
     seerr_api_key: str | None = None
@@ -100,6 +101,7 @@ def _settings_for_client(raw: dict | None) -> dict:
     out["iptv_enabled"] = bool(out.get("iptv_enabled", False))
     out["plex_enabled"] = bool(out.get("plex_enabled", False))
     out["plex_playback_mode"] = str(out.get("plex_playback_mode") or "auto")
+    out["plex_max_bitrate"] = int(out.get("plex_max_bitrate") or 0)
     out["seerr_enabled"] = bool(out.get("seerr_enabled", False))
     out["seerr_shared_requests_enabled"] = bool(
         out.get("seerr_shared_requests_enabled", False)

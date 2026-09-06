@@ -817,10 +817,13 @@ to nor accepted from browser callers. Persistent queues and history keep the
 encrypted item reference and resolve a fresh media part at playback time; a
 temporary relay URL is never written as the durable source.
 
-`plex_playback_mode=auto|direct|transcode` is stored with ordinary settings.
+`plex_playback_mode=auto|direct|transcode` and
+`plex_max_bitrate=0|4000|8000|12000|20000` are stored with ordinary settings.
 Automatic mode asks PMS for a media decision, prefers direct playback when the
 selected version matches RelayTV's mpv profile, and uses a single-stream HTTP
-transcode otherwise. Direct mode bypasses media decisions. Transcode mode
+transcode otherwise. A nonzero bitrate cap participates in Automatic and
+Transcode decisions; zero means original quality. Direct mode bypasses media
+decisions and the cap. Transcode mode
 requires PMS conversion and fails before the active playback transition when
 PMS cannot prepare it. Resume offsets are sent to PMS in seconds. RelayTV owns
 the transient session and stops it on disconnect, playback stop/replacement,

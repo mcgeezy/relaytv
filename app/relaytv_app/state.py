@@ -116,6 +116,14 @@ def _normalize_plex_playback_mode(v: object) -> str:
     return "auto"
 
 
+def _normalize_plex_max_bitrate(v: object) -> int:
+    try:
+        value = int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+    return value if value in {0, 4000, 8000, 12000, 20000} else 0
+
+
 def _normalize_jellyfin_auth_mode(v: object, *, api_key_configured: bool = False) -> str:
     s = str(v or "").strip().lower()
     if s in ("shared_api_key", "user_login"):
@@ -1371,6 +1379,7 @@ def _default_settings() -> dict:
         "plex_enabled": False,
         "plex_server_machine_id": "",
         "plex_playback_mode": "auto",
+        "plex_max_bitrate": 0,
         **seerr_defaults,
     }
 
@@ -1418,6 +1427,9 @@ def load_settings() -> None:
     ).strip()
     defaults["plex_playback_mode"] = _normalize_plex_playback_mode(
         defaults.get("plex_playback_mode")
+    )
+    defaults["plex_max_bitrate"] = _normalize_plex_max_bitrate(
+        defaults.get("plex_max_bitrate")
     )
     defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
     defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
@@ -1490,6 +1502,7 @@ def update_settings(patch: dict) -> dict:
         "plex_enabled",
         "plex_server_machine_id",
         "plex_playback_mode",
+        "plex_max_bitrate",
         "seerr_enabled",
         "seerr_server_url",
         "seerr_api_key",
@@ -1546,6 +1559,10 @@ def update_settings(patch: dict) -> dict:
     if "plex_playback_mode" in clean:
         clean["plex_playback_mode"] = _normalize_plex_playback_mode(
             clean.get("plex_playback_mode")
+        )
+    if "plex_max_bitrate" in clean:
+        clean["plex_max_bitrate"] = _normalize_plex_max_bitrate(
+            clean.get("plex_max_bitrate")
         )
     if "seerr_enabled" in clean:
         clean["seerr_enabled"] = bool(clean.get("seerr_enabled"))

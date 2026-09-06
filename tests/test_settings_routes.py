@@ -177,6 +177,9 @@ def test_settings_normalize_plex_playback_mode() -> None:
     assert state._normalize_plex_playback_mode("transcode") == "transcode"
     assert state._normalize_plex_playback_mode("unexpected") == "auto"
     assert state._default_settings()["plex_playback_mode"] == "auto"
+    assert state._normalize_plex_max_bitrate("8000") == 8000
+    assert state._normalize_plex_max_bitrate(1234) == 0
+    assert state._default_settings()["plex_max_bitrate"] == 0
 
 
 def test_settings_api_key_omission_preserves_and_explicit_values_replace_or_clear(monkeypatch) -> None:

@@ -15,12 +15,15 @@ playback of movie and episode media that the selected server exposes.
 7. Choose a playback mode. **Automatic** prefers the original file and uses
    Plex conversion when necessary. **Direct play** always requests the original
    file. **Always transcode** makes Plex convert video and audio for RelayTV.
-8. Close Settings and choose **Plex** in the RelayTV header to browse Home,
+8. Optionally choose a maximum video bitrate. Automatic mode converts a file
+   when PMS determines it exceeds the cap. Original quality removes the cap;
+   Direct play ignores it.
+9. Close Settings and choose **Plex** in the RelayTV header to browse Home,
    movie and TV libraries, search, details, seasons, and episodes.
-9. Open a movie or episode and choose **Play now**, **Resume**, **Play next**,
+10. Open a movie or episode and choose **Play now**, **Resume**, **Play next**,
    or **Add to queue**. Resume appears when Plex reports saved progress; Play
    now starts over.
-10. If Plex exposes more than one media version, choose the intended resolution
+11. If Plex exposes more than one media version, choose the intended resolution
    and container before starting or queueing it. RelayTV remembers that
    encrypted version reference with the item.
 
@@ -42,11 +45,12 @@ neither the browser nor persisted queue/history state receives a Plex token,
 raw media-part path, or transcode session. Automatic and Always-transcode modes
 require a successful PMS decision before RelayTV changes active playback.
 Direct-play mode bypasses that decision and requests the selected original
-file. RelayTV sends resume
+file. The optional 4, 8, 12, or 20 Mbps maximum is sent to PMS with Automatic
+and Always-transcode decisions. RelayTV sends resume
 offsets to the transcoder in seconds and reports playing, paused, and stopped
 positions to Plex in milliseconds. Stop, replacement, natural end, HTTP close,
-and process shutdown all retire the transient PMS session. Track selection and
-Plex quality limits remain follow-up work.
+and process shutdown all retire the transient PMS session. Track and subtitle
+selection remain follow-up work.
 
 ## Credential storage and backup
 
@@ -54,7 +58,7 @@ Plex private state is stored in `/data/plex_auth.json` with mode `0600`. The
 file contains the device private key, renewable account token, and selected
 server token. Treat backups of this file as secrets. The ordinary
 `/data/settings.json` file contains the enable switch, selected server machine
-identifier, and playback preference.
+identifier, playback mode, and bitrate preference.
 
 Unlinking removes the linked account and server credentials from RelayTV. It
 does not currently revoke the device through Plex's account service. You can
@@ -111,7 +115,9 @@ expected content range. The same PMS accepted the complete universal media
 decision contract, returned a forced-conversion decision, served a
 `video/x-matroska` HTTP transcode, and accepted the matching explicit stop.
 Stock mpv decoded its first H.264/AAC frame through an isolated RelayTV route
-in 1.25 seconds, and RelayTV observed successful PMS cleanup. Full screen/audio
+in 1.25 seconds, and RelayTV observed successful PMS cleanup. A live 4 Mbps
+decision kept a 1,092 Kbps HEVC file direct and selected transcoding for a
+21,516 Kbps file. Full screen/audio
 playback, remux-only media, arbitrary seek, and Plex controller behavior are
 not yet claimed. Timeline request shape,
 throttling, and lifecycle ordering are fixture-tested; a live watch-history
