@@ -770,8 +770,8 @@ yt-dlp client fallbacks that do not support cookie auth.
 
 ## Plex integration and browse API
 
-The current implementation exposes Plex account linking, server setup, and
-read-only personal-library browsing. See
+The current implementation exposes Plex account linking, server setup,
+personal-library browsing, and direct playback actions. See
 [Plex operations](PLEX_OPERATIONS.md). All responses on these routes use
 `Cache-Control: no-store`; account and server tokens are never returned.
 
@@ -801,15 +801,22 @@ read-only personal-library browsing. See
   for a season
 - `GET /plex/artwork/{asset_id}`: credentialed artwork proxy; returns an image
   with private no-store caching and content sniffing disabled
+- `POST /plex/items/action`: accepts an encrypted `item_id` and
+  `command=play_now|resume|play_next|play_last`; immediate actions start the
+  item and queue actions store a durable Plex reference
+- `GET /plex/stream/{stream_id}`: loopback media relay used by the player;
+  forwards a single byte range and the safe media response headers needed for
+  seekable direct playback
 
-Library, item, and artwork IDs are authenticated encrypted references bound to
-the linked account and selected server. A reference stops resolving after
-either changes. Upstream Plex paths and credentials are neither exposed to nor
-accepted from browser callers.
+Library, item, artwork, and media IDs are authenticated encrypted references
+bound to the linked account and selected server. A reference stops resolving
+after either changes. Upstream Plex paths and credentials are neither exposed
+to nor accepted from browser callers. Persistent queues and history keep the
+encrypted item reference and resolve a fresh media part at playback time; a
+temporary relay URL is never written as the durable source.
 
-Plex account-link and server-selection writes use the normal optional
-`RELAYTV_API_TOKEN` guard. Browse routes are read-only. Playback routes are not
-part of the current phase.
+Plex account-link, server-selection, and playback writes use the normal
+optional `RELAYTV_API_TOKEN` guard. Browse routes are read-only.
 
 ## Jellyfin integration and browse API
 

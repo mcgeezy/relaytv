@@ -2,8 +2,9 @@
 """Secret-safe HTTP transport for Plex cloud and media-server APIs."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
+import re
 import socket
 from typing import Any
 import urllib.error
@@ -135,6 +136,23 @@ class PlexBinaryResponse:
     content_type: str
 
 
+@dataclass(slots=True)
+class PlexStreamResponse:
+    status_code: int
+    headers: dict[str, str]
+    _response: Any = field(repr=False)
+
+    def iter_bytes(self, chunk_size: int = 256 * 1024):
+        try:
+            while True:
+                chunk = self._response.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            self._response.close()
+
+
 class PlexClient:
     """One immutable Plex origin and credential snapshot per operation."""
 
@@ -236,6 +254,62 @@ class PlexClient:
                 status_code=502,
             )
         return PlexBinaryResponse(body=raw, content_type=media_type)
+
+    def open_stream(
+        self,
+        path: str,
+        *,
+        range_header: str = "",
+    ) -> PlexStreamResponse:
+        byte_range = str(range_header or "").strip()
+        if byte_range and re.fullmatch(r"bytes=(?:\d+-\d*|\d*-\d+)", byte_range) is None:
+            raise PlexError(
+                "plex_invalid_range",
+                "The requested media range is invalid",
+                status_code=416,
+            )
+        request = self._build_request(
+            "GET",
+            path,
+            query=None,
+            body=None,
+            auth=True,
+            accept="video/*,audio/*,application/octet-stream",
+        )
+        if byte_range:
+            request.add_header("Range", byte_range)
+        try:
+            response = self._opener.open(request, timeout=self.timeout_sec)
+        except urllib.error.HTTPError as exc:
+            raise _http_error(int(exc.code)) from None
+        except (TimeoutError, socket.timeout):
+            raise PlexError(
+                "plex_timeout",
+                "Plex did not respond before the timeout",
+                status_code=504,
+            ) from None
+        except (urllib.error.URLError, OSError):
+            raise PlexError(
+                "plex_unreachable",
+                "Plex could not be reached",
+                status_code=502,
+            ) from None
+        content_type = str(response.headers.get("Content-Type") or "application/octet-stream")
+        media_type = content_type.partition(";")[0].strip().lower()
+        if media_type in {"application/json", "text/html"} or media_type.startswith("text/"):
+            response.close()
+            raise PlexError(
+                "plex_invalid_response",
+                "Plex returned an unexpected media response",
+                status_code=502,
+            )
+        safe_headers: dict[str, str] = {"Content-Type": content_type}
+        for name in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"):
+            value = str(response.headers.get(name) or "").strip()
+            if value and "\r" not in value and "\n" not in value:
+                safe_headers[name] = value
+        status = int(getattr(response, "status", 0) or response.getcode() or 200)
+        return PlexStreamResponse(status_code=status, headers=safe_headers, _response=response)
 
     def _build_request(
         self,
@@ -361,6 +435,13 @@ def _http_error(status: int) -> PlexError:
             "plex_rate_limited",
             "Plex temporarily rate-limited this device",
             status_code=503,
+            upstream_status=status,
+        )
+    if status == 416:
+        return PlexError(
+            "plex_range_not_satisfiable",
+            "The requested Plex media range is unavailable",
+            status_code=416,
             upstream_status=status,
         )
     return PlexError(

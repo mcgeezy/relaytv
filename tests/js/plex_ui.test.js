@@ -130,3 +130,20 @@ test('switching tabs retires a pending Plex search', () => {
   assert.equal(state.evaluate('__plexSearchTimer'), 0);
   assert.equal(state.evaluate('__plexQuery'), '');
 });
+
+test('playable Plex details offer start, resume, and queue actions', () => {
+  const state = fixture();
+  const labels = state.evaluate(`(() => {
+    _plexRenderDetail({
+      id:'opaque', type:'movie', title:'A Movie', summary:'Summary',
+      duration_ms:7200000, view_offset_ms:1800000, children_available:false
+    });
+    const detail = document.getElementById('plexDetail');
+    const actions = detail.children[1].children.find(child => child.className === 'plexActions');
+    return actions.children.map(child => child.textContent).filter(Boolean);
+  })()`);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(labels)), [
+    'Play now', 'Resume', 'Play next', 'Add to queue',
+  ]);
+});

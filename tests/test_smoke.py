@@ -3331,17 +3331,38 @@ def test_history_entry_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch)
     assert 'SECRET-CRED' not in json.dumps(persistable)
 
 
-def test_mpv_up_next_skips_iptv_and_header_bearing_items() -> None:
-    # IPTV needs re-resolution + redaction and header-bearing items need their
-    # per-channel headers, so both must bypass mpv's direct up-next handoff.
+def test_mpv_up_next_skips_catalog_references_and_header_bearing_items() -> None:
+    # Catalog items need re-resolution + redaction and header-bearing items
+    # need their per-channel headers, so both bypass mpv's direct handoff.
     assert routes.player._mpv_up_next_eligible_item({
         'url': 'https://cdn.example/live.m3u8', 'provider': 'iptv',
         'iptv_source_id': 's', 'iptv_channel_id': 'c',
     }) is False
     assert routes.player._mpv_up_next_eligible_item({
+        'url': 'https://plex.invalid/item', 'provider': 'plex',
+        'plex_item_id': 'opaque',
+    }) is False
+    assert routes.player._mpv_up_next_eligible_item({
         'url': 'https://cdn.example/vod.mp4', 'provider': 'jellyfin',
         'http_headers': {'User-Agent': 'x'},
     }) is False
+
+
+def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
+    persisted = routes.state._persistable_queue_item({
+        'url': 'http://127.0.0.1:8787/plex/stream/temporary-stream',
+        'title': 'A Movie',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item-reference',
+        'plex_server_machine_id': 'server-1',
+        'thumbnail': '/plex/artwork/opaque-art-reference',
+    })
+
+    assert persisted is not None
+    assert persisted['url'] == 'https://plex.invalid/item'
+    assert persisted['plex_item_id'] == 'opaque-item-reference'
+    assert persisted['thumbnail'] == '/plex/artwork/opaque-art-reference'
+    assert 'temporary-stream' not in repr(persisted)
 
 
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:

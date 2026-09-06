@@ -69,12 +69,14 @@ EXPECTED_PLEX_ROUTE_FUNCTIONS = {
         "plex_integration_status",
         "plex_integration_test",
         "plex_item_children",
+        "plex_item_action",
         "plex_item_detail",
         "plex_libraries",
         "plex_library_items",
         "plex_search",
         "plex_server_select",
         "plex_servers",
+        "plex_stream",
     }
 }
 

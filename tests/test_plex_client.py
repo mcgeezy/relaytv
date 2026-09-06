@@ -195,3 +195,53 @@ def test_binary_artwork_keeps_auth_in_headers_and_checks_media_type() -> None:
             identity=_identity(),
             opener=active,
         ).get_bytes("/library/metadata/10/thumb/1")
+
+
+def test_media_stream_forwards_one_range_without_exposing_token() -> None:
+    class _StreamResponse(_Response):
+        status = 206
+
+        def __init__(self):
+            super().__init__(b"first-second")
+            self.headers = email.message.Message()
+            self.headers["Content-Type"] = "video/mp4"
+            self.headers["Content-Length"] = "12"
+            self.headers["Content-Range"] = "bytes 10-21/100"
+
+        def getcode(self):
+            return self.status
+
+    class _StreamOpener:
+        def __init__(self):
+            self.request = None
+
+        def open(self, request, timeout):
+            self.request = request
+            return _StreamResponse()
+
+    opener = _StreamOpener()
+    client = plex_client.PlexClient(
+        "https://plex.example:32400",
+        token="server-secret",
+        identity=_identity(),
+        opener=opener,
+    )
+
+    stream = client.open_stream(
+        "/library/parts/10/file.mp4",
+        range_header="bytes=10-21",
+    )
+
+    assert stream.status_code == 206
+    assert stream.headers["Content-Range"] == "bytes 10-21/100"
+    assert b"".join(stream.iter_bytes(chunk_size=5)) == b"first-second"
+    assert opener.request.get_header("Range") == "bytes=10-21"
+    assert opener.request.get_header("X-plex-token") == "server-secret"
+    assert "server-secret" not in opener.request.full_url
+
+    with pytest.raises(plex_client.PlexError) as exc_info:
+        client.open_stream(
+            "/library/parts/10/file.mp4",
+            range_header="bytes=0-1,10-11",
+        )
+    assert exc_info.value.code == "plex_invalid_range"

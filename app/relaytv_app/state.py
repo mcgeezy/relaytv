@@ -342,6 +342,12 @@ def _sanitize_thumb_ref(th: object) -> str | None:
         fn = th[len("/thumbs/"):]
         return f"/thumbs/{fn}" if _is_safe_thumb_filename(fn) else None
 
+    if th.startswith("/plex/artwork/"):
+        asset_id = th[len("/plex/artwork/") :]
+        if len(asset_id) <= 4096 and re.fullmatch(r"[A-Za-z0-9_-]+", asset_id):
+            return f"/plex/artwork/{asset_id}"
+        return None
+
     # bare filename -> normalize
     return f"/thumbs/{th}" if _is_safe_thumb_filename(th) else None
 
@@ -366,6 +372,8 @@ def _persistable_queue_item(item: dict) -> dict | None:
         # IPTV stream URLs can contain path or query credentials. Persist only
         # opaque catalog references; player.play_item resolves them at use time.
         persisted_url = f"https://iptv.invalid/{iptv_source_id}/{iptv_channel_id}"
+    if str(provider).strip().lower() == "plex" and str(item.get("plex_item_id") or "").strip():
+        persisted_url = "https://plex.invalid/item"
     out: dict[str, object] = {
         "url": persisted_url,
         "title": (
@@ -391,6 +399,12 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "subtitle_language",
         "iptv_source_id",
         "iptv_channel_id",
+        "plex_item_id",
+        "plex_server_machine_id",
+        "plex_stream_mode",
+        "plex_container",
+        "plex_video_codec",
+        "plex_audio_codec",
     ):
         val = item.get(key)
         if isinstance(val, str) and val.strip():

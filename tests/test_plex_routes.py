@@ -2,7 +2,7 @@
 from fastapi.testclient import TestClient
 
 from relaytv_app.integrations import plex_auth, plex_service
-from relaytv_app.integrations.plex_client import PlexBinaryResponse
+from relaytv_app.integrations.plex_client import PlexBinaryResponse, PlexStreamResponse
 from relaytv_app.main import create_app
 
 
@@ -165,3 +165,63 @@ def test_plex_artwork_route_returns_private_nosniff_image(monkeypatch) -> None:
     assert response.headers["content-type"] == "image/jpeg"
     assert response.headers["cache-control"] == "private, no-store"
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_plex_stream_forwards_range_and_private_response_headers(monkeypatch) -> None:
+    class _Response:
+        def __init__(self):
+            self.chunks = [b"video", b""]
+
+        def read(self, _size):
+            return self.chunks.pop(0)
+
+        def close(self):
+            pass
+
+    calls = []
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "media_stream",
+        lambda stream_id, *, range_header: calls.append((stream_id, range_header))
+        or PlexStreamResponse(
+            status_code=206,
+            headers={
+                "Content-Type": "video/mp4",
+                "Content-Length": "5",
+                "Content-Range": "bytes 0-4/100",
+            },
+            _response=_Response(),
+        ),
+    )
+
+    response = TestClient(create_app(testing=True)).get(
+        "/plex/stream/stream-ref",
+        headers={"Range": "bytes=0-4"},
+    )
+
+    assert response.status_code == 206
+    assert response.content == b"video"
+    assert response.headers["content-range"] == "bytes 0-4/100"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert calls == [("stream-ref", "bytes=0-4")]
+
+
+def test_plex_action_route_dispatches_opaque_item(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "action",
+        lambda item_id, command: calls.append((item_id, command))
+        or {"ok": True, "action": command},
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/plex/items/action",
+        json={"item_id": "opaque-item", "command": "play_next"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"ok": True, "action": "play_next"}
+    assert calls == [("opaque-item", "play_next")]

@@ -4022,11 +4022,11 @@ def _mpv_up_next_eligible_item(item: object) -> bool:
     # handoff consumption when extractor/auth fails before playback starts.
     if (not prefer_mpv_ytdl) or force_resolve_provider:
         return False
-    # IPTV carries opaque catalog references that must be re-resolved (and
-    # redacted in NOW_PLAYING/history/session), and any header-bearing item
-    # needs its per-channel headers installed. mpv's direct playlist handoff
-    # does neither, so route both through play_item.
-    if provider == "iptv":
+    # IPTV and Plex carry opaque catalog references that must be re-resolved
+    # (and redacted in NOW_PLAYING/history/session), and any header-bearing
+    # item needs its per-channel headers installed. mpv's direct playlist
+    # handoff does neither, so route all of them through play_item.
+    if provider in {"iptv", "plex"}:
         return False
     if isinstance(item, dict) and _item_http_headers(item):
         return False
@@ -5140,8 +5140,13 @@ def _play_item_owned(
 
         item = iptv_service.resolve_queue_item(item)
 
-    # make_item and IPTV catalog resolution may both block. Nothing below may
-    # touch device or queue state until the result is known to belong to the
+    if str(item.get("provider") or "").strip().lower() == "plex" and item.get("plex_item_id"):
+        from .integrations import plex_service
+
+        item = plex_service.catalog_service.resolve_playback_item(item)
+
+    # make_item and catalog resolution may block. Nothing below may touch
+    # device or queue state until the result is known to belong to the
     # still-current Play.
     _require_owned("post_item_prepare")
     raw = validate_user_url(item["url"])
@@ -5410,6 +5415,12 @@ def _play_item_owned(
         **({"jellyfin_stream_reason": item.get("jellyfin_stream_reason")} if item.get("jellyfin_stream_reason") else {}),
         **({"iptv_source_id": item.get("iptv_source_id")} if item.get("iptv_source_id") else {}),
         **({"iptv_channel_id": item.get("iptv_channel_id")} if item.get("iptv_channel_id") else {}),
+        **({"plex_item_id": item.get("plex_item_id")} if item.get("plex_item_id") else {}),
+        **({"plex_server_machine_id": item.get("plex_server_machine_id")} if item.get("plex_server_machine_id") else {}),
+        **({"plex_stream_mode": item.get("plex_stream_mode")} if item.get("plex_stream_mode") else {}),
+        **({"plex_container": item.get("plex_container")} if item.get("plex_container") else {}),
+        **({"plex_video_codec": item.get("plex_video_codec")} if item.get("plex_video_codec") else {}),
+        **({"plex_audio_codec": item.get("plex_audio_codec")} if item.get("plex_audio_codec") else {}),
     }
     # Relay URLs are single-use loopback tokens: caching one as a resolved
     # stream would replay a dead token (404) instead of re-resolving.

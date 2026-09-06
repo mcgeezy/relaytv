@@ -12,8 +12,9 @@ import urllib.parse
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
+from .. import config, playback_service
 from . import plex_auth
-from .plex_client import PlexBinaryResponse, PlexError
+from .plex_client import PlexBinaryResponse, PlexError, PlexStreamResponse
 
 
 REFERENCE_VERSION = 1
@@ -276,6 +277,148 @@ class PlexCatalogService:
         )
         self.auth_manager.assert_server_session_current(session)
         return result
+
+    def durable_item(self, item_id: str) -> dict[str, object]:
+        session = self.auth_manager.selected_server_session()
+        reference = self._resolve(session, item_id, expected_kind="item")
+        raw = self._fetch_item_record(session, reference["path"])
+        item = self._item(session, raw, detail=True)
+        if item is None:
+            raise PlexError(
+                "plex_not_found",
+                "The requested Plex item was not found",
+                status_code=404,
+            )
+        if str(item.get("type") or "") not in {"movie", "episode"}:
+            raise PlexError(
+                "plex_item_not_playable",
+                "Choose a Plex movie or episode to play",
+                status_code=400,
+            )
+        durable = {
+            "url": "https://plex.invalid/item",
+            "provider": "plex",
+            "title": str(item.get("title") or "Plex item"),
+            "plex_item_id": item_id,
+            "plex_server_machine_id": session.machine_id,
+            "type": str(item.get("type") or ""),
+            **({"thumbnail": item["poster_url"]} if item.get("poster_url") else {}),
+        }
+        view_offset = max(0, _integer(item.get("view_offset_ms")))
+        if view_offset:
+            durable["resume_pos"] = view_offset / 1000.0
+        self.auth_manager.assert_server_session_current(session)
+        return durable
+
+    def resolve_playback_item(self, item: dict[str, object]) -> dict[str, object]:
+        item_id = str(item.get("plex_item_id") or "").strip()
+        session = self.auth_manager.selected_server_session()
+        reference = self._resolve(session, item_id, expected_kind="item")
+        raw = self._fetch_item_record(session, reference["path"])
+        part, media = self._select_direct_part(raw)
+        part_path = _safe_upstream_path(part.get("key"))
+        if not part_path or not part_path.startswith("/library/parts/"):
+            raise PlexError(
+                "plex_media_unavailable",
+                "Plex did not return a playable media part",
+                status_code=502,
+            )
+        stream_id = self._reference(session, "stream", part_path, "media")
+        self.auth_manager.assert_server_session_current(session)
+        return {
+            **item,
+            "url": f"http://127.0.0.1:{config.server_port()}/plex/stream/{stream_id}",
+            "provider": "plex",
+            "plex_server_machine_id": session.machine_id,
+            "plex_stream_mode": "direct",
+            "plex_container": str(media.get("container") or part.get("container") or ""),
+            "plex_video_codec": str(media.get("videoCodec") or ""),
+            "plex_audio_codec": str(media.get("audioCodec") or ""),
+        }
+
+    def media_stream(self, stream_id: str, *, range_header: str) -> PlexStreamResponse:
+        session = self.auth_manager.selected_server_session()
+        reference = self._resolve(session, stream_id, expected_kind="stream")
+        if not str(reference["path"]).startswith("/library/parts/"):
+            raise PlexError(
+                "plex_invalid_reference",
+                "The Plex stream reference is no longer valid",
+                status_code=404,
+            )
+        stream = session.client.open_stream(
+            reference["path"],
+            range_header=range_header,
+        )
+        self.auth_manager.assert_server_session_current(session)
+        return stream
+
+    def action(self, item_id: str, command: str) -> dict[str, object]:
+        action = str(command or "play_now").strip().lower()
+        if action not in {"play_now", "play_next", "play_last", "resume"}:
+            raise PlexError(
+                "plex_action_unsupported",
+                "Choose a supported Plex playback action",
+                status_code=400,
+            )
+        item = self.durable_item(item_id)
+        if action == "play_next":
+            queue_length, _snapshot = playback_service.queue_item_next(item)
+            return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
+        if action == "play_last":
+            queue_length, _snapshot = playback_service.queue_item(item)
+            return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
+        start_pos = None
+        if action == "resume":
+            resume_pos = item.get("resume_pos")
+            start_pos = float(resume_pos) if resume_pos is not None else None
+        now = playback_service.play_now(
+            item,
+            use_resolver=False,
+            cec=False,
+            clear_queue=True,
+            mode="plex_play",
+            start_pos=start_pos,
+        )
+        return {"ok": True, "action": action, "now_playing": now}
+
+    def _fetch_item_record(
+        self,
+        session: plex_auth.PlexServerSession,
+        path: str,
+    ) -> dict[str, Any]:
+        payload = session.client.get(
+            path,
+            query={"includeGuids": 1, "includeExtras": 0},
+        )
+        container = self._container(payload)
+        records = self._records(container, "Metadata")
+        if not records:
+            raise PlexError(
+                "plex_not_found",
+                "The requested Plex item was not found",
+                status_code=404,
+            )
+        return records[0]
+
+    @staticmethod
+    def _select_direct_part(raw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        media_values = raw.get("Media") if isinstance(raw.get("Media"), list) else []
+        for media in media_values:
+            if not isinstance(media, dict):
+                continue
+            parts = media.get("Part") if isinstance(media.get("Part"), list) else []
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("accessible") is False or part.get("exists") is False:
+                    continue
+                if _safe_upstream_path(part.get("key")):
+                    return part, media
+        raise PlexError(
+            "plex_media_unavailable",
+            "Plex did not return a playable media part",
+            status_code=502,
+        )
 
     @staticmethod
     def _container(payload: object) -> dict[str, Any]:

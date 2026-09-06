@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Plex personal-library browser. Playback actions arrive in the next phase.
+// Plex personal-library browser and playback actions.
 
 let __plexVisible = false;
 let __plexReady = false;
@@ -432,13 +432,54 @@ function _plexRenderDetail(item){
     children.append(heading, content);
     body.appendChild(children);
     _plexLoadChildren(String(item.id || ''), content);
-  } else {
-    const note = document.createElement('span');
-    note.className = 'plexPhaseNote';
-    note.textContent = 'Playback controls are coming in the next Plex phase.';
-    body.appendChild(note);
+  } else if (item.type === 'movie' || item.type === 'episode') {
+    const actions = document.createElement('div');
+    actions.className = 'plexActions';
+    const choices = [['Play now', 'play_now']];
+    if (Number(item.view_offset_ms || 0) > 0) choices.push(['Resume', 'resume']);
+    choices.push(['Play next', 'play_next'], ['Add to queue', 'play_last']);
+    choices.forEach(([label, command], index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `plexAction${index === 0 ? ' primary' : ''}`;
+      button.textContent = label;
+      button.onclick = () => _plexRunAction(item, command, button);
+      actions.appendChild(button);
+    });
+    const result = document.createElement('span');
+    result.className = 'plexActionResult';
+    result.setAttribute('aria-live', 'polite');
+    actions.appendChild(result);
+    body.appendChild(actions);
   }
   detail.append(hero, body);
+}
+
+async function _plexRunAction(item, command, source){
+  const actions = source && source.parentElement;
+  const result = actions && actions.querySelector('.plexActionResult');
+  const buttons = actions ? Array.from(actions.querySelectorAll('button')) : [];
+  buttons.forEach(button => { button.disabled = true; });
+  if (result) result.textContent = command === 'play_last' || command === 'play_next' ? 'Adding…' : 'Starting…';
+  try {
+    const response = await fetch('/plex/items/action', {
+      method:'POST',
+      cache:'no-store',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({item_id:String(item.id || ''), command}),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(_plexBrowseErrorMessage(body, response.status));
+    if (command === 'play_next' || command === 'play_last') {
+      if (result) result.textContent = command === 'play_next' ? 'Added next.' : 'Added to queue.';
+    } else {
+      closePlexShell();
+    }
+  } catch (error) {
+    if (result) result.textContent = error && error.message ? error.message : 'Plex action failed.';
+  } finally {
+    buttons.forEach(button => { button.disabled = false; });
+  }
 }
 
 async function _plexLoadChildren(itemId, host){

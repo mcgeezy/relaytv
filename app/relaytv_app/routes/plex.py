@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from ..integrations import plex_auth, plex_service
@@ -25,6 +26,13 @@ class PlexServerSelectReq(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     machine_id: str
+
+
+class PlexItemActionReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    command: str = "play_now"
 
 
 def _http_error(exc: PlexError) -> HTTPException:
@@ -230,6 +238,37 @@ def plex_artwork(asset_id: str):
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.get("/plex/stream/{stream_id}")
+def plex_stream(stream_id: str, request: Request):
+    try:
+        stream = plex_service.catalog_service.media_stream(
+            stream_id,
+            range_header=str(request.headers.get("range") or ""),
+        )
+    except PlexError as exc:
+        raise _http_error(exc) from None
+    headers = dict(stream.headers)
+    headers["Cache-Control"] = "private, no-store"
+    headers["X-Content-Type-Options"] = "nosniff"
+    return StreamingResponse(
+        stream.iter_bytes(),
+        status_code=stream.status_code,
+        headers=headers,
+    )
+
+
+@router.post("/plex/items/action")
+def plex_item_action(req: PlexItemActionReq, response: Response):
+    _no_store(response)
+    item_id = str(req.item_id or "").strip()
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id is required")
+    try:
+        return plex_service.catalog_service.action(item_id, req.command)
+    except PlexError as exc:
+        raise _http_error(exc) from None
 
 
 @router.post("/integrations/plex/server")

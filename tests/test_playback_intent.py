@@ -392,6 +392,43 @@ def test_a_play_that_is_never_superseded_publishes(harness) -> None:
     assert state.SESSION_STATE == "playing"
 
 
+def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) -> None:
+    from relaytv_app.integrations import plex_service
+
+    harness["gate"].set()
+    resolved = []
+
+    def _resolve(item):
+        resolved.append(dict(item))
+        return {
+            **item,
+            "url": "http://127.0.0.1:8787/plex/stream/opaque-stream",
+            "plex_stream_mode": "direct",
+            "plex_container": "mp4",
+        }
+
+    monkeypatch.setattr(plex_service.catalog_service, "resolve_playback_item", _resolve)
+
+    now = player.play_item(
+        {
+            "url": "https://plex.invalid/item",
+            "title": "A Movie",
+            "provider": "plex",
+            "plex_item_id": "opaque-item",
+        },
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="plex_play",
+    )
+
+    assert resolved[0]["plex_item_id"] == "opaque-item"
+    assert harness["loaded"] == ["http://127.0.0.1:8787/plex/stream/opaque-stream"]
+    assert now["plex_item_id"] == "opaque-item"
+    assert now["plex_stream_mode"] == "direct"
+    assert now["plex_container"] == "mp4"
+
+
 def test_superseded_play_reports_the_winner(harness, monkeypatch) -> None:
     results: list[dict] = []
     errors: list[BaseException] = []

@@ -1,8 +1,8 @@
 # Plex integration operations
 
 RelayTV's Plex integration provides account linking, direct server discovery,
-server selection, connection testing, and read-only personal-library browsing.
-Playback is a later phase.
+server selection, connection testing, personal-library browsing, and direct
+playback of movie and episode media that the selected server exposes.
 
 ## Set up Plex
 
@@ -14,6 +14,9 @@ Playback is a later phase.
 6. Choose **Test server** to confirm the saved connection and PMS version.
 7. Close Settings and choose **Plex** in the RelayTV header to browse Home,
    movie and TV libraries, search, details, seasons, and episodes.
+8. Open a movie or episode and choose **Play now**, **Resume**, **Play next**,
+   or **Add to queue**. Resume appears when Plex reports saved progress; Play
+   now starts over.
 
 RelayTV uses Plex's Ed25519 device-key and PIN flow. It does not collect a Plex
 password. Server discovery prefers direct local connections, with verified
@@ -25,6 +28,13 @@ account and selected server. Artwork is fetched by RelayTV with the saved
 server token and returned through a private no-store image route. Plex tokens
 and upstream paths are not sent to the browser. Changing the account or
 selected server invalidates an in-flight browse result and all older item IDs.
+
+Playback resolves the selected Plex item immediately before it starts. The
+player reads it through a private loopback relay that forwards byte ranges to
+the selected server, so neither the browser nor persisted queue/history state
+receives a Plex token or raw media-part path. This phase supports an accessible
+direct media part. Remux/transcode selection, track selection, and Plex
+watched-progress reporting remain follow-up work.
 
 ## Credential storage and backup
 
@@ -62,6 +72,9 @@ create its own device identity and Plex authorization.
 - **An item becomes unavailable after changing servers:** reload the Plex
   browser. Item and artwork references are intentionally scoped to the server
   that returned them.
+- **Playback says no media part is available:** the item currently requires a
+  Plex media decision, remux, or transcode that RelayTV does not yet request.
+  Try a version Plex marks accessible for direct play.
 
 ## Exercised contract
 
@@ -77,4 +90,7 @@ a Recently Added Movies row; library paging reported 286 movies; item detail,
 search, and a 131,340-byte JPEG artwork proxy response all completed. The
 sanitized RelayTV results contained no upstream `/library/` paths.
 
-No Plex controller or media playback behavior is claimed by this phase.
+The media relay contract was exercised against this PMS with a 1,024-byte
+range from a Matroska movie; PMS returned `206 Partial Content` and the
+expected content range. Cold playback on RelayTV hardware, progress reporting,
+remux/transcode, and Plex controller behavior are not yet claimed.

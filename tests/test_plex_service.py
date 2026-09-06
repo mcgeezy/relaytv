@@ -3,7 +3,11 @@ import base64
 import pytest
 
 from relaytv_app.integrations import plex_auth, plex_service
-from relaytv_app.integrations.plex_client import PlexBinaryResponse, PlexError
+from relaytv_app.integrations.plex_client import (
+    PlexBinaryResponse,
+    PlexError,
+    PlexStreamResponse,
+)
 
 
 class _CatalogClient:
@@ -82,6 +86,22 @@ class _CatalogClient:
                             "summary": "A safe summary.",
                             "Genre": [{"tag": "Drama"}],
                             "audienceRating": 8.2,
+                            "viewOffset": 1800000,
+                            "thumb": "/library/metadata/10/thumb/1",
+                            "Media": [
+                                {
+                                    "container": "mp4",
+                                    "videoCodec": "h264",
+                                    "audioCodec": "aac",
+                                    "Part": [
+                                        {
+                                            "key": "/library/parts/10/file.mp4",
+                                            "accessible": True,
+                                            "exists": True,
+                                        }
+                                    ],
+                                }
+                            ],
                         }
                     ]
                 }
@@ -109,6 +129,26 @@ class _CatalogClient:
         assert path == "/library/metadata/10/thumb/1"
         assert query["width"] == 1000
         return PlexBinaryResponse(body=b"jpeg-data", content_type="image/jpeg")
+
+    def open_stream(self, path, *, range_header=""):
+        self.calls.append((path, range_header, True))
+
+        class _Response:
+            def __init__(self):
+                self.chunks = [b"media", b""]
+                self.closed = False
+
+            def read(self, _size):
+                return self.chunks.pop(0)
+
+            def close(self):
+                self.closed = True
+
+        return PlexStreamResponse(
+            status_code=206,
+            headers={"Content-Type": "video/mp4", "Content-Range": "bytes 0-4/9"},
+            _response=_Response(),
+        )
 
 
 class _Auth:
@@ -242,3 +282,66 @@ def test_catalog_rejects_results_if_settings_change_during_fetch(service) -> Non
     with pytest.raises(PlexError) as exc_info:
         catalog.home()
     assert exc_info.value.code == "plex_credentials_changed"
+
+
+def test_playback_reference_resolves_to_private_range_stream(service) -> None:
+    catalog, auth = service
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+
+    durable = catalog.durable_item(item_id)
+    resolved = catalog.resolve_playback_item(durable)
+
+    assert durable["url"] == "https://plex.invalid/item"
+    assert durable["resume_pos"] == 1800.0
+    assert resolved["url"].startswith("http://127.0.0.1:8787/plex/stream/")
+    assert resolved["plex_stream_mode"] == "direct"
+    assert resolved["plex_container"] == "mp4"
+    assert "/library/parts/" not in repr(resolved)
+    assert "token" not in repr(resolved).lower()
+
+    stream_id = resolved["url"].rsplit("/", 1)[-1]
+    stream = catalog.media_stream(stream_id, range_header="bytes=0-4")
+    assert b"".join(stream.iter_bytes()) == b"media"
+    assert auth.client.calls[-1] == ("/library/parts/10/file.mp4", "bytes=0-4", True)
+
+
+def test_playback_actions_use_durable_items_and_explicit_resume(service, monkeypatch) -> None:
+    catalog, _auth = service
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    calls = []
+    monkeypatch.setattr(
+        plex_service.playback_service,
+        "queue_item_next",
+        lambda item: calls.append(("next", item)) or (2, [item]),
+    )
+    monkeypatch.setattr(
+        plex_service.playback_service,
+        "play_now",
+        lambda item, **kwargs: calls.append(("play", item, kwargs)) or item,
+    )
+
+    queued = catalog.action(item_id, "play_next")
+    resumed = catalog.action(item_id, "resume")
+
+    assert queued["queue_length"] == 2
+    assert calls[0][1]["url"] == "https://plex.invalid/item"
+    assert calls[1][2]["start_pos"] == 1800.0
+    assert calls[1][2]["use_resolver"] is False
+    assert resumed["action"] == "resume"
+
+
+def test_direct_play_rejects_items_without_an_accessible_part(service) -> None:
+    catalog, auth = service
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    original_get = auth.client.get
+
+    def without_media(path, *, query=None, auth=True):
+        payload = original_get(path, query=query, auth=auth)
+        if path == "/library/metadata/10":
+            payload["MediaContainer"]["Metadata"][0].pop("Media")
+        return payload
+
+    auth.client.get = without_media
+    with pytest.raises(PlexError) as exc_info:
+        catalog.resolve_playback_item(catalog.durable_item(item_id))
+    assert exc_info.value.code == "plex_media_unavailable"

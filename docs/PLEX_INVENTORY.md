@@ -18,7 +18,7 @@ Regenerate the listing after an intentional route change with:
 ## Plex Function Listing
 
 <!-- BEGIN GENERATED PLEX ROUTE LISTING (tests/test_plex_inventory.py) -->
-### `routes/plex.py` (15)
+### `routes/plex.py` (17)
 
 - `plex_artwork`
 - `plex_auth_cancel`
@@ -28,6 +28,7 @@ Regenerate the listing after an intentional route change with:
 - `plex_home`
 - `plex_integration_status`
 - `plex_integration_test`
+- `plex_item_action`
 - `plex_item_children`
 - `plex_item_detail`
 - `plex_libraries`
@@ -35,4 +36,5 @@ Regenerate the listing after an intentional route change with:
 - `plex_search`
 - `plex_server_select`
 - `plex_servers`
+- `plex_stream`
 <!-- END GENERATED PLEX ROUTE LISTING -->
