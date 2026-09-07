@@ -9,6 +9,7 @@ undone the moment that resolve completed.
 """
 import inspect
 import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -533,7 +534,9 @@ def test_plex_stopped_transition_releases_transcode_session(monkeypatch) -> None
     session = object()
     with plex_service._TRANSCODE_LOCK:
         plex_service._TRANSCODE_SESSIONS.clear()
-        plex_service._TRANSCODE_SESSIONS[stream_id] = (session, "session-1")
+        plex_service._TRANSCODE_SESSIONS[stream_id] = plex_service._TranscodeEntry(
+            session=session, session_id="session-1", created_at=time.time()
+        )
     monkeypatch.setattr(plex_service, "emit_timeline_hint", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         plex_service.PlexCatalogService,
@@ -574,7 +577,9 @@ def test_superseded_plex_play_releases_prepared_transcode_session(
 
     def resolve(item, **_kwargs):
         with plex_service._TRANSCODE_LOCK:
-            plex_service._TRANSCODE_SESSIONS[stream_id] = (session, "session-2")
+            plex_service._TRANSCODE_SESSIONS[stream_id] = plex_service._TranscodeEntry(
+                session=session, session_id="session-2", created_at=time.time()
+            )
         prepared.set()
         release.wait(5.0)
         return {

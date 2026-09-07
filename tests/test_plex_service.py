@@ -862,3 +862,108 @@ def test_direct_play_rejects_items_without_an_accessible_part(service) -> None:
     with pytest.raises(PlexError) as exc_info:
         catalog.resolve_playback_item(catalog.durable_item(item_id))
     assert exc_info.value.code == "plex_media_unavailable"
+
+
+# --- upstream path validation ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/library/parts/1/file.mkv",
+        "/library/metadata/1?includeGuids=1",
+        "/movies/Some..Title/x.mkv",
+    ],
+)
+def test_upstream_paths_the_server_returns_are_accepted(path) -> None:
+    assert plex_service._safe_upstream_path(path) == path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/library/../../etc/passwd",
+        "/lib/%2e%2e/x",
+        "/a/..%2Fb",
+        "//evil.example/x",
+        "http://evil.example/x",
+        "/x?X-Plex-Token=secret",
+    ],
+)
+def test_upstream_paths_that_leave_the_intended_shape_are_refused(path) -> None:
+    """Not reachable through a minted reference, refused regardless.
+
+    Keeping this a whole-path validator means it stays correct if a future
+    caller ever hands it a path from somewhere less trusted.
+    """
+    assert plex_service._safe_upstream_path(path) == ""
+
+
+# --- transcode reference lifetime -------------------------------------------
+
+
+class _FakeSession:
+    account_id = "a"
+    machine_id = "m"
+    generation = 1
+    reference_key = b"k" * 32
+
+
+def _entry(created_at: float, *, opened: bool) -> plex_service._TranscodeEntry:
+    return plex_service._TranscodeEntry(
+        session=_FakeSession(),
+        session_id="s",
+        created_at=created_at,
+        opened=opened,
+    )
+
+
+@pytest.fixture
+def transcode_registry():
+    with plex_service._TRANSCODE_LOCK:
+        original = dict(plex_service._TRANSCODE_SESSIONS)
+        plex_service._TRANSCODE_SESSIONS.clear()
+    yield plex_service._TRANSCODE_SESSIONS
+    with plex_service._TRANSCODE_LOCK:
+        plex_service._TRANSCODE_SESSIONS.clear()
+        plex_service._TRANSCODE_SESSIONS.update(original)
+
+
+def test_a_reference_that_was_never_opened_is_reclaimed(transcode_registry) -> None:
+    """A play that resolves an item and then fails leaves the entry behind.
+
+    Without a sweep it holds a server session until the process exits.
+    """
+    now = 10_000.0
+    transcode_registry["abandoned"] = _entry(
+        now - plex_service.TRANSCODE_UNOPENED_TTL_SEC - 1, opened=False
+    )
+
+    with plex_service._TRANSCODE_LOCK:
+        dropped = plex_service._sweep_unopened_transcodes_locked(now)
+
+    assert dropped == ["abandoned"]
+    assert "abandoned" not in transcode_registry
+
+
+def test_a_long_running_stream_is_never_swept(transcode_registry) -> None:
+    """An opened reference belongs to a live stream, however long it runs."""
+    now = 10_000.0
+    transcode_registry["playing"] = _entry(now - 60 * 60 * 6, opened=True)
+
+    with plex_service._TRANSCODE_LOCK:
+        dropped = plex_service._sweep_unopened_transcodes_locked(now)
+
+    assert dropped == []
+    assert "playing" in transcode_registry
+
+
+def test_a_reference_still_within_its_grace_period_survives(transcode_registry) -> None:
+    now = 10_000.0
+    transcode_registry["starting"] = _entry(now - 1, opened=False)
+
+    with plex_service._TRANSCODE_LOCK:
+        dropped = plex_service._sweep_unopened_transcodes_locked(now)
+
+    assert dropped == []
+    assert "starting" in transcode_registry

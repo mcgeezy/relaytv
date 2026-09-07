@@ -267,3 +267,82 @@ def test_a_real_preferred_id_still_wins_over_the_login(monkeypatch) -> None:
     assert user_id == "aaaaaaaabbbbccccddddeeeeeeeeeeee"
     assert source == "preferred"
     assert rejected == ""
+
+
+def test_a_half_filled_login_is_not_reported_as_configured(monkeypatch) -> None:
+    """A username with no password cannot sign in, so it is not a login.
+
+    It must still withhold the administrator-level API key from catalog reads,
+    which is what `auth_user_partial` carries.
+    """
+    for name, value in (
+        ("_AUTH_USERNAME", "mark"),
+        ("_AUTH_PASSWORD", ""),
+        ("_AUTH_MODE", "shared_api_key"),
+        ("_API_KEY", "shared-api-key"),
+    ):
+        monkeypatch.setattr(receiver, name, value)
+    raw = {
+        "enabled": True, "running": True, "connected": False,
+        "server_url": "http://jf.example", "auth_mode": "shared_api_key",
+        "api_key_configured": True, "authenticated": False,
+        "auth_user_configured": False, "auth_user_partial": True,
+        # Isolate the health verdict from the transport checks that run first.
+        "last_progress_ok": True, "last_stopped_ok": True, "last_register_ok": True,
+    }
+
+    out = receiver._status_with_sync_health(raw)
+
+    assert out["catalog_auth_source"] == "none"
+    assert out["sync_health_reason"] == "client_login_incomplete"
+
+
+def test_an_api_key_only_setup_still_browses_on_the_key() -> None:
+    raw = {
+        "enabled": True, "running": True, "connected": True,
+        "server_url": "http://jf.example", "auth_mode": "shared_api_key",
+        "api_key_configured": True, "authenticated": False,
+        "auth_user_configured": False, "auth_user_partial": False,
+    }
+
+    assert receiver._status_with_sync_health(raw)["catalog_auth_source"] == "api_key"
+
+
+def test_the_cast_scope_covers_the_dispatched_command(monkeypatch) -> None:
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        receiver,
+        "_COMMAND_SINK",
+        lambda action, payload, guard=None: seen.append(receiver.catalog_scope_is_cast()),
+    )
+
+    receiver.dispatch_command("play", {})
+
+    assert seen == [True]
+    # The scope is released, so a later browser request is not cast-scoped.
+    assert receiver.catalog_scope_is_cast() is False
+
+
+def test_binding_carries_the_cast_scope_onto_another_thread() -> None:
+    """A ContextVar is not inherited by a thread, so cast work must bind it."""
+    import threading
+
+    unbound: list[bool] = []
+    bound: list[bool] = []
+
+    with receiver.cast_catalog_scope():
+        assert receiver.catalog_scope_is_cast() is True
+        wrapped = receiver.bind_catalog_scope(
+            lambda: bound.append(receiver.catalog_scope_is_cast())
+        )
+        plain = threading.Thread(
+            target=lambda: unbound.append(receiver.catalog_scope_is_cast())
+        )
+        carried = threading.Thread(target=wrapped)
+        plain.start()
+        carried.start()
+        plain.join()
+        carried.join()
+
+    assert unbound == [False]
+    assert bound == [True]

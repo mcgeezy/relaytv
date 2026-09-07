@@ -777,6 +777,10 @@ def test_library_label_from_path_variants() -> None:
     # Junk stays quiet.
     assert label("", title="Silo") == ""
     assert label("movie.mkv", title="Movie") == ""
+    # Nothing matched the title, so the depth under the library is unknown.
+    # Guessing the parent would name the item's own folder as its library.
+    assert label("/mnt/media/Movies/Unmatched Folder/file.mkv", title="Silo") == ""
+    assert label("/mnt/media/Movies/Silo/Extras/behind.mkv", title="Nothing") == ""
 
 
 def test_item_detail_requests_tmdb_provider_identity(monkeypatch) -> None:

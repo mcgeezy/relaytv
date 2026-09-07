@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -16,9 +17,12 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
 from .. import config, playback_service, state, video_profile
+from ..debug import get_logger
 from . import plex_auth
 from .plex_client import PlexBinaryResponse, PlexError, PlexStreamResponse
 
+
+logger = get_logger("plex_service")
 
 REFERENCE_VERSION = 1
 REFERENCE_AAD = b"relaytv-plex-reference-v1"
@@ -39,7 +43,41 @@ _TIMELINE_SEND_LOCK = threading.Lock()
 _TIMELINE_LAST: dict[tuple[str, str], tuple[float, str, float, int]] = {}
 _TIMELINE_SEQUENCE = 0
 _TRANSCODE_LOCK = threading.RLock()
-_TRANSCODE_SESSIONS: dict[str, tuple[plex_auth.PlexServerSession, str]] = {}
+
+
+@dataclass
+class _TranscodeEntry:
+    """One minted transcode reference and the PMS session it will start."""
+
+    session: plex_auth.PlexServerSession
+    session_id: str
+    created_at: float
+    opened: bool = False
+
+
+_TRANSCODE_SESSIONS: dict[str, _TranscodeEntry] = {}
+# How long a minted transcode reference may sit unopened before it is dropped.
+# Playback opens the stream within seconds of resolving it; anything still
+# unopened after this was abandoned by a play that never started.
+TRANSCODE_UNOPENED_TTL_SEC = 300.0
+
+
+def _sweep_unopened_transcodes_locked(now: float) -> list[str]:
+    """Drop references that were minted for a play that never opened them.
+
+    Caller holds ``_TRANSCODE_LOCK``. An entry is only reclaimed when
+    ``opened`` is still False, so a stream that has been running for hours is
+    never swept out from under itself. Nothing is asked of PMS: an unopened
+    reference never reached the start path, so there is no session to stop.
+    """
+    stale = [
+        stream_id
+        for stream_id, entry in _TRANSCODE_SESSIONS.items()
+        if not entry.opened and (now - entry.created_at) > TRANSCODE_UNOPENED_TTL_SEC
+    ]
+    for stream_id in stale:
+        _TRANSCODE_SESSIONS.pop(stream_id, None)
+    return stale
 PLEX_PLAYBACK_MODES = {"auto", "direct", "transcode"}
 TRANSCODE_START_PATH = "/video/:/transcode/universal/start.mkv"
 TRANSCODE_STOP_PATH = "/video/:/transcode/universal/stop"
@@ -78,6 +116,16 @@ def _safe_upstream_path(value: object) -> str:
     if any(
         key.strip().lower() in {"access_token", "auth_token", "token", "x-plex-token"}
         for key, _value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    ):
+        return ""
+    # Traversal cannot be reached through a minted reference, which is
+    # authenticated and only ever carries paths the server itself returned.
+    # It is refused anyway so this stays a whole-path validator rather than one
+    # that happens to be safe because of who calls it. Unquote first: the check
+    # must see the same segments the server will.
+    if any(
+        segment == ".."
+        for segment in urllib.parse.unquote(parsed.path).replace("\\", "/").split("/")
     ):
         return ""
     return path
@@ -475,7 +523,14 @@ class PlexCatalogService:
         self.auth_manager.assert_server_session_current(session)
         if stream_kind == "transcode_stream":
             with _TRANSCODE_LOCK:
-                _TRANSCODE_SESSIONS[stream_id] = (session, session_id)
+                dropped = _sweep_unopened_transcodes_locked(time.time())
+                _TRANSCODE_SESSIONS[stream_id] = _TranscodeEntry(
+                    session=session,
+                    session_id=session_id,
+                    created_at=time.time(),
+                )
+            if dropped:
+                logger.info("plex_transcode_refs_swept count=%d", len(dropped))
         return {
             **item,
             "url": f"http://127.0.0.1:{config.server_port()}/plex/stream/{stream_id}",
@@ -524,21 +579,25 @@ class PlexCatalogService:
                 )
             with _TRANSCODE_LOCK:
                 registered = _TRANSCODE_SESSIONS.get(stream_id)
-            registered_session = registered[0] if registered is not None else None
-            registered_session_id = registered[1] if registered is not None else ""
-            if (
-                registered_session is None
-                or registered_session_id != session_id
-                or registered_session.account_id != session.account_id
-                or registered_session.machine_id != session.machine_id
-                or registered_session.generation != session.generation
-                or registered_session.reference_key != session.reference_key
-            ):
-                raise PlexError(
-                    "plex_stream_expired",
-                    "The Plex transcoded stream has expired",
-                    status_code=404,
-                )
+                registered_session = registered.session if registered is not None else None
+                if (
+                    registered is None
+                    or registered_session is None
+                    or registered.session_id != session_id
+                    or registered_session.account_id != session.account_id
+                    or registered_session.machine_id != session.machine_id
+                    or registered_session.generation != session.generation
+                    or registered_session.reference_key != session.reference_key
+                ):
+                    raise PlexError(
+                        "plex_stream_expired",
+                        "The Plex transcoded stream has expired",
+                        status_code=404,
+                    )
+                # Mark before the request goes out: from here the reference is
+                # in use and the sweep must leave it alone however long the
+                # stream runs.
+                registered.opened = True
             try:
                 stream = session.client.open_stream(
                     parsed.path,
@@ -1196,8 +1255,7 @@ def stop_transcode_stream(value: object) -> bool:
         entry = _TRANSCODE_SESSIONS.pop(stream_id, None)
     if entry is None:
         return False
-    session, session_id = entry
-    PlexCatalogService._stop_transcode(session, session_id)
+    PlexCatalogService._stop_transcode(entry.session, entry.session_id)
     return True
 
 
@@ -1211,8 +1269,8 @@ def stop_all_transcodes() -> int:
     with _TRANSCODE_LOCK:
         entries = list(_TRANSCODE_SESSIONS.values())
         _TRANSCODE_SESSIONS.clear()
-    for session, session_id in entries:
-        PlexCatalogService._stop_transcode(session, session_id)
+    for entry in entries:
+        PlexCatalogService._stop_transcode(entry.session, entry.session_id)
     return len(entries)
 
 

@@ -2991,6 +2991,7 @@ async function loadSettingsUi(){
       : !jfStatus ? 'Client login: status unavailable.'
       : jfStatus.authenticated ? `Client login: connected as ${jfStatus.auth_user || cur.jellyfin_username || 'configured user'}.`
       : jfStatus.last_auth_ok === false ? 'Client login: failed. Check the username and password.'
+      : jfStatus.auth_user_partial ? 'Client login: incomplete. Fill in both the username and the password — browsing stays off until then.'
       : cur.jellyfin_username ? 'Client login: waiting for sign-in.'
       : 'Client login: not configured. Sign in above to use your personal library.';
   }

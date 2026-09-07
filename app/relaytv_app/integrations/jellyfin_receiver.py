@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 from contextvars import ContextVar
 from dataclasses import dataclass
 import os
@@ -27,6 +28,11 @@ _THREAD_LOCK = threading.Lock()
 
 # Only the authenticated server socket selects cast credentials for media work.
 # Context-local scope keeps concurrent browser requests on the client login.
+#
+# A ContextVar does not cross a thread boundary: work handed to a new thread or
+# an executor starts at the default and silently reverts to client credentials.
+# Anything that offloads cast work must carry the scope explicitly with
+# ``run_in_catalog_scope``; ``cast_catalog_scope`` is the only place that sets it.
 _CAST_CATALOG = ContextVar("jellyfin_cast_catalog", default=False)
 
 # Serializes whole configuration transactions (connect / disconnect / rename /
@@ -111,6 +117,8 @@ _STATUS: dict[str, object] = {
     # None until a session readback has been attempted; see _verify_registration.
     "media_control_verified": None,
     "auth_user_configured": False,
+    # Half-filled login: enough to withhold the API key, not enough to sign in.
+    "auth_user_partial": False,
     "authenticated": False,
     "auth_user": "",
     "auth_user_id": "",
@@ -456,7 +464,10 @@ def _start_locked() -> None:
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
         _STATUS["api_key_configured"] = bool(_API_KEY)
-        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME or _AUTH_PASSWORD)
+        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME and _AUTH_PASSWORD)
+        _STATUS["auth_user_partial"] = bool(
+            (_AUTH_USERNAME or _AUTH_PASSWORD) and not (_AUTH_USERNAME and _AUTH_PASSWORD)
+        )
         _STATUS["authenticated"] = False
         _STATUS["auth_user"] = _AUTH_USERNAME
         _STATUS["auth_user_id"] = ""
@@ -556,7 +567,11 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     elif (
         auth_mode == "shared_api_key"
         and bool(out.get("api_key_configured"))
+        # A configured client login owns catalog reads even before it succeeds,
+        # and a half-filled one must not silently fall back to an
+        # administrator-level API key either.
         and not bool(out.get("auth_user_configured"))
+        and not bool(out.get("auth_user_partial"))
     ):
         out["catalog_auth_source"] = "api_key"
     else:
@@ -623,6 +638,13 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     if auth_mode == "user_login" and auth_ts == 0 and bool(out.get("auth_user_configured")):
         out["sync_health"] = "degraded"
         out["sync_health_reason"] = "awaiting_auth"
+        return out
+    if bool(out.get("auth_user_partial")):
+        # Half a login cannot sign in, and it still withholds the API key from
+        # catalog reads. Browsing is down and the cause is a blank field, so say
+        # so rather than leaving the screen to report a healthy connection.
+        out["sync_health"] = "degraded"
+        out["sync_health_reason"] = "client_login_incomplete"
         return out
     active_credential = (
         bool(out.get("api_key_configured"))
@@ -907,7 +929,10 @@ def _connect_locked(*, server_url: str, api_key: str | None, auth_mode: str | No
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
         _STATUS["api_key_configured"] = bool(_API_KEY)
-        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME or _AUTH_PASSWORD)
+        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME and _AUTH_PASSWORD)
+        _STATUS["auth_user_partial"] = bool(
+            (_AUTH_USERNAME or _AUTH_PASSWORD) and not (_AUTH_USERNAME and _AUTH_PASSWORD)
+        )
         _STATUS["authenticated"] = False
         _STATUS["auth_user"] = _AUTH_USERNAME
         _STATUS["auth_user_id"] = ""
@@ -1490,7 +1515,11 @@ def _library_label_from_path(path: object, *, title: str = "", series_name: str 
             if cleaned == n or cleaned.startswith(f"{n} (") or cleaned.startswith(f"{n}."):
                 if i >= 1:
                     return segs[i - 1]
-    return segs[-2]
+    # No segment matched the title, so the depth of the item under its library
+    # is unknown. Guessing the parent directory names the item's own folder on
+    # any nested layout, which reads as a library that does not exist. Say
+    # nothing rather than label the item wrongly.
+    return ""
 
 
 def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -> dict[str, object]:
@@ -2803,6 +2832,50 @@ def register_command_sink(fn) -> None:
     _COMMAND_SINK = fn
 
 
+@contextlib.contextmanager
+def cast_catalog_scope():
+    """Select cast credentials for catalog and media work in this context.
+
+    The scope is context-local, so it covers the synchronous call chain and
+    nothing else. Concurrent browser requests keep the client login.
+    """
+    scope = _CAST_CATALOG.set(True)
+    try:
+        yield
+    finally:
+        _CAST_CATALOG.reset(scope)
+
+
+def catalog_scope_is_cast() -> bool:
+    """True when the caller is running under cast credentials."""
+    return bool(_CAST_CATALOG.get())
+
+
+def bind_catalog_scope(fn):
+    """Wrap ``fn`` so it keeps the *caller's* catalog scope on another thread.
+
+    A ContextVar is not inherited by a thread the caller starts, so offloaded
+    cast work would quietly run on the client login and build a URL the cast
+    session cannot play. Bind at the hand-off point, on the calling thread::
+
+        pool.submit(jellyfin_receiver.bind_catalog_scope(fetch), item_id)
+
+    Binding is what captures the flag. Calling this on the worker thread
+    captures the worker's own (default) scope and protects nothing.
+    """
+    cast = bool(_CAST_CATALOG.get())
+
+    @functools.wraps(fn)
+    def _bound(*args, **kwargs):
+        scope = _CAST_CATALOG.set(cast)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _CAST_CATALOG.reset(scope)
+
+    return _bound
+
+
 def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> object:
     """Run a socket-sourced command through the registered ingress.
 
@@ -2813,11 +2886,8 @@ def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> 
     sink = _COMMAND_SINK
     if sink is None:
         raise RuntimeError("no jellyfin command sink registered")
-    scope = _CAST_CATALOG.set(True)
-    try:
+    with cast_catalog_scope():
         return sink(action, payload, guard=guard)
-    finally:
-        _CAST_CATALOG.reset(scope)
 
 
 def command_sink_registered() -> bool:
