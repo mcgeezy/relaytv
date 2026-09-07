@@ -3482,6 +3482,45 @@ def mpv_seek_absolute_with_retry(sec: float, tries: int = 25, delay: float = 0.1
 
 
 
+def _project_plex_conversion_property(key: str, value):
+    """Translate a conversion stream's zero-based clock to library time."""
+    if key != "time-pos" or not isinstance(value, (int, float)):
+        return value
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if (
+        not now
+        or str(now.get("provider") or "").strip().lower() != "plex"
+        or str(now.get("plex_stream_mode") or "").strip().lower()
+        not in {"remux", "transcode"}
+    ):
+        return value
+    try:
+        offset = max(0.0, float(now.get("_playback_started_pos") or 0.0))
+    except (TypeError, ValueError):
+        offset = 0.0
+    if offset <= 0.0:
+        return value
+    projected = max(0.0, float(value)) + offset
+    try:
+        duration = float(now.get("duration_sec"))
+        if duration > 0.0:
+            projected = min(projected, duration)
+    except (TypeError, ValueError):
+        pass
+    return projected
+
+
+def _project_plex_conversion_properties(values: dict[str, Any]) -> dict[str, Any]:
+    if "time-pos" not in values:
+        return values
+    projected = dict(values)
+    projected["time-pos"] = _project_plex_conversion_property(
+        "time-pos",
+        projected.get("time-pos"),
+    )
+    return projected
+
+
 def mpv_get(prop: str):
     key = str(prop or "").strip()
     prefer_host = _qt_shell_runtime_preferred()
@@ -3490,16 +3529,16 @@ def mpv_get(prop: str):
         cache_ttl = _mpv_poll_cache_ttl_sec()
         cached = _mpv_cache_get(prop, max_age_sec=cache_ttl)
         if cached is not None:
-            return cached
+            return _project_plex_conversion_property(key, cached)
     host_val = _host_runtime_mpv_property(prop) if prefer_host else None
     if prefer_host and (not live_ipc_required) and host_val is not None:
         if key:
             _mpv_cache_update({key: host_val})
-        return host_val
+        return _project_plex_conversion_property(key, host_val)
     if prefer_host and (not live_ipc_required) and _qt_shell_runtime_supports_mpv_property(key):
         cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
         if cached is not None:
-            return cached
+            return _project_plex_conversion_property(key, cached)
     # Status/UI polling should never crash the whole API if mpv is not ready.
     try:
         r = mpv_command(["get_property", prop])
@@ -3508,35 +3547,35 @@ def mpv_get(prop: str):
         if host_val is not None:
             if key:
                 _mpv_cache_update({key: host_val})
-            return host_val
+            return _project_plex_conversion_property(key, host_val)
         cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
         if cached is not None:
-            return cached
-        return _host_runtime_mpv_property(prop)
+            return _project_plex_conversion_property(key, cached)
+        return _project_plex_conversion_property(key, _host_runtime_mpv_property(prop))
     if r.get("error") != "success":
         host_val = _host_runtime_mpv_property(prop)
         if host_val is not None:
             if key:
                 _mpv_cache_update({key: host_val})
-            return host_val
+            return _project_plex_conversion_property(key, host_val)
         cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
         if cached is not None:
-            return cached
-        return _host_runtime_mpv_property(prop)
+            return _project_plex_conversion_property(key, cached)
+        return _project_plex_conversion_property(key, _host_runtime_mpv_property(prop))
     if "data" in r:
         val = r.get("data")
         if key:
             _mpv_cache_update({key: val})
-        return val
+        return _project_plex_conversion_property(key, val)
     host_val = _host_runtime_mpv_property(prop)
     if host_val is not None:
         if key:
             _mpv_cache_update({key: host_val})
-        return host_val
+        return _project_plex_conversion_property(key, host_val)
     cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
     if cached is not None:
-        return cached
-    return _host_runtime_mpv_property(prop)
+        return _project_plex_conversion_property(key, cached)
+    return _project_plex_conversion_property(key, _host_runtime_mpv_property(prop))
 
 
 
@@ -3554,7 +3593,7 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
     host = _host_runtime_mpv_properties(normalized) if prefer_host else {}
     if prefer_host and (not live_ipc_required) and all(host.get(p) is not None for p in normalized):
         _mpv_cache_update(host)
-        return host
+        return _project_plex_conversion_properties(host)
     if (
         not fresh
         and prefer_host
@@ -3572,13 +3611,13 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
                 out[p] = stale.get(p)
         if all(out.get(p) is not None for p in normalized):
             _mpv_cache_update(out)
-            return out
+            return _project_plex_conversion_properties(out)
     if not fresh and not prefer_host and (not live_ipc_required):
         cache_ttl = _mpv_poll_cache_ttl_sec()
         if cache_ttl > 0:
             cached = _mpv_cache_get_many(normalized, max_age_sec=cache_ttl, project_playback=True)
             if len(cached) == len(normalized):
-                return cached
+                return _project_plex_conversion_properties(cached)
     payloads = [{"command": ["get_property", p]} for p in normalized]
     try:
         resps = _mpv_ipc_request_many(payloads, timeout=_mpv_poll_ipc_timeout_sec())
@@ -3586,7 +3625,7 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
         fallback_host = host if prefer_host else _host_runtime_mpv_properties(normalized)
         if any(v is not None for v in fallback_host.values()):
             _mpv_cache_update(fallback_host)
-            return fallback_host
+            return _project_plex_conversion_properties(fallback_host)
         if fresh:
             return {}
         stale = _mpv_cache_get_many(
@@ -3594,7 +3633,7 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
             max_age_sec=_mpv_poll_cache_stale_sec(),
             project_playback=True,
         )
-        return stale if stale else {}
+        return _project_plex_conversion_properties(stale) if stale else {}
     out: dict[str, Any] = {}
     success_count = 0
     for p, r in zip(normalized, resps):
@@ -3611,18 +3650,18 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
             if host.get(p) is not None:
                 out[p] = host.get(p)
         _mpv_cache_update(out)
-        return out
+        return _project_plex_conversion_properties(out)
     host = _host_runtime_mpv_properties(normalized)
     if success_count <= 0:
         if any(v is not None for v in host.values()):
             _mpv_cache_update(host)
-            return host
+            return _project_plex_conversion_properties(host)
     else:
         for p in normalized:
             if out.get(p) is None and host.get(p) is not None:
                 out[p] = host.get(p)
     _mpv_cache_update(out)
-    return out
+    return _project_plex_conversion_properties(out)
 
 def mpv_set_result(prop: str, value) -> dict[str, Any]:
     key = str(prop or "").strip()
@@ -5342,6 +5381,17 @@ def _play_item_owned(
         debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
 
     resume_start_pos = _normalize_start_pos(start_pos)
+    player_start_pos = resume_start_pos
+    if plex_playback and str(item.get("plex_stream_mode") or "").strip().lower() in {
+        "remux",
+        "transcode",
+    }:
+        # PMS already applies the requested offset when it creates a
+        # conversion stream. That stream starts its own media clock at zero,
+        # so asking mpv to seek the same offset again is both redundant and
+        # unreliable. Public position reads project this zero-based clock back
+        # onto the item's absolute timeline.
+        player_start_pos = None
     ytdl_handoff_kwargs = (
         {
             "ytdl_format_override": ytdl_format_override,
@@ -5387,7 +5437,7 @@ def _play_item_owned(
         reused_runtime = _load_stream_in_existing_mpv(
             stream,
             audio_url=audio,
-            start_pos=resume_start_pos,
+            start_pos=player_start_pos,
             **http_header_kwargs,
             **ytdl_handoff_kwargs,
         )
@@ -5409,7 +5459,7 @@ def _play_item_owned(
                 reused_runtime = _load_stream_in_existing_mpv(
                     stream,
                     audio_url=audio,
-                    start_pos=resume_start_pos,
+                    start_pos=player_start_pos,
                     **http_header_kwargs,
                     **ytdl_handoff_kwargs,
                 )
@@ -5423,7 +5473,7 @@ def _play_item_owned(
             start_mpv(
                 stream,
                 audio_url=audio,
-                start_pos=resume_start_pos,
+                start_pos=player_start_pos,
                 **http_header_kwargs,
                 **ytdl_handoff_kwargs,
             )

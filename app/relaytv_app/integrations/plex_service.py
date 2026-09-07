@@ -524,7 +524,16 @@ class PlexCatalogService:
                 )
             with _TRANSCODE_LOCK:
                 registered = _TRANSCODE_SESSIONS.get(stream_id)
-            if registered != (session, session_id):
+            registered_session = registered[0] if registered is not None else None
+            registered_session_id = registered[1] if registered is not None else ""
+            if (
+                registered_session is None
+                or registered_session_id != session_id
+                or registered_session.account_id != session.account_id
+                or registered_session.machine_id != session.machine_id
+                or registered_session.generation != session.generation
+                or registered_session.reference_key != session.reference_key
+            ):
                 raise PlexError(
                     "plex_stream_expired",
                     "The Plex transcoded stream has expired",
@@ -535,6 +544,7 @@ class PlexCatalogService:
                     parsed.path,
                     query=query,
                     on_close=lambda: stop_transcode_stream(stream_id),
+                    allow_incomplete_read=True,
                 )
             except Exception:
                 stop_transcode_stream(stream_id)

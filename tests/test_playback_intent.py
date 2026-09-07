@@ -436,6 +436,56 @@ def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) ->
     assert timelines[0][1]["playback_state"] == "playing"
 
 
+def test_plex_conversion_offset_is_applied_by_server_not_player(
+    harness,
+    monkeypatch,
+) -> None:
+    from relaytv_app.integrations import plex_service
+
+    harness["gate"].set()
+    loads: list[dict[str, object]] = []
+
+    def _resolve(item, *, start_pos=None):
+        assert start_pos == 60.0
+        return {
+            **item,
+            "url": "http://127.0.0.1:8787/plex/stream/opaque-conversion",
+            "plex_stream_mode": "transcode",
+        }
+
+    monkeypatch.setattr(plex_service.catalog_service, "resolve_playback_item", _resolve)
+    monkeypatch.setattr(plex_service, "emit_timeline_hint", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        player,
+        "_load_stream_in_existing_mpv",
+        lambda stream, **kwargs: loads.append({"stream": stream, **kwargs}) or True,
+    )
+
+    now = player.play_item(
+        {
+            "url": "https://plex.invalid/item",
+            "title": "A Movie",
+            "provider": "plex",
+            "plex_item_id": "opaque-item",
+            "duration_sec": 300.0,
+        },
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="plex_seek",
+        start_pos=60.0,
+    )
+
+    assert loads == [
+        {
+            "stream": "http://127.0.0.1:8787/plex/stream/opaque-conversion",
+            "audio_url": None,
+            "start_pos": None,
+        }
+    ]
+    assert now["_playback_started_pos"] == 60.0
+
+
 def test_failed_plex_resolution_leaves_existing_queue_and_runtime_untouched(
     harness,
     monkeypatch,

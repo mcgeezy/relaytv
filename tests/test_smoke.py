@@ -5730,6 +5730,40 @@ def test_plex_conversion_seek_restarts_at_requested_offset_and_keeps_queue(
     assert all(call[0]['plex_audio_id'] == 'opaque-audio' for call in calls)
 
 
+def test_plex_conversion_position_projects_server_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'provider': 'plex',
+        'plex_stream_mode': 'transcode',
+        '_playback_started_pos': 60.0,
+        'duration_sec': 300.0,
+    }, raising=False)
+    monkeypatch.setattr(routes.player, '_qt_shell_runtime_preferred', lambda: True)
+    monkeypatch.setattr(
+        routes.player,
+        '_qt_shell_runtime_requires_live_mpv_ipc',
+        lambda _props=None: False,
+    )
+    monkeypatch.setattr(
+        routes.player,
+        '_host_runtime_mpv_property',
+        lambda prop: {'time-pos': 5.0}.get(prop),
+    )
+    monkeypatch.setattr(
+        routes.player,
+        '_host_runtime_mpv_properties',
+        lambda _props: {'time-pos': 5.0, 'duration': 300.0, 'pause': False},
+    )
+
+    assert routes.player.mpv_get('time-pos') == 65.0
+    assert routes.player.mpv_get_many(['time-pos', 'duration', 'pause']) == {
+        'time-pos': 65.0,
+        'duration': 300.0,
+        'pause': False,
+    }
+
+
 def test_direct_plex_seek_keeps_existing_player_control_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

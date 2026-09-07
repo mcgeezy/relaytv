@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import email.message
+import http.client
 import io
 import json
 import urllib.error
@@ -306,3 +307,47 @@ def test_media_stream_close_runs_transcode_cleanup_once() -> None:
     assert "session=session-1" in opener.requests[0].full_url
     assert "path=%2Flibrary%2Fmetadata%2F10" in opener.requests[0].full_url
     assert opener.requests[0].get_header("X-plex-token") == "server-secret"
+
+
+def test_conversion_stream_tolerates_pms_chunk_termination() -> None:
+    class _InterruptedResponse:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def read(self, _size):
+            raise http.client.IncompleteRead(b"final-transcode-bytes")
+
+        def close(self):
+            self.closed = True
+
+    response = _InterruptedResponse()
+    closed = []
+    stream = plex_client.PlexStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "video/x-matroska"},
+        _response=response,
+        _on_close=lambda: closed.append(True),
+        _allow_incomplete_read=True,
+    )
+
+    assert b"".join(stream.iter_bytes()) == b"final-transcode-bytes"
+    assert response.closed is True
+    assert closed == [True]
+
+
+def test_direct_stream_preserves_incomplete_read_failure() -> None:
+    class _InterruptedResponse:
+        def read(self, _size):
+            raise http.client.IncompleteRead(b"partial-file")
+
+        def close(self):
+            pass
+
+    stream = plex_client.PlexStreamResponse(
+        status_code=206,
+        headers={"Content-Type": "video/mp4"},
+        _response=_InterruptedResponse(),
+    )
+
+    with pytest.raises(http.client.IncompleteRead):
+        b"".join(stream.iter_bytes())

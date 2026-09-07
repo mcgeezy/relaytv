@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import http.client
 import json
 import re
 import socket
@@ -142,15 +143,25 @@ class PlexStreamResponse:
     headers: dict[str, str]
     _response: Any = field(repr=False)
     _on_close: Callable[[], None] | None = field(default=None, repr=False)
+    _allow_incomplete_read: bool = field(default=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def iter_bytes(self, chunk_size: int = 256 * 1024):
         try:
             while True:
-                chunk = self._response.read(chunk_size)
+                incomplete = False
+                try:
+                    chunk = self._response.read(chunk_size)
+                except http.client.IncompleteRead as exc:
+                    if not self._allow_incomplete_read:
+                        raise
+                    chunk = bytes(exc.partial or b"")
+                    incomplete = True
                 if not chunk:
                     break
                 yield chunk
+                if incomplete:
+                    break
         finally:
             self.close()
 
@@ -292,6 +303,7 @@ class PlexClient:
         range_header: str = "",
         query: dict[str, object] | None = None,
         on_close: Callable[[], None] | None = None,
+        allow_incomplete_read: bool = False,
     ) -> PlexStreamResponse:
         byte_range = str(range_header or "").strip()
         if byte_range and re.fullmatch(r"bytes=(?:\d+-\d*|\d*-\d+)", byte_range) is None:
@@ -346,6 +358,7 @@ class PlexClient:
             headers=safe_headers,
             _response=response,
             _on_close=on_close,
+            _allow_incomplete_read=bool(allow_incomplete_read),
         )
 
     def _build_request(

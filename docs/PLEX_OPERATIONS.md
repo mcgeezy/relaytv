@@ -63,7 +63,9 @@ conversion. Track references are encrypted, version-scoped, and persisted with
 the item so queued and interrupted playback keeps the requested choice.
 Seeking a Plex conversion replaces its non-byte-seekable stream with a new PMS
 session at the requested second, keeps the current queue, and restores pause
-when the session was paused. Direct files continue to seek in place.
+when the session was paused. PMS starts the replacement stream's local clock at
+zero, so RelayTV maps it back to the absolute movie or episode position shown
+in the remote and reported to Plex. Direct files continue to seek in place.
 
 ## Credential storage and backup
 

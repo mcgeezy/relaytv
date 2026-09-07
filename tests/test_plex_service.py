@@ -218,7 +218,15 @@ class _CatalogClient:
         assert query["width"] == 1000
         return PlexBinaryResponse(body=b"jpeg-data", content_type="image/jpeg")
 
-    def open_stream(self, path, *, range_header="", query=None, on_close=None):
+    def open_stream(
+        self,
+        path,
+        *,
+        range_header="",
+        query=None,
+        on_close=None,
+        allow_incomplete_read=False,
+    ):
         self.calls.append((path, range_header, query, True))
 
         class _Response:
@@ -237,6 +245,7 @@ class _CatalogClient:
             headers={"Content-Type": "video/mp4", "Content-Range": "bytes 0-4/9"},
             _response=_Response(),
             _on_close=on_close,
+            _allow_incomplete_read=allow_incomplete_read,
         )
 
     def request_no_content(self, method, path, *, query=None, auth=True):
@@ -443,6 +452,7 @@ def test_forced_transcode_reuses_decision_session_and_cleans_up(
     assert start_query["directPlay"] == "0"
 
     stream = catalog.media_stream(stream_id, range_header="")
+    assert stream._allow_incomplete_read is True
     assert b"".join(stream.iter_bytes()) == b"media"
     assert auth.client.calls[-1] == (
         "GET",
@@ -471,6 +481,41 @@ def test_forced_transcode_ignores_downstream_byte_range(service, monkeypatch) ->
         call for call in _auth.client.calls if call[0] == plex_service.TRANSCODE_START_PATH
     )
     assert start_call[1] == ""
+
+
+def test_transcode_stream_accepts_fresh_equivalent_server_session(
+    service,
+    monkeypatch,
+) -> None:
+    catalog, auth = service
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "transcode"},
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    resolved = catalog.resolve_playback_item(catalog.durable_item(item_id))
+    original = auth.session
+    fresh_client = _CatalogClient()
+
+    def fresh_session():
+        return plex_auth.PlexServerSession(
+            client=fresh_client,
+            account_id=original.account_id,
+            machine_id=original.machine_id,
+            generation=original.generation,
+            reference_key=original.reference_key,
+        )
+
+    monkeypatch.setattr(auth, "selected_server_session", fresh_session)
+    monkeypatch.setattr(auth, "assert_server_session_current", lambda _session: None)
+
+    stream = catalog.media_stream(
+        resolved["url"].rsplit("/", 1)[-1],
+        range_header="",
+    )
+
+    assert b"".join(stream.iter_bytes()) == b"media"
 
 
 def test_automatic_quality_cap_uses_media_decision_transcode(service, monkeypatch) -> None:
