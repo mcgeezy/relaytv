@@ -1004,6 +1004,11 @@ def test_register_falls_back_to_the_query_form_for_emby(monkeypatch) -> None:
     assert out["method"] == "caps_query"
     assert "/Sessions/Capabilities?" in attempts[1]
     assert "supportedCommands=PlayState" in attempts[1]
+    # ``id`` on this endpoint is a session id, not a DeviceId. Sending the
+    # device id made every fallback 404 with "Session ... not found"; with it
+    # omitted the server resolves the session from the Authorization header.
+    assert "id=" not in attempts[1]
+    assert "relaytv-den" not in attempts[1]
 
 
 # --- remote-friendly playback reporting ------------------------------------

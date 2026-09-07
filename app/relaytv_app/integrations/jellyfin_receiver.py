@@ -117,6 +117,8 @@ _STATUS: dict[str, object] = {
     "auth_session_id": "",
     "catalog_user_id": "",
     "catalog_user_source": "none",
+    # The configured preferred id when it is not a usable server user id.
+    "catalog_user_id_rejected": "",
     "last_auth_ts": None,
     "last_auth_ok": None,
     "last_auth_error": None,
@@ -392,14 +394,38 @@ def _preferred_catalog_user_id() -> str:
     return str(runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USER_ID") or "").strip()
 
 
-def _effective_catalog_user(st: dict[str, object]) -> tuple[str, str]:
+# Jellyfin and Emby user ids are GUIDs, served either bare or dashed.
+_USER_ID_RE = re.compile(
+    r"\A(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z",
+    re.IGNORECASE,
+)
+
+
+def is_server_user_id(value: object) -> bool:
+    """True when a value can address a user on the media server."""
+    return bool(_USER_ID_RE.match(str(value or "").strip()))
+
+
+def _effective_catalog_user(st: dict[str, object]) -> tuple[str, str, str]:
+    """Resolve the catalog profile, and report a preferred id we had to ignore.
+
+    The settings field wants a server user *id*, but a username is the easy
+    thing to type there. A username routes every user-scoped catalog request to
+    ``/Users/<name>/Items``, which the server rejects; browsing then silently
+    falls back to the unscoped endpoint and loses resume points and watched
+    state. Ignoring an unusable value keeps the authenticated profile working,
+    and the third element carries the rejected text so status can say why.
+    """
     preferred = _preferred_catalog_user_id()
+    rejected = ""
     if preferred:
-        return preferred, "preferred"
+        if is_server_user_id(preferred):
+            return preferred, "preferred", ""
+        rejected = preferred
     authenticated = str(st.get("auth_user_id") or "").strip()
     if authenticated:
-        return authenticated, "authenticated"
-    return "", "none"
+        return authenticated, "authenticated", rejected
+    return "", "none", rejected
 
 
 def start() -> None:
@@ -541,9 +567,10 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
         and str(out.get("server_url") or "").strip()
         and out.get("catalog_auth_source") != "none"
     )
-    catalog_user_id, catalog_user_source = _effective_catalog_user(raw)
+    catalog_user_id, catalog_user_source, rejected_user_id = _effective_catalog_user(raw)
     out["catalog_user_id"] = catalog_user_id
     out["catalog_user_source"] = catalog_user_source
+    out["catalog_user_id_rejected"] = rejected_user_id
     with _CATALOG_CACHE_LOCK:
         out["catalog_cache_entries"] = len(_CATALOG_CACHE)
     out["catalog_cache_max_entries"] = _catalog_cache_max_entries()
@@ -743,7 +770,7 @@ def _request_context() -> _RequestContext:
     """Capture every input for one network operation under one lock."""
     with _LOCK:
         detect_ts = _STATUS.get("last_detect_ts")
-        catalog_user_id, _catalog_user_source = _effective_catalog_user(_STATUS)
+        catalog_user_id, _source, _rejected = _effective_catalog_user(_STATUS)
         return _RequestContext(
             generation=int(_CONFIG_GENERATION),
             enabled=bool(_STATUS.get("enabled")),
@@ -1119,27 +1146,48 @@ def extract_item_id_from_url(url: str | None) -> str:
     return ""
 
 
-def _build_emby_headers(*, token: str = "") -> dict[str, str]:
-    context = _request_context()
-    client_name = context.client_name
-    device_name = context.device_name
-    device_id = _catalog_device_id(context, token)
-    client_version = context.client_version
-    out: dict[str, str] = {}
+def _emby_identity_headers(
+    *,
+    token: str,
+    client_name: str,
+    device_name: str,
+    device_id: str,
+    client_version: str,
+) -> dict[str, str]:
+    """Authentication headers that also carry this client's device identity.
+
+    Jellyfin reads the standard ``Authorization`` header and ignores
+    ``X-Emby-Authorization`` when both are present. Sending a token-only
+    ``Authorization`` authenticated the request but dropped the DeviceId, so
+    every catalog call was filed under one anonymous session named after the
+    server instead of this device. Both headers carry the full value.
+    """
     tok = str(token or "").strip()
+    out: dict[str, str] = {}
     if tok:
         out["X-Emby-Token"] = tok
-        out["Authorization"] = f'MediaBrowser Token="{tok}"'
     auth = (
         f'MediaBrowser Client="{client_name}", '
         f'Device="{device_name}", '
-        f'DeviceId="{device_id}", '
+        f'DeviceId="{device_id or "relaytv"}", '
         f'Version="{client_version}"'
     )
     if tok:
         auth = f'{auth}, Token="{tok}"'
+    out["Authorization"] = auth
     out["X-Emby-Authorization"] = auth
     return out
+
+
+def _build_emby_headers(*, token: str = "") -> dict[str, str]:
+    context = _request_context()
+    return _emby_identity_headers(
+        token=token,
+        client_name=context.client_name,
+        device_name=context.device_name,
+        device_id=_catalog_device_id(context, token),
+        client_version=context.client_version,
+    )
 
 
 def get_item_metadata(
@@ -1169,20 +1217,13 @@ def get_item_metadata(
     client_version = context.client_version
 
     def _headers() -> dict[str, str]:
-        out: dict[str, str] = {}
-        if token:
-            out["X-Emby-Token"] = token
-            out["Authorization"] = f'MediaBrowser Token="{token}"'
-        auth = (
-            f'MediaBrowser Client="{client_name}", '
-            f'Device="{device_name}", '
-            f'DeviceId="{device_id}", '
-            f'Version="{client_version}"'
+        return _emby_identity_headers(
+            token=token,
+            client_name=client_name,
+            device_name=device_name,
+            device_id=device_id,
+            client_version=client_version,
         )
-        if token:
-            auth = f'{auth}, Token="{token}"'
-        out["X-Emby-Authorization"] = auth
-        return out
 
     urls: list[str] = []
     if user_id:
@@ -2798,26 +2839,19 @@ def _context_url(context: _RequestContext, path: str) -> str:
 
 
 def _context_headers(context: _RequestContext) -> dict[str, str]:
-    """Control-plane authentication captured in one request context."""
-    token = context.control_token.strip()
-    out: dict[str, str] = {}
-    if token:
-        out["X-Emby-Token"] = token
-    auth = (
-        f'MediaBrowser Client="{context.client_name}", '
-        f'Device="{context.device_name}", '
-        f'DeviceId="{context.device_id or "relaytv"}", '
-        f'Version="{context.client_version}"'
+    """Control-plane authentication captured in one request context.
+
+    The cast target keeps its own DeviceId here: capability registration and
+    playback reporting must land on the session the control socket owns, not
+    on the ``-client`` session catalog browsing uses.
+    """
+    return _emby_identity_headers(
+        token=context.control_token.strip(),
+        client_name=context.client_name,
+        device_name=context.device_name,
+        device_id=context.device_id,
+        client_version=context.client_version,
     )
-    if token:
-        auth = f'{auth}, Token="{token}"'
-    # Jellyfin prioritizes the standard Authorization header when both forms
-    # are present. A token-only value authenticates the request but loses the
-    # DeviceId, so capability registration silently updates a different API-key
-    # session and the fallback then fails with "Session ... not found".
-    out["Authorization"] = auth
-    out["X-Emby-Authorization"] = auth
-    return out
 
 
 def _post_json_for(
@@ -3026,8 +3060,15 @@ def capabilities_payload() -> dict[str, object]:
     }
 
 
-def _capabilities_query(device_id: str) -> str:
-    q: list[tuple[str, str]] = [("id", device_id)]
+def _capabilities_query() -> str:
+    """Query-string capabilities, addressed by the request's own session.
+
+    The ``id`` parameter here is a *session* id, not a DeviceId. Passing the
+    device id made the server reject the fallback with "Session ... not found",
+    which is a 404 on every attempt. Omitting it lets the server resolve the
+    session from the Authorization header, which carries this device's DeviceId.
+    """
+    q: list[tuple[str, str]] = []
     q.extend(("playableMediaTypes", value) for value in CAPABILITY_MEDIA_TYPES)
     q.extend(("supportedCommands", value) for value in CAPABILITY_COMMANDS)
     q.append(("supportsMediaControl", "true"))
@@ -3081,13 +3122,12 @@ def register_receiver_once(*, _context: _RequestContext | None = None) -> dict[s
         return {"ok": False, "reason": "disabled"}
     if not context.server_url:
         return {"ok": False, "reason": "no_server_url"}
-    did = context.device_id
     payload = capabilities_payload()
     # The query-string form is what older Emby builds accept; it stays as a
     # fallback so an Emby server that rejects the DTO body still registers.
     candidates: list[tuple[str, str, dict | None]] = [
         ("full", "/Sessions/Capabilities/Full", payload),
-        ("caps_query", f"/Sessions/Capabilities?{_capabilities_query(did)}", None),
+        ("caps_query", f"/Sessions/Capabilities?{_capabilities_query()}", None),
     ]
     timeout = float(os.getenv("RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC", "3"))
     generation = context.generation

@@ -3415,6 +3415,7 @@ def _status_payload() -> dict[str, object]:
     jf_complete_remaining_sec = jf_status.get("complete_remaining_sec")
     jf_catalog_user_id = str(jf_status.get("catalog_user_id") or "")
     jf_catalog_user_source = str(jf_status.get("catalog_user_source") or "none")
+    jf_catalog_user_id_rejected = str(jf_status.get("catalog_user_id_rejected") or "")
     jf_catalog_cache_entries = int(jf_status.get("catalog_cache_entries") or 0)
     jf_catalog_cache_max_entries = int(jf_status.get("catalog_cache_max_entries") or 0)
     jf_catalog_cache_clears = int(jf_status.get("catalog_cache_clears") or 0)
@@ -3502,6 +3503,7 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_complete_remaining_sec": jf_complete_remaining_sec,
         "jellyfin_catalog_user_id": jf_catalog_user_id,
         "jellyfin_catalog_user_source": jf_catalog_user_source,
+        "jellyfin_catalog_user_id_rejected": jf_catalog_user_id_rejected,
         "jellyfin_catalog_cache_entries": jf_catalog_cache_entries,
         "jellyfin_catalog_cache_max_entries": jf_catalog_cache_max_entries,
         "jellyfin_catalog_cache_clears": jf_catalog_cache_clears,
@@ -4668,9 +4670,10 @@ def ui():
           </div>
         </div>
         <div class="fieldRow">
-          <label class="fieldLbl">Preferred user ID (optional)</label>
+          <label class="fieldLbl" for="setJfUserId">Preferred user ID (optional)</label>
           <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
           <div class="hint">Leave blank to use the signed-in account. For API-key-only browsing, enter a server user ID. A login can only access profiles its account is allowed to read.</div>
+          <div class="hint" id="setJfUserIdState" role="status"></div>
         </div>
 
         <div id="setJfSharedAuthFields" role="group" aria-labelledby="setJfCastHeading">

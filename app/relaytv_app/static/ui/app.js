@@ -2916,6 +2916,7 @@ async function loadSettingsUi(){
   const jfApiKeyState = document.getElementById('setJfApiKeyState');
   const jfUsername = document.getElementById('setJfUsername');
   const jfUserId = document.getElementById('setJfUserId');
+  const jfUserIdState = document.getElementById('setJfUserIdState');
   const jfPwInput = document.getElementById('setJfPassword');
   const jfClearPw = document.getElementById('setJfClearPassword');
   const jfPwState = document.getElementById('setJfPasswordState');
@@ -2966,6 +2967,13 @@ async function loadSettingsUi(){
   }
   if (jfUsername) jfUsername.value = (cur.jellyfin_username || '');
   if (jfUserId) jfUserId.value = (cur.jellyfin_user_id || '');
+  if (jfUserIdState) {
+    const rejected = (jfStatus && jfStatus.catalog_user_id_rejected ? jfStatus.catalog_user_id_rejected : '').toString().trim();
+    jfUserIdState.classList.toggle('err', !!rejected);
+    jfUserIdState.textContent = rejected
+      ? `“${rejected}” is not a server user ID, so it is being ignored. Use the ID from the server’s user page, or clear this field to use the signed-in account.`
+      : '';
+  }
   if (jfAudioLang) jfAudioLang.value = (cur.jellyfin_audio_lang || '');
   if (jfSubLang) jfSubLang.value = (cur.jellyfin_sub_lang || '');
   if (jfPlaybackMode) jfPlaybackMode.value = (cur.jellyfin_playback_mode || 'auto');
@@ -3023,7 +3031,9 @@ async function loadSettingsUi(){
       const catalogAuth = (jfStatus.catalog_auth_source || 'none').toString();
       const catalogUserId = (jfStatus.catalog_user_id || '').toString().trim();
       const catalogUserSource = (jfStatus.catalog_user_source || 'none').toString().trim();
-      const catalogUser = catalogUserId ? `${catalogUserId} (${catalogUserSource || 'preferred'})` : 'auto';
+      const catalogUserRejected = (jfStatus.catalog_user_id_rejected || '').toString().trim();
+      const catalogUser = (catalogUserId ? `${catalogUserId} (${catalogUserSource || 'preferred'})` : 'auto')
+        + (catalogUserRejected ? `, ignoring ${catalogUserRejected}` : '');
       const cacheEntries = Number(jfStatus.catalog_cache_entries || 0);
       const cacheMax = Number(jfStatus.catalog_cache_max_entries || 0);
       const cacheDiag = cacheMax > 0 ? `${cacheEntries}/${cacheMax}` : String(cacheEntries);

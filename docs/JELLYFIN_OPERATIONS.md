@@ -411,6 +411,10 @@ Episode adjacency resilience:
 - `auth_session_id`
 - `catalog_user_id`
 - `catalog_user_source` (`preferred`, `authenticated`, or `none`)
+- `catalog_user_id_rejected` — the configured `jellyfin_user_id` when it is not a
+  server user id (a GUID, bare or dashed). A username here would send catalog reads
+  to `/Users/<name>/Items`, which the server rejects, so the value is ignored and the
+  authenticated profile is used instead. Empty when nothing was rejected.
 - `catalog_cache_entries`, `catalog_cache_max_entries`
 - `catalog_ttl_home_sec`, `catalog_ttl_search_sec`, `catalog_ttl_detail_sec`, `catalog_ttl_metadata_sec`
 - `catalog_cache_clears`, `catalog_cache_last_cleared_ts`, `catalog_cache_last_cleared_reason`
@@ -533,10 +537,14 @@ RelayTV base URL.
 For each RelayTV instance:
 
 1. Set a unique device name in RelayTV settings.
-2. Optionally set `jellyfin_user_id` for profile targeting.
+2. Optionally set `jellyfin_user_id` for profile targeting. It must be the server's
+   user **id** (a GUID from the user's admin page), not a username.
 3. Confirm:
    - `GET /status` shows expected `device_name`
    - `GET /integrations/jellyfin/status` shows expected `catalog_user_id` and `catalog_user_source`
+   - `catalog_user_id_rejected` is empty. A non-empty value means the configured id was
+     unusable and browsing has fallen back to the unscoped catalog, which loses resume
+     points and watched state.
 
 ### Long-Session Playback Validation
 
