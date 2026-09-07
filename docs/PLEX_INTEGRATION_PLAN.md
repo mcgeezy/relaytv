@@ -2,8 +2,8 @@
 
 Status: implementation in progress on `feat/plex-account-foundation` in PR
 #93. The original review used RelayTV `main` at `5a671f3` (0.10.3). The account,
-browser, direct-play, transcoding, quality, and track foundations are
-implemented; hardware acceptance, recovery, and the optional controller phase
+browser, direct-play, transcoding, quality, track, and reconnect foundations
+are implemented; hardware acceptance and the optional controller phase
 remain. Live checks on 2026-09-05 and 2026-09-06 exercised a local Plex Media
 Server and the start of Plex's current PIN/JWK flow, as recorded below. Full
 account approval and controller compatibility remain to be demonstrated.
@@ -257,7 +257,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
 | 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
 | 3 — playback and queue | Partial — direct playback, queue, and timeline reporting implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
-| 4 — compatibility and release | Partial — media-version, server transcoding, bitrate, and embedded-track controls implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
+| 4 — compatibility and release | Partial — media-version, server transcoding, bitrate, embedded-track controls, and server reconnect implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
 Phases 1–4 form the first library release. Phase 5 can ship later or remain
@@ -376,8 +376,8 @@ the local PMS kept a 1,092 Kbps HEVC source direct and selected transcoding for
 a 21,516 Kbps source. The local PMS returned
 a forced H.264/AAC `video/x-matroska` stream; stock mpv
 decoded its first frame through an isolated RelayTV route in 1.25 seconds, and
-the explicit stop completed successfully. Remux-only media, arbitrary seeks,
-and failure recovery across a PMS restart remain.
+the explicit stop completed successfully. Remux-only media and arbitrary seeks
+remain.
 
 Automatic decisions now include RelayTV's measured decoder profile rather than
 assuming every source Plex advertises can be decoded locally. AV1 permission,
@@ -387,6 +387,13 @@ copy-only remux classification. On the live host's 1080p display, the only
 above-cap title in the recent 50-item sample was HEVC Dolby Vision Profile 5;
 RelayTV requested conversion and PMS returned its explicit unsupported-color-
 space decision instead of RelayTV attempting direct playback.
+
+Connection recovery was exercised by stopping the otherwise idle YAMS Plex
+container between requests from one authenticated `PlexClient`. The client
+returned the sanitized `plex_unreachable` error during the outage, then reached
+the restarted server on its fourth one-second probe with the same machine ID
+and PMS `1.43.3.10896-cb3ebc72d` version. Identity and both video libraries
+were available afterward. No RelayTV playback was active during the restart.
 
 ### Phase 4 media-track slice recorded 2026-09-06
 

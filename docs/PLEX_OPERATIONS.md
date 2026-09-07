@@ -147,6 +147,13 @@ above-cap title in the recent 50-item sample was HEVC Dolby Vision Profile 5;
 RelayTV requested conversion and PMS explicitly rejected that color space as
 unplayable instead of RelayTV attempting unsafe direct playback.
 
+With no active Plex or RelayTV playback, the YAMS PMS container was stopped
+between requests from one authenticated RelayTV client. RelayTV returned its
+sanitized unreachable error during the outage and the same client reconnected
+on the fourth one-second probe after startup. The machine identifier and PMS
+version were unchanged, and identity plus both video libraries were available
+afterward.
+
 An isolated RelayTV process also accepted an item reference minted by a second
 process and served the movie to stock mpv. A cold, null-output first-frame
 decode completed in 0.92 seconds without warnings. The active TV session was
