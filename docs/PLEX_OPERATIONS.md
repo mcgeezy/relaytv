@@ -50,7 +50,9 @@ raw media-part path, or transcode session. Automatic and Always-transcode modes
 require a successful PMS decision before RelayTV changes active playback.
 Direct-play mode bypasses that decision and requests the selected original
 file. The optional 4, 8, 12, or 20 Mbps maximum is sent to PMS with Automatic
-and Always-transcode decisions. RelayTV sends resume
+and Always-transcode decisions. Automatic also requests conversion when the
+source exceeds the active display height or RelayTV's measured AV1, bit-depth,
+software-decoder, or high-bitrate limits. RelayTV sends resume
 offsets to the transcoder in seconds and reports playing, paused, and stopped
 positions to Plex in milliseconds. Stop, replacement, natural end, HTTP close,
 and process shutdown all retire the transient PMS session. Explicit audio or
@@ -138,6 +140,12 @@ Alternate-audio, external-subtitle, and screen/audio acceptance remain.
 Timeline request shape,
 throttling, and lifecycle ordering are fixture-tested; a live watch-history
 mutation was deliberately left for playback acceptance.
+
+The runtime-profile boundary is fixture-tested for AV1 conversion and a
+copy-only PMS result is retained as remux. On the live 1080p display, the only
+above-cap title in the recent 50-item sample was HEVC Dolby Vision Profile 5;
+RelayTV requested conversion and PMS explicitly rejected that color space as
+unplayable instead of RelayTV attempting unsafe direct playback.
 
 An isolated RelayTV process also accepted an item reference minted by a second
 process and served the movie to stock mpv. A cold, null-output first-frame

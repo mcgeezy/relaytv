@@ -822,8 +822,9 @@ temporary relay URL is never written as the durable source.
 `plex_playback_mode=auto|direct|transcode` and
 `plex_max_bitrate=0|4000|8000|12000|20000` are stored with ordinary settings.
 Automatic mode asks PMS for a media decision, prefers direct playback when the
-selected version matches RelayTV's mpv profile, and uses a single-stream HTTP
-transcode otherwise. A nonzero bitrate cap participates in Automatic and
+selected version matches RelayTV's measured decoder, AV1, and display-height
+profile, and uses a single-stream HTTP transcode otherwise. A nonzero bitrate
+cap participates in Automatic and
 Transcode decisions; zero means original quality. Direct mode bypasses media
 decisions and the cap. Transcode mode
 requires PMS conversion and fails before the active playback transition when

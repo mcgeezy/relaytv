@@ -15,7 +15,7 @@ import uuid
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-from .. import config, playback_service, state
+from .. import config, playback_service, state, video_profile
 from . import plex_auth
 from .plex_client import PlexBinaryResponse, PlexError, PlexStreamResponse
 
@@ -445,6 +445,10 @@ class PlexCatalogService:
         stream_kind = "stream"
         if playback_mode != "direct":
             session_id = str(uuid.uuid4())
+            profile_requires_transcode = (
+                playback_mode == "auto"
+                and self._profile_requires_transcode(media, part)
+            )
             decision_query = self._transcode_query(
                 reference["path"],
                 media_index=media_index,
@@ -455,6 +459,7 @@ class PlexCatalogService:
                     playback_mode == "auto"
                     and not selected_audio
                     and not selected_subtitle
+                    and not profile_requires_transcode
                 ),
                 media=media,
                 max_bitrate=max_bitrate,
@@ -561,6 +566,57 @@ class PlexCatalogService:
     def _profile_value(value: object) -> str:
         candidate = str(value or "").strip().lower()
         return candidate if re.fullmatch(r"[a-z0-9_.-]+", candidate) else ""
+
+    @staticmethod
+    def _profile_requires_transcode(
+        media: dict[str, Any],
+        part: dict[str, Any],
+    ) -> bool:
+        try:
+            profile = dict(video_profile.get_profile() or {})
+        except Exception:
+            profile = {}
+        video_stream = next(
+            (
+                stream
+                for stream in (
+                    part.get("Stream")
+                    if isinstance(part.get("Stream"), list)
+                    else []
+                )
+                if isinstance(stream, dict)
+                and _integer(stream.get("streamType")) == 1
+            ),
+            {},
+        )
+        codec = str(
+            media.get("videoCodec") or video_stream.get("codec") or ""
+        ).strip().lower()
+        height = _integer(media.get("height") or video_stream.get("height"))
+        bit_depth = _integer(video_stream.get("bitDepth") or media.get("bitDepth"))
+        bitrate = _integer(media.get("bitrate") or video_stream.get("bitrate"))
+        decode_profile = str(profile.get("decode_profile") or "").strip().lower()
+        display_cap_height = _integer(profile.get("display_cap_height"))
+
+        if codec in {"av1", "av01"} and not bool(profile.get("av1_allowed")):
+            return True
+        if display_cap_height > 0 and height > display_cap_height:
+            return True
+        if decode_profile in {"software", "arm_safe"}:
+            if codec in {"hevc", "h265", "av1", "vp9"} and height >= 1080:
+                return True
+            if bit_depth > 8 and codec in {"hevc", "h265", "av1"}:
+                return True
+            if bitrate > 25_000:
+                return True
+        if (
+            codec in {"hevc", "h265"}
+            and bit_depth > 8
+            and decode_profile
+            not in {"intel_amd64_qsv", "intel_amd64_vaapi", "nvidia_cuda"}
+        ):
+            return True
+        return False
 
     def _transcode_query(
         self,

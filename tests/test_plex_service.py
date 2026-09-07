@@ -496,6 +496,92 @@ def test_automatic_quality_cap_uses_media_decision_transcode(service, monkeypatc
     assert plex_service.stop_transcode_stream(resolved["url"]) is True
 
 
+def test_automatic_mode_transcodes_media_outside_runtime_profile(
+    service,
+    monkeypatch,
+) -> None:
+    catalog, auth = service
+    original_get = auth.client.get
+
+    def av1_media(path, *, query=None, auth=True):
+        payload = original_get(path, query=query, auth=auth)
+        if path == "/library/metadata/10":
+            media = payload["MediaContainer"]["Metadata"][0]["Media"][0]
+            media.update({"videoCodec": "av1", "height": 2160})
+        return payload
+
+    auth.client.get = av1_media
+    monkeypatch.setattr(
+        plex_service.state,
+        "get_settings",
+        lambda: {"plex_playback_mode": "auto"},
+    )
+    monkeypatch.setattr(
+        plex_service.video_profile,
+        "get_profile",
+        lambda: {
+            "decode_profile": "intel_amd64_qsv",
+            "av1_allowed": False,
+            "display_cap_height": 2160,
+        },
+    )
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+
+    resolved = catalog.resolve_playback_item(catalog.durable_item(item_id))
+
+    assert resolved["plex_stream_mode"] == "transcode"
+    decision = next(
+        call for call in auth.client.calls if call[0] == plex_service.TRANSCODE_DECISION_PATH
+    )
+    assert decision[1]["directPlay"] == 0
+    assert plex_service.stop_transcode_stream(resolved["url"]) is True
+
+
+def test_media_decision_preserves_copy_only_remux_result(service) -> None:
+    catalog, auth = service
+    original_get = auth.client.get
+
+    def remux_decision(path, *, query=None, auth=True):
+        if path == plex_service.TRANSCODE_DECISION_PATH:
+            return {
+                "MediaContainer": {
+                    "directPlayDecisionCode": 3000,
+                    "Metadata": [
+                        {
+                            "Media": [
+                                {
+                                    "Part": [
+                                        {
+                                            "decision": "copy",
+                                            "Stream": [
+                                                {
+                                                    "streamType": 1,
+                                                    "decision": "copy",
+                                                },
+                                                {
+                                                    "streamType": 2,
+                                                    "decision": "copy",
+                                                },
+                                            ],
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        return original_get(path, query=query, auth=auth)
+
+    auth.client.get = remux_decision
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+
+    resolved = catalog.resolve_playback_item(catalog.durable_item(item_id))
+
+    assert resolved["plex_stream_mode"] == "remux"
+    assert plex_service.stop_transcode_stream(resolved["url"]) is True
+
+
 def test_media_decision_accepts_directplay_part_without_top_level_code(service) -> None:
     catalog, auth = service
     auth.client.get = lambda path, *, query=None, auth=True: {

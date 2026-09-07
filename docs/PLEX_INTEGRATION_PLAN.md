@@ -379,6 +379,15 @@ decoded its first frame through an isolated RelayTV route in 1.25 seconds, and
 the explicit stop completed successfully. Remux-only media, arbitrary seeks,
 and failure recovery across a PMS restart remain.
 
+Automatic decisions now include RelayTV's measured decoder profile rather than
+assuming every source Plex advertises can be decoded locally. AV1 permission,
+active display height, high-cost software codecs, bit depth, and source bitrate
+can require conversion before PMS evaluates the item. A fixture pins the
+copy-only remux classification. On the live host's 1080p display, the only
+above-cap title in the recent 50-item sample was HEVC Dolby Vision Profile 5;
+RelayTV requested conversion and PMS returned its explicit unsupported-color-
+space decision instead of RelayTV attempting direct playback.
+
 ### Phase 4 media-track slice recorded 2026-09-06
 
 Item detail now normalizes numeric audio and subtitle streams for each media
