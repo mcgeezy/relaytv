@@ -2803,7 +2803,6 @@ def _context_headers(context: _RequestContext) -> dict[str, str]:
     out: dict[str, str] = {}
     if token:
         out["X-Emby-Token"] = token
-        out["Authorization"] = f'MediaBrowser Token="{token}"'
     auth = (
         f'MediaBrowser Client="{context.client_name}", '
         f'Device="{context.device_name}", '
@@ -2812,6 +2811,11 @@ def _context_headers(context: _RequestContext) -> dict[str, str]:
     )
     if token:
         auth = f'{auth}, Token="{token}"'
+    # Jellyfin prioritizes the standard Authorization header when both forms
+    # are present. A token-only value authenticates the request but loses the
+    # DeviceId, so capability registration silently updates a different API-key
+    # session and the fallback then fails with "Session ... not found".
+    out["Authorization"] = auth
     out["X-Emby-Authorization"] = auth
     return out
 

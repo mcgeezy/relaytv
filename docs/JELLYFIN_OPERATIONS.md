@@ -126,6 +126,14 @@ curl -s "http://<jellyfin>:8096/Sessions" -H 'Authorization: MediaBrowser Token=
 ignored — `last_register_error` says which. If `ws_connected` is false, see the
 next two entries.
 
+**`last_register_error` reports `caps_query: HTTP 404` and Jellyfin logs
+`Session ... not found`.** Upgrade RelayTV to a build containing the cast
+session identity fix. Catalog browsing can remain healthy while this fails:
+the error means Jellyfin authenticated the capability request but associated
+its token-only standard authorization header with a different session than the
+WebSocket device. Current builds send the same complete client and `DeviceId`
+identity in both accepted authorization headers.
+
 **`ws_available: false`.** The `websockets` package is missing from the image.
 The library integration keeps working; only casting is unavailable.
 
