@@ -435,7 +435,7 @@ held the clock, resume advanced it, and replacing that conversion with a
 Direct-play stream kept the native runtime active. A direct absolute seek
 reached 30 seconds on its first observation.
 
-This check exposed two production-only conversion boundaries that fixture
+This check exposed three production-only conversion boundaries that fixture
 clients had hidden. `selected_server_session()` returns a fresh immutable
 client snapshot for each request, so the transcode registry now validates its
 stable account/server generation and reference key instead of requiring the
