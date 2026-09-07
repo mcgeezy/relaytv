@@ -61,6 +61,7 @@ def test_ui_smoke() -> None:
     jellyfin_playwright = (ROOT_DIR / 'scripts' / 'jellyfin-ui-smoke.js').read_text(encoding='utf-8')
     iptv_playwright = (ROOT_DIR / 'scripts' / 'iptv-ui-smoke.js').read_text(encoding='utf-8')
     seerr_playwright = (ROOT_DIR / 'scripts' / 'seerr-ui-smoke.js').read_text(encoding='utf-8')
+    plex_playwright = (ROOT_DIR / 'scripts' / 'plex-ui-smoke.js').read_text(encoding='utf-8')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
@@ -127,6 +128,14 @@ def test_ui_smoke() -> None:
     assert 'function loadPlexHome' in plex_js
     assert 'function loadPlexLibraries' in plex_js
     assert 'function openPlexDetail' in plex_js
+    assert 'function _plexMoveCardFocus' in plex_js
+    assert "button.dataset.itemId = String(item.id || '');" in plex_js
+    assert '.plexCard{display:flex;' in plex_css_response.text
+    assert 'flex-direction:column;' in plex_css_response.text
+    assert "chromium.connect(wsEndpoint)" in plex_playwright
+    assert 'arrowMovedFocus' in plex_playwright
+    assert 'focusReturned' in plex_playwright
+    assert 'nestedInteractive' in plex_playwright
     assert '<option value="shared_admin">Shared administrator API</option>' in response.text
     assert '<option value="caller_session">Caller-specific sign-in</option>' in response.text
     assert 'administrator API identity and may auto-approve' in js

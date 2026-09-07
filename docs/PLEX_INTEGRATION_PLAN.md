@@ -259,7 +259,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | --- | --- | --- | --- |
 | 0 — contract and compatibility spikes | Partial | Small unshipped harness for JWT linking/refresh, server discovery, browse, media decision/part, reporting, plus independent Companion discovery probe. Record exact PMS/controller versions and sanitized fixtures. | Successful request/response evidence; verified minimum PMS/API contract; selected media-auth mechanism; receiver supported/unsupported matrix. A receiver failure does not block the library track. |
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
-| 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
+| 2 — library browser | Implemented; shared-account checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests. |
 | 3 — playback and queue | Partial — direct playback, queue, timeline reporting, and amd64/Pi native-runtime acceptance implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
 | 4 — compatibility and release | Partial — media-version, server transcoding, bitrate, embedded-track controls, and server reconnect implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
@@ -307,8 +307,11 @@ stack and retires a pending search when its tab changes.
 The live PMS returned one Home row, two video libraries, a 286-movie paged
 catalog, item detail with genres, search results, and JPEG artwork through the
 production transport and catalog service. Sanitized results contained no
-upstream `/library/` paths. Shared-account visibility, non-empty TV hierarchy,
-missing-art behavior on live data, and phone/desktop browser checks remain.
+upstream `/library/` paths. A live Chromium matrix at 390×844 and 1440×900
+covered Home, libraries, bounded movie paging, search, artwork, responsive card
+and detail geometry, keyboard movement, focus restoration, failed-action
+feedback, and overflow checks. Shared-account visibility, non-empty TV
+hierarchy, and missing-art behavior on live data remain.
 
 ### Phase 3 direct-play slice recorded 2026-09-06
 

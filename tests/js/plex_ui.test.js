@@ -105,6 +105,8 @@ test('Plex cards render metadata and partial progress without HTML injection', (
       duration_ms:7200000, progress:25, poster_url:''
     });
     return {
+      itemId:card.dataset.itemId,
+      itemTitle:card.dataset.itemTitle,
       title:card.children[1].children[0].textContent,
       meta:card.children[1].children[1].textContent,
       progress:card.children[2].children[0].style.width,
@@ -112,10 +114,59 @@ test('Plex cards render metadata and partial progress without HTML injection', (
   })()`);
 
   assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    itemId:'opaque',
+    itemTitle:'<b>A Movie</b>',
     title:'<b>A Movie</b>',
     meta:'Drama · 2026 · 2h 0m',
     progress:'25%',
   });
+});
+
+test('Plex card arrow keys move focus within the current grid', () => {
+  const state = fixture();
+  const result = state.evaluate(`(() => {
+    const first = _plexCard({id:'first', title:'First'});
+    const second = _plexCard({id:'second', title:'Second'});
+    const grid = {querySelectorAll:() => [first, second]};
+    first.closest = () => grid;
+    second.closest = () => grid;
+    second.focus = () => { globalThis.__focusedCard = second.dataset.itemId; };
+    second.scrollIntoView = () => { globalThis.__scrolledCard = second.dataset.itemId; };
+    const event = {
+      key:'ArrowRight',
+      preventDefault:() => { globalThis.__prevented = true; },
+      stopPropagation:() => { globalThis.__stopped = true; },
+    };
+    first.listeners.get('keydown')(event);
+    return {
+      focused:globalThis.__focusedCard,
+      scrolled:globalThis.__scrolledCard,
+      prevented:globalThis.__prevented,
+      stopped:globalThis.__stopped,
+    };
+  })()`);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    focused:'second',
+    scrolled:'second',
+    prevented:true,
+    stopped:true,
+  });
+});
+
+test('closing Plex details restores focus to the launching card', () => {
+  const state = fixture();
+  const restored = state.evaluate(`(() => {
+    const origin = document.createElement('button');
+    origin.isConnected = true;
+    origin.focus = () => { globalThis.__restoredFocus = true; };
+    __plexVisible = true;
+    __plexDetailFocus = origin;
+    _plexCloseDetailNow();
+    return globalThis.__restoredFocus;
+  })()`);
+
+  assert.equal(restored, true);
 });
 
 test('switching tabs retires a pending Plex search', () => {
@@ -129,6 +180,14 @@ test('switching tabs retires a pending Plex search', () => {
 
   assert.equal(state.evaluate('__plexSearchTimer'), 0);
   assert.equal(state.evaluate('__plexQuery'), '');
+});
+
+test('searching Plex retires a stale library paging control', async () => {
+  const state = fixture();
+  state.elements.get('plexMoreBtn').classList.remove('hidden');
+  await state.evaluate("searchPlex('movie')");
+
+  assert.equal(state.elements.get('plexMoreBtn').classList.contains('hidden'), true);
 });
 
 test('playable Plex details offer start, resume, and queue actions', () => {

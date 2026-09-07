@@ -67,6 +67,28 @@ when the session was paused. PMS starts the replacement stream's local clock at
 zero, so RelayTV maps it back to the absolute movie or episode position shown
 in the remote and reported to Plex. Direct files continue to seek in place.
 
+## Browser validation
+
+From a host with Playwright installed, run the checked-in Plex browser matrix
+against a configured RelayTV server:
+
+```bash
+node scripts/plex-ui-smoke.js \
+  --ws=launch \
+  --base=http://RELAYTV_HOST:8787 \
+  --screenshots=/tmp/relaytv-plex-ui
+```
+
+Use `--ws=ws://PLAYWRIGHT_HOST:3000/` when connecting to a Playwright browser
+server instead of launching a local headless browser. The browser itself must
+be able to reach the RelayTV base URL.
+
+The matrix covers phone-dark and desktop-light layouts, Home and library data,
+bounded paging, search, vertical card geometry, arrow-key navigation, detail
+focus and viewport bounds, action-error feedback, viewport overflow, and
+nested interactive controls. It intercepts the detail playback action with a
+simulated upstream error, so it does not change active playback or the queue.
+
 ## Credential storage and backup
 
 Plex private state is stored in `/data/plex_auth.json` with mode `0600`. The
@@ -134,6 +156,12 @@ The read-only catalog path was also exercised against that PMS: Home returned
 a Recently Added Movies row; library paging reported 286 movies; item detail,
 search, and a 131,340-byte JPEG artwork proxy response all completed. The
 sanitized RelayTV results contained no upstream `/library/` paths.
+
+On 2026-09-07 the browser matrix exercised the configured live library in
+Chromium at 390×844 and 1440×900. Both layouts returned 7 Home cards, 2 video
+libraries, a bounded 60-item movie page, working search and artwork, full-width
+poster metadata, arrow-key card movement, focus return after closing details,
+and no viewport overflow or unexpected HTTP/browser errors.
 
 The direct media relay contract was exercised against this PMS with a 1,024-byte
 range from a Matroska movie; PMS returned `206 Partial Content` and the

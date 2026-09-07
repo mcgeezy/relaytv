@@ -12,6 +12,7 @@ let __plexRequestController = null;
 let __plexRequestSerial = 0;
 let __plexSearchTimer = 0;
 let __plexLastFocus = null;
+let __plexDetailFocus = null;
 const __PLEX_TIMEOUT_MS = 12000;
 const __PLEX_PAGE_SIZE = 60;
 
@@ -105,10 +106,50 @@ function _plexPoster(item){
   return fallback;
 }
 
+function _plexMoveCardFocus(source, key){
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(key)) return false;
+  const grid = source && source.closest ? source.closest('.plexGrid') : null;
+  const cards = grid ? Array.from(grid.querySelectorAll('.plexCard')) : [];
+  const index = cards.indexOf(source);
+  if (index < 0 || cards.length < 2) return false;
+  let target = null;
+  if (key === 'ArrowLeft' || key === 'ArrowRight') {
+    target = cards[index + (key === 'ArrowLeft' ? -1 : 1)] || null;
+  } else if (typeof source.getBoundingClientRect === 'function') {
+    const sourceRect = source.getBoundingClientRect();
+    const sourceX = sourceRect.left + sourceRect.width / 2;
+    const sourceY = sourceRect.top + sourceRect.height / 2;
+    const direction = key === 'ArrowUp' ? -1 : 1;
+    const candidates = cards.filter(card => {
+      if (card === source || typeof card.getBoundingClientRect !== 'function') return false;
+      const rect = card.getBoundingClientRect();
+      return direction * (rect.top + rect.height / 2 - sourceY) > 1;
+    });
+    candidates.sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      const leftY = Math.abs(leftRect.top + leftRect.height / 2 - sourceY);
+      const rightY = Math.abs(rightRect.top + rightRect.height / 2 - sourceY);
+      const leftX = Math.abs(leftRect.left + leftRect.width / 2 - sourceX);
+      const rightX = Math.abs(rightRect.left + rightRect.width / 2 - sourceX);
+      return (leftY - rightY) || (leftX - rightX);
+    });
+    target = candidates[0] || null;
+  }
+  if (!target || typeof target.focus !== 'function') return false;
+  target.focus();
+  if (typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({block:'nearest', inline:'nearest'});
+  }
+  return true;
+}
+
 function _plexCard(item){
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'plexCard';
+  button.dataset.itemId = String(item.id || '');
+  button.dataset.itemTitle = String(item.title || 'Untitled');
   button.setAttribute('aria-label', `Open ${String(item.title || 'Plex item')}`);
   button.appendChild(_plexPoster(item));
   const body = document.createElement('span');
@@ -136,7 +177,12 @@ function _plexCard(item){
     progress.appendChild(fill);
     button.appendChild(progress);
   }
-  button.onclick = () => openPlexDetail(String(item.id || ''), title.textContent);
+  button.onclick = () => openPlexDetail(String(item.id || ''), title.textContent, button);
+  button.addEventListener('keydown', event => {
+    if (!_plexMoveCardFocus(button, event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
   return button;
 }
 
@@ -220,6 +266,10 @@ function _plexSetActiveTab(view){
   });
 }
 
+function _plexSetMoreVisible(visible){
+  document.getElementById('plexMoreBtn')?.classList.toggle('hidden', !visible);
+}
+
 function _plexBeginRequest(){
   _plexAbortRequest();
   const controller = new AbortController();
@@ -242,6 +292,7 @@ async function loadPlexHome(){
   __plexLibrary = null;
   __plexItems = [];
   __plexNextStart = null;
+  _plexSetMoreVisible(false);
   _plexSetActiveTab('home');
   const request = _plexBeginRequest();
   _plexSetStatus('Loading Plex home…', false);
@@ -265,6 +316,7 @@ async function loadPlexLibraries(){
   __plexLibrary = null;
   __plexItems = [];
   __plexNextStart = null;
+  _plexSetMoreVisible(false);
   _plexSetActiveTab('libraries');
   const request = _plexBeginRequest();
   _plexSetStatus('Loading libraries…', false);
@@ -298,6 +350,7 @@ async function loadPlexLibraryPage(append){
   if (append && !Number.isInteger(start)) return;
   const request = _plexBeginRequest();
   const more = document.getElementById('plexMoreBtn');
+  if (!append) _plexSetMoreVisible(false);
   if (more) more.disabled = true;
   _plexSetStatus(append ? 'Loading more…' : `Loading ${String(__plexLibrary.title || 'library')}…`, false);
   try {
@@ -309,7 +362,7 @@ async function loadPlexLibraryPage(append){
     __plexItems = append ? __plexItems.concat(pageItems) : pageItems;
     __plexNextStart = Number.isInteger(payload.next_start) ? payload.next_start : null;
     _plexRenderItems(__plexItems, 'This library is empty.');
-    if (more) more.classList.toggle('hidden', __plexNextStart === null);
+    _plexSetMoreVisible(__plexNextStart !== null);
     const total = Math.max(__plexItems.length, Number(payload.count || 0));
     _plexSetStatus(`${String(__plexLibrary.title || 'Library')} · ${__plexItems.length} of ${total}`, false);
   } catch (error) {
@@ -333,6 +386,7 @@ async function searchPlex(query){
   __plexLibrary = null;
   __plexItems = [];
   __plexNextStart = null;
+  _plexSetMoreVisible(false);
   _plexSetActiveTab('');
   const request = _plexBeginRequest();
   _plexSetStatus(`Searching for “${__plexQuery}”…`, false);
@@ -351,7 +405,8 @@ async function searchPlex(query){
   }
 }
 
-function _plexCloseDetailNow(){
+function _plexCloseDetailNow(options){
+  const restoreFocus = !(options && options.restoreFocus === false);
   const detail = document.getElementById('plexDetail');
   const backdrop = document.getElementById('plexDetailBackdrop');
   if (detail) {
@@ -362,6 +417,11 @@ function _plexCloseDetailNow(){
   if (backdrop) {
     backdrop.classList.add('hidden');
     backdrop.setAttribute('aria-hidden', 'true');
+  }
+  const focus = __plexDetailFocus;
+  __plexDetailFocus = null;
+  if (restoreFocus && __plexVisible && focus && focus.isConnected !== false && typeof focus.focus === 'function') {
+    requestAnimationFrame(() => focus.focus());
   }
 }
 
@@ -569,10 +629,11 @@ async function _plexLoadChildren(itemId, host){
   }
 }
 
-async function openPlexDetail(itemId, fallbackTitle){
+async function openPlexDetail(itemId, fallbackTitle, source){
   const detail = document.getElementById('plexDetail');
   const backdrop = document.getElementById('plexDetailBackdrop');
   if (!detail || !backdrop || !itemId) return;
+  __plexDetailFocus = source && typeof source.focus === 'function' ? source : document.activeElement;
   detail.classList.remove('hidden');
   detail.setAttribute('aria-hidden', 'false');
   detail.textContent = `Loading ${String(fallbackTitle || 'details')}…`;
@@ -619,7 +680,7 @@ function closePlexShell(options){
   if (__plexSearchTimer) clearTimeout(__plexSearchTimer);
   __plexSearchTimer = 0;
   _plexAbortRequest();
-  _plexCloseDetailNow();
+  _plexCloseDetailNow({restoreFocus:false});
   const shell = document.getElementById('plexShell');
   if (shell) {
     shell.classList.add('hidden');
