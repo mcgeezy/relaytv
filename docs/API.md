@@ -833,7 +833,10 @@ the transient session and stops it on disconnect, playback stop/replacement,
 natural end, or application shutdown. An explicit audio or subtitle choice
 uses PMS conversion so the result behaves consistently across RelayTV player
 backends; subtitles are burned into the converted video. Direct mode rejects
-an explicit track choice with a clear client error.
+an explicit track choice with a clear client error. `/seek` and `/seek_abs`
+restart an active Plex remux/transcode at the requested PMS time offset while
+preserving the queue and selected version/tracks; direct Plex files retain the
+ordinary player byte-seek path.
 
 Plex account-link, server-selection, and playback writes use the normal
 optional `RELAYTV_API_TOKEN` guard. Browse routes are read-only.

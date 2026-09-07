@@ -61,6 +61,9 @@ modes, and burned subtitles provide the same result on every RelayTV player
 backend. Direct play rejects an explicit track choice because it bypasses
 conversion. Track references are encrypted, version-scoped, and persisted with
 the item so queued and interrupted playback keeps the requested choice.
+Seeking a Plex conversion replaces its non-byte-seekable stream with a new PMS
+session at the requested second, keeps the current queue, and restores pause
+when the session was paused. Direct files continue to seek in place.
 
 ## Credential storage and backup
 
@@ -153,6 +156,13 @@ sanitized unreachable error during the outage and the same client reconnected
 on the fourth one-second probe after startup. The machine identifier and PMS
 version were unchanged, and identity plus both video libraries were available
 afterward.
+
+A live forced-conversion probe requested a 600-second start offset. PMS
+accepted `600.0`, RelayTV read the first 262,144 bytes, then closed and cleaned
+up the transient session. Route tests verify relative and absolute conversion
+seeks, duration clamping, queue and track preservation, paused-state restore,
+and direct-file fallback. A driven supersession race verifies that a losing
+play releases the exact Plex transcode it prepared.
 
 An isolated RelayTV process also accepted an item reference minted by a second
 process and served the movie to stock mpv. A cold, null-output first-frame

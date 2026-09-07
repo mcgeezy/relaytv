@@ -376,8 +376,7 @@ the local PMS kept a 1,092 Kbps HEVC source direct and selected transcoding for
 a 21,516 Kbps source. The local PMS returned
 a forced H.264/AAC `video/x-matroska` stream; stock mpv
 decoded its first frame through an isolated RelayTV route in 1.25 seconds, and
-the explicit stop completed successfully. Remux-only media and arbitrary seeks
-remain.
+the explicit stop completed successfully. Live remux-only media remains.
 
 Automatic decisions now include RelayTV's measured decoder profile rather than
 assuming every source Plex advertises can be decoded locally. AV1 permission,
@@ -394,6 +393,15 @@ returned the sanitized `plex_unreachable` error during the outage, then reached
 the restarted server on its fourth one-second probe with the same machine ID
 and PMS `1.43.3.10896-cb3ebc72d` version. Identity and both video libraries
 were available afterward. No RelayTV playback was active during the restart.
+
+Converted-media seeking now restarts playback through the transition service
+at the requested PMS offset because the single-response Matroska stream is not
+byte-seekable. Relative and absolute targets preserve the queue and encrypted
+version/track choices, clamp to known duration, and restore pause after the new
+stream loads; direct files keep their existing player seek. A live probe
+requested 600 seconds, confirmed the exact `600.0` PMS offset, and read 262,144
+bytes before cleanup. A driven concurrency test confirms a superseded play
+releases the exact conversion session it prepared.
 
 ### Phase 4 media-track slice recorded 2026-09-06
 

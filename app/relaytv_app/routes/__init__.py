@@ -2984,6 +2984,9 @@ def _qt_runtime_seek_via_time_pos(target_sec: float) -> dict[str, object] | None
 
 
 def _seek_relative_result(delta_sec: float) -> dict[str, object]:
+    plex_result = playback_service.seek_plex_conversion(delta_sec=delta_sec)
+    if isinstance(plex_result, dict):
+        return plex_result
     try:
         delta = float(delta_sec)
     except Exception:
@@ -3005,6 +3008,9 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
 
 
 def _seek_absolute_result(target_sec: float) -> dict[str, object]:
+    plex_result = playback_service.seek_plex_conversion(target_sec=target_sec)
+    if isinstance(plex_result, dict):
+        return plex_result
     result = _qt_runtime_seek_via_time_pos(target_sec)
     if isinstance(result, dict):
         return result

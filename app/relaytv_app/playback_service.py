@@ -28,6 +28,7 @@ attributes and must keep intercepting the calls.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Any, Callable
@@ -69,6 +70,76 @@ def play_now(
     if raise_on_superseded:
         kwargs["raise_on_superseded"] = True
     return player.play_item(item_or_text, **kwargs)
+
+
+def seek_plex_conversion(
+    *,
+    target_sec: float | None = None,
+    delta_sec: float | None = None,
+) -> dict[str, object] | None:
+    """Restart a Plex conversion at a time offset so network seeks are reliable.
+
+    Plex's single-response HTTP transcode is not byte-seekable. Direct Plex
+    files and every other provider return ``None`` so their existing in-player
+    seek path remains unchanged.
+    """
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if (
+        not now
+        or str(now.get("provider") or "").strip().lower() != "plex"
+        or str(now.get("plex_stream_mode") or "").strip().lower()
+        not in {"remux", "transcode"}
+        or not now.get("plex_item_id")
+    ):
+        return None
+
+    try:
+        props = player.mpv_get_many(["time-pos", "duration", "pause"])
+    except Exception:
+        props = {}
+    try:
+        if target_sec is not None:
+            target = float(target_sec)
+        else:
+            current = props.get("time-pos")
+            if current is None:
+                current = state.SESSION_POSITION
+            target = float(current) + float(delta_sec or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(target):
+        return None
+    target = max(0.0, target)
+    try:
+        duration_value = props.get("duration") or now.get("duration_sec")
+        duration = float(duration_value)
+        if duration > 0.0:
+            target = min(target, duration)
+    except (TypeError, ValueError):
+        pass
+
+    was_paused = bool(props.get("pause")) or str(state.SESSION_STATE) == "paused"
+    restarted = play_now(
+        dict(now),
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="plex_seek",
+        start_pos=target,
+    )
+    if was_paused:
+        pause_result = player.mpv_set_result("pause", True)
+        if not isinstance(pause_result, dict) or pause_result.get("error") != "success":
+            raise RuntimeError("Plex seek could not restore the paused state")
+        mark_paused(True)
+    return {
+        "error": "success",
+        "request_id": "plex-conversion-seek",
+        "ack_observed": True,
+        "ack_reason": "playback_restarted",
+        "position": target,
+        "now_playing": restarted,
+    }
 
 
 def queue_item(item: dict) -> tuple[int, list[dict]]:

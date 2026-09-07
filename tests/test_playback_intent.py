@@ -505,6 +505,80 @@ def test_plex_stopped_transition_releases_transcode_session(monkeypatch) -> None
         assert stream_id not in plex_service._TRANSCODE_SESSIONS
 
 
+def test_superseded_plex_play_releases_prepared_transcode_session(
+    harness,
+    monkeypatch,
+) -> None:
+    from relaytv_app.integrations import plex_service
+
+    prepared = threading.Event()
+    release = threading.Event()
+    stopped = []
+    results: list[dict] = []
+    errors: list[BaseException] = []
+    stream_id = "opaque-superseded-transcode"
+    stream_url = f"http://127.0.0.1:8787/plex/stream/{stream_id}"
+    session = object()
+    with plex_service._TRANSCODE_LOCK:
+        plex_service._TRANSCODE_SESSIONS.clear()
+
+    def resolve(item, **_kwargs):
+        with plex_service._TRANSCODE_LOCK:
+            plex_service._TRANSCODE_SESSIONS[stream_id] = (session, "session-2")
+        prepared.set()
+        release.wait(5.0)
+        return {
+            **item,
+            "url": stream_url,
+            "plex_stream_mode": "transcode",
+        }
+
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "resolve_playback_item",
+        resolve,
+    )
+    monkeypatch.setattr(
+        plex_service.PlexCatalogService,
+        "_stop_transcode",
+        staticmethod(lambda current, session_id: stopped.append((current, session_id))),
+    )
+
+    def run_play() -> None:
+        try:
+            results.append(
+                player.play_item(
+                    {
+                        "url": "https://plex.invalid/item",
+                        "provider": "plex",
+                        "plex_item_id": "opaque-item",
+                    },
+                    use_resolver=False,
+                    cec=False,
+                    clear_queue=False,
+                    mode="plex_play",
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the caller
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_play, daemon=True)
+    thread.start()
+    assert prepared.wait(5.0)
+    winner = {"url": "https://example.com/winner.mp4", "title": "winner"}
+    player.claim_playback_intent()
+    state.NOW_PLAYING = winner
+    release.set()
+    thread.join(timeout=10.0)
+
+    assert not thread.is_alive()
+    assert not errors, errors
+    assert results == [winner]
+    assert stopped == [(session, "session-2")]
+    with plex_service._TRANSCODE_LOCK:
+        assert stream_id not in plex_service._TRANSCODE_SESSIONS
+
+
 def test_superseded_play_reports_the_winner(harness, monkeypatch) -> None:
     results: list[dict] = []
     errors: list[BaseException] = []

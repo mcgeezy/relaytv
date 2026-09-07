@@ -5686,6 +5686,113 @@ def test_seek_routes_use_time_pos_setter_for_qt_runtime(monkeypatch: pytest.Monk
     assert mpv_commands == []
 
 
+def test_plex_conversion_seek_restarts_at_requested_offset_and_keeps_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = {
+        'url': 'http://127.0.0.1:8787/plex/stream/temporary-stream',
+        'stream': 'http://127.0.0.1:8787/plex/stream/temporary-stream',
+        'title': 'A Movie',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item',
+        'plex_audio_id': 'opaque-audio',
+        'plex_stream_mode': 'transcode',
+        'duration_sec': 300.0,
+    }
+    calls: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', current, raising=False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda _props: {
+        'time-pos': 90.0,
+        'duration': 300.0,
+        'pause': False,
+    })
+    monkeypatch.setattr(
+        routes.playback_service,
+        'play_now',
+        lambda item, **kwargs: calls.append((dict(item), dict(kwargs))) or dict(item),
+    )
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_command',
+        lambda _command: (_ for _ in ()).throw(AssertionError('mpv seek must not be used')),
+    )
+
+    relative = routes.seek(routes.SeekReq(sec=30))
+    absolute = routes.seek_abs(routes.SeekAbsReq(sec=999))
+
+    assert relative['ack_reason'] == 'playback_restarted'
+    assert absolute['ack_reason'] == 'playback_restarted'
+    assert [call[1]['start_pos'] for call in calls] == [120.0, 300.0]
+    assert all(call[1]['clear_queue'] is False for call in calls)
+    assert all(call[1]['mode'] == 'plex_seek' for call in calls)
+    assert all(call[0]['plex_item_id'] == 'opaque-item' for call in calls)
+    assert all(call[0]['plex_audio_id'] == 'opaque-audio' for call in calls)
+
+
+def test_direct_plex_seek_keeps_existing_player_control_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[object]] = []
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item',
+        'plex_stream_mode': 'direct',
+    }, raising=False)
+    monkeypatch.setattr(routes.player, '_qt_shell_runtime_accepts_mpv_commands', lambda: False)
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_command',
+        lambda command: commands.append(list(command)) or {'error': 'success'},
+    )
+
+    routes.seek_abs(routes.SeekAbsReq(sec=45))
+
+    assert commands == [['seek', 45.0, 'absolute']]
+
+
+def test_paused_plex_conversion_seek_restores_pause_after_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pause_calls: list[tuple[str, bool]] = []
+    state_calls: list[bool] = []
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item',
+        'plex_stream_mode': 'remux',
+        'duration_sec': 300.0,
+    }, raising=False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'paused', raising=False)
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda _props: {
+        'time-pos': 90.0,
+        'duration': 300.0,
+        'pause': True,
+    })
+    monkeypatch.setattr(
+        routes.playback_service,
+        'play_now',
+        lambda item, **_kwargs: dict(item),
+    )
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_set_result',
+        lambda prop, value: pause_calls.append((prop, bool(value)))
+        or {'error': 'success'},
+    )
+    monkeypatch.setattr(
+        routes.playback_service,
+        'mark_paused',
+        lambda paused: state_calls.append(bool(paused)),
+    )
+
+    result = routes.playback_service.seek_plex_conversion(target_sec=180.0)
+
+    assert result is not None
+    assert result['position'] == 180.0
+    assert pause_calls == [('pause', True)]
+    assert state_calls == [True]
+
+
 def test_qt_runtime_seek_uses_extended_ack_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[float | None] = []
 

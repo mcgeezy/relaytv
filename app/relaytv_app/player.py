@@ -5119,7 +5119,12 @@ def _play_item_owned(
 ):
     """play_item's body, guarded by ``intent`` at every irreversible effect."""
 
-    def _require_owned(stage: str, *, relay_stream: str = "") -> None:
+    def _require_owned(
+        stage: str,
+        *,
+        relay_stream: str = "",
+        plex_stream: str = "",
+    ) -> None:
         if playback_intent_current(intent):
             return
         if relay_stream:
@@ -5132,6 +5137,13 @@ def _play_item_owned(
                     postlive_relay.close_session(token, reason="playback superseded")
                 except Exception:
                     pass
+        if plex_stream:
+            try:
+                from .integrations import plex_service
+
+                plex_service.stop_transcode_stream(plex_stream)
+            except Exception:
+                pass
         raise _PlaybackSuperseded(stage)
 
     def _run_owned(stage: str, effect):
@@ -5171,7 +5183,12 @@ def _play_item_owned(
     # make_item and catalog resolution may block. Nothing below may touch
     # device or queue state until the result is known to belong to the
     # still-current Play.
-    _require_owned("post_item_prepare")
+    prepared_plex_stream = (
+        str(item.get("url") or "")
+        if str(item.get("provider") or "").strip().lower() == "plex"
+        else ""
+    )
+    _require_owned("post_item_prepare", plex_stream=prepared_plex_stream)
     raw = validate_user_url(item["url"])
     item["url"] = raw
     title = item.get("title") or raw
@@ -5205,6 +5222,7 @@ def _play_item_owned(
     stream, audio = (raw, None)
     prefer_mpv_ytdl = _env_bool("RELAYTV_MPV_YTDL", True)
     provider = str(provider or "").strip().lower()
+    plex_playback = provider == "plex"
     trusted_local_stream = ""
     if provider == "upload" and isinstance(item, dict):
         local_candidate = str(item.get("_local_stream_path") or "").strip()
@@ -5335,13 +5353,25 @@ def _play_item_owned(
     http_header_kwargs = {"http_headers": http_headers} if http_headers else {}
     # Resolution is done. Everything past this point changes what the TV is
     # doing, so nothing proceeds unless this play still owns the intent.
-    _require_owned("post_resolve", relay_stream=stream if relay_playback else "")
+    _require_owned(
+        "post_resolve",
+        relay_stream=stream if relay_playback else "",
+        plex_stream=stream if plex_playback else "",
+    )
     _wait_for_resolved_media_availability(item)
-    _require_owned("post_availability_wait", relay_stream=stream if relay_playback else "")
+    _require_owned(
+        "post_availability_wait",
+        relay_stream=stream if relay_playback else "",
+        plex_stream=stream if plex_playback else "",
+    )
     with MPV_LOCK:
         # Rechecked under the lock: a Stop can land between the wait above and
         # acquiring it, and loading media is the point of no return.
-        _require_owned("pre_load", relay_stream=stream if relay_playback else "")
+        _require_owned(
+            "pre_load",
+            relay_stream=stream if relay_playback else "",
+            plex_stream=stream if plex_playback else "",
+        )
         note_playback_started(start_pos)
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
@@ -5403,7 +5433,10 @@ def _play_item_owned(
             f"{int((time.monotonic() - t_mpv) * 1000)}ms",
         )
 
-    _require_owned("post_load")
+    _require_owned(
+        "post_load",
+        plex_stream=stream if plex_playback else "",
+    )
 
     if relay_playback:
         # Once the relay's mux finalizes the spool file, swap mpv onto the
