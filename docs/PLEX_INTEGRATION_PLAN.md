@@ -3,7 +3,8 @@
 Status: implementation in progress on `feat/plex-account-foundation` in PR
 #93. The original review used RelayTV `main` at `5a671f3` (0.10.3). The account,
 browser, direct-play, transcoding, quality, track, and reconnect foundations
-are implemented; Pi acceptance and the optional controller phase remain.
+are implemented; mixed-queue/media-edge acceptance and the optional controller
+phase remain.
 Live checks from 2026-09-05 through 2026-09-07 exercised a local Plex Media
 Server and the start of Plex's current PIN/JWK flow, as recorded below. Full
 account approval and controller compatibility remain to be demonstrated.
@@ -256,7 +257,7 @@ open unauthenticated `/player/*` controls merely to make the picker work.
 | 0 — contract and compatibility spikes | Partial | Small unshipped harness for JWT linking/refresh, server discovery, browse, media decision/part, reporting, plus independent Companion discovery probe. Record exact PMS/controller versions and sanitized fixtures. | Successful request/response evidence; verified minimum PMS/API contract; selected media-auth mechanism; receiver supported/unsupported matrix. A receiver failure does not block the library track. |
 | 1 — account and server foundation | Implemented; final live approval checks pending | Auth/client modules, private persistence, settings/live apply, server selection, status, lifecycle. Disabled by default. | Link/cancel/expire/unlink/restart; revocation vs outage; concurrent refresh; account/server change during blocked I/O; no secrets in responses, logs, persistence exports, or environment. |
 | 2 — library browser | Implemented; shared-account and device-layout checks pending | Home, libraries, search, movie/show/season/episode details, local artwork, pagination, metadata normalization. | Owner/shared-account visibility; duplicate titles across libraries; missing art; bounded large-library paging; canceled search and stale-account cache tests; phone and desktop browser checks. |
-| 3 — playback and queue | Partial — direct playback, queue, timeline reporting, and amd64 native-runtime acceptance implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
+| 3 — playback and queue | Partial — direct playback, queue, timeline reporting, and amd64/Pi native-runtime acceptance implemented | Direct play, explicit resume/start-over, durable references, queue/history/session replay, progress/stopped reporting. | Cold start and seamless replace on amd64 and Pi; seek/pause/stop/end; repeated items; failed-play rollback; restart re-resolution; mixed Plex/Jellyfin/URL queue. Peer transfer is hidden with a clear reason until reference exchange is implemented. |
 | 4 — compatibility and release | Partial — media-version, server transcoding, bitrate, embedded-track controls, and server reconnect implemented | Remux/transcode lifecycle, audio/subtitle selection, quality limits, connection recovery, operator runbook. | Direct/remux/transcode fixtures plus real media; multi-version/part handling or explicit rejection; embedded/external/burned subtitles; server restart, expired token, and abandoned-transcode cleanup. No silent fallback to the wrong user or version. |
 | 5 — optional Companion receiver | Planned | Verified discovery, registered ingress, bounded commands/subscriptions, timeline responses, queue ownership bridge. | Current Plex Web and available Android/iOS versions tested separately; two RelayTV boxes; controller switch/disconnect; duplicate commands; stale generation; no weakened REST auth. Advertise only demonstrated controls. |
 
@@ -339,8 +340,8 @@ playback acceptance rather than the non-mutating transport check.
 Failed direct-part resolution is fixture-tested to leave the current queue and
 runtime untouched. Persisted and interrupted items reload from their encrypted
 item references, and repeated Plex entries retain distinct queue instance IDs.
-The remaining Phase 3 work is a live mixed-provider queue plus Pi cold and
-seamless hardware playback checks. Phase 4 still owns
+The remaining Phase 3 work is a live mixed-provider queue plus Pi seamless
+replacement and natural-end hardware checks. Phase 4 still owns
 remux-only behavior, selected-track live acceptance, arbitrary seeking, and
 recovery across a PMS restart.
 
@@ -449,9 +450,36 @@ tracebacks. Revert proofs cover all three device-found boundaries.
 
 The runtime telemetry proves the real display/audio process and device paths
 were active; human-observed picture, sound quality, and lip sync were not
-recorded. Pi playback, live mixed-provider queue behavior, live remux-only
-media, alternate audio, external subtitles, and current Plex controller
-compatibility remain open acceptance items.
+recorded. Live mixed-provider queue behavior, live remux-only media, alternate
+audio, external subtitles, Pi seamless replacement/natural end, and current
+Plex controller compatibility remain open acceptance items.
+
+### Raspberry Pi device acceptance recorded 2026-09-07
+
+The same unified branch ran on an aarch64 Raspberry Pi through its generated
+Wayland, DRM, audio, and CEC compose configuration. The checkout was bind
+mounted over the Pi's existing ARM image, with the branch's declared
+`cryptography` and `PyJWT` dependencies layered into a temporary local test
+image. Runtime status confirmed the `arm_safe` decode profile, a 2160p display
+cap, the Qt backend, and subprocess libmpv telemetry.
+
+Against PMS `1.43.3.10896-cb3ebc72d`, the Pi browsed two video libraries and
+loaded Home rows through the authenticated production routes. Automatic mode
+selected direct play for the 5,856-second H.264/EAC3 Matroska sample; the native
+runtime became active and its clock advanced. Pause, resume, and a 30-second
+absolute seek succeeded. Always transcode then selected a live conversion for
+the same item. Pause held within 0.58 seconds, resume advanced by 2.42 seconds,
+and a 45-second conversion seek reported 48.42 seconds after four seconds of
+play while the restarted PMS clock reported 3.42 seconds, preserving the exact
+45-second projection offset.
+
+Stop removed the PMS session, and the RelayTV log contained no private-stream
+404, `IncompleteRead`, ASGI exception, or traceback. The test exercised cold
+direct and conversion starts plus playback controls; it did not include a Pi
+seamless replacement, natural end, or human-observed picture, sound quality,
+and lip sync check. Afterward the Pi was restored to its original branch,
+image, settings, generated compose override, and data, idle with an empty
+queue and no temporary Plex credentials.
 
 ### Test and release discipline
 

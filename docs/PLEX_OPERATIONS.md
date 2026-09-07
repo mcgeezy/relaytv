@@ -135,13 +135,14 @@ decision contract, returned a forced-conversion decision, served a
 Stock mpv decoded its first H.264/AAC frame through an isolated RelayTV route
 in 1.25 seconds, and RelayTV observed successful PMS cleanup. A live 4 Mbps
 decision kept a 1,092 Kbps HEVC file direct and selected transcoding for a
-21,516 Kbps file. Full screen/audio
-playback, remux-only media, arbitrary seek, and Plex controller behavior are
+21,516 Kbps file. Live native-runtime playback and arbitrary seek are now
+exercised on amd64 and Raspberry Pi hardware. Human-observed picture,
+sound quality, and lip sync, remux-only media, and Plex controller behavior are
 not yet claimed. Audio/subtitle selection and version revalidation are
 fixture-tested. A later live probe against PMS `1.43.3.10896-cb3ebc72d`
 selected one embedded subtitle, received a conversion stream, and read its
 first 262,144 bytes before RelayTV closed and cleaned up the session.
-Alternate-audio, external-subtitle, and screen/audio acceptance remain.
+Alternate-audio and external-subtitle acceptance remain.
 Timeline request shape,
 throttling, and lifecycle ordering are fixture-tested; a live watch-history
 mutation was deliberately left for playback acceptance.
@@ -168,6 +169,14 @@ play releases the exact Plex transcode it prepared.
 
 An isolated RelayTV process also accepted an item reference minted by a second
 process and served the movie to stock mpv. A cold, null-output first-frame
-decode completed in 0.92 seconds without warnings. The active TV session was
-left untouched, so screen/audio output and seamless replacement still require
-device acceptance.
+decode completed in 0.92 seconds without warnings.
+
+The unified branch subsequently ran through the production Qt backend on both
+amd64 and a Raspberry Pi. The Pi used its generated `arm_safe` Wayland/DRM,
+audio, and CEC configuration. Automatic mode directly played an H.264/EAC3
+Matroska item; Always transcode converted the same item. Both paths reached an
+active native runtime with advancing clocks. Pause/resume and absolute seek
+worked in both modes, the conversion clock retained its requested 45-second
+offset, Stop left zero PMS sessions, and the log contained no stream 404,
+`IncompleteRead`, ASGI exception, or traceback. Human-observed picture, sound
+quality, and lip sync plus Pi seamless replacement remain open acceptance.
