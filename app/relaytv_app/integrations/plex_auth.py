@@ -386,6 +386,78 @@ class PlexAuthManager:
         )
         return [self._public_server(resource) for resource in self._server_resources(resources)]
 
+    @staticmethod
+    def _looks_like_jwt(token: object) -> bool:
+        parts = str(token or "").strip().split(".")
+        return len(parts) == 3 and all(parts)
+
+    def _server_device_token(self, account_token: str, machine_id: str) -> str:
+        """Return Plex's server-scoped token when a JWT account is linked."""
+        devices = self._cloud(account_token).get("/api/v2/devices")
+        if not isinstance(devices, list):
+            return ""
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            if str(device.get("clientIdentifier") or "") != machine_id:
+                continue
+            token = str(device.get("token") or device.get("accessToken") or "").strip()
+            if token and not self._looks_like_jwt(token):
+                return token
+        return ""
+
+    def _upgrade_selected_server_token(
+        self,
+        *,
+        generation: int,
+        account_id: str,
+        account_token: str,
+        machine_id: str,
+        server_token: str,
+    ) -> tuple[str, int]:
+        if not self._looks_like_jwt(server_token):
+            return server_token, generation
+        try:
+            upgraded = self._server_device_token(account_token, machine_id)
+        except PlexError:
+            return server_token, generation
+        if not upgraded:
+            return server_token, generation
+
+        with self._lock:
+            latest = self.store.load()
+            latest_account = (
+                latest.get("account") if isinstance(latest.get("account"), dict) else {}
+            )
+            latest_server = (
+                latest.get("server") if isinstance(latest.get("server"), dict) else {}
+            )
+            latest_token = str(latest_server.get("access_token") or "")
+            same_selection = (
+                str(latest_account.get("id") or "") == account_id
+                and str(latest_server.get("machine_id") or "") == machine_id
+            )
+            if generation != self._generation:
+                if same_selection and latest_token and not self._looks_like_jwt(latest_token):
+                    return latest_token, self._generation
+                raise PlexAuthError(
+                    "plex_credentials_changed",
+                    "Plex account or server changed while credentials were refreshing",
+                    status_code=409,
+                )
+            if not same_selection or not secrets.compare_digest(latest_token, server_token):
+                raise PlexAuthError(
+                    "plex_credentials_changed",
+                    "Plex account or server changed while credentials were refreshing",
+                    status_code=409,
+                )
+            updated_server = dict(latest_server)
+            updated_server["access_token"] = upgraded
+            latest["server"] = updated_server
+            self.store.save(latest)
+            self._generation += 1
+            return upgraded, self._generation
+
     def selected_server_session(self) -> PlexServerSession:
         settings = state.get_settings()
         if not bool(settings.get("plex_enabled", False)):
@@ -403,6 +475,9 @@ class PlexAuthManager:
             server_url = str(server.get("server_url") or "")
             server_token = str(server.get("access_token") or "")
             machine_id = str(server.get("machine_id") or "")
+            account_id = str(account.get("id") or "")
+            account_token = str(account.get("auth_token") or "")
+            generation = self._generation
             if not server_url or not server_token or not machine_id:
                 raise PlexAuthError(
                     "plex_server_not_selected",
@@ -417,15 +492,22 @@ class PlexAuthManager:
                     "Plex device credentials could not be read",
                     status_code=500,
                 ) from None
-            return PlexServerSession(
-                client=self._client_factory(server_url, server_token),
-                account_id=str(account.get("id") or ""),
-                machine_id=machine_id,
-                generation=self._generation,
-                reference_key=hashlib.sha256(
-                    b"relaytv-plex-reference-v1\0" + private_key
-                ).digest(),
-            )
+        server_token, generation = self._upgrade_selected_server_token(
+            generation=generation,
+            account_id=account_id,
+            account_token=account_token,
+            machine_id=machine_id,
+            server_token=server_token,
+        )
+        return PlexServerSession(
+            client=self._client_factory(server_url, server_token),
+            account_id=account_id,
+            machine_id=machine_id,
+            generation=generation,
+            reference_key=hashlib.sha256(
+                b"relaytv-plex-reference-v1\0" + private_key
+            ).digest(),
+        )
 
     def assert_server_session_current(self, session: PlexServerSession) -> None:
         if not bool(state.get_settings().get("plex_enabled", False)):
@@ -488,6 +570,13 @@ class PlexAuthManager:
                 "Plex did not provide access to the selected server",
                 status_code=403,
             )
+        if self._looks_like_jwt(server_token):
+            try:
+                server_token = (
+                    self._server_device_token(account_token, requested) or server_token
+                )
+            except PlexError:
+                pass
 
         last_error: PlexError | None = None
         for connection in self._connection_candidates(resource):

@@ -78,6 +78,15 @@ class _FakeClientFactory:
         if method == "GET" and path == "/api/v2/resources":
             assert token == self.account_token
             return self.server_resources
+        if method == "GET" and path == "/api/v2/devices":
+            assert token == self.account_token
+            return [
+                {
+                    "clientIdentifier": "server-123",
+                    "provides": "server",
+                    "token": "server-secret",
+                }
+            ]
         if method == "GET" and path == "/identity":
             assert token == "server-secret"
             return {
@@ -181,6 +190,87 @@ def test_select_server_prefers_local_non_relay_and_verifies_identity(manager) ->
     assert tested["reachable"] is True
     assert tested["version"] == "1.43.3.10828"
     assert "server-secret" not in repr(auth.status())
+
+
+def test_select_server_exchanges_jwt_resource_token_for_server_token(
+    manager,
+    account_token,
+) -> None:
+    auth, factory = manager
+    started = auth.start_link("browser-a")
+    factory.pin_claimed = True
+    auth.poll_link(started["flow_id"], "browser-a")
+    factory.server_resources[0]["accessToken"] = account_token
+
+    auth.select_server("server-123")
+
+    assert auth.store.load()["server"]["access_token"] == "server-secret"
+    assert any(call[2] == "/api/v2/devices" for call in factory.calls)
+
+
+def test_selected_server_session_upgrades_persisted_jwt_server_token(
+    manager,
+    account_token,
+) -> None:
+    auth, factory = manager
+    started = auth.start_link("browser-a")
+    factory.pin_claimed = True
+    auth.poll_link(started["flow_id"], "browser-a")
+    auth.select_server("server-123")
+    payload = auth.store.load()
+    payload["server"]["access_token"] = account_token
+    auth.store.save(payload)
+
+    session = auth.selected_server_session()
+
+    assert session.client.token == "server-secret"
+    assert auth.store.load()["server"]["access_token"] == "server-secret"
+
+
+def test_server_token_upgrade_cannot_restore_a_disconnected_account(
+    manager,
+    account_token,
+) -> None:
+    auth, factory = manager
+    started = auth.start_link("browser-a")
+    factory.pin_claimed = True
+    auth.poll_link(started["flow_id"], "browser-a")
+    auth.select_server("server-123")
+    payload = auth.store.load()
+    payload["server"]["access_token"] = account_token
+    auth.store.save(payload)
+    entered = threading.Event()
+    release = threading.Event()
+    original_response = factory.response
+
+    def blocked_response(method, base_url, path, payload, token):
+        if method == "GET" and path == "/api/v2/devices":
+            entered.set()
+            assert release.wait(2)
+        return original_response(method, base_url, path, payload, token)
+
+    factory.response = blocked_response
+    failures = []
+
+    def load_session():
+        try:
+            auth.selected_server_session()
+        except Exception as exc:  # noqa: BLE001 - captured for thread assertion
+            failures.append(exc)
+
+    worker = threading.Thread(target=load_session)
+    worker.start()
+    assert entered.wait(2)
+    auth.disconnect()
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert len(failures) == 1
+    assert isinstance(failures[0], plex_auth.PlexAuthError)
+    assert failures[0].code == "plex_credentials_changed"
+    assert auth.store.load()["account"] == {}
+    assert auth.store.load()["server"] == {}
 
 
 def test_server_reselection_rejects_a_blocked_catalog_result(manager) -> None:

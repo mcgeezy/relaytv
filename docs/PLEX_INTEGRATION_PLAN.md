@@ -48,8 +48,11 @@ the document version alone is not a tested compatibility claim.
 For new apps Plex recommends a PIN/JWK flow using Ed25519 and renewable,
 seven-day JWTs. Account resources supply server connections and access tokens.
 Prefer local connections and use relay only as a last resort. The modern
-authentication description also discusses direct JWT use against PMS; shared
-server token behavior needs a captured fixture before choosing credentials.
+authentication description also discusses direct JWT use against PMS. Live
+testing found that current PMS accepts the JWT for ordinary catalog requests
+but its universal transcoder requires the matching server-scoped token. RelayTV
+keeps the modern account flow and resolves that separate PMS credential by
+machine identifier.
 [Authentication](https://developer.plex.tv/pms/#section/API-Info/Authenticating-with-Plex)
 
 The official Companion specification describes player advertising, HTTP
@@ -481,6 +484,31 @@ and lip sync check. Afterward the Pi was restored to its original branch,
 image, settings, generated compose override, and data, idle with an empty
 queue and no temporary Plex credentials.
 
+### PMS server-token compatibility recorded 2026-09-07
+
+A real account completed the Ed25519/JWK flow and selected an owned PMS running
+`1.43.3.10896-cb3ebc72d`. Plex's resource response supplied a 538-character JWT
+as the server access token. Catalog, artwork, and item-detail requests accepted
+that credential, but the universal media-decision endpoint returned HTTP 400.
+The PMS log showed that its internal metadata request had fallen back to a
+guest, received HTML instead of a `MediaContainer`, and aborted the decision.
+
+The same account's `/api/v2/devices` response contained one 20-character
+server-scoped token for the selected machine identifier. Sending that token in
+the existing `X-Plex-Token` header made the previously failing H.264/AC3 item
+resolve as direct play. RelayTV now prefers the server-scoped token while
+selecting a JWT-discovered server and transparently migrates already selected
+JWT-backed server records. The account JWT remains renewable and separate.
+Both credentials stay only in the mode-0600 private state file; neither is
+placed in a URL or log.
+
+The migration revalidates the account, machine identifier, stored token, and
+credential generation after the cloud request. A driven disconnect race proves
+that a late device response cannot restore credentials after unlink. Removing
+that guard makes the race test fail. The running installation migrated without
+restarting or disturbing its active non-Plex playback and queue, then passed
+the selected-server test and the exact failed media decision.
+
 ### Test and release discipline
 
 Continue focused Plex transport/auth/service/route tests, fixture-based
@@ -519,7 +547,7 @@ and should be reviewed for a release highlight before the unified PR merges.
 | Plex server versions and accounts | Test a current PMS plus the intended minimum; owner and shared non-admin access. Record versions without tokens. |
 | Controllers for cast support | Current Plex Web and the household's actual Android/iOS apps; discovery success must be demonstrated per version. |
 | Representative media | H.264/AAC baseline, constrained-device incompatible codec, multi-audio, text/image subtitles, resumed movie/episode, duplicate library titles. |
-| Auth contract and minimum version | Verify current JWT flow and shared-server credentials first. Legacy-token support is an explicit fallback decision, not the default sign-in design. |
+| Auth contract and minimum version | Current JWT account linking plus machine-matched server-token resolution is implemented on PMS 1.43.3. Shared non-admin behavior and the intended minimum PMS remain to be verified. |
 | Secure media transport | Prove scoped mpv headers or choose the measured local relay before production playback work. |
 | Receiver networking | Confirm GDM/account-resource registration requirements, usable advertised listener, container networking, controller credentials, and callback verification in phase 0. |
 | Account scope | One account per TV initially. Plex Home and per-browser account switching require a later design with isolated queues/watch-state context. |

@@ -71,7 +71,10 @@ in the remote and reported to Plex. Direct files continue to seek in place.
 
 Plex private state is stored in `/data/plex_auth.json` with mode `0600`. The
 file contains the device private key, renewable account token, and selected
-server token. Treat backups of this file as secrets. The ordinary
+server-scoped token. Current Plex account linking returns a renewable JWT;
+RelayTV resolves the separate PMS token by selected machine identifier and
+upgrades earlier JWT-backed server records automatically. Treat backups of this
+file as secrets. The ordinary
 `/data/settings.json` file contains the enable switch, selected server machine
 identifier, playback mode, and bitrate preference.
 
@@ -92,6 +95,11 @@ create its own device identity and Plex authorization.
 - **Server selection fails:** open Plex once, confirm the server reports
   online, then reload RelayTV settings. RelayTV rejects a connection whose
   reported machine identifier does not match the selected server.
+- **Playback reports a Plex upstream error while browsing still works:** test
+  the selected server, then retry the title. RelayTV automatically replaces an
+  older JWT-backed server record with the machine-matched PMS token needed by
+  the universal transcoder. If it persists, reselect the server so Plex can
+  return a current server credential.
 - **Authorization expires:** link the account again. RelayTV renews current
   JWT credentials within 24 hours of their expiry and serializes concurrent
   refresh attempts.
