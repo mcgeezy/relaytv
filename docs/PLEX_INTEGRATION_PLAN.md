@@ -576,9 +576,17 @@ seconds from its end, reached it, auto-advanced to the queued Jellyfin episode,
 drained the queue, and left zero PMS sessions. An explicit stop afterwards left
 the session closed with zero PMS sessions.
 
-Still open for this gate: the same run on the Raspberry Pi, which needs a Plex
-account linked on that device — the PIN flow is browser-bound and requires a
-person to approve it at `app.plex.tv`.
+The same run then passed on the Raspberry Pi once an account was linked there.
+Plex direct play started and PMS attributed the single session to the Pi's own
+address. Replacing it with a Jellyfin movie took PMS to zero sessions
+immediately, confirming the replacement fix on aarch64 as well. Natural end
+from twelve seconds out auto-advanced to the queued Jellyfin item, drained the
+queue, and left zero sessions, and an explicit stop returned the device to idle
+with none remaining. The Pi's container log contained no error, traceback,
+`IncompleteRead`, or stream 404 across the whole run.
+
+Both devices therefore satisfy the mixed-provider queue, seamless-replacement,
+and natural-end gate.
 
 ### Test and release discipline
 
