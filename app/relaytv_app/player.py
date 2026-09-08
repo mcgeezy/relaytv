@@ -3482,6 +3482,45 @@ def mpv_seek_absolute_with_retry(sec: float, tries: int = 25, delay: float = 0.1
 
 
 
+def _project_plex_conversion_property(key: str, value):
+    """Translate a conversion stream's zero-based clock to library time."""
+    if key != "time-pos" or not isinstance(value, (int, float)):
+        return value
+    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    if (
+        not now
+        or str(now.get("provider") or "").strip().lower() != "plex"
+        or str(now.get("plex_stream_mode") or "").strip().lower()
+        not in {"remux", "transcode"}
+    ):
+        return value
+    try:
+        offset = max(0.0, float(now.get("_playback_started_pos") or 0.0))
+    except (TypeError, ValueError):
+        offset = 0.0
+    if offset <= 0.0:
+        return value
+    projected = max(0.0, float(value)) + offset
+    try:
+        duration = float(now.get("duration_sec"))
+        if duration > 0.0:
+            projected = min(projected, duration)
+    except (TypeError, ValueError):
+        pass
+    return projected
+
+
+def _project_plex_conversion_properties(values: dict[str, Any]) -> dict[str, Any]:
+    if "time-pos" not in values:
+        return values
+    projected = dict(values)
+    projected["time-pos"] = _project_plex_conversion_property(
+        "time-pos",
+        projected.get("time-pos"),
+    )
+    return projected
+
+
 def mpv_get(prop: str):
     key = str(prop or "").strip()
     prefer_host = _qt_shell_runtime_preferred()
@@ -3490,16 +3529,16 @@ def mpv_get(prop: str):
         cache_ttl = _mpv_poll_cache_ttl_sec()
         cached = _mpv_cache_get(prop, max_age_sec=cache_ttl)
         if cached is not None:
-            return cached
+            return _project_plex_conversion_property(key, cached)
     host_val = _host_runtime_mpv_property(prop) if prefer_host else None
     if prefer_host and (not live_ipc_required) and host_val is not None:
         if key:
             _mpv_cache_update({key: host_val})
-        return host_val
+        return _project_plex_conversion_property(key, host_val)
     if prefer_host and (not live_ipc_required) and _qt_shell_runtime_supports_mpv_property(key):
         cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
         if cached is not None:
-            return cached
+            return _project_plex_conversion_property(key, cached)
     # Status/UI polling should never crash the whole API if mpv is not ready.
     try:
         r = mpv_command(["get_property", prop])
@@ -3508,35 +3547,35 @@ def mpv_get(prop: str):
         if host_val is not None:
             if key:
                 _mpv_cache_update({key: host_val})
-            return host_val
+            return _project_plex_conversion_property(key, host_val)
         cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
         if cached is not None:
-            return cached
-        return _host_runtime_mpv_property(prop)
+            return _project_plex_conversion_property(key, cached)
+        return _project_plex_conversion_property(key, _host_runtime_mpv_property(prop))
     if r.get("error") != "success":
         host_val = _host_runtime_mpv_property(prop)
         if host_val is not None:
             if key:
                 _mpv_cache_update({key: host_val})
-            return host_val
+            return _project_plex_conversion_property(key, host_val)
         cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
         if cached is not None:
-            return cached
-        return _host_runtime_mpv_property(prop)
+            return _project_plex_conversion_property(key, cached)
+        return _project_plex_conversion_property(key, _host_runtime_mpv_property(prop))
     if "data" in r:
         val = r.get("data")
         if key:
             _mpv_cache_update({key: val})
-        return val
+        return _project_plex_conversion_property(key, val)
     host_val = _host_runtime_mpv_property(prop)
     if host_val is not None:
         if key:
             _mpv_cache_update({key: host_val})
-        return host_val
+        return _project_plex_conversion_property(key, host_val)
     cached = _mpv_cache_get(prop, max_age_sec=_mpv_poll_cache_stale_sec())
     if cached is not None:
-        return cached
-    return _host_runtime_mpv_property(prop)
+        return _project_plex_conversion_property(key, cached)
+    return _project_plex_conversion_property(key, _host_runtime_mpv_property(prop))
 
 
 
@@ -3554,7 +3593,7 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
     host = _host_runtime_mpv_properties(normalized) if prefer_host else {}
     if prefer_host and (not live_ipc_required) and all(host.get(p) is not None for p in normalized):
         _mpv_cache_update(host)
-        return host
+        return _project_plex_conversion_properties(host)
     if (
         not fresh
         and prefer_host
@@ -3572,13 +3611,13 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
                 out[p] = stale.get(p)
         if all(out.get(p) is not None for p in normalized):
             _mpv_cache_update(out)
-            return out
+            return _project_plex_conversion_properties(out)
     if not fresh and not prefer_host and (not live_ipc_required):
         cache_ttl = _mpv_poll_cache_ttl_sec()
         if cache_ttl > 0:
             cached = _mpv_cache_get_many(normalized, max_age_sec=cache_ttl, project_playback=True)
             if len(cached) == len(normalized):
-                return cached
+                return _project_plex_conversion_properties(cached)
     payloads = [{"command": ["get_property", p]} for p in normalized]
     try:
         resps = _mpv_ipc_request_many(payloads, timeout=_mpv_poll_ipc_timeout_sec())
@@ -3586,7 +3625,7 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
         fallback_host = host if prefer_host else _host_runtime_mpv_properties(normalized)
         if any(v is not None for v in fallback_host.values()):
             _mpv_cache_update(fallback_host)
-            return fallback_host
+            return _project_plex_conversion_properties(fallback_host)
         if fresh:
             return {}
         stale = _mpv_cache_get_many(
@@ -3594,7 +3633,7 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
             max_age_sec=_mpv_poll_cache_stale_sec(),
             project_playback=True,
         )
-        return stale if stale else {}
+        return _project_plex_conversion_properties(stale) if stale else {}
     out: dict[str, Any] = {}
     success_count = 0
     for p, r in zip(normalized, resps):
@@ -3611,18 +3650,18 @@ def mpv_get_many(props: list[str], *, fresh: bool = False) -> dict[str, Any]:
             if host.get(p) is not None:
                 out[p] = host.get(p)
         _mpv_cache_update(out)
-        return out
+        return _project_plex_conversion_properties(out)
     host = _host_runtime_mpv_properties(normalized)
     if success_count <= 0:
         if any(v is not None for v in host.values()):
             _mpv_cache_update(host)
-            return host
+            return _project_plex_conversion_properties(host)
     else:
         for p in normalized:
             if out.get(p) is None and host.get(p) is not None:
                 out[p] = host.get(p)
     _mpv_cache_update(out)
-    return out
+    return _project_plex_conversion_properties(out)
 
 def mpv_set_result(prop: str, value) -> dict[str, Any]:
     key = str(prop or "").strip()
@@ -4022,11 +4061,11 @@ def _mpv_up_next_eligible_item(item: object) -> bool:
     # handoff consumption when extractor/auth fails before playback starts.
     if (not prefer_mpv_ytdl) or force_resolve_provider:
         return False
-    # IPTV carries opaque catalog references that must be re-resolved (and
-    # redacted in NOW_PLAYING/history/session), and any header-bearing item
-    # needs its per-channel headers installed. mpv's direct playlist handoff
-    # does neither, so route both through play_item.
-    if provider == "iptv":
+    # IPTV and Plex carry opaque catalog references that must be re-resolved
+    # (and redacted in NOW_PLAYING/history/session), and any header-bearing
+    # item needs its per-channel headers installed. mpv's direct playlist
+    # handoff does neither, so route all of them through play_item.
+    if provider in {"iptv", "plex"}:
         return False
     if isinstance(item, dict) and _item_http_headers(item):
         return False
@@ -4635,6 +4674,7 @@ def advance_queue_playback(
                 force=True,
             )
             _emit_jellyfin_stopped_from_now(prev_now)
+            _emit_plex_timeline_from_now(prev_now, "stopped")
             start_pos = next_item.get("resume_pos") if isinstance(next_item, dict) else None
             try:
                 now = play_item(
@@ -4867,6 +4907,7 @@ def _consume_mpv_queued_next_if_started(
 
     update_history_progress(prev_now, completed=_history_item_completed(prev_now), force=True)
     _emit_jellyfin_stopped_from_now(prev_now)
+    _emit_plex_timeline_from_now(prev_now, "stopped")
 
     url = _queue_item_play_url(consumed)
     title = url
@@ -4944,20 +4985,38 @@ def _add_history_entry(now: dict) -> None:
         "provider": now.get("provider"),
         "resume_pos": max(0.0, float(now.get("resume_pos") or 0.0)),
     }
-    for key in ("channel", "jellyfin_item_id", "jellyfin_media_source_id", "thumbnail", "thumbnail_local"):
+    for key in (
+        "channel",
+        "jellyfin_item_id",
+        "jellyfin_media_source_id",
+        "plex_item_id",
+        "plex_part_id",
+        "plex_audio_id",
+        "plex_subtitle_id",
+        "plex_server_machine_id",
+        "plex_stream_mode",
+        "plex_container",
+        "plex_video_codec",
+        "plex_audio_codec",
+        "type",
+        "thumbnail",
+        "thumbnail_local",
+    ):
         if now.get(key):
             entry[key] = now[key]
     iptv_sid = str(now.get("iptv_source_id") or "").strip()
     iptv_cid = str(now.get("iptv_channel_id") or "").strip()
     is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" and bool(iptv_sid) and bool(iptv_cid)
+    is_plex = str(now.get("provider") or "").strip().lower() == "plex" and bool(now.get("plex_item_id"))
     if is_iptv:
         # Carry opaque catalog references so persistence redacts the credential
         # stream URL and history replay re-resolves the stream and headers.
         entry["iptv_source_id"] = iptv_sid
         entry["iptv_channel_id"] = iptv_cid
+    elif is_plex:
+        entry["url"] = "https://plex.invalid/item"
     elif now.get("_resolved_source_url") == now.get("url") and now.get("_resolved_stream"):
-        # Cache the resolved stream for non-IPTV replay. Skipped for IPTV so no
-        # credential-bearing stream is stored in history.
+        # Cache resolved streams only for ordinary URL providers.
         entry["_resolved_source_url"] = now.get("_resolved_source_url")
         entry["_resolved_stream"] = now.get("_resolved_stream")
         entry["_resolved_audio"] = now.get("_resolved_audio") or ""
@@ -5099,7 +5158,12 @@ def _play_item_owned(
 ):
     """play_item's body, guarded by ``intent`` at every irreversible effect."""
 
-    def _require_owned(stage: str, *, relay_stream: str = "") -> None:
+    def _require_owned(
+        stage: str,
+        *,
+        relay_stream: str = "",
+        plex_stream: str = "",
+    ) -> None:
         if playback_intent_current(intent):
             return
         if relay_stream:
@@ -5112,6 +5176,13 @@ def _play_item_owned(
                     postlive_relay.close_session(token, reason="playback superseded")
                 except Exception:
                     pass
+        if plex_stream:
+            try:
+                from .integrations import plex_service
+
+                plex_service.stop_transcode_stream(plex_stream)
+            except Exception:
+                pass
         raise _PlaybackSuperseded(stage)
 
     def _run_owned(stage: str, effect):
@@ -5128,7 +5199,8 @@ def _play_item_owned(
             return effect()
 
     _require_owned("pre_history_update")
-    update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
+    _outgoing_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    update_history_progress(_outgoing_now, force=True)
     _mark_playback_transition()
     if isinstance(item_or_text, dict):
         item = dict(item_or_text)
@@ -5140,10 +5212,23 @@ def _play_item_owned(
 
         item = iptv_service.resolve_queue_item(item)
 
-    # make_item and IPTV catalog resolution may both block. Nothing below may
-    # touch device or queue state until the result is known to belong to the
+    if str(item.get("provider") or "").strip().lower() == "plex" and item.get("plex_item_id"):
+        from .integrations import plex_service
+
+        item = plex_service.catalog_service.resolve_playback_item(
+            item,
+            start_pos=start_pos,
+        )
+
+    # make_item and catalog resolution may block. Nothing below may touch
+    # device or queue state until the result is known to belong to the
     # still-current Play.
-    _require_owned("post_item_prepare")
+    prepared_plex_stream = (
+        str(item.get("url") or "")
+        if str(item.get("provider") or "").strip().lower() == "plex"
+        else ""
+    )
+    _require_owned("post_item_prepare", plex_stream=prepared_plex_stream)
     raw = validate_user_url(item["url"])
     item["url"] = raw
     title = item.get("title") or raw
@@ -5177,6 +5262,7 @@ def _play_item_owned(
     stream, audio = (raw, None)
     prefer_mpv_ytdl = _env_bool("RELAYTV_MPV_YTDL", True)
     provider = str(provider or "").strip().lower()
+    plex_playback = provider == "plex"
     trusted_local_stream = ""
     if provider == "upload" and isinstance(item, dict):
         local_candidate = str(item.get("_local_stream_path") or "").strip()
@@ -5296,6 +5382,17 @@ def _play_item_owned(
         debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
 
     resume_start_pos = _normalize_start_pos(start_pos)
+    player_start_pos = resume_start_pos
+    if plex_playback and str(item.get("plex_stream_mode") or "").strip().lower() in {
+        "remux",
+        "transcode",
+    }:
+        # PMS already applies the requested offset when it creates a
+        # conversion stream. That stream starts its own media clock at zero,
+        # so asking mpv to seek the same offset again is both redundant and
+        # unreliable. Public position reads project this zero-based clock back
+        # onto the item's absolute timeline.
+        player_start_pos = None
     ytdl_handoff_kwargs = (
         {
             "ytdl_format_override": ytdl_format_override,
@@ -5307,13 +5404,25 @@ def _play_item_owned(
     http_header_kwargs = {"http_headers": http_headers} if http_headers else {}
     # Resolution is done. Everything past this point changes what the TV is
     # doing, so nothing proceeds unless this play still owns the intent.
-    _require_owned("post_resolve", relay_stream=stream if relay_playback else "")
+    _require_owned(
+        "post_resolve",
+        relay_stream=stream if relay_playback else "",
+        plex_stream=stream if plex_playback else "",
+    )
     _wait_for_resolved_media_availability(item)
-    _require_owned("post_availability_wait", relay_stream=stream if relay_playback else "")
+    _require_owned(
+        "post_availability_wait",
+        relay_stream=stream if relay_playback else "",
+        plex_stream=stream if plex_playback else "",
+    )
     with MPV_LOCK:
         # Rechecked under the lock: a Stop can land between the wait above and
         # acquiring it, and loading media is the point of no return.
-        _require_owned("pre_load", relay_stream=stream if relay_playback else "")
+        _require_owned(
+            "pre_load",
+            relay_stream=stream if relay_playback else "",
+            plex_stream=stream if plex_playback else "",
+        )
         note_playback_started(start_pos)
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it
@@ -5329,7 +5438,7 @@ def _play_item_owned(
         reused_runtime = _load_stream_in_existing_mpv(
             stream,
             audio_url=audio,
-            start_pos=resume_start_pos,
+            start_pos=player_start_pos,
             **http_header_kwargs,
             **ytdl_handoff_kwargs,
         )
@@ -5351,7 +5460,7 @@ def _play_item_owned(
                 reused_runtime = _load_stream_in_existing_mpv(
                     stream,
                     audio_url=audio,
-                    start_pos=resume_start_pos,
+                    start_pos=player_start_pos,
                     **http_header_kwargs,
                     **ytdl_handoff_kwargs,
                 )
@@ -5365,7 +5474,7 @@ def _play_item_owned(
             start_mpv(
                 stream,
                 audio_url=audio,
-                start_pos=resume_start_pos,
+                start_pos=player_start_pos,
                 **http_header_kwargs,
                 **ytdl_handoff_kwargs,
             )
@@ -5375,7 +5484,10 @@ def _play_item_owned(
             f"{int((time.monotonic() - t_mpv) * 1000)}ms",
         )
 
-    _require_owned("post_load")
+    _require_owned(
+        "post_load",
+        plex_stream=stream if plex_playback else "",
+    )
 
     if relay_playback:
         # Once the relay's mux finalizes the spool file, swap mpv onto the
@@ -5410,6 +5522,19 @@ def _play_item_owned(
         **({"jellyfin_stream_reason": item.get("jellyfin_stream_reason")} if item.get("jellyfin_stream_reason") else {}),
         **({"iptv_source_id": item.get("iptv_source_id")} if item.get("iptv_source_id") else {}),
         **({"iptv_channel_id": item.get("iptv_channel_id")} if item.get("iptv_channel_id") else {}),
+        **({"plex_item_id": item.get("plex_item_id")} if item.get("plex_item_id") else {}),
+        **({"plex_part_id": item.get("plex_part_id")} if item.get("plex_part_id") else {}),
+        **({"plex_audio_id": item.get("plex_audio_id")} if item.get("plex_audio_id") else {}),
+        **(
+            {"plex_subtitle_id": item.get("plex_subtitle_id")}
+            if item.get("plex_subtitle_id")
+            else {}
+        ),
+        **({"plex_server_machine_id": item.get("plex_server_machine_id")} if item.get("plex_server_machine_id") else {}),
+        **({"plex_stream_mode": item.get("plex_stream_mode")} if item.get("plex_stream_mode") else {}),
+        **({"plex_container": item.get("plex_container")} if item.get("plex_container") else {}),
+        **({"plex_video_codec": item.get("plex_video_codec")} if item.get("plex_video_codec") else {}),
+        **({"plex_audio_codec": item.get("plex_audio_codec")} if item.get("plex_audio_codec") else {}),
     }
     # Relay URLs are single-use loopback tokens: caching one as a resolved
     # stream would replay a dead token (404) instead of re-resolving.
@@ -5445,7 +5570,15 @@ def _play_item_owned(
             session_position=float(start_pos) if start_pos is not None else 0.0,
         )
 
+    # Replacing an item is a stop for whatever was on screen. Auto-advance
+    # reports that itself before it gets here, but a user picking something
+    # else never did, so Plex kept showing the replaced item as playing long
+    # after it was gone. A repeat report for an already-stopped item is
+    # dropped downstream, so emitting here is safe from either caller.
+    if _outgoing_now is not None and _outgoing_now is not now:
+        _emit_plex_timeline_from_now(_outgoing_now, "stopped")
     _run_owned("publish", _publish_playback)
+    _emit_plex_timeline_from_now(now, "playing")
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.
@@ -5656,6 +5789,7 @@ def _handle_playback_idle_no_queue() -> None:
     note_playback_failure_if_no_progress(now)
     update_history_progress(now, completed=_history_item_completed(now), force=True)
     _emit_jellyfin_stopped_from_now(now)
+    _emit_plex_timeline_from_now(now, "stopped")
     # Only clear now-playing when not in a user-closed resumable session.
     if getattr(state, "SESSION_STATE", "idle") != "closed":
         state.set_now_playing(None)
@@ -6123,7 +6257,6 @@ def _emit_jellyfin_stopped_from_now(now: dict | None) -> None:
         state.set_now_playing(updated)
     except Exception:
         pass
-
     def _run() -> None:
         try:
             jellyfin_receiver.send_progress_payload_once(payload)
@@ -6136,6 +6269,30 @@ def _emit_jellyfin_stopped_from_now(now: dict | None) -> None:
 
     try:
         threading.Thread(target=_run, daemon=True, name="relaytv-jellyfin-stopped-player").start()
+    except Exception:
+        pass
+
+
+def _emit_plex_timeline_from_now(
+    now: dict | None,
+    playback_state: str,
+    *,
+    position_sec: float | None = None,
+    duration_sec: float | None = None,
+) -> None:
+    if not isinstance(now, dict) or not now.get("plex_item_id"):
+        return
+    try:
+        from .integrations import plex_service
+
+        plex_service.emit_timeline_hint(
+            now,
+            playback_state=playback_state,
+            position_sec=position_sec,
+            duration_sec=duration_sec,
+        )
+        if playback_state == "stopped":
+            plex_service.stop_transcode_for_now(now)
     except Exception:
         pass
 
@@ -6432,6 +6589,12 @@ def _session_tracker_tick() -> None:
         state.persist_session()
     if updated is not None:
         update_history_progress(updated)
+        _emit_plex_timeline_from_now(
+            updated,
+            "paused" if paused else "playing",
+            position_sec=updated.get("resume_pos"),
+            duration_sec=updated.get("duration_sec"),
+        )
     _prime_mpv_up_next_from_queue()
 
 

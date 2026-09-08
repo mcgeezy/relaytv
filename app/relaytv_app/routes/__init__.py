@@ -133,6 +133,7 @@ from .playback import (
     volume as volume,
 )
 from .playback import router as playback_router
+from .plex import router as plex_router
 from .postlive import router as postlive_router
 from .queue import router as queue_router
 from .realtime import router as realtime_router
@@ -166,6 +167,7 @@ router.include_router(iptv_router)
 router.include_router(jellyfin_router)
 router.include_router(peers_router)
 router.include_router(playback_router)
+router.include_router(plex_router)
 router.include_router(postlive_router)
 router.include_router(queue_router)
 router.include_router(realtime_router)
@@ -2982,6 +2984,9 @@ def _qt_runtime_seek_via_time_pos(target_sec: float) -> dict[str, object] | None
 
 
 def _seek_relative_result(delta_sec: float) -> dict[str, object]:
+    plex_result = playback_service.seek_plex_conversion(delta_sec=delta_sec)
+    if isinstance(plex_result, dict):
+        return plex_result
     try:
         delta = float(delta_sec)
     except Exception:
@@ -3003,6 +3008,9 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
 
 
 def _seek_absolute_result(target_sec: float) -> dict[str, object]:
+    plex_result = playback_service.seek_plex_conversion(target_sec=target_sec)
+    if isinstance(plex_result, dict):
+        return plex_result
     result = _qt_runtime_seek_via_time_pos(target_sec)
     if isinstance(result, dict):
         return result
@@ -3407,6 +3415,7 @@ def _status_payload() -> dict[str, object]:
     jf_complete_remaining_sec = jf_status.get("complete_remaining_sec")
     jf_catalog_user_id = str(jf_status.get("catalog_user_id") or "")
     jf_catalog_user_source = str(jf_status.get("catalog_user_source") or "none")
+    jf_catalog_user_id_rejected = str(jf_status.get("catalog_user_id_rejected") or "")
     jf_catalog_cache_entries = int(jf_status.get("catalog_cache_entries") or 0)
     jf_catalog_cache_max_entries = int(jf_status.get("catalog_cache_max_entries") or 0)
     jf_catalog_cache_clears = int(jf_status.get("catalog_cache_clears") or 0)
@@ -3494,6 +3503,7 @@ def _status_payload() -> dict[str, object]:
         "jellyfin_complete_remaining_sec": jf_complete_remaining_sec,
         "jellyfin_catalog_user_id": jf_catalog_user_id,
         "jellyfin_catalog_user_source": jf_catalog_user_source,
+        "jellyfin_catalog_user_id_rejected": jf_catalog_user_id_rejected,
         "jellyfin_catalog_cache_entries": jf_catalog_cache_entries,
         "jellyfin_catalog_cache_max_entries": jf_catalog_cache_max_entries,
         "jellyfin_catalog_cache_clears": jf_catalog_cache_clears,
@@ -3803,6 +3813,7 @@ def ui():
   <title>RelayTV</title>
   <link rel="stylesheet" href="/static/ui/app.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/jellyfin.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/plex.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/seerr.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/peers.css?v=__UI_ASSET_V__" />
@@ -3824,6 +3835,7 @@ def ui():
       <div class="hdrRight">
         <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
         <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
+        <button id="plexOpenBtn" class="plexLaunch" title="Open Plex" aria-label="Open Plex"><span class="plexLaunchMark" aria-hidden="true">›</span><span>Plex</span></button>
         <button id="seerrOpenBtn" class="seerrLaunch" title="Open Seerr" aria-label="Open Seerr"><span aria-hidden="true">✦</span><span>Seerr</span></button>
         <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
@@ -4333,6 +4345,30 @@ def ui():
         </div>
       </div>
     </div>
+
+    <div id="plexShell" class="plexShell hidden" aria-hidden="true">
+      <div class="plexShellInner">
+        <header class="plexShellHead">
+          <button id="plexBackBtn" class="plexBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>
+          <div class="plexIdentity"><span class="plexMark" aria-hidden="true">›</span><div><small>Personal media</small><strong>Plex</strong></div></div>
+          <div id="plexConnection" class="plexConnection" role="status" aria-live="polite">Checking…</div>
+        </header>
+        <main class="plexWorkspace">
+          <div class="plexToolbar">
+            <nav class="plexTabs" role="tablist" aria-label="Plex sections">
+              <button class="plexTab active" data-plex-view="home" role="tab" aria-selected="true">Home</button>
+              <button class="plexTab" data-plex-view="libraries" role="tab" aria-selected="false">Libraries</button>
+            </nav>
+            <label class="plexSearch"><span aria-hidden="true">⌕</span><input id="plexSearchInput" type="search" maxlength="200" placeholder="Search your Plex library…" aria-label="Search Plex" /></label>
+          </div>
+          <div id="plexBrowseStatus" class="plexBrowseStatus" role="status" aria-live="polite"></div>
+          <div id="plexContent" class="plexContent"></div>
+          <button id="plexMoreBtn" class="plexMore hidden" type="button">Load more</button>
+        </main>
+        <div id="plexDetailBackdrop" class="plexDetailBackdrop hidden" aria-hidden="true"></div>
+        <aside id="plexDetail" class="plexDetail hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="plexDetailTitle"></aside>
+      </div>
+    </div>
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
@@ -4340,6 +4376,7 @@ def ui():
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/seerr.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/plex.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/peers.js?v=__UI_ASSET_V__" defer></script>
 </body>
@@ -4633,9 +4670,10 @@ def ui():
           </div>
         </div>
         <div class="fieldRow">
-          <label class="fieldLbl">Preferred user ID (optional)</label>
+          <label class="fieldLbl" for="setJfUserId">Preferred user ID (optional)</label>
           <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
           <div class="hint">Leave blank to use the signed-in account. For API-key-only browsing, enter a server user ID. A login can only access profiles its account is allowed to read.</div>
+          <div class="hint" id="setJfUserIdState" role="status"></div>
         </div>
 
         <div id="setJfSharedAuthFields" role="group" aria-labelledby="setJfCastHeading">
@@ -4698,6 +4736,69 @@ def ui():
           <div id="setJfCacheClearResult" class="inlineApplyMsg"></div>
         </div>
         <div id="setJfSyncDiag" class="hint"></div>
+      </div>
+    </details>
+
+    <details class="settingsGroup">
+      <summary>Plex Integration <span id="setPlexStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable Plex</div>
+            <div class="toggleHint">Use the linked Plex account and selected server for RelayTV library access.</div>
+          </div>
+          <label class="toggleSwitch" for="setPlexEnabled" title="Enable Plex integration">
+            <input type="checkbox" id="setPlexEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div role="group" aria-labelledby="setPlexAccountHeading">
+          <h3 id="setPlexAccountHeading">Plex account</h3>
+          <div class="hint">Link on Plex’s site. RelayTV never asks for or stores your Plex password.</div>
+          <div id="setPlexAccountStatus" class="hint" role="status">No account linked.</div>
+          <div class="inlineApplyRow">
+            <button type="button" id="setPlexLinkBtn" class="btn electricBlue">Link Plex account</button>
+            <a id="setPlexLinkUrl" class="btn primary hidden" href="#" target="_blank" rel="noopener noreferrer">Continue on Plex</a>
+            <button type="button" id="setPlexPollBtn" class="btn hidden">Check link</button>
+            <button type="button" id="setPlexCancelBtn" class="btn hidden">Cancel link</button>
+            <button type="button" id="setPlexUnlinkBtn" class="btn hidden">Unlink account</button>
+          </div>
+        </div>
+
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setPlexServer">Library server</label>
+          <select id="setPlexServer" class="input">
+            <option value="">Link an account to load servers</option>
+          </select>
+          <div class="hint">Local connections are preferred. Relay connections are excluded from this first integration phase.</div>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setPlexPlaybackMode">Playback mode</label>
+          <select id="setPlexPlaybackMode" class="input">
+            <option value="auto">Automatic</option>
+            <option value="direct">Direct play</option>
+            <option value="transcode">Always transcode</option>
+          </select>
+          <div class="hint">Automatic prefers the original file and asks Plex to convert it when direct playback is unavailable.</div>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl" for="setPlexMaxBitrate">Maximum video bitrate</label>
+          <select id="setPlexMaxBitrate" class="input">
+            <option value="0">Original quality</option>
+            <option value="20000">20 Mbps</option>
+            <option value="12000">12 Mbps</option>
+            <option value="8000">8 Mbps</option>
+            <option value="4000">4 Mbps</option>
+          </select>
+          <div class="hint">Automatic converts files above this limit. Direct play always uses the original bitrate.</div>
+        </div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setPlexApplyBtn" class="btn electricBlue">Apply Plex</button>
+          <button type="button" id="setPlexTestBtn" class="btn">Test server</button>
+          <div id="setPlexApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
+        </div>
+        <div id="setPlexDiag" class="hint"></div>
       </div>
     </details>
 
@@ -4765,12 +4866,14 @@ def _ui_asset_version() -> str:
     for name in (
         "app.css",
         "jellyfin.css",
+        "plex.css",
         "iptv.css",
         "seerr.css",
         "peers.css",
         "realtime_transport.js",
         "app.js",
         "jellyfin.js",
+        "plex.js",
         "iptv.js",
         "seerr.js",
         "peers.js",

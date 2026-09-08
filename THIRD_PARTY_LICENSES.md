@@ -22,6 +22,8 @@ dist/licenses/relaytv-THIRD_PARTY_LICENSES.md
 RelayTV uses Python packages including, but not limited to:
 
 - `fastapi`
+- `cryptography`
+- `PyJWT`
 - `python-multipart`
 - `uvicorn`
 - `yt-dlp`

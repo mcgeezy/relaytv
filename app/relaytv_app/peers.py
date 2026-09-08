@@ -448,6 +448,14 @@ def wire_item(item: object) -> dict | None:
     public = public_media.public_media_item(upload_store.annotate_item(item))
     if not isinstance(public, dict):
         return None
+    if str(public.get("provider") or "").strip().lower() == "plex":
+        # A Plex entry's URL is the durable placeholder, which resolves only
+        # against this device's own account and server. Sending it would hand
+        # the peer something it can never play while the sender drops its own
+        # copy as "accepted" — the item would simply be lost. Transferring
+        # Plex needs the peer contract that exchanges catalog ids and resolves
+        # them with the destination's account; until then it stays here.
+        return None
     url = _absolute_media_url(public.get("url"))
     if not url:
         return None
@@ -484,12 +492,13 @@ def wire_entries(items: list[object] | None) -> tuple[list[dict], list[dict], li
             sources.append(item)
             continue
         provider = str((item or {}).get("provider") or "").strip().lower() if isinstance(item, dict) else ""
-        skipped.append(
-            {
-                "title": _item_label(item),
-                "reason": "iptv_channels_stay_on_this_device" if provider == "iptv" else "item_has_no_shareable_url",
-            }
-        )
+        if provider == "iptv":
+            reason = "iptv_channels_stay_on_this_device"
+        elif provider == "plex":
+            reason = "plex_items_stay_on_this_device"
+        else:
+            reason = "item_has_no_shareable_url"
+        skipped.append({"title": _item_label(item), "reason": reason})
     return entries, skipped, sources
 
 

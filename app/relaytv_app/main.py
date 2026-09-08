@@ -25,7 +25,7 @@ from .config import normalize_seerr_request_mode, runtime_config
 from .routes import router, start_realtime_runtime, stop_realtime_runtime
 from .state import get_settings, load_state_from_disk
 from .thumb_cache import THUMB_DIR, start_worker as start_thumb_worker
-from .integrations import iptv_service, jellyfin_receiver, seerr_sessions
+from .integrations import iptv_service, jellyfin_receiver, plex_service, seerr_sessions
 from . import discovery_mdns
 from . import postlive_relay
 from . import video_profile
@@ -138,6 +138,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
             stop_x11_overlay()
             stop_splash_screen()
             postlive_relay.close_all(reason="server shutdown")
+            plex_service.stop_all_transcodes()
 
     app = FastAPI(lifespan=_lifespan)
 

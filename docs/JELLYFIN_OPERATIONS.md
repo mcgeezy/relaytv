@@ -126,6 +126,14 @@ curl -s "http://<jellyfin>:8096/Sessions" -H 'Authorization: MediaBrowser Token=
 ignored — `last_register_error` says which. If `ws_connected` is false, see the
 next two entries.
 
+**`last_register_error` reports `caps_query: HTTP 404` and Jellyfin logs
+`Session ... not found`.** Upgrade RelayTV to a build containing the cast
+session identity fix. Catalog browsing can remain healthy while this fails:
+the error means Jellyfin authenticated the capability request but associated
+its token-only standard authorization header with a different session than the
+WebSocket device. Current builds send the same complete client and `DeviceId`
+identity in both accepted authorization headers.
+
 **`ws_available: false`.** The `websockets` package is missing from the image.
 The library integration keeps working; only casting is unavailable.
 
@@ -403,6 +411,10 @@ Episode adjacency resilience:
 - `auth_session_id`
 - `catalog_user_id`
 - `catalog_user_source` (`preferred`, `authenticated`, or `none`)
+- `catalog_user_id_rejected` — the configured `jellyfin_user_id` when it is not a
+  server user id (a GUID, bare or dashed). A username here would send catalog reads
+  to `/Users/<name>/Items`, which the server rejects, so the value is ignored and the
+  authenticated profile is used instead. Empty when nothing was rejected.
 - `catalog_cache_entries`, `catalog_cache_max_entries`
 - `catalog_ttl_home_sec`, `catalog_ttl_search_sec`, `catalog_ttl_detail_sec`, `catalog_ttl_metadata_sec`
 - `catalog_cache_clears`, `catalog_cache_last_cleared_ts`, `catalog_cache_last_cleared_reason`
@@ -525,10 +537,14 @@ RelayTV base URL.
 For each RelayTV instance:
 
 1. Set a unique device name in RelayTV settings.
-2. Optionally set `jellyfin_user_id` for profile targeting.
+2. Optionally set `jellyfin_user_id` for profile targeting. It must be the server's
+   user **id** (a GUID from the user's admin page), not a username.
 3. Confirm:
    - `GET /status` shows expected `device_name`
    - `GET /integrations/jellyfin/status` shows expected `catalog_user_id` and `catalog_user_source`
+   - `catalog_user_id_rejected` is empty. A non-empty value means the configured id was
+     unusable and browsing has fallen back to the unscoped catalog, which loses resume
+     points and watched state.
 
 ### Long-Session Playback Validation
 

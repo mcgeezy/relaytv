@@ -49,9 +49,11 @@ def test_ui_smoke() -> None:
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
+    plex_css_response = client.get('/static/ui/plex.css')
     realtime_policy_response = client.get('/static/ui/realtime_transport.js')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
+    plex_js_response = client.get('/static/ui/plex.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
     iptv_js_response = client.get('/static/ui/iptv.js')
     seerr_css_response = client.get('/static/ui/seerr.css')
@@ -59,11 +61,13 @@ def test_ui_smoke() -> None:
     jellyfin_playwright = (ROOT_DIR / 'scripts' / 'jellyfin-ui-smoke.js').read_text(encoding='utf-8')
     iptv_playwright = (ROOT_DIR / 'scripts' / 'iptv-ui-smoke.js').read_text(encoding='utf-8')
     seerr_playwright = (ROOT_DIR / 'scripts' / 'seerr-ui-smoke.js').read_text(encoding='utf-8')
+    plex_playwright = (ROOT_DIR / 'scripts' / 'plex-ui-smoke.js').read_text(encoding='utf-8')
 
     assert response.status_code == 200
     assert 'text/html' in response.headers['content-type']
     assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/plex\.css\?v=\d+" />', response.text)
     realtime_policy_tag = re.search(
         r'<script src="/static/ui/realtime_transport\.js\?v=\d+" defer></script>',
         response.text,
@@ -72,6 +76,7 @@ def test_ui_smoke() -> None:
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
     assert realtime_policy_tag.start() < response.text.index('<script src="/static/ui/app.js')
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
+    assert re.search(r'<script src="/static/ui/plex\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
     assert re.search(r'<script src="/static/ui/iptv\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/seerr\.css\?v=\d+" />', response.text)
@@ -83,6 +88,7 @@ def test_ui_smoke() -> None:
     assert 'text/css' in css_response.headers['content-type']
     css = css_response.text
     assert jellyfin_css_response.status_code == 200
+    assert plex_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
     assert iptv_js_response.status_code == 200
     assert seerr_css_response.status_code == 200
@@ -98,12 +104,18 @@ def test_ui_smoke() -> None:
     assert jellyfin_js_response.status_code == 200
     assert 'javascript' in jellyfin_js_response.headers['content-type']
     jellyfin_js = jellyfin_js_response.text
+    assert plex_js_response.status_code == 200
+    assert 'javascript' in plex_js_response.headers['content-type']
+    plex_js = plex_js_response.text
     seerr_js = seerr_js_response.text
     assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
     assert 'id="jellyfinShell"' in response.text
+    assert 'id="plexOpenBtn"' in response.text
+    assert 'id="plexShell"' in response.text
+    assert 'id="plexSearchInput"' in response.text
     assert 'id="seerrOpenBtn"' in response.text
     assert 'id="seerrShell"' in response.text
     assert 'id="seerrSearchInput"' in response.text
@@ -113,6 +125,17 @@ def test_ui_smoke() -> None:
     assert 'id="setSeerrApiKey"' in response.text
     assert 'id="setSeerrClearApiKey"' in response.text
     assert 'id="setSeerrRequestMode"' in response.text
+    assert 'function loadPlexHome' in plex_js
+    assert 'function loadPlexLibraries' in plex_js
+    assert 'function openPlexDetail' in plex_js
+    assert 'function _plexMoveCardFocus' in plex_js
+    assert "button.dataset.itemId = String(item.id || '');" in plex_js
+    assert '.plexCard{display:flex;' in plex_css_response.text
+    assert 'flex-direction:column;' in plex_css_response.text
+    assert "chromium.connect(wsEndpoint)" in plex_playwright
+    assert 'arrowMovedFocus' in plex_playwright
+    assert 'focusReturned' in plex_playwright
+    assert 'nestedInteractive' in plex_playwright
     assert '<option value="shared_admin">Shared administrator API</option>' in response.text
     assert '<option value="caller_session">Caller-specific sign-in</option>' in response.text
     assert 'administrator API identity and may auto-approve' in js
@@ -3317,17 +3340,113 @@ def test_history_entry_redacts_iptv_credentials(monkeypatch: pytest.MonkeyPatch)
     assert 'SECRET-CRED' not in json.dumps(persistable)
 
 
-def test_mpv_up_next_skips_iptv_and_header_bearing_items() -> None:
-    # IPTV needs re-resolution + redaction and header-bearing items need their
-    # per-channel headers, so both must bypass mpv's direct up-next handoff.
+def test_plex_history_and_interrupt_preserve_opaque_item_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream_url = 'http://127.0.0.1:8787/plex/stream/temporary-stream'
+    now = {
+        'url': stream_url,
+        'title': 'A Movie',
+        'provider': 'plex',
+        'mode': 'plex_play',
+        'plex_item_id': 'opaque-item-reference',
+        'plex_part_id': 'opaque-part-reference',
+        'plex_audio_id': 'opaque-audio-reference',
+        'plex_subtitle_id': 'opaque-subtitle-reference',
+        'plex_server_machine_id': 'server-1',
+        'plex_stream_mode': 'direct',
+        'type': 'movie',
+    }
+    history: list[dict] = []
+    persisted: list[dict] = []
+    monkeypatch.setattr(routes.state, 'history_contains', lambda _hid: False)
+    monkeypatch.setattr(routes.state, 'history_add', lambda entry: history.append(entry))
+    monkeypatch.setattr(routes.player, 'is_playing', lambda: True)
+    monkeypatch.setattr(routes.player, 'mpv_get', lambda prop: 41.0 if prop == 'time-pos' else 120.0)
+    monkeypatch.setattr(routes.player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', dict(now), raising=False)
+    monkeypatch.setattr(routes.state, 'QUEUE', [], raising=False)
+    monkeypatch.setattr(routes.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+
+    routes.player._add_history_entry(dict(now))
+    preserved = routes._preserve_current_to_queue_front()
+
+    assert history[0]['url'] == 'https://plex.invalid/item'
+    assert history[0]['plex_item_id'] == 'opaque-item-reference'
+    assert history[0]['plex_audio_id'] == 'opaque-audio-reference'
+    assert history[0]['plex_subtitle_id'] == 'opaque-subtitle-reference'
+    assert preserved is not None
+    assert preserved['url'] == 'https://plex.invalid/item'
+    assert preserved['plex_item_id'] == 'opaque-item-reference'
+    assert preserved['plex_audio_id'] == 'opaque-audio-reference'
+    assert preserved['plex_subtitle_id'] == 'opaque-subtitle-reference'
+    assert preserved['resume_pos'] == 41.0
+    assert 'temporary-stream' not in repr(history + persisted)
+
+
+def test_mpv_up_next_skips_catalog_references_and_header_bearing_items() -> None:
+    # Catalog items need re-resolution + redaction and header-bearing items
+    # need their per-channel headers, so both bypass mpv's direct handoff.
     assert routes.player._mpv_up_next_eligible_item({
         'url': 'https://cdn.example/live.m3u8', 'provider': 'iptv',
         'iptv_source_id': 's', 'iptv_channel_id': 'c',
     }) is False
     assert routes.player._mpv_up_next_eligible_item({
+        'url': 'https://plex.invalid/item', 'provider': 'plex',
+        'plex_item_id': 'opaque',
+    }) is False
+    assert routes.player._mpv_up_next_eligible_item({
         'url': 'https://cdn.example/vod.mp4', 'provider': 'jellyfin',
         'http_headers': {'User-Agent': 'x'},
     }) is False
+
+
+def test_plex_queue_persistence_keeps_only_opaque_catalog_reference() -> None:
+    persisted = routes.state._persistable_queue_item({
+        'url': 'http://127.0.0.1:8787/plex/stream/temporary-stream',
+        'title': 'A Movie',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item-reference',
+        'plex_part_id': 'opaque-part-reference',
+        'plex_audio_id': 'opaque-audio-reference',
+        'plex_subtitle_id': 'opaque-subtitle-reference',
+        'plex_server_machine_id': 'server-1',
+        'thumbnail': '/plex/artwork/opaque-art-reference',
+    })
+
+    assert persisted is not None
+    assert persisted['url'] == 'https://plex.invalid/item'
+    assert persisted['plex_item_id'] == 'opaque-item-reference'
+    assert persisted['plex_part_id'] == 'opaque-part-reference'
+    assert persisted['plex_audio_id'] == 'opaque-audio-reference'
+    assert persisted['plex_subtitle_id'] == 'opaque-subtitle-reference'
+    assert persisted['thumbnail'] == '/plex/artwork/opaque-art-reference'
+    assert 'temporary-stream' not in repr(persisted)
+
+    loaded = routes.state._load_persisted_queue_item(persisted)
+    assert loaded is not None
+    assert loaded['url'] == 'https://plex.invalid/item'
+    assert loaded['plex_item_id'] == 'opaque-item-reference'
+    assert loaded['plex_part_id'] == 'opaque-part-reference'
+    assert loaded['plex_audio_id'] == 'opaque-audio-reference'
+    assert loaded['plex_subtitle_id'] == 'opaque-subtitle-reference'
+    assert routes.state.queue_item_id(loaded)
+
+
+def test_repeated_plex_queue_items_keep_distinct_queue_instance_ids() -> None:
+    item = {
+        'url': 'https://plex.invalid/item',
+        'title': 'A Movie',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item-reference',
+    }
+    queue = [dict(item), dict(item)]
+
+    routes.state.ensure_queue_item_ids(queue)
+
+    assert routes.state.queue_item_id(queue[0])
+    assert routes.state.queue_item_id(queue[1])
+    assert routes.state.queue_item_id(queue[0]) != routes.state.queue_item_id(queue[1])
 
 
 def test_preserve_current_does_not_stack_interrupt_items(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5574,6 +5693,147 @@ def test_seek_routes_use_time_pos_setter_for_qt_runtime(monkeypatch: pytest.Monk
     assert marked == [6.0, 6.0]
     assert set_calls == [('time-pos', 120.0), ('time-pos', 120.0)]
     assert mpv_commands == []
+
+
+def test_plex_conversion_seek_restarts_at_requested_offset_and_keeps_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = {
+        'url': 'http://127.0.0.1:8787/plex/stream/temporary-stream',
+        'stream': 'http://127.0.0.1:8787/plex/stream/temporary-stream',
+        'title': 'A Movie',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item',
+        'plex_audio_id': 'opaque-audio',
+        'plex_stream_mode': 'transcode',
+        'duration_sec': 300.0,
+    }
+    calls: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', current, raising=False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda _props: {
+        'time-pos': 90.0,
+        'duration': 300.0,
+        'pause': False,
+    })
+    monkeypatch.setattr(
+        routes.playback_service,
+        'play_now',
+        lambda item, **kwargs: calls.append((dict(item), dict(kwargs))) or dict(item),
+    )
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_command',
+        lambda _command: (_ for _ in ()).throw(AssertionError('mpv seek must not be used')),
+    )
+
+    relative = routes.seek(routes.SeekReq(sec=30))
+    absolute = routes.seek_abs(routes.SeekAbsReq(sec=999))
+
+    assert relative['ack_reason'] == 'playback_restarted'
+    assert absolute['ack_reason'] == 'playback_restarted'
+    assert [call[1]['start_pos'] for call in calls] == [120.0, 300.0]
+    assert all(call[1]['clear_queue'] is False for call in calls)
+    assert all(call[1]['mode'] == 'plex_seek' for call in calls)
+    assert all(call[0]['plex_item_id'] == 'opaque-item' for call in calls)
+    assert all(call[0]['plex_audio_id'] == 'opaque-audio' for call in calls)
+
+
+def test_plex_conversion_position_projects_server_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'provider': 'plex',
+        'plex_stream_mode': 'transcode',
+        '_playback_started_pos': 60.0,
+        'duration_sec': 300.0,
+    }, raising=False)
+    monkeypatch.setattr(routes.player, '_qt_shell_runtime_preferred', lambda: True)
+    monkeypatch.setattr(
+        routes.player,
+        '_qt_shell_runtime_requires_live_mpv_ipc',
+        lambda _props=None: False,
+    )
+    monkeypatch.setattr(
+        routes.player,
+        '_host_runtime_mpv_property',
+        lambda prop: {'time-pos': 5.0}.get(prop),
+    )
+    monkeypatch.setattr(
+        routes.player,
+        '_host_runtime_mpv_properties',
+        lambda _props: {'time-pos': 5.0, 'duration': 300.0, 'pause': False},
+    )
+
+    assert routes.player.mpv_get('time-pos') == 65.0
+    assert routes.player.mpv_get_many(['time-pos', 'duration', 'pause']) == {
+        'time-pos': 65.0,
+        'duration': 300.0,
+        'pause': False,
+    }
+
+
+def test_direct_plex_seek_keeps_existing_player_control_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[object]] = []
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item',
+        'plex_stream_mode': 'direct',
+    }, raising=False)
+    monkeypatch.setattr(routes.player, '_qt_shell_runtime_accepts_mpv_commands', lambda: False)
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_command',
+        lambda command: commands.append(list(command)) or {'error': 'success'},
+    )
+
+    routes.seek_abs(routes.SeekAbsReq(sec=45))
+
+    assert commands == [['seek', 45.0, 'absolute']]
+
+
+def test_paused_plex_conversion_seek_restores_pause_after_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pause_calls: list[tuple[str, bool]] = []
+    state_calls: list[bool] = []
+    monkeypatch.setattr(routes.state, 'NOW_PLAYING', {
+        'provider': 'plex',
+        'plex_item_id': 'opaque-item',
+        'plex_stream_mode': 'remux',
+        'duration_sec': 300.0,
+    }, raising=False)
+    monkeypatch.setattr(routes.state, 'SESSION_STATE', 'paused', raising=False)
+    monkeypatch.setattr(routes.player, 'mpv_get_many', lambda _props: {
+        'time-pos': 90.0,
+        'duration': 300.0,
+        'pause': True,
+    })
+    monkeypatch.setattr(
+        routes.playback_service,
+        'play_now',
+        lambda item, **_kwargs: dict(item),
+    )
+    monkeypatch.setattr(
+        routes.player,
+        'mpv_set_result',
+        lambda prop, value: pause_calls.append((prop, bool(value)))
+        or {'error': 'success'},
+    )
+    monkeypatch.setattr(
+        routes.playback_service,
+        'mark_paused',
+        lambda paused: state_calls.append(bool(paused)),
+    )
+
+    result = routes.playback_service.seek_plex_conversion(target_sec=180.0)
+
+    assert result is not None
+    assert result['position'] == 180.0
+    assert pause_calls == [('pause', True)]
+    assert state_calls == [True]
 
 
 def test_qt_runtime_seek_uses_extended_ack_wait(monkeypatch: pytest.MonkeyPatch) -> None:

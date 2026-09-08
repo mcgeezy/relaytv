@@ -132,7 +132,7 @@ ENV PYTHONPATH=/usr/lib/python3/dist-packages
 # build args for X11 overlay fallback, headless/VNC, yt-dlp Node helpers,
 # browser-backed idle, and extra ops/debug tools.
 RUN set -eux; \
-    pip install --no-cache-dir 'yt-dlp[default,curl-cffi]' fastapi uvicorn[standard] zeroconf qrcode python-multipart; \
+    pip install --no-cache-dir 'yt-dlp[default,curl-cffi]' 'cryptography>=43,<47' fastapi 'PyJWT>=2.9,<3' uvicorn[standard] zeroconf qrcode python-multipart; \
     if [ "${RELAYTV_INSTALL_QT}" = "1" ]; then \
       pip install --no-cache-dir PySide6; \
     fi

@@ -9,6 +9,7 @@ undone the moment that resolve completed.
 """
 import inspect
 import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -392,6 +393,247 @@ def test_a_play_that_is_never_superseded_publishes(harness) -> None:
     assert state.SESSION_STATE == "playing"
 
 
+def test_plex_catalog_item_is_resolved_at_playback_time(harness, monkeypatch) -> None:
+    from relaytv_app.integrations import plex_service
+
+    harness["gate"].set()
+    resolved = []
+    timelines = []
+
+    def _resolve(item, *, start_pos=None):
+        resolved.append(dict(item))
+        return {
+            **item,
+            "url": "http://127.0.0.1:8787/plex/stream/opaque-stream",
+            "plex_stream_mode": "direct",
+            "plex_container": "mp4",
+        }
+
+    monkeypatch.setattr(plex_service.catalog_service, "resolve_playback_item", _resolve)
+    monkeypatch.setattr(
+        plex_service,
+        "emit_timeline_hint",
+        lambda now, **kwargs: timelines.append((dict(now), kwargs)),
+    )
+
+    now = player.play_item(
+        {
+            "url": "https://plex.invalid/item",
+            "title": "A Movie",
+            "provider": "plex",
+            "plex_item_id": "opaque-item",
+        },
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="plex_play",
+    )
+
+    assert resolved[0]["plex_item_id"] == "opaque-item"
+    assert harness["loaded"] == ["http://127.0.0.1:8787/plex/stream/opaque-stream"]
+    assert now["plex_item_id"] == "opaque-item"
+    assert now["plex_stream_mode"] == "direct"
+    assert now["plex_container"] == "mp4"
+    assert timelines[0][1]["playback_state"] == "playing"
+
+
+def test_plex_conversion_offset_is_applied_by_server_not_player(
+    harness,
+    monkeypatch,
+) -> None:
+    from relaytv_app.integrations import plex_service
+
+    harness["gate"].set()
+    loads: list[dict[str, object]] = []
+
+    def _resolve(item, *, start_pos=None):
+        assert start_pos == 60.0
+        return {
+            **item,
+            "url": "http://127.0.0.1:8787/plex/stream/opaque-conversion",
+            "plex_stream_mode": "transcode",
+        }
+
+    monkeypatch.setattr(plex_service.catalog_service, "resolve_playback_item", _resolve)
+    monkeypatch.setattr(plex_service, "emit_timeline_hint", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        player,
+        "_load_stream_in_existing_mpv",
+        lambda stream, **kwargs: loads.append({"stream": stream, **kwargs}) or True,
+    )
+
+    now = player.play_item(
+        {
+            "url": "https://plex.invalid/item",
+            "title": "A Movie",
+            "provider": "plex",
+            "plex_item_id": "opaque-item",
+            "duration_sec": 300.0,
+        },
+        use_resolver=False,
+        cec=False,
+        clear_queue=False,
+        mode="plex_seek",
+        start_pos=60.0,
+    )
+
+    assert loads == [
+        {
+            "stream": "http://127.0.0.1:8787/plex/stream/opaque-conversion",
+            "audio_url": None,
+            "start_pos": None,
+        }
+    ]
+    assert now["_playback_started_pos"] == 60.0
+
+
+def test_failed_plex_resolution_leaves_existing_queue_and_runtime_untouched(
+    harness,
+    monkeypatch,
+) -> None:
+    from relaytv_app.integrations import plex_service
+    from relaytv_app.integrations.plex_client import PlexError
+
+    winner = {"url": "https://example.com/keep.mp4", "title": "Keep queued"}
+    state.QUEUE[:] = [winner]
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "resolve_playback_item",
+        lambda _item, **_kwargs: (_ for _ in ()).throw(
+            PlexError(
+                "plex_media_unavailable",
+                "Plex did not return a playable media part",
+                status_code=502,
+            )
+        ),
+    )
+
+    with pytest.raises(PlexError):
+        player.play_item(
+            {
+                "url": "https://plex.invalid/item",
+                "provider": "plex",
+                "plex_item_id": "opaque-item",
+            },
+            use_resolver=False,
+            cec=False,
+            clear_queue=True,
+            mode="plex_play",
+        )
+
+    assert state.QUEUE == [winner]
+    assert harness["loaded"] == []
+    assert state.NOW_PLAYING is None
+
+
+def test_plex_stopped_transition_releases_transcode_session(monkeypatch) -> None:
+    from relaytv_app.integrations import plex_service
+
+    stopped = []
+    stream_id = "opaque-transcode-stream"
+    session = object()
+    with plex_service._TRANSCODE_LOCK:
+        plex_service._TRANSCODE_SESSIONS.clear()
+        plex_service._TRANSCODE_SESSIONS[stream_id] = plex_service._TranscodeEntry(
+            session=session, session_id="session-1", created_at=time.time()
+        )
+    monkeypatch.setattr(plex_service, "emit_timeline_hint", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        plex_service.PlexCatalogService,
+        "_stop_transcode",
+        staticmethod(lambda current, session_id: stopped.append((current, session_id))),
+    )
+
+    player._emit_plex_timeline_from_now(
+        {
+            "provider": "plex",
+            "plex_item_id": "opaque-item",
+            "stream": f"http://127.0.0.1:8787/plex/stream/{stream_id}",
+        },
+        "stopped",
+    )
+
+    assert stopped == [(session, "session-1")]
+    with plex_service._TRANSCODE_LOCK:
+        assert stream_id not in plex_service._TRANSCODE_SESSIONS
+
+
+def test_superseded_plex_play_releases_prepared_transcode_session(
+    harness,
+    monkeypatch,
+) -> None:
+    from relaytv_app.integrations import plex_service
+
+    prepared = threading.Event()
+    release = threading.Event()
+    stopped = []
+    results: list[dict] = []
+    errors: list[BaseException] = []
+    stream_id = "opaque-superseded-transcode"
+    stream_url = f"http://127.0.0.1:8787/plex/stream/{stream_id}"
+    session = object()
+    with plex_service._TRANSCODE_LOCK:
+        plex_service._TRANSCODE_SESSIONS.clear()
+
+    def resolve(item, **_kwargs):
+        with plex_service._TRANSCODE_LOCK:
+            plex_service._TRANSCODE_SESSIONS[stream_id] = plex_service._TranscodeEntry(
+                session=session, session_id="session-2", created_at=time.time()
+            )
+        prepared.set()
+        release.wait(5.0)
+        return {
+            **item,
+            "url": stream_url,
+            "plex_stream_mode": "transcode",
+        }
+
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "resolve_playback_item",
+        resolve,
+    )
+    monkeypatch.setattr(
+        plex_service.PlexCatalogService,
+        "_stop_transcode",
+        staticmethod(lambda current, session_id: stopped.append((current, session_id))),
+    )
+
+    def run_play() -> None:
+        try:
+            results.append(
+                player.play_item(
+                    {
+                        "url": "https://plex.invalid/item",
+                        "provider": "plex",
+                        "plex_item_id": "opaque-item",
+                    },
+                    use_resolver=False,
+                    cec=False,
+                    clear_queue=False,
+                    mode="plex_play",
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the caller
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_play, daemon=True)
+    thread.start()
+    assert prepared.wait(5.0)
+    winner = {"url": "https://example.com/winner.mp4", "title": "winner"}
+    player.claim_playback_intent()
+    state.NOW_PLAYING = winner
+    release.set()
+    thread.join(timeout=10.0)
+
+    assert not thread.is_alive()
+    assert not errors, errors
+    assert results == [winner]
+    assert stopped == [(session, "session-2")]
+    with plex_service._TRANSCODE_LOCK:
+        assert stream_id not in plex_service._TRANSCODE_SESSIONS
+
+
 def test_superseded_play_reports_the_winner(harness, monkeypatch) -> None:
     results: list[dict] = []
     errors: list[BaseException] = []
@@ -518,3 +760,50 @@ def test_a_cold_start_publishes(harness, monkeypatch) -> None:
     assert len(harness["history"]) == 1, "cold start wrote no history"
     assert len(harness["watchdogs"]) == 1, "cold start armed no watchdog"
     assert state.SESSION_STATE == "playing"
+
+
+def test_replacing_a_plex_item_reports_it_stopped(harness, monkeypatch) -> None:
+    """A user picking something else is a stop for what was on screen.
+
+    Auto-advance reported this itself; a manual replacement never did, so Plex
+    kept showing the replaced item as playing long after it was gone.
+    """
+    emitted: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        player,
+        "_emit_plex_timeline_from_now",
+        lambda now, state_name, **kw: emitted.append(
+            (str((now or {}).get("plex_item_id") or (now or {}).get("url") or ""), state_name)
+        ),
+    )
+    monkeypatch.setattr(
+        state, "NOW_PLAYING", {"provider": "plex", "plex_item_id": "outgoing"}, raising=False
+    )
+    harness["gate"].set()
+
+    player.play_item(
+        {"url": "https://youtu.be/incoming"}, use_resolver=True, cec=False,
+        clear_queue=False, mode="test",
+    )
+
+    assert ("outgoing", "stopped") in emitted
+    # The replacement is still announced as playing, after the stop.
+    assert emitted[-1][1] == "playing"
+
+
+def test_a_first_play_reports_no_outgoing_stop(harness, monkeypatch) -> None:
+    emitted: list[str] = []
+    monkeypatch.setattr(
+        player,
+        "_emit_plex_timeline_from_now",
+        lambda now, state_name, **kw: emitted.append(state_name),
+    )
+    monkeypatch.setattr(state, "NOW_PLAYING", None, raising=False)
+    harness["gate"].set()
+
+    player.play_item(
+        {"url": "https://youtu.be/first"}, use_resolver=True, cec=False,
+        clear_queue=False, mode="test",
+    )
+
+    assert emitted == ["playing"]

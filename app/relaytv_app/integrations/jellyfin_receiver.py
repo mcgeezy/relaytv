@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 from contextvars import ContextVar
 from dataclasses import dataclass
 import os
@@ -27,6 +28,11 @@ _THREAD_LOCK = threading.Lock()
 
 # Only the authenticated server socket selects cast credentials for media work.
 # Context-local scope keeps concurrent browser requests on the client login.
+#
+# A ContextVar does not cross a thread boundary: work handed to a new thread or
+# an executor starts at the default and silently reverts to client credentials.
+# Anything that offloads cast work must carry the scope explicitly with
+# ``run_in_catalog_scope``; ``cast_catalog_scope`` is the only place that sets it.
 _CAST_CATALOG = ContextVar("jellyfin_cast_catalog", default=False)
 
 # Serializes whole configuration transactions (connect / disconnect / rename /
@@ -111,12 +117,16 @@ _STATUS: dict[str, object] = {
     # None until a session readback has been attempted; see _verify_registration.
     "media_control_verified": None,
     "auth_user_configured": False,
+    # Half-filled login: enough to withhold the API key, not enough to sign in.
+    "auth_user_partial": False,
     "authenticated": False,
     "auth_user": "",
     "auth_user_id": "",
     "auth_session_id": "",
     "catalog_user_id": "",
     "catalog_user_source": "none",
+    # The configured preferred id when it is not a usable server user id.
+    "catalog_user_id_rejected": "",
     "last_auth_ts": None,
     "last_auth_ok": None,
     "last_auth_error": None,
@@ -392,14 +402,38 @@ def _preferred_catalog_user_id() -> str:
     return str(runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USER_ID") or "").strip()
 
 
-def _effective_catalog_user(st: dict[str, object]) -> tuple[str, str]:
+# Jellyfin and Emby user ids are GUIDs, served either bare or dashed.
+_USER_ID_RE = re.compile(
+    r"\A(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z",
+    re.IGNORECASE,
+)
+
+
+def is_server_user_id(value: object) -> bool:
+    """True when a value can address a user on the media server."""
+    return bool(_USER_ID_RE.match(str(value or "").strip()))
+
+
+def _effective_catalog_user(st: dict[str, object]) -> tuple[str, str, str]:
+    """Resolve the catalog profile, and report a preferred id we had to ignore.
+
+    The settings field wants a server user *id*, but a username is the easy
+    thing to type there. A username routes every user-scoped catalog request to
+    ``/Users/<name>/Items``, which the server rejects; browsing then silently
+    falls back to the unscoped endpoint and loses resume points and watched
+    state. Ignoring an unusable value keeps the authenticated profile working,
+    and the third element carries the rejected text so status can say why.
+    """
     preferred = _preferred_catalog_user_id()
+    rejected = ""
     if preferred:
-        return preferred, "preferred"
+        if is_server_user_id(preferred):
+            return preferred, "preferred", ""
+        rejected = preferred
     authenticated = str(st.get("auth_user_id") or "").strip()
     if authenticated:
-        return authenticated, "authenticated"
-    return "", "none"
+        return authenticated, "authenticated", rejected
+    return "", "none", rejected
 
 
 def start() -> None:
@@ -430,7 +464,10 @@ def _start_locked() -> None:
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
         _STATUS["api_key_configured"] = bool(_API_KEY)
-        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME or _AUTH_PASSWORD)
+        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME and _AUTH_PASSWORD)
+        _STATUS["auth_user_partial"] = bool(
+            (_AUTH_USERNAME or _AUTH_PASSWORD) and not (_AUTH_USERNAME and _AUTH_PASSWORD)
+        )
         _STATUS["authenticated"] = False
         _STATUS["auth_user"] = _AUTH_USERNAME
         _STATUS["auth_user_id"] = ""
@@ -530,7 +567,11 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     elif (
         auth_mode == "shared_api_key"
         and bool(out.get("api_key_configured"))
+        # A configured client login owns catalog reads even before it succeeds,
+        # and a half-filled one must not silently fall back to an
+        # administrator-level API key either.
         and not bool(out.get("auth_user_configured"))
+        and not bool(out.get("auth_user_partial"))
     ):
         out["catalog_auth_source"] = "api_key"
     else:
@@ -541,9 +582,10 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
         and str(out.get("server_url") or "").strip()
         and out.get("catalog_auth_source") != "none"
     )
-    catalog_user_id, catalog_user_source = _effective_catalog_user(raw)
+    catalog_user_id, catalog_user_source, rejected_user_id = _effective_catalog_user(raw)
     out["catalog_user_id"] = catalog_user_id
     out["catalog_user_source"] = catalog_user_source
+    out["catalog_user_id_rejected"] = rejected_user_id
     with _CATALOG_CACHE_LOCK:
         out["catalog_cache_entries"] = len(_CATALOG_CACHE)
     out["catalog_cache_max_entries"] = _catalog_cache_max_entries()
@@ -596,6 +638,13 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     if auth_mode == "user_login" and auth_ts == 0 and bool(out.get("auth_user_configured")):
         out["sync_health"] = "degraded"
         out["sync_health_reason"] = "awaiting_auth"
+        return out
+    if bool(out.get("auth_user_partial")):
+        # Half a login cannot sign in, and it still withholds the API key from
+        # catalog reads. Browsing is down and the cause is a blank field, so say
+        # so rather than leaving the screen to report a healthy connection.
+        out["sync_health"] = "degraded"
+        out["sync_health_reason"] = "client_login_incomplete"
         return out
     active_credential = (
         bool(out.get("api_key_configured"))
@@ -743,7 +792,7 @@ def _request_context() -> _RequestContext:
     """Capture every input for one network operation under one lock."""
     with _LOCK:
         detect_ts = _STATUS.get("last_detect_ts")
-        catalog_user_id, _catalog_user_source = _effective_catalog_user(_STATUS)
+        catalog_user_id, _source, _rejected = _effective_catalog_user(_STATUS)
         return _RequestContext(
             generation=int(_CONFIG_GENERATION),
             enabled=bool(_STATUS.get("enabled")),
@@ -880,7 +929,10 @@ def _connect_locked(*, server_url: str, api_key: str | None, auth_mode: str | No
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
         _STATUS["api_key_configured"] = bool(_API_KEY)
-        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME or _AUTH_PASSWORD)
+        _STATUS["auth_user_configured"] = bool(_AUTH_USERNAME and _AUTH_PASSWORD)
+        _STATUS["auth_user_partial"] = bool(
+            (_AUTH_USERNAME or _AUTH_PASSWORD) and not (_AUTH_USERNAME and _AUTH_PASSWORD)
+        )
         _STATUS["authenticated"] = False
         _STATUS["auth_user"] = _AUTH_USERNAME
         _STATUS["auth_user_id"] = ""
@@ -1119,27 +1171,48 @@ def extract_item_id_from_url(url: str | None) -> str:
     return ""
 
 
-def _build_emby_headers(*, token: str = "") -> dict[str, str]:
-    context = _request_context()
-    client_name = context.client_name
-    device_name = context.device_name
-    device_id = _catalog_device_id(context, token)
-    client_version = context.client_version
-    out: dict[str, str] = {}
+def _emby_identity_headers(
+    *,
+    token: str,
+    client_name: str,
+    device_name: str,
+    device_id: str,
+    client_version: str,
+) -> dict[str, str]:
+    """Authentication headers that also carry this client's device identity.
+
+    Jellyfin reads the standard ``Authorization`` header and ignores
+    ``X-Emby-Authorization`` when both are present. Sending a token-only
+    ``Authorization`` authenticated the request but dropped the DeviceId, so
+    every catalog call was filed under one anonymous session named after the
+    server instead of this device. Both headers carry the full value.
+    """
     tok = str(token or "").strip()
+    out: dict[str, str] = {}
     if tok:
         out["X-Emby-Token"] = tok
-        out["Authorization"] = f'MediaBrowser Token="{tok}"'
     auth = (
         f'MediaBrowser Client="{client_name}", '
         f'Device="{device_name}", '
-        f'DeviceId="{device_id}", '
+        f'DeviceId="{device_id or "relaytv"}", '
         f'Version="{client_version}"'
     )
     if tok:
         auth = f'{auth}, Token="{tok}"'
+    out["Authorization"] = auth
     out["X-Emby-Authorization"] = auth
     return out
+
+
+def _build_emby_headers(*, token: str = "") -> dict[str, str]:
+    context = _request_context()
+    return _emby_identity_headers(
+        token=token,
+        client_name=context.client_name,
+        device_name=context.device_name,
+        device_id=_catalog_device_id(context, token),
+        client_version=context.client_version,
+    )
 
 
 def get_item_metadata(
@@ -1169,20 +1242,13 @@ def get_item_metadata(
     client_version = context.client_version
 
     def _headers() -> dict[str, str]:
-        out: dict[str, str] = {}
-        if token:
-            out["X-Emby-Token"] = token
-            out["Authorization"] = f'MediaBrowser Token="{token}"'
-        auth = (
-            f'MediaBrowser Client="{client_name}", '
-            f'Device="{device_name}", '
-            f'DeviceId="{device_id}", '
-            f'Version="{client_version}"'
+        return _emby_identity_headers(
+            token=token,
+            client_name=client_name,
+            device_name=device_name,
+            device_id=device_id,
+            client_version=client_version,
         )
-        if token:
-            auth = f'{auth}, Token="{token}"'
-        out["X-Emby-Authorization"] = auth
-        return out
 
     urls: list[str] = []
     if user_id:
@@ -1449,7 +1515,11 @@ def _library_label_from_path(path: object, *, title: str = "", series_name: str 
             if cleaned == n or cleaned.startswith(f"{n} (") or cleaned.startswith(f"{n}."):
                 if i >= 1:
                     return segs[i - 1]
-    return segs[-2]
+    # No segment matched the title, so the depth of the item under its library
+    # is unknown. Guessing the parent directory names the item's own folder on
+    # any nested layout, which reads as a library that does not exist. Say
+    # nothing rather than label the item wrongly.
+    return ""
 
 
 def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -> dict[str, object]:
@@ -2762,6 +2832,50 @@ def register_command_sink(fn) -> None:
     _COMMAND_SINK = fn
 
 
+@contextlib.contextmanager
+def cast_catalog_scope():
+    """Select cast credentials for catalog and media work in this context.
+
+    The scope is context-local, so it covers the synchronous call chain and
+    nothing else. Concurrent browser requests keep the client login.
+    """
+    scope = _CAST_CATALOG.set(True)
+    try:
+        yield
+    finally:
+        _CAST_CATALOG.reset(scope)
+
+
+def catalog_scope_is_cast() -> bool:
+    """True when the caller is running under cast credentials."""
+    return bool(_CAST_CATALOG.get())
+
+
+def bind_catalog_scope(fn):
+    """Wrap ``fn`` so it keeps the *caller's* catalog scope on another thread.
+
+    A ContextVar is not inherited by a thread the caller starts, so offloaded
+    cast work would quietly run on the client login and build a URL the cast
+    session cannot play. Bind at the hand-off point, on the calling thread::
+
+        pool.submit(jellyfin_receiver.bind_catalog_scope(fetch), item_id)
+
+    Binding is what captures the flag. Calling this on the worker thread
+    captures the worker's own (default) scope and protects nothing.
+    """
+    cast = bool(_CAST_CATALOG.get())
+
+    @functools.wraps(fn)
+    def _bound(*args, **kwargs):
+        scope = _CAST_CATALOG.set(cast)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _CAST_CATALOG.reset(scope)
+
+    return _bound
+
+
 def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> object:
     """Run a socket-sourced command through the registered ingress.
 
@@ -2772,11 +2886,8 @@ def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> 
     sink = _COMMAND_SINK
     if sink is None:
         raise RuntimeError("no jellyfin command sink registered")
-    scope = _CAST_CATALOG.set(True)
-    try:
+    with cast_catalog_scope():
         return sink(action, payload, guard=guard)
-    finally:
-        _CAST_CATALOG.reset(scope)
 
 
 def command_sink_registered() -> bool:
@@ -2798,22 +2909,19 @@ def _context_url(context: _RequestContext, path: str) -> str:
 
 
 def _context_headers(context: _RequestContext) -> dict[str, str]:
-    """Control-plane authentication captured in one request context."""
-    token = context.control_token.strip()
-    out: dict[str, str] = {}
-    if token:
-        out["X-Emby-Token"] = token
-        out["Authorization"] = f'MediaBrowser Token="{token}"'
-    auth = (
-        f'MediaBrowser Client="{context.client_name}", '
-        f'Device="{context.device_name}", '
-        f'DeviceId="{context.device_id or "relaytv"}", '
-        f'Version="{context.client_version}"'
+    """Control-plane authentication captured in one request context.
+
+    The cast target keeps its own DeviceId here: capability registration and
+    playback reporting must land on the session the control socket owns, not
+    on the ``-client`` session catalog browsing uses.
+    """
+    return _emby_identity_headers(
+        token=context.control_token.strip(),
+        client_name=context.client_name,
+        device_name=context.device_name,
+        device_id=context.device_id,
+        client_version=context.client_version,
     )
-    if token:
-        auth = f'{auth}, Token="{token}"'
-    out["X-Emby-Authorization"] = auth
-    return out
 
 
 def _post_json_for(
@@ -3022,8 +3130,15 @@ def capabilities_payload() -> dict[str, object]:
     }
 
 
-def _capabilities_query(device_id: str) -> str:
-    q: list[tuple[str, str]] = [("id", device_id)]
+def _capabilities_query() -> str:
+    """Query-string capabilities, addressed by the request's own session.
+
+    The ``id`` parameter here is a *session* id, not a DeviceId. Passing the
+    device id made the server reject the fallback with "Session ... not found",
+    which is a 404 on every attempt. Omitting it lets the server resolve the
+    session from the Authorization header, which carries this device's DeviceId.
+    """
+    q: list[tuple[str, str]] = []
     q.extend(("playableMediaTypes", value) for value in CAPABILITY_MEDIA_TYPES)
     q.extend(("supportedCommands", value) for value in CAPABILITY_COMMANDS)
     q.append(("supportsMediaControl", "true"))
@@ -3077,13 +3192,12 @@ def register_receiver_once(*, _context: _RequestContext | None = None) -> dict[s
         return {"ok": False, "reason": "disabled"}
     if not context.server_url:
         return {"ok": False, "reason": "no_server_url"}
-    did = context.device_id
     payload = capabilities_payload()
     # The query-string form is what older Emby builds accept; it stays as a
     # fallback so an Emby server that rejects the DTO body still registers.
     candidates: list[tuple[str, str, dict | None]] = [
         ("full", "/Sessions/Capabilities/Full", payload),
-        ("caps_query", f"/Sessions/Capabilities?{_capabilities_query(did)}", None),
+        ("caps_query", f"/Sessions/Capabilities?{_capabilities_query()}", None),
     ]
     timeout = float(os.getenv("RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC", "3"))
     generation = context.generation

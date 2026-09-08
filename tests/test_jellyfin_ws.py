@@ -1427,6 +1427,31 @@ def test_context_http_request_never_reloads_a_new_servers_token(monkeypatch) -> 
     assert requests == [("http://old.local:8096/Sessions/Playing/Progress", "old-control-token")]
 
 
+def test_control_http_authorization_keeps_the_cast_device_identity(monkeypatch) -> None:
+    """Jellyfin selects the session from Authorization before X-Emby-Authorization."""
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
+    monkeypatch.setattr(jellyfin_receiver, "_AUTH_MODE", "shared_api_key")
+    with jellyfin_receiver._LOCK:
+        jellyfin_receiver._STATUS.update(
+            {
+                "device_id": "relaytv-den",
+                "device_name": "Living Room",
+                "client_name": "RelayTV",
+                "client_version": "1.0",
+            }
+        )
+
+    headers = jellyfin_receiver._context_headers(jellyfin_receiver._request_context())
+
+    expected = (
+        'MediaBrowser Client="RelayTV", Device="Living Room", '
+        'DeviceId="relaytv-den", Version="1.0", Token="shared-api-key"'
+    )
+    assert headers["Authorization"] == expected
+    assert headers["X-Emby-Authorization"] == expected
+    assert headers["X-Emby-Token"] == "shared-api-key"
+
+
 def test_registration_post_and_readback_share_one_context(monkeypatch) -> None:
     seen: list[tuple[str, int, str, str]] = []
     for key, value in (

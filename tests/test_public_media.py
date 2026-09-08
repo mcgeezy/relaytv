@@ -34,6 +34,22 @@ def test_sanitize_public_url_strips_emby_jellyfin_and_jwt_auth_keys() -> None:
     assert result == "https://media.example/Videos/abc/stream?static=true"
 
 
+def test_sanitize_public_url_and_items_strip_plex_token_variants() -> None:
+    item = {
+        "provider": "plex",
+        "title": "Movie",
+        "url": "https://plex.example/video?X-Plex-Token=query-secret&part=1",
+        "X-Plex-Token": "header-secret",
+        "x_plex_token": "alternate-secret",
+        "plex_token": "field-secret",
+    }
+
+    result = public_media_item(item)
+
+    assert result["url"] == "https://plex.example/video?part=1"
+    assert "secret" not in str(result)
+
+
 def test_sanitize_public_url_preserves_ipv6_hosts() -> None:
     url = "http://[fd00::a1]:8096/Videos/abc/stream?api_key=secret&static=true"
 

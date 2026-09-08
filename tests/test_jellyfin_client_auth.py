@@ -29,6 +29,10 @@ def shared_client(monkeypatch):
     monkeypatch.setattr(state, "get_settings", lambda: {})
     monkeypatch.setattr(receiver, "_preferred_catalog_user_id", lambda: "")
     monkeypatch.setattr(receiver, "_control_socket_status", lambda: {})
+    # Keep the auth interleaving isolated from the asynchronous thumbnail
+    # worker, which also uses urllib.request and can otherwise append a later
+    # unrelated request to this fixture's shared recorder.
+    monkeypatch.setattr(receiver, "attach_local_thumbnail", lambda item: item)
     runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1")
     receiver._catalog_cache_clear()
     requests = []
@@ -177,3 +181,168 @@ def test_cast_credential_scope_is_reset_on_failure(shared_client, monkeypatch):
         receiver.dispatch_command("play", {})
     assert receiver.catalog_token() == "client-token"
     assert receiver._request_context().catalog_token == "client-token"
+
+
+def test_catalog_headers_carry_the_client_device_identity(monkeypatch) -> None:
+    """Jellyfin reads Authorization first, so it must not be token-only.
+
+    A token-only value authenticates but drops the DeviceId, which filed every
+    catalog call under one anonymous session named after the server and made
+    the ``-client`` device split invisible to Jellyfin.
+    """
+    monkeypatch.setattr(receiver, "_API_KEY", "shared-api-key")
+    monkeypatch.setattr(receiver, "_ACCESS_TOKEN", "client-token")
+    monkeypatch.setattr(receiver, "_AUTH_MODE", "shared_api_key")
+    for key, value in (
+        ("device_id", "relaytv-den"),
+        ("device_name", "Living Room"),
+        ("client_name", "RelayTV"),
+        ("client_version", "1.0"),
+    ):
+        monkeypatch.setitem(receiver._STATUS, key, value)
+
+    headers = receiver._build_emby_headers(token="client-token")
+
+    assert headers["Authorization"] == headers["X-Emby-Authorization"]
+    assert 'DeviceId="relaytv-den-client"' in headers["Authorization"]
+    assert 'Token="client-token"' in headers["Authorization"]
+    assert headers["X-Emby-Token"] == "client-token"
+
+    cast = receiver._build_emby_headers(token="shared-api-key")
+
+    assert 'DeviceId="relaytv-den"' in cast["Authorization"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "21fe4ebb571840af92e9862a8c432a34",
+        "21fe4ebb-5718-40af-92e9-862a8c432a34",
+        "21FE4EBB571840AF92E9862A8C432A34",
+    ],
+)
+def test_server_user_ids_are_accepted_bare_or_dashed(value) -> None:
+    assert receiver.is_server_user_id(value) is True
+
+
+@pytest.mark.parametrize("value", ["mark", "", "   ", "not-a-guid", "21fe4ebb5718"])
+def test_values_that_cannot_address_a_user_are_rejected(value) -> None:
+    assert receiver.is_server_user_id(value) is False
+
+
+def test_a_username_in_the_preferred_id_field_is_ignored_not_used(monkeypatch) -> None:
+    """A username routes catalog reads to /Users/<name>/Items, which 400s.
+
+    Falling back to the authenticated profile keeps user data working; the
+    rejected text goes to status so the settings screen can explain itself.
+    """
+    monkeypatch.setattr(receiver, "_preferred_catalog_user_id", lambda: "mark")
+
+    user_id, source, rejected = receiver._effective_catalog_user(
+        {"auth_user_id": "21fe4ebb571840af92e9862a8c432a34"}
+    )
+
+    assert user_id == "21fe4ebb571840af92e9862a8c432a34"
+    assert source == "authenticated"
+    assert rejected == "mark"
+
+
+def test_a_rejected_preferred_id_is_reported_even_without_a_login(monkeypatch) -> None:
+    monkeypatch.setattr(receiver, "_preferred_catalog_user_id", lambda: "mark")
+
+    user_id, source, rejected = receiver._effective_catalog_user({"auth_user_id": ""})
+
+    assert (user_id, source, rejected) == ("", "none", "mark")
+
+
+def test_a_real_preferred_id_still_wins_over_the_login(monkeypatch) -> None:
+    monkeypatch.setattr(
+        receiver, "_preferred_catalog_user_id", lambda: "aaaaaaaabbbbccccddddeeeeeeeeeeee"
+    )
+
+    user_id, source, rejected = receiver._effective_catalog_user(
+        {"auth_user_id": "21fe4ebb571840af92e9862a8c432a34"}
+    )
+
+    assert user_id == "aaaaaaaabbbbccccddddeeeeeeeeeeee"
+    assert source == "preferred"
+    assert rejected == ""
+
+
+def test_a_half_filled_login_is_not_reported_as_configured(monkeypatch) -> None:
+    """A username with no password cannot sign in, so it is not a login.
+
+    It must still withhold the administrator-level API key from catalog reads,
+    which is what `auth_user_partial` carries.
+    """
+    for name, value in (
+        ("_AUTH_USERNAME", "mark"),
+        ("_AUTH_PASSWORD", ""),
+        ("_AUTH_MODE", "shared_api_key"),
+        ("_API_KEY", "shared-api-key"),
+    ):
+        monkeypatch.setattr(receiver, name, value)
+    raw = {
+        "enabled": True, "running": True, "connected": False,
+        "server_url": "http://jf.example", "auth_mode": "shared_api_key",
+        "api_key_configured": True, "authenticated": False,
+        "auth_user_configured": False, "auth_user_partial": True,
+        # Isolate the health verdict from the transport checks that run first.
+        "last_progress_ok": True, "last_stopped_ok": True, "last_register_ok": True,
+    }
+
+    out = receiver._status_with_sync_health(raw)
+
+    assert out["catalog_auth_source"] == "none"
+    assert out["sync_health_reason"] == "client_login_incomplete"
+
+
+def test_an_api_key_only_setup_still_browses_on_the_key() -> None:
+    raw = {
+        "enabled": True, "running": True, "connected": True,
+        "server_url": "http://jf.example", "auth_mode": "shared_api_key",
+        "api_key_configured": True, "authenticated": False,
+        "auth_user_configured": False, "auth_user_partial": False,
+    }
+
+    assert receiver._status_with_sync_health(raw)["catalog_auth_source"] == "api_key"
+
+
+def test_the_cast_scope_covers_the_dispatched_command(monkeypatch) -> None:
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        receiver,
+        "_COMMAND_SINK",
+        lambda action, payload, guard=None: seen.append(receiver.catalog_scope_is_cast()),
+    )
+
+    receiver.dispatch_command("play", {})
+
+    assert seen == [True]
+    # The scope is released, so a later browser request is not cast-scoped.
+    assert receiver.catalog_scope_is_cast() is False
+
+
+def test_binding_carries_the_cast_scope_onto_another_thread() -> None:
+    """A ContextVar is not inherited by a thread, so cast work must bind it."""
+    import threading
+
+    unbound: list[bool] = []
+    bound: list[bool] = []
+
+    with receiver.cast_catalog_scope():
+        assert receiver.catalog_scope_is_cast() is True
+        wrapped = receiver.bind_catalog_scope(
+            lambda: bound.append(receiver.catalog_scope_is_cast())
+        )
+        plain = threading.Thread(
+            target=lambda: unbound.append(receiver.catalog_scope_is_cast())
+        )
+        carried = threading.Thread(target=wrapped)
+        plain.start()
+        carried.start()
+        plain.join()
+        carried.join()
+
+    assert unbound == [False]
+    assert bound == [True]

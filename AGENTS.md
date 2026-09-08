@@ -85,6 +85,7 @@ matching test's `--write` mode instead of hand-editing:
 - env variables: `tests/test_env_inventory.py` → `docs/ENV_INVENTORY.md`
 - playback transition writers: `tests/test_transition_inventory.py` → `docs/TRANSITION_INVENTORY.md`
 - Jellyfin route surface: `tests/test_jellyfin_inventory.py` → `docs/JELLYFIN_INVENTORY.md`
+- Plex route surface: `tests/test_plex_inventory.py` → `docs/PLEX_INVENTORY.md`
 - runtime profile matrix: `tests/test_runtime_matrix.py` → `docs/OPERATIONS_TEST_MATRIX.md`
 
 ## Test Discipline

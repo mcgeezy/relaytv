@@ -109,6 +109,21 @@ def _normalize_jellyfin_playback_mode(v: object) -> str:
     return "auto"
 
 
+def _normalize_plex_playback_mode(v: object) -> str:
+    s = str(v or "").strip().lower()
+    if s in ("direct", "transcode", "auto"):
+        return s
+    return "auto"
+
+
+def _normalize_plex_max_bitrate(v: object) -> int:
+    try:
+        value = int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+    return value if value in {0, 4000, 8000, 12000, 20000} else 0
+
+
 def _normalize_jellyfin_auth_mode(v: object, *, api_key_configured: bool = False) -> str:
     s = str(v or "").strip().lower()
     if s in ("shared_api_key", "user_login"):
@@ -342,6 +357,12 @@ def _sanitize_thumb_ref(th: object) -> str | None:
         fn = th[len("/thumbs/"):]
         return f"/thumbs/{fn}" if _is_safe_thumb_filename(fn) else None
 
+    if th.startswith("/plex/artwork/"):
+        asset_id = th[len("/plex/artwork/") :]
+        if len(asset_id) <= 4096 and re.fullmatch(r"[A-Za-z0-9_-]+", asset_id):
+            return f"/plex/artwork/{asset_id}"
+        return None
+
     # bare filename -> normalize
     return f"/thumbs/{th}" if _is_safe_thumb_filename(th) else None
 
@@ -366,6 +387,8 @@ def _persistable_queue_item(item: dict) -> dict | None:
         # IPTV stream URLs can contain path or query credentials. Persist only
         # opaque catalog references; player.play_item resolves them at use time.
         persisted_url = f"https://iptv.invalid/{iptv_source_id}/{iptv_channel_id}"
+    if str(provider).strip().lower() == "plex" and str(item.get("plex_item_id") or "").strip():
+        persisted_url = "https://plex.invalid/item"
     out: dict[str, object] = {
         "url": persisted_url,
         "title": (
@@ -391,6 +414,15 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "subtitle_language",
         "iptv_source_id",
         "iptv_channel_id",
+        "plex_item_id",
+        "plex_part_id",
+        "plex_audio_id",
+        "plex_subtitle_id",
+        "plex_server_machine_id",
+        "plex_stream_mode",
+        "plex_container",
+        "plex_video_codec",
+        "plex_audio_codec",
     ):
         val = item.get(key)
         if isinstance(val, str) and val.strip():
@@ -411,6 +443,15 @@ def _persistable_queue_item(item: dict) -> dict | None:
             rp_f = float(rp)
             if rp_f >= 0:
                 out["resume_pos"] = rp_f
+        except Exception:
+            pass
+
+    duration_value = item.get("duration_sec")
+    if duration_value is not None:
+        try:
+            duration_f = float(duration_value)
+            if duration_f > 0:
+                out["duration_sec"] = duration_f
         except Exception:
             pass
 
@@ -1337,6 +1378,10 @@ def _default_settings() -> dict:
         "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
         "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
         "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
+        "plex_enabled": False,
+        "plex_server_machine_id": "",
+        "plex_playback_mode": "auto",
+        "plex_max_bitrate": 0,
         **seerr_defaults,
     }
 
@@ -1378,6 +1423,16 @@ def load_settings() -> None:
     )
     defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(defaults.get("jellyfin_server_type"))
     defaults["seerr_enabled"] = bool(defaults.get("seerr_enabled"))
+    defaults["plex_enabled"] = bool(defaults.get("plex_enabled"))
+    defaults["plex_server_machine_id"] = str(
+        defaults.get("plex_server_machine_id") or ""
+    ).strip()
+    defaults["plex_playback_mode"] = _normalize_plex_playback_mode(
+        defaults.get("plex_playback_mode")
+    )
+    defaults["plex_max_bitrate"] = _normalize_plex_max_bitrate(
+        defaults.get("plex_max_bitrate")
+    )
     defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
     defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
     defaults["seerr_shared_requests_enabled"] = bool(
@@ -1446,6 +1501,10 @@ def update_settings(patch: dict) -> dict:
         "jellyfin_playback_mode",
         "jellyfin_server_type",
         "iptv_enabled",
+        "plex_enabled",
+        "plex_server_machine_id",
+        "plex_playback_mode",
+        "plex_max_bitrate",
         "seerr_enabled",
         "seerr_server_url",
         "seerr_api_key",
@@ -1493,6 +1552,20 @@ def update_settings(patch: dict) -> dict:
         clean["jellyfin_enabled"] = bool(clean.get("jellyfin_enabled"))
     if "iptv_enabled" in clean:
         clean["iptv_enabled"] = bool(clean.get("iptv_enabled"))
+    if "plex_enabled" in clean:
+        clean["plex_enabled"] = bool(clean.get("plex_enabled"))
+    if "plex_server_machine_id" in clean:
+        clean["plex_server_machine_id"] = str(
+            clean.get("plex_server_machine_id") or ""
+        ).strip()[:128]
+    if "plex_playback_mode" in clean:
+        clean["plex_playback_mode"] = _normalize_plex_playback_mode(
+            clean.get("plex_playback_mode")
+        )
+    if "plex_max_bitrate" in clean:
+        clean["plex_max_bitrate"] = _normalize_plex_max_bitrate(
+            clean.get("plex_max_bitrate")
+        )
     if "seerr_enabled" in clean:
         clean["seerr_enabled"] = bool(clean.get("seerr_enabled"))
     if "seerr_server_url" in clean:

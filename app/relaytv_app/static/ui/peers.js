@@ -84,7 +84,7 @@
     // Mirror the server's rule (see peers.wire_items): a live channel's stream
     // URL can carry credentials anywhere in its path, so it never travels.
     // Saying so up front beats reporting it as a skip after the send.
-    const sendable = !!url && provider !== 'iptv';
+    const sendable = !!url && provider !== 'iptv' && provider !== 'plex';
     return {
       kind,
       index,
@@ -95,7 +95,7 @@
       channel: String(source.channel || ''),
       thumbnail: String(source.thumbnail || source.thumbnail_local || ''),
       sendable,
-      reason: sendable ? '' : (provider === 'iptv' ? 'Live TV stays here' : 'No shareable link'),
+      reason: sendable ? '' : (provider === 'iptv' ? 'Live TV stays here' : (provider === 'plex' ? 'Plex stays here' : 'No shareable link')),
     };
   }
 

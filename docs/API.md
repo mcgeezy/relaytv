@@ -768,6 +768,79 @@ YouTube cookie helpers:
 When YouTube cookies are configured, RelayTV passes them to yt-dlp and avoids
 yt-dlp client fallbacks that do not support cookie auth.
 
+## Plex integration and browse API
+
+The current implementation exposes Plex account linking, server setup,
+personal-library browsing, direct playback, and server transcoding. See
+[Plex operations](PLEX_OPERATIONS.md). All responses on these routes use
+`Cache-Control: no-store`; account and server tokens are never returned.
+
+- `GET /integrations/plex/status`: enabled, linked-account, selected-server,
+  and most recent connection-test status
+- `POST /integrations/plex/auth/start`: starts a browser-bound Plex PIN/JWK
+  flow and returns an opaque flow ID plus the official Plex authorization URL
+- `POST /integrations/plex/auth/poll`: checks a flow ID after approval
+- `POST /integrations/plex/auth/cancel`: cancels an in-flight flow
+- `POST /integrations/plex/disconnect`: removes local Plex account and server
+  credentials
+- `GET /plex/servers`: returns sanitized directly reachable Plex servers for
+  the linked account
+- `POST /integrations/plex/server`: selects and identity-checks a server by
+  machine ID
+- `POST /integrations/plex/test`: probes the saved server and reports its PMS
+  version
+- `GET /plex/home`: returns normalized video rows from the selected server;
+  optional `limit` is bounded to 1–50 items per row
+- `GET /plex/libraries`: returns movie and TV library sections
+- `GET /plex/libraries/{library_id}/items`: paged library contents; supports
+  `start`, a `limit` bounded to 1–100, and `sort=title|added|year|rating`
+- `GET /plex/search`: searches the selected server; requires `q` and accepts a
+  `limit` bounded to 1–100
+- `GET /plex/items/{item_id}`: normalized movie, show, season, or episode detail
+- `GET /plex/items/{item_id}/children`: paged seasons for a show or episodes
+  for a season
+- `GET /plex/artwork/{asset_id}`: credentialed artwork proxy; returns an image
+  with private no-store caching and content sniffing disabled
+- `POST /plex/items/action`: accepts an encrypted `item_id` and
+  `command=play_now|resume|play_next|play_last`; immediate actions start the
+  item and queue actions store a durable Plex reference. An optional encrypted
+  `version_id` selects one of the item's advertised accessible media parts.
+  Optional encrypted `audio_id` and `subtitle_id` values select tracks that
+  the chosen version advertises; RelayTV revalidates both against that version.
+- `GET /plex/stream/{stream_id}`: loopback media relay used by the player;
+  forwards a single byte range for direct playback or a session-bound Plex
+  Matroska transcode. Transcode credentials, item paths, and session parameters
+  remain inside the encrypted stream reference.
+
+Library, item, artwork, and media IDs are authenticated encrypted references
+bound to the linked account and selected server. A reference stops resolving
+after either changes. Upstream Plex paths and credentials are neither exposed
+to nor accepted from browser callers. Persistent queues and history keep the
+encrypted item reference and resolve a fresh media part at playback time; a
+temporary relay URL is never written as the durable source.
+
+`plex_playback_mode=auto|direct|transcode` and
+`plex_max_bitrate=0|4000|8000|12000|20000` are stored with ordinary settings.
+Automatic mode asks PMS for a media decision, prefers direct playback when the
+selected version matches RelayTV's measured decoder, AV1, and display-height
+profile, and uses a single-stream HTTP transcode otherwise. A nonzero bitrate
+cap participates in Automatic and
+Transcode decisions; zero means original quality. Direct mode bypasses media
+decisions and the cap. Transcode mode
+requires PMS conversion and fails before the active playback transition when
+PMS cannot prepare it. Resume offsets are sent to PMS in seconds. RelayTV owns
+the transient session and stops it on disconnect, playback stop/replacement,
+natural end, or application shutdown. An explicit audio or subtitle choice
+uses PMS conversion so the result behaves consistently across RelayTV player
+backends; subtitles are burned into the converted video. Direct mode rejects
+an explicit track choice with a clear client error. `/seek` and `/seek_abs`
+restart an active Plex remux/transcode at the requested PMS time offset while
+preserving the queue and selected version/tracks; direct Plex files retain the
+ordinary player byte-seek path.
+
+Plex account-link, server-selection, and playback writes use the normal
+optional `RELAYTV_API_TOKEN` guard. Browse routes are read-only.
+
 ## Jellyfin integration and browse API
 
 Integration status and operator helpers:
