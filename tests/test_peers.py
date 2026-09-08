@@ -1094,3 +1094,34 @@ def test_handoff_of_a_selection_leaves_the_unselected_items_here(
 
     with state.QUEUE_LOCK:
         state.QUEUE.clear()
+
+
+def test_a_plex_item_is_not_sent_to_a_peer() -> None:
+    """Its URL is a placeholder that only resolves against this account.
+
+    Sending it would hand the peer something unplayable while the sender drops
+    its own copy as accepted, losing the item from both devices.
+    """
+    item = {
+        "url": "https://plex.invalid/item",
+        "provider": "plex",
+        "title": "Napoleon Dynamite",
+        "plex_item_id": "opaque-reference",
+    }
+
+    entries, skipped, sources = peers.wire_entries([item])
+
+    assert entries == []
+    assert sources == []
+    assert [entry["reason"] for entry in skipped] == ["plex_items_stay_on_this_device"]
+
+
+def test_other_providers_still_travel_alongside_a_plex_item() -> None:
+    plex = {"url": "https://plex.invalid/item", "provider": "plex", "title": "Movie"}
+    web = {"url": "https://example.com/clip.mp4", "provider": "web", "title": "Clip"}
+
+    entries, skipped, sources = peers.wire_entries([plex, web])
+
+    assert [entry["url"] for entry in entries] == ["https://example.com/clip.mp4"]
+    assert sources == [web]
+    assert len(skipped) == 1

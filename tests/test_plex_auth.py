@@ -500,3 +500,83 @@ def test_an_unlinked_account_reports_no_unresolved_credential(tmp_path) -> None:
     store.save({"device": {}, "account": {}, "server": {}})
 
     assert plex_auth.PlexAuthManager(store=store).status()["server_token_unresolved"] is False
+
+
+def test_an_impossible_server_token_upgrade_is_attempted_once(tmp_path, monkeypatch) -> None:
+    """A shared server is never in /api/v2/devices, so retrying is pure cost.
+
+    Without the latch this ran a plex.tv round trip per catalog and per artwork
+    request, for an upgrade that cannot succeed.
+    """
+    store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
+    store.save({
+        "device": {},
+        "account": {"auth_token": "account-token", "id": "acct"},
+        "server": {"machine_id": "m1", "access_token": "header.payload.signature"},
+    })
+    manager = plex_auth.PlexAuthManager(store=store)
+    lookups: list[str] = []
+    monkeypatch.setattr(
+        manager,
+        "_server_device_token",
+        lambda account_token, machine_id: lookups.append(machine_id) or "",
+    )
+
+    for _ in range(5):
+        token, _gen = manager._upgrade_selected_server_token(
+            generation=manager._generation,
+            account_id="acct",
+            account_token="account-token",
+            machine_id="m1",
+            server_token="header.payload.signature",
+        )
+        assert token == "header.payload.signature"
+
+    assert lookups == ["m1"]
+
+
+def test_a_different_server_is_still_attempted(tmp_path, monkeypatch) -> None:
+    store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
+    store.save({"device": {}, "account": {}, "server": {}})
+    manager = plex_auth.PlexAuthManager(store=store)
+    lookups: list[str] = []
+    monkeypatch.setattr(
+        manager,
+        "_server_device_token",
+        lambda account_token, machine_id: lookups.append(machine_id) or "",
+    )
+    args = dict(
+        generation=manager._generation,
+        account_id="acct",
+        account_token="account-token",
+        server_token="header.payload.signature",
+    )
+
+    manager._upgrade_selected_server_token(machine_id="m1", **args)
+    manager._upgrade_selected_server_token(machine_id="m2", **args)
+
+    assert lookups == ["m1", "m2"]
+
+
+def test_an_unreadable_devices_response_is_retried(tmp_path, monkeypatch) -> None:
+    """That failure is transient, unlike a server that cannot be in the list."""
+    store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
+    store.save({"device": {}, "account": {}, "server": {}})
+    manager = plex_auth.PlexAuthManager(store=store)
+    attempts: list[str] = []
+
+    def _boom(account_token, machine_id):
+        attempts.append(machine_id)
+        raise plex_auth.PlexAuthError("plex_upstream", "unreachable", status_code=502)
+
+    monkeypatch.setattr(manager, "_server_device_token", _boom)
+    for _ in range(3):
+        manager._upgrade_selected_server_token(
+            generation=manager._generation,
+            account_id="acct",
+            account_token="account-token",
+            machine_id="m1",
+            server_token="header.payload.signature",
+        )
+
+    assert attempts == ["m1", "m1", "m1"]

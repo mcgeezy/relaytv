@@ -111,8 +111,12 @@ def seek_plex_conversion(
         return None
     target = max(0.0, target)
     try:
-        duration_value = props.get("duration") or now.get("duration_sec")
-        duration = float(duration_value)
+        # ``target`` is absolute library time. mpv's own duration belongs to the
+        # zero-based conversion stream, so after resuming mid-item it is the
+        # remainder, not the whole — clamping to it would drag a legitimate
+        # forward seek backwards. _project_plex_conversion_property clamps with
+        # the item duration for the same reason.
+        duration = float(now.get("duration_sec") or props.get("duration"))
         if duration > 0.0:
             target = min(target, duration)
     except (TypeError, ValueError):
@@ -700,10 +704,19 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     except Exception:
         start_pos = None
 
-    if not isinstance(stream, str) or not stream.strip():
+    # A Plex stream reference dies with the session that made it: closing
+    # reports the item stopped, which releases the transcode and drops the
+    # reference, so reloading the retained URL would only get a 404. Re-resolve
+    # from the durable item instead — that also mints a conversion starting at
+    # the resume offset, which the retained zero-based URL could not represent.
+    plex_item = (
+        str(now.get("provider") or "").strip().lower() == "plex"
+        and bool(str(now.get("plex_item_id") or "").strip())
+    )
+    if plex_item or not isinstance(stream, str) or not stream.strip():
         resumed = play_now(
             now,
-            use_resolver=True,
+            use_resolver=not plex_item,
             cec=False,
             clear_queue=False,
             mode="resume",

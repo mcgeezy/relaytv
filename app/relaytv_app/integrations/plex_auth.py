@@ -159,6 +159,8 @@ class PlexAuthManager:
         self._flows: dict[str, _LinkFlow] = {}
         self._generation = 0
         self._last_server_test: dict[str, object] = {}
+        # (account_id, machine_id, server_token) whose upgrade already failed.
+        self._unupgradable_server: tuple[str, str, str] | None = None
 
     @property
     def identity(self) -> PlexClientIdentity:
@@ -290,6 +292,7 @@ class PlexAuthManager:
             self._flows.pop(flow.flow_id, None)
             self._generation += 1
             self._last_server_test = {}
+            self._unupgradable_server = None
         return {
             "linked": True,
             "pending": False,
@@ -317,6 +320,7 @@ class PlexAuthManager:
             self._generation += 1
             self._flows.clear()
             self._last_server_test = {}
+            self._unupgradable_server = None
         state.update_settings({"plex_server_machine_id": ""})
         return {"linked": False}
 
@@ -420,12 +424,23 @@ class PlexAuthManager:
     ) -> tuple[str, int]:
         if not self._looks_like_jwt(server_token):
             return server_token, generation
+        # A shared (non-owned) server is never in /api/v2/devices, so its
+        # upgrade cannot succeed however often it is retried. Without this the
+        # attempt repeats on every selected_server_session() — a round trip to
+        # plex.tv per catalog and per artwork request.
+        selection = (account_id, machine_id, server_token)
+        with self._lock:
+            if self._unupgradable_server == selection:
+                return server_token, generation
         try:
             upgraded = self._server_device_token(account_token, machine_id)
         except PlexError:
+            # Transient: a later attempt may reach plex.tv, so do not latch.
             logger.warning("plex_server_token_upgrade_unavailable reason=devices_unreadable")
             return server_token, generation
         if not upgraded:
+            with self._lock:
+                self._unupgradable_server = selection
             # /api/v2/devices lists the account's own devices, so a server
             # shared with this account is never in it and this upgrade cannot
             # succeed. Keeping the JWT lets browsing carry on; playback will

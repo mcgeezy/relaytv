@@ -351,3 +351,62 @@ def test_direct_stream_preserves_incomplete_read_failure() -> None:
 
     with pytest.raises(http.client.IncompleteRead):
         b"".join(stream.iter_bytes())
+
+
+# --- media transfers are not JSON calls -------------------------------------
+
+
+def test_a_media_stream_gets_a_longer_timeout_than_the_json_api() -> None:
+    """The API timeout doubles as the gap tolerance between stream chunks.
+
+    A transcoder pausing to build its buffer routinely exceeds a six-second
+    budget, which killed playback mid-stream.
+    """
+    client = plex_client.PlexClient("https://pms.local:32400", token="t")
+
+    assert client.timeout_sec == plex_client.DEFAULT_TIMEOUT_SEC
+    assert client.media_timeout_sec == plex_client.MEDIA_TIMEOUT_SEC
+    assert client.media_timeout_sec > client.timeout_sec
+
+
+def test_a_configured_api_timeout_never_shortens_the_media_timeout() -> None:
+    client = plex_client.PlexClient("https://pms.local:32400", token="t", timeout_sec=1.0)
+
+    assert client.media_timeout_sec >= plex_client.MEDIA_TIMEOUT_SEC
+
+
+class _StallingResponse:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        self.closed = False
+
+    def read(self, _size):
+        if not self._chunks:
+            raise TimeoutError("stalled")
+        value = self._chunks.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_stalled_stream_ends_the_body_instead_of_raising() -> None:
+    """This runs inside a StreamingResponse, where an exception mid-body
+    becomes an ASGI error rather than something the player can react to."""
+    response = plex_client.PlexStreamResponse(
+        status_code=200,
+        headers={},
+        _response=_StallingResponse([b"abc", b"def"]),
+    )
+
+    assert b"".join(response.iter_bytes()) == b"abcdef"
+
+
+def test_a_stall_before_any_bytes_yields_an_empty_body() -> None:
+    response = plex_client.PlexStreamResponse(
+        status_code=200, headers={}, _response=_StallingResponse([])
+    )
+
+    assert b"".join(response.iter_bytes()) == b""

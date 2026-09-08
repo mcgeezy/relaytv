@@ -1023,3 +1023,28 @@ def test_each_item_is_tracked_separately(monkeypatch, timeline_registry) -> None
 
     assert plex_service.emit_timeline_hint(_plex_now("a"), playback_state="stopped") is True
     assert plex_service.emit_timeline_hint(_plex_now("b"), playback_state="stopped") is True
+
+
+# --- paging strides by what the server returned -----------------------------
+
+
+def test_the_next_page_starts_after_every_record_the_server_sent(service, monkeypatch) -> None:
+    """A record the normalizer drops must not shorten the stride.
+
+    Advancing by the surviving count made the next request overlap this page,
+    so "Load more" repeated rows — and a page whose every record was dropped
+    returned the same cursor it was given, so it never advanced at all.
+    """
+    catalog, _auth = service
+    library_id = catalog.libraries()["libraries"][0]["id"]
+
+    kept = catalog.library_items(library_id, start=0, limit=1, sort="title")
+    assert len(kept["items"]) == 1
+    assert kept["next_start"] == 1
+
+    monkeypatch.setattr(catalog, "_item", lambda session, raw: None)
+    dropped = catalog.library_items(library_id, start=0, limit=1, sort="title")
+
+    assert dropped["items"] == []
+    # The server still sent a record, so the cursor moves past it.
+    assert dropped["next_start"] == 1

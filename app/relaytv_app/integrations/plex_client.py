@@ -13,9 +13,16 @@ import urllib.parse
 import urllib.request
 
 from .. import device_identity
+from ..debug import get_logger
 
+
+logger = get_logger("plex_client")
 
 DEFAULT_TIMEOUT_SEC = 6.0
+# Media transfers are not JSON calls. The API timeout is a latency budget for a
+# small response; applied to a stream it also becomes the gap tolerance between
+# chunks, and a transcoder that pauses to build its buffer exceeds it routinely.
+MEDIA_TIMEOUT_SEC = 60.0
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_BINARY_RESPONSE_BYTES = 16 * 1024 * 1024
 SAFE_IMAGE_TYPES = {
@@ -157,6 +164,13 @@ class PlexStreamResponse:
                         raise
                     chunk = bytes(exc.partial or b"")
                     incomplete = True
+                except (TimeoutError, socket.timeout):
+                    # The socket timeout also governs the gap between chunks.
+                    # Ending the response lets the player see a truncated
+                    # stream and react; raising here would surface as an ASGI
+                    # error mid-body instead.
+                    logger.warning("plex_stream_stalled")
+                    break
                 if not chunk:
                     break
                 yield chunk
@@ -197,6 +211,7 @@ class PlexClient:
         self.token = clean_token
         self.identity = identity or PlexClientIdentity.current()
         self.timeout_sec = max(0.25, min(30.0, float(timeout_sec)))
+        self.media_timeout_sec = max(self.timeout_sec, MEDIA_TIMEOUT_SEC)
         self._opener = opener or _OPENER
 
     def get(
@@ -323,7 +338,7 @@ class PlexClient:
         if byte_range:
             request.add_header("Range", byte_range)
         try:
-            response = self._opener.open(request, timeout=self.timeout_sec)
+            response = self._opener.open(request, timeout=self.media_timeout_sec)
         except urllib.error.HTTPError as exc:
             raise _http_error(int(exc.code)) from None
         except (TimeoutError, socket.timeout):

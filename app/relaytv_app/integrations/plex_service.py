@@ -215,14 +215,16 @@ class PlexCatalogService:
             },
         )
         container = self._container(payload)
+        records = self._records(container, "Metadata")
         items = [
-            item
-            for raw in self._records(container, "Metadata")
-            if (item := self._item(session, raw)) is not None
+            item for raw in records if (item := self._item(session, raw)) is not None
         ]
         total = max(len(items), _integer(container.get("totalSize"), len(items)))
         offset = max(0, _integer(container.get("offset"), start))
-        next_start = offset + len(items)
+        # Advance by what the server returned, not by what survived filtering.
+        # Any record dropped by _item would otherwise shorten the stride and
+        # make the next page overlap this one, repeating rows in the UI.
+        next_start = offset + len(records)
         self.auth_manager.assert_server_session_current(session)
         return {
             "library_id": library_id,
@@ -321,7 +323,7 @@ class PlexCatalogService:
         ]
         total = max(len(items), _integer(container.get("totalSize"), len(items)))
         offset = max(0, _integer(container.get("offset"), start))
-        next_start = offset + len(items)
+        next_start = offset + len(records)
         self.auth_manager.assert_server_session_current(session)
         return {
             "parent_id": item_id,
