@@ -2820,7 +2820,13 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
   if (accountStatus) {
     const account = status.account || {};
     const label = account.friendly_name || account.username || 'linked account';
-    accountStatus.textContent = linked ? `Linked as ${label}.` : (__plexLinkFlowId ? 'Waiting for Plex authorization.' : 'No account linked.');
+    const unresolved = !!status.server_token_unresolved;
+    accountStatus.textContent = linked
+      ? (unresolved
+        ? `Linked as ${label}, but this server's credential could not be resolved. Browsing works; playback will fail. Reselect the server, or unlink and link again.`
+        : `Linked as ${label}.`)
+      : (__plexLinkFlowId ? 'Waiting for Plex authorization.' : 'No account linked.');
+    accountStatus.classList.toggle('err', linked && unresolved);
   }
   const linkBtn = document.getElementById('setPlexLinkBtn');
   const linkUrl = document.getElementById('setPlexLinkUrl');

@@ -18,8 +18,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .. import state
+from ..debug import get_logger
 from .plex_client import PlexClient, PlexClientIdentity, PlexError, normalize_server_url
 
+
+logger = get_logger("plex_auth")
 
 AUTH_STATE_FILE = "plex_auth.json"
 AUTH_STATE_VERSION = 1
@@ -420,8 +423,18 @@ class PlexAuthManager:
         try:
             upgraded = self._server_device_token(account_token, machine_id)
         except PlexError:
+            logger.warning("plex_server_token_upgrade_unavailable reason=devices_unreadable")
             return server_token, generation
         if not upgraded:
+            # /api/v2/devices lists the account's own devices, so a server
+            # shared with this account is never in it and this upgrade cannot
+            # succeed. Keeping the JWT lets browsing carry on; playback will
+            # fail at PMS with an unexplained 400, so leave a trail. Status
+            # reports the same condition as server_token_unresolved.
+            logger.warning(
+                "plex_server_token_upgrade_unavailable reason=no_matching_device machine_id=%s",
+                machine_id,
+            )
             return server_token, generation
 
         with self._lock:
@@ -683,6 +696,12 @@ class PlexAuthManager:
             "token_expires_at": int(float(account.get("expires_at") or 0)) or None,
             "server_selected": selected,
             "server": self._public_selected_server(server) if selected else None,
+            # A JWT still in the server slot means the upgrade to a
+            # machine-matched server token never happened. Browsing works;
+            # playback will fail at PMS without saying why.
+            "server_token_unresolved": bool(
+                selected and self._looks_like_jwt(server.get("access_token"))
+            ),
             "link_in_progress": active_flows > 0,
             "last_server_test": last_test or None,
         }

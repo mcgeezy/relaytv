@@ -512,6 +512,41 @@ that guard makes the race test fail. The running installation migrated without
 restarting or disturbing its active non-Plex playback and queue, then passed
 the selected-server test and the exact failed media decision.
 
+### Shared non-admin account access recorded 2026-09-07
+
+A restricted Plex Home managed user on the linked account (`admin: false`,
+`restricted: true`) was exercised read-only through the standard home-user
+switch, without disturbing the owner's stored credentials.
+
+The managed user's account token is **not** a JWT, and neither is the server
+access token in its `/api/v2/resources` entry, so the JWT-to-server-token
+migration recorded above never engages for this account shape. The selected
+`nuc-server` machine identifier appears in that response with `owned: false`
+and a usable access token. `_server_resources` filters on `provides`, not on
+`owned`, so a shared server is offered for selection; `_public_server` carries
+`owned` through for display only.
+
+Browsing succeeded against the shared server: `/identity` returned PMS
+`1.43.3.10896-cb3ebc72d` and `/library/sections` returned both video sections.
+Account normalization holds for this shape even though `/api/v2/user` returns
+an empty `username` and `email` for a managed user — `friendly_name` falls back
+through `friendlyName`/`title`, and the settings screen prefers it, so the
+account renders by name rather than blank.
+
+One structural gap was found and closed. `/api/v2/devices` lists only the
+account's own devices and did **not** contain the shared machine identifier, so
+for a non-owned server the JWT upgrade path cannot succeed by construction.
+That is moot while home-user tokens are classic, but the code returned the
+unusable JWT silently, which would surface only as the same unexplained HTTP
+400 from the media decision described above. The failed upgrade is now logged,
+and `GET /integrations/plex/status` reports `server_token_unresolved` whenever
+a JWT remains in the server slot; the settings screen explains that browsing
+works while playback will not. Behavior is unchanged when the credential is a
+real server token.
+
+Still open for this gate: a full end-to-end link as the managed user (which
+requires unlinking the owner), and shared-account duplicate-title visibility.
+
 ### Test and release discipline
 
 Continue focused Plex transport/auth/service/route tests, fixture-based

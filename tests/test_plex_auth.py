@@ -453,3 +453,50 @@ def test_disconnect_recovers_a_corrupt_auth_state(tmp_path, monkeypatch) -> None
     assert auth.disconnect() == {"linked": False}
     assert auth.store.load()["account"] == {}
     assert "secret" not in path.read_text()
+
+
+# --- shared (non-owner) account credentials ---------------------------------
+
+
+def _jwt_like() -> str:
+    return "header.payload.signature"
+
+
+def test_status_reports_a_server_credential_that_never_resolved(tmp_path) -> None:
+    """A JWT left in the server slot means the upgrade could not run.
+
+    `/api/v2/devices` lists the account's own devices, so a server shared with
+    this account is never in it. Browsing still works on the JWT; playback
+    fails at PMS with an unexplained 400, so status has to say so.
+    """
+    store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
+    store.save({
+        "device": {},
+        "account": {"auth_token": "account-token", "id": "1", "username": "gavin"},
+        "server": {"machine_id": "m1", "access_token": _jwt_like(), "server_url": "https://pms:32400"},
+    })
+    manager = plex_auth.PlexAuthManager(store=store)
+
+    status = manager.status()
+
+    assert status["server_selected"] is True
+    assert status["server_token_unresolved"] is True
+
+
+def test_status_is_quiet_once_the_server_credential_is_a_real_token(tmp_path) -> None:
+    store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
+    store.save({
+        "device": {},
+        "account": {"auth_token": "account-token", "id": "1", "username": "gavin"},
+        "server": {"machine_id": "m1", "access_token": "plain-server-token", "server_url": "https://pms:32400"},
+    })
+    manager = plex_auth.PlexAuthManager(store=store)
+
+    assert manager.status()["server_token_unresolved"] is False
+
+
+def test_an_unlinked_account_reports_no_unresolved_credential(tmp_path) -> None:
+    store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
+    store.save({"device": {}, "account": {}, "server": {}})
+
+    assert plex_auth.PlexAuthManager(store=store).status()["server_token_unresolved"] is False
