@@ -967,3 +967,59 @@ def test_a_reference_still_within_its_grace_period_survives(transcode_registry) 
 
     assert dropped == []
     assert "starting" in transcode_registry
+
+
+# --- timeline reporting on replacement --------------------------------------
+
+
+@pytest.fixture
+def timeline_registry():
+    with plex_service._TIMELINE_LOCK:
+        original = dict(plex_service._TIMELINE_LAST)
+        plex_service._TIMELINE_LAST.clear()
+    yield
+    with plex_service._TIMELINE_LOCK:
+        plex_service._TIMELINE_LAST.clear()
+        plex_service._TIMELINE_LAST.update(original)
+
+
+def _plex_now(item_id: str = "i1") -> dict:
+    return {"provider": "plex", "plex_item_id": item_id, "history_id": "h1"}
+
+
+def test_a_repeat_stopped_report_is_dropped(monkeypatch, timeline_registry) -> None:
+    """Several paths can end an item; only the first one has news.
+
+    Being idempotent means play_item can report the outgoing item stopped
+    without having to know whether auto-advance already did.
+    """
+    sent: list[str] = []
+    monkeypatch.setattr(
+        plex_service.catalog_service,
+        "report_timeline",
+        lambda now, **kw: sent.append(kw["playback_state"]),
+    )
+
+    first = plex_service.emit_timeline_hint(_plex_now(), playback_state="stopped")
+    second = plex_service.emit_timeline_hint(_plex_now(), playback_state="stopped")
+
+    assert first is True
+    assert second is False
+
+
+def test_a_stop_after_playing_still_reports(monkeypatch, timeline_registry) -> None:
+    monkeypatch.setattr(
+        plex_service.catalog_service, "report_timeline", lambda now, **kw: None
+    )
+
+    assert plex_service.emit_timeline_hint(_plex_now(), playback_state="playing") is True
+    assert plex_service.emit_timeline_hint(_plex_now(), playback_state="stopped") is True
+
+
+def test_each_item_is_tracked_separately(monkeypatch, timeline_registry) -> None:
+    monkeypatch.setattr(
+        plex_service.catalog_service, "report_timeline", lambda now, **kw: None
+    )
+
+    assert plex_service.emit_timeline_hint(_plex_now("a"), playback_state="stopped") is True
+    assert plex_service.emit_timeline_hint(_plex_now("b"), playback_state="stopped") is True

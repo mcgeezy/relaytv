@@ -547,6 +547,39 @@ real server token.
 Still open for this gate: a full end-to-end link as the managed user (which
 requires unlinking the owner), and shared-account duplicate-title visibility.
 
+### Mixed-provider queue and replacement acceptance recorded 2026-09-07
+
+Run on the amd64 device against PMS `1.43.3.10896-cb3ebc72d`. A queue was built
+from all three sources — a Plex movie, a Jellyfin episode, and a plain URL. The
+Plex entry persisted as the durable `https://plex.invalid/item` reference with
+no credential, each entry carried a distinct queue instance id, and the public
+`/queue` payload contained no `api_key` or `token` parameter for any provider.
+Plex `play_now` clears the queue, matching Jellyfin's `playnow` mode.
+
+Seamless replacement exposed a real defect. Replacing a playing Plex item
+reported nothing to Plex: `play_item` announced the incoming item as playing
+but never reported the outgoing one stopped, because only auto-advance did
+that. PMS still listed the replaced movie as `state: playing` from RelayTV four
+minutes later. Transcode sessions were unaffected — those are released by the
+stream close handler — so this was watch-state reporting alone, and it would
+have left Plex's on-deck position wrong for every manually replaced item.
+
+`play_item` now reports the outgoing item stopped before publishing the
+replacement, and a repeat stopped report for an already-stopped item is dropped
+so any path may report an ending without coordinating with the others. After
+the fix, replacing the Plex movie with the Jellyfin episode took PMS from one
+session to **zero immediately**, and the replaced Plex item was preserved to
+the queue front as expected.
+
+Natural end was verified in the same run: the Plex movie was seeked to twelve
+seconds from its end, reached it, auto-advanced to the queued Jellyfin episode,
+drained the queue, and left zero PMS sessions. An explicit stop afterwards left
+the session closed with zero PMS sessions.
+
+Still open for this gate: the same run on the Raspberry Pi, which needs a Plex
+account linked on that device — the PIN flow is browser-bound and requires a
+person to approve it at `app.plex.tv`.
+
 ### Test and release discipline
 
 Continue focused Plex transport/auth/service/route tests, fixture-based

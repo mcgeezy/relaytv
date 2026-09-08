@@ -760,3 +760,50 @@ def test_a_cold_start_publishes(harness, monkeypatch) -> None:
     assert len(harness["history"]) == 1, "cold start wrote no history"
     assert len(harness["watchdogs"]) == 1, "cold start armed no watchdog"
     assert state.SESSION_STATE == "playing"
+
+
+def test_replacing_a_plex_item_reports_it_stopped(harness, monkeypatch) -> None:
+    """A user picking something else is a stop for what was on screen.
+
+    Auto-advance reported this itself; a manual replacement never did, so Plex
+    kept showing the replaced item as playing long after it was gone.
+    """
+    emitted: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        player,
+        "_emit_plex_timeline_from_now",
+        lambda now, state_name, **kw: emitted.append(
+            (str((now or {}).get("plex_item_id") or (now or {}).get("url") or ""), state_name)
+        ),
+    )
+    monkeypatch.setattr(
+        state, "NOW_PLAYING", {"provider": "plex", "plex_item_id": "outgoing"}, raising=False
+    )
+    harness["gate"].set()
+
+    player.play_item(
+        {"url": "https://youtu.be/incoming"}, use_resolver=True, cec=False,
+        clear_queue=False, mode="test",
+    )
+
+    assert ("outgoing", "stopped") in emitted
+    # The replacement is still announced as playing, after the stop.
+    assert emitted[-1][1] == "playing"
+
+
+def test_a_first_play_reports_no_outgoing_stop(harness, monkeypatch) -> None:
+    emitted: list[str] = []
+    monkeypatch.setattr(
+        player,
+        "_emit_plex_timeline_from_now",
+        lambda now, state_name, **kw: emitted.append(state_name),
+    )
+    monkeypatch.setattr(state, "NOW_PLAYING", None, raising=False)
+    harness["gate"].set()
+
+    player.play_item(
+        {"url": "https://youtu.be/first"}, use_resolver=True, cec=False,
+        clear_queue=False, mode="test",
+    )
+
+    assert emitted == ["playing"]

@@ -5199,7 +5199,8 @@ def _play_item_owned(
             return effect()
 
     _require_owned("pre_history_update")
-    update_history_progress(state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None, force=True)
+    _outgoing_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    update_history_progress(_outgoing_now, force=True)
     _mark_playback_transition()
     if isinstance(item_or_text, dict):
         item = dict(item_or_text)
@@ -5569,6 +5570,13 @@ def _play_item_owned(
             session_position=float(start_pos) if start_pos is not None else 0.0,
         )
 
+    # Replacing an item is a stop for whatever was on screen. Auto-advance
+    # reports that itself before it gets here, but a user picking something
+    # else never did, so Plex kept showing the replaced item as playing long
+    # after it was gone. A repeat report for an already-stopped item is
+    # dropped downstream, so emitting here is safe from either caller.
+    if _outgoing_now is not None and _outgoing_now is not now:
+        _emit_plex_timeline_from_now(_outgoing_now, "stopped")
     _run_owned("publish", _publish_playback)
     _emit_plex_timeline_from_now(now, "playing")
 

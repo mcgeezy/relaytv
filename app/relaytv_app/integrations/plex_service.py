@@ -1302,12 +1302,18 @@ def emit_timeline_hint(
         should_send = previous is None
         if previous is not None:
             last_ts, last_state, last_pos, _last_sequence = previous
-            should_send = (
-                state_name != last_state
-                or state_name == "stopped"
-                or (now_ts - last_ts) >= TIMELINE_INTERVAL_SEC
-                or abs(pos - last_pos) >= TIMELINE_SEEK_DELTA_SEC
-            )
+            if state_name == "stopped" and last_state == "stopped":
+                # Already reported stopped and nothing has played since, so
+                # this adds nothing. Being idempotent here lets every path that
+                # can end an item report it without coordinating with the rest.
+                should_send = False
+            else:
+                should_send = (
+                    state_name != last_state
+                    or state_name == "stopped"
+                    or (now_ts - last_ts) >= TIMELINE_INTERVAL_SEC
+                    or abs(pos - last_pos) >= TIMELINE_SEEK_DELTA_SEC
+                )
         if not should_send:
             return False
         _TIMELINE_SEQUENCE += 1
