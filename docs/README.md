@@ -17,6 +17,8 @@ release branch.
   availability, credential handling, and troubleshooting
 - `PLEX_OPERATIONS.md`: Plex account linking, server selection, credential
   storage, connection verification, and troubleshooting
+- `PLEX_COMPANION_DISCOVERY.md`: Phase 0 spike evidence for casting *to*
+  RelayTV from Plex apps — what was measured, and what still needs a controller
 - `DEVICE_SYNC_OPERATIONS.md`: sending a queue or the running playback to
   another RelayTV device — adding devices, mDNS discovery requirements, peer
   token handling, what can travel between devices, and troubleshooting
