@@ -44,6 +44,43 @@ def test_get_settings_route_sanitizes_secret_values(monkeypatch, tmp_path) -> No
     assert body["idle_notifications_enabled"] is True
 
 
+def test_settings_apply_response_sanitizes_restarted_media(monkeypatch) -> None:
+    current = {"volume": 50}
+    restarted = {
+        "url": "https://jellyfin.example/Videos/item?api_key=now-secret",
+        "provider": "jellyfin",
+        "title": "Movie",
+        "_resolved_stream": "https://jellyfin.example/stream?api_key=stream-secret",
+        "http_headers": {"X-Emby-Token": "header-secret"},
+    }
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", dict(restarted), raising=False)
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "restart_current", lambda: dict(restarted))
+
+    response = TestClient(create_app(testing=True)).post(
+        "/settings",
+        json={"volume": 60, "apply_now": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["now_playing"] == {
+        "url": "https://jellyfin.example/Videos/item",
+        "provider": "jellyfin",
+        "title": "Movie",
+    }
+    assert "now-secret" not in response.text
+    assert "stream-secret" not in response.text
+    assert "header-secret" not in response.text
+
+
 def test_seerr_api_key_is_write_only_and_requires_explicit_clear(monkeypatch) -> None:
     current = {
         "seerr_enabled": True,

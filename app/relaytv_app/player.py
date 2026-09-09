@@ -4699,7 +4699,20 @@ def advance_queue_playback(
                     and isinstance(next_item, dict)
                     and str(next_item.get("provider") or "").strip().lower() == "iptv"
                 )
-                skip_unplayable = bot_check or post_live_processing or iptv_stale or (
+                plex_stale = False
+                if (
+                    isinstance(next_item, dict)
+                    and str(next_item.get("provider") or "").strip().lower() == "plex"
+                ):
+                    try:
+                        from .integrations.plex_client import PlexError
+
+                        plex_stale = isinstance(exc, PlexError) and int(
+                            getattr(exc, "status_code", 0) or 0
+                        ) == 404
+                    except Exception:
+                        plex_stale = False
+                skip_unplayable = bot_check or post_live_processing or iptv_stale or plex_stale or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
                     and int(getattr(exc, "status_code", 0) or 0) == 400
@@ -6974,10 +6987,34 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
             return None
         if not state.NOW_PLAYING:
             return None
-        inp = (state.NOW_PLAYING.get("input") or state.NOW_PLAYING.get("url") or "").strip()
+        current = dict(state.NOW_PLAYING)
+        inp = (current.get("input") or current.get("url") or "").strip()
         if not inp:
             return None
         target: object = inp
+        provider = str(current.get("provider") or "").strip().lower()
+        plex_restart = provider == "plex" and bool(
+            str(current.get("plex_item_id") or "").strip()
+        )
+        if plex_restart:
+            # Plex's loopback stream URL belongs to the current direct relay or
+            # transcode session. Replaying it after stop_mpv either loses the
+            # Plex identity or races the old response's cleanup and returns a
+            # 404. Keep the durable encrypted catalog references and let
+            # play_item resolve a fresh stream before replacing the old one.
+            target = current
+            target["input"] = "https://plex.invalid/item"
+            target["url"] = "https://plex.invalid/item"
+            for key in (
+                "stream",
+                "audio",
+                "http_headers",
+                "_resolved_source_url",
+                "_resolved_stream",
+                "_resolved_audio",
+                "_resolved_at",
+            ):
+                target.pop(key, None)
         if is_youtube_url(inp):
             # Resolve before stopping anything: a failed resolve (e.g. a
             # YouTube bot check right after cookies were removed) must leave
@@ -7030,7 +7067,8 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                 pos = mpv_get("time-pos")
         except Exception:
             pos = None
-        stop_mpv()
+        if not plex_restart:
+            stop_mpv()
         # Use settings-driven video mode by default; apply_mode can force x11/drm.
         if apply_mode:
             runtime_config.set_value("RELAYTV_VIDEO_MODE", apply_mode)

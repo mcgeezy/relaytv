@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
+from .. import state
 from ..integrations import plex_auth, plex_service
 from ..integrations.plex_client import PlexError
 
@@ -283,8 +284,28 @@ def plex_item_action(req: PlexItemActionReq, response: Response):
 @router.post("/integrations/plex/server")
 def plex_server_select(req: PlexServerSelectReq, response: Response):
     _no_store(response)
+    requested = str(req.machine_id or "").strip()
     try:
-        return {"server": plex_auth.auth_manager.select_server(req.machine_id)}
+        status = plex_auth.auth_manager.status()
+        selected = status.get("server") if isinstance(status.get("server"), dict) else {}
+        selected_machine_id = str(selected.get("machine_id") or "").strip()
+        active_plex = (
+            str(getattr(state, "SESSION_STATE", "idle") or "").strip().lower()
+            in {"playing", "paused"}
+            and isinstance(getattr(state, "NOW_PLAYING", None), dict)
+            and str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "plex"
+        )
+        if active_plex:
+            if requested and requested == selected_machine_id:
+                return {"server": selected}
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "plex_playback_active",
+                    "message": "Stop Plex playback before changing the selected server",
+                },
+            )
+        return {"server": plex_auth.auth_manager.select_server(requested)}
     except PlexError as exc:
         raise _http_error(exc) from None
 

@@ -52,6 +52,7 @@ function fixture(){
     window: {addEventListener(){}, relaytvSeerr:null},
     openSettings(){}, closeSettings(){}, loadSettingsUi: async() => {},
     syncJellyfinAuthModeUi(){}, syncSeerrRequestModeUi(){},
+    jellyfinCredentialsError: () => '',
     SETTINGS_TV_CONTROL_BASELINE: {}, WEATHER_LOCATION_STATE: {},
     collectIdlePanelSettings: () => ({}),
     alert(){},
@@ -87,7 +88,7 @@ test('Plex link start exposes the official authorization URL and polls its flow'
   assert.match(f.element('setPlexApplyResult').textContent, /account linked/i);
 });
 
-test('Apply Plex saves the enable switch and selected server separately', async() => {
+test('Apply Plex selects the server before applying restart-sensitive settings', async() => {
   const f = fixture();
   f.element('setPlexEnabled').checked = true;
   f.element('setPlexServer').value = 'server-1';
@@ -98,8 +99,28 @@ test('Apply Plex saves the enable switch and selected server separately', async(
 
   assert.equal(result, true);
   assert.deepEqual(f.requests, [
-    {url:'/settings', body:{plex_enabled:true, plex_playback_mode:'transcode', plex_max_bitrate:8000, apply_now:true}},
     {url:'/integrations/plex/server', body:{machine_id:'server-1'}},
+    {url:'/settings', body:{plex_enabled:true, plex_playback_mode:'transcode', plex_max_bitrate:8000, apply_now:true}},
   ]);
   assert.match(f.element('setPlexApplyResult').textContent, /settings applied/i);
+});
+
+test('main Settings save applies a changed Plex server selection', async() => {
+  const f = fixture();
+  f.element('setPlexEnabled').checked = true;
+  f.element('setPlexServer').setAttribute('data-selected-machine-id', 'server-old');
+  f.element('setPlexServer').value = 'server-new';
+  f.element('setPlexPlaybackMode').value = 'direct';
+  f.element('setPlexMaxBitrate').value = '12000';
+
+  await f.element('settingsSaveBtn').onclick();
+
+  assert.deepEqual(f.requests[0], {
+    url:'/integrations/plex/server',
+    body:{machine_id:'server-new'},
+  });
+  assert.equal(f.requests[1].url, '/settings');
+  assert.equal(f.requests[1].body.plex_enabled, true);
+  assert.equal(f.requests[1].body.plex_playback_mode, 'direct');
+  assert.equal(f.requests[1].body.plex_max_bitrate, 12000);
 });

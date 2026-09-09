@@ -4196,6 +4196,52 @@ def test_restart_current_non_youtube_does_not_preresolve(monkeypatch: pytest.Mon
     assert played == ['https://example.com/movie.mp4']
 
 
+def test_restart_current_reresolves_plex_from_durable_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    played: list[dict[str, object]] = []
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(
+        player.state,
+        'NOW_PLAYING',
+        {
+            'input': 'http://127.0.0.1:8787/plex/stream/old-session',
+            'url': 'http://127.0.0.1:8787/plex/stream/old-session',
+            'title': 'Plex Movie',
+            'provider': 'plex',
+            'plex_item_id': 'opaque-item-ref',
+            'plex_part_id': 'opaque-part-ref',
+            '_resolved_stream': 'http://127.0.0.1:8787/plex/stream/old-session',
+            'http_headers': {'X-Plex-Token': 'secret'},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(player, 'is_playing', lambda: True)
+    monkeypatch.setattr(player, 'mpv_get', lambda prop: 42.5)
+    monkeypatch.setattr(
+        player,
+        'stop_mpv',
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('Plex must resolve its replacement before stopping')
+        ),
+    )
+
+    def fake_play(item, **kwargs):
+        played.append({'item': dict(item), **kwargs})
+        return {'provider': 'plex', 'plex_item_id': item['plex_item_id']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.restart_current()
+
+    assert result == {'provider': 'plex', 'plex_item_id': 'opaque-item-ref'}
+    assert played[0]['item']['provider'] == 'plex'
+    assert played[0]['item']['plex_item_id'] == 'opaque-item-ref'
+    assert played[0]['item']['plex_part_id'] == 'opaque-part-ref'
+    assert played[0]['item']['url'] == 'https://plex.invalid/item'
+    assert '_resolved_stream' not in played[0]['item']
+    assert 'http_headers' not in played[0]['item']
+    assert played[0]['start_pos'] == 42.5
+
+
 def _patch_resolver_ytdlp_env(monkeypatch: pytest.MonkeyPatch, stdout: str) -> list[list[str]]:
     calls: list[list[str]] = []
 
@@ -6459,6 +6505,51 @@ def test_auto_next_skips_stale_iptv_channel_instead_of_blocking(monkeypatch: pyt
     result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
 
     # The stale IPTV item is skipped (not re-queued) so autoplay is not blocked.
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert play_calls == [good_item]
+    assert player.state.QUEUE == []
+
+
+@pytest.mark.parametrize('mode', ['auto_next', 'next'])
+def test_queue_advance_skips_stale_plex_item_in_every_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    from relaytv_app.integrations.plex_client import PlexError
+
+    play_calls: list[dict] = []
+    stale_plex = {
+        'url': 'https://plex.invalid/item',
+        'title': 'Deleted Plex title',
+        'provider': 'plex',
+        'plex_item_id': 'opaque-deleted-ref',
+    }
+    good_item = {'url': 'https://example.com/good.mp4', 'title': 'Good'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [stale_plex, good_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_emit_plex_timeline_from_now', lambda now, state_name: None)
+
+    def fake_play(item, **kwargs):
+        if item is stale_plex:
+            raise PlexError(
+                'plex_item_not_found',
+                'The Plex item is no longer available',
+                status_code=404,
+            )
+        play_calls.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode=mode, prefer_playlist_next=False)
+
     assert result['status'] == 'playing_next'
     assert result['skipped_unplayable'] == 1
     assert play_calls == [good_item]

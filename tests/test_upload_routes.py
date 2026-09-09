@@ -17,7 +17,17 @@ def test_ingest_media_enqueue_route_uploads_and_queues(monkeypatch, tmp_path) ->
     monkeypatch.setenv("RELAYTV_UPLOADS_DIR", str(uploads_dir))
     monkeypatch.setattr(upload_store, "_UPLOADS_ROOT", str(uploads_dir), raising=False)
     monkeypatch.setattr(routes.state, "QUEUE", [], raising=False)
-    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.com/current.mp4"}, raising=False)
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {
+            "url": "https://jellyfin.example/Videos/current?api_key=now-secret",
+            "provider": "jellyfin",
+            "_resolved_stream": "https://jellyfin.example/stream?api_key=stream-secret",
+            "http_headers": {"X-Emby-Token": "header-secret"},
+        },
+        raising=False,
+    )
     monkeypatch.setattr(routes.state, "persist_queue", lambda: persist_calls.append(True))
     monkeypatch.setattr(routes.player, "prefetch_queue_item_stream", lambda item: prefetch_calls.append(dict(item)))
     monkeypatch.setattr(routes.player, "prime_mpv_up_next_from_queue", lambda force=False: prime_calls.append(bool(force)))
@@ -37,6 +47,10 @@ def test_ingest_media_enqueue_route_uploads_and_queues(monkeypatch, tmp_path) ->
     assert body["item"]["provider"] == "upload"
     assert body["result"]["status"] == "queued"
     assert body["result"]["queue_length"] == 1
+    assert body["result"]["now_playing"]["url"] == "https://jellyfin.example/Videos/current"
+    assert "now-secret" not in response.text
+    assert "stream-secret" not in response.text
+    assert "header-secret" not in response.text
     assert routes.state.QUEUE[0]["provider"] == "upload"
     assert persist_calls == [True]
     assert prefetch_calls[0]["provider"] == "upload"

@@ -1086,19 +1086,15 @@ def control_socket_identity_headers(status_snapshot: dict[str, object] | None = 
     """Identify the cast device during the websocket HTTP handshake.
 
     The socket URL carries the credential as ``?api_key=``, while this header
-    gives Jellyfin the configured display name. For a shared API-key session
-    this header stays token-free on purpose: Jellyfin deliberately owns that
-    session's client label (the API key name) and keeps it userless, and
-    including the token here would duplicate the secret and take that back.
+    gives Jellyfin the configured display name and the same credential.
 
     Some Jellyfin builds don't accept the query-string credential at all for
     ``/socket`` ("Token is required", even though the same token works fine
     on every REST endpoint) and only read it from this header's ``Token``
     component - the same header-only quirk already worked around for login
-    and catalog requests elsewhere in this module. A user-login session has
-    no shared label to protect, so it carries the token here to survive that
-    server behavior; a shared API-key session keeps relying on the query
-    string alone, preserving its existing anonymous-session behavior.
+    and catalog requests elsewhere in this module. Both supported auth modes
+    carry their selected control credential here so the cast target works on
+    those builds as well as servers that accept the query string.
     """
     st = status_snapshot if isinstance(status_snapshot, dict) else status()
 
@@ -1118,10 +1114,11 @@ def control_socket_identity_headers(status_snapshot: dict[str, object] | None = 
         f'DeviceId="{device_id}", '
         f'Version="{client_version}"'
     )
-    if str(st.get("auth_mode") or "").strip().lower() == "user_login":
-        token = str(_ACCESS_TOKEN or "").strip()
-        if token:
-            auth = f'{auth}, Token="{token}"'
+    auth_mode = str(st.get("auth_mode") or "").strip().lower()
+    with _LOCK:
+        token = str(_API_KEY if auth_mode == "shared_api_key" else _ACCESS_TOKEN).strip()
+    if token:
+        auth = f'{auth}, Token="{token}"'
     return {"Authorization": auth}
 
 

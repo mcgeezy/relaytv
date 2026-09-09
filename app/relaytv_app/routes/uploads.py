@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import player, playback_service, state, upload_store
+from .. import player, playback_service, public_media, state, upload_store
 from ..debug import get_logger
 
 
@@ -149,7 +149,14 @@ def _enqueue_uploaded_media_url(url: str) -> dict:
     except Exception:
         pass
     _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="ingest_media_enqueue")
-    return {"status": "queued", "item": item, "queue_length": qlen, "now_playing": state.NOW_PLAYING}
+    return {
+        "status": "queued",
+        "item": public_media.public_media_item(upload_store.annotate_item(item)),
+        "queue_length": qlen,
+        "now_playing": public_media.public_media_item(
+            upload_store.annotate_item(state.NOW_PLAYING)
+        ),
+    }
 
 
 @router.post("/ingest/media")

@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, state, upload_store, ytdlp_update
+from .. import player, public_media, state, upload_store, ytdlp_update
 from ..config import (
     SEERR_REQUEST_MODES,
     normalize_seerr_request_mode,
@@ -595,7 +595,7 @@ def update_settings(req: SettingsReq):
         "apply_performed": apply_performed,
         "apply_succeeded": apply_succeeded,
         "settings": _settings_for_client(updated),
-        "now_playing": now,
+        "now_playing": public_media.public_media_item(upload_store.annotate_item(now)),
         "live_applied": live_applied,
         "live_apply_failed": live_apply_failed,
         "restart_sensitive_pending": restart_sensitive_pending,
