@@ -1085,14 +1085,20 @@ def control_token() -> str:
 def control_socket_identity_headers(status_snapshot: dict[str, object] | None = None) -> dict[str, str]:
     """Identify the cast device during the websocket HTTP handshake.
 
-    The socket URL carries the credential, while this token-free header gives
-    Jellyfin the configured display name. Without it, an API-key websocket is
-    created as the server itself and falls back to DeviceId for its name, so
-    the cast menu shows e.g. ``Jellyfin Server - relaytv-...``.
+    The socket URL carries the credential as ``?api_key=``, while this header
+    gives Jellyfin the configured display name. For a shared API-key session
+    this header stays token-free on purpose: Jellyfin deliberately owns that
+    session's client label (the API key name) and keeps it userless, and
+    including the token here would duplicate the secret and take that back.
 
-    Jellyfin deliberately owns the API-key session's client label (the API key
-    name) and keeps the session userless. Keeping the token out of this header
-    preserves that shared-session behavior and avoids duplicating the secret.
+    Some Jellyfin builds don't accept the query-string credential at all for
+    ``/socket`` ("Token is required", even though the same token works fine
+    on every REST endpoint) and only read it from this header's ``Token``
+    component - the same header-only quirk already worked around for login
+    and catalog requests elsewhere in this module. A user-login session has
+    no shared label to protect, so it carries the token here to survive that
+    server behavior; a shared API-key session keeps relying on the query
+    string alone, preserving its existing anonymous-session behavior.
     """
     st = status_snapshot if isinstance(status_snapshot, dict) else status()
 
@@ -1106,14 +1112,17 @@ def control_socket_identity_headers(status_snapshot: dict[str, object] | None = 
     device_name = _component("device_name", "RelayTV")
     device_id = _component("device_id", "relaytv")
     client_version = _component("client_version", "1.0")
-    return {
-        "Authorization": (
-            f'MediaBrowser Client="{client_name}", '
-            f'Device="{device_name}", '
-            f'DeviceId="{device_id}", '
-            f'Version="{client_version}"'
-        )
-    }
+    auth = (
+        f'MediaBrowser Client="{client_name}", '
+        f'Device="{device_name}", '
+        f'DeviceId="{device_id}", '
+        f'Version="{client_version}"'
+    )
+    if str(st.get("auth_mode") or "").strip().lower() == "user_login":
+        token = str(_ACCESS_TOKEN or "").strip()
+        if token:
+            auth = f'{auth}, Token="{token}"'
+    return {"Authorization": auth}
 
 
 def _catalog_token_locked() -> str:
@@ -3023,15 +3032,20 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
     payload = {"Username": username, "Pw": password}
     req = _urlrequest.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header(
-        "X-Emby-Authorization",
-        (
-            f'MediaBrowser Client="{client_name}", '
-            f'Device="{device_name}", '
-            f'DeviceId="{device_id}", '
-            f'Version="{client_version}"'
-        ),
+    # Jellyfin reads the standard Authorization header for the client-identity
+    # fields (App/Device/DeviceId) and ignores X-Emby-Authorization when it's
+    # the only one present. Sending X-Emby-Authorization alone leaves
+    # request.App null server-side, which crashes AuthenticateByName with a
+    # 400 for every login attempt regardless of credentials. Send both, as
+    # _emby_identity_headers already does for catalog requests.
+    identity_auth = (
+        f'MediaBrowser Client="{client_name}", '
+        f'Device="{device_name}", '
+        f'DeviceId="{device_id}", '
+        f'Version="{client_version}"'
     )
+    req.add_header("Authorization", identity_auth)
+    req.add_header("X-Emby-Authorization", identity_auth)
     timeout = float(os.getenv("RELAYTV_JELLYFIN_AUTH_TIMEOUT_SEC", "5"))
     try:
         with _urlrequest.urlopen(req, timeout=timeout) as resp:
