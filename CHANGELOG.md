@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.11.0](https://github.com/mcgeezy/relaytv/compare/v0.10.3...v0.11.0) (2026-09-10)
+
+
+### Features
+
+* add Plex integration ([ed05063](https://github.com/mcgeezy/relaytv/commit/ed0506364394fe84f6e960335e67f8de6d76a1b0))
+
+
+### Bug Fixes
+
+* harden integration settings and playback ([#95](https://github.com/mcgeezy/relaytv/issues/95)) ([26176f5](https://github.com/mcgeezy/relaytv/commit/26176f5f29bffe951e7cd19d09ac51e41b5eb40c))
+* restore recognizable local provider icons ([#90](https://github.com/mcgeezy/relaytv/issues/90)) ([4c95b3a](https://github.com/mcgeezy/relaytv/commit/4c95b3a412ef031ba9e316b01baedd248d219e59))
+* send Jellyfin token via Authorization header for login and control socket ([#94](https://github.com/mcgeezy/relaytv/issues/94)) ([2e509b5](https://github.com/mcgeezy/relaytv/commit/2e509b5af6b97f5b20cfbeeb4b2b294198582385))
+
+
+### Documentation
+
+* add 0.11.0 release highlight ([#96](https://github.com/mcgeezy/relaytv/issues/96)) ([4f60619](https://github.com/mcgeezy/relaytv/commit/4f60619d7466d08dafdba7c7f6037c5ea84e8f45))
+
 ## [0.10.3](https://github.com/mcgeezy/relaytv/compare/v0.10.2...v0.10.3) (2026-09-05)
 
 
