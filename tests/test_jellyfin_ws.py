@@ -257,8 +257,8 @@ def test_socket_url_carries_the_token_and_device() -> None:
     assert jellyfin_ws.socket_url(server_url="http://jf.lan:8096", token="", device_id="d") == ""
 
 
-def test_socket_handshake_identifies_the_display_device_without_repeating_the_token(monkeypatch) -> None:
-    """API-key sockets otherwise inherit the server name and opaque DeviceId."""
+def test_socket_handshake_identifies_device_and_sends_shared_key_header(monkeypatch) -> None:
+    """Some Jellyfin servers accept websocket credentials only in the header."""
     seen: dict[str, object] = {}
 
     class _Conn:
@@ -286,8 +286,10 @@ def test_socket_handshake_identifies_the_display_device_without_repeating_the_to
             "device_name": "Living Room",
             "client_name": "RelayTV",
             "client_version": "1.0",
+            "auth_mode": "shared_api_key",
         },
     )
+    monkeypatch.setattr(jellyfin_receiver, "_API_KEY", "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "control_token", lambda: "shared-api-key")
     monkeypatch.setattr(jellyfin_receiver, "invalidate_registration", lambda reason="": None)
 
@@ -303,10 +305,9 @@ def test_socket_handshake_identifies_the_display_device_without_repeating_the_to
     assert headers == {
         "Authorization": (
             'MediaBrowser Client="RelayTV", Device="Living%20Room", '
-            'DeviceId="relaytv-stable", Version="1.0"'
+            'DeviceId="relaytv-stable", Version="1.0", Token="shared-api-key"'
         )
     }
-    assert "shared-api-key" not in str(headers)
 
 
 def test_the_access_token_never_reaches_status_or_logs(caplog) -> None:

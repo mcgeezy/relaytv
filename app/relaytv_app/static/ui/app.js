@@ -2905,7 +2905,9 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
       option.textContent = `${server.name || 'Plex Media Server'}${local ? ' · local' : ''}${server.owned ? ' · owned' : ''}`;
       serverSelect.appendChild(option);
     }
-    serverSelect.value = String((selected && selected.machine_id) || cur.plex_server_machine_id || '');
+    const selectedMachineId = String((selected && selected.machine_id) || cur.plex_server_machine_id || '');
+    serverSelect.value = selectedMachineId;
+    serverSelect.setAttribute('data-selected-machine-id', selectedMachineId);
   }
   const testBtn = document.getElementById('setPlexTestBtn');
   if (testBtn) testBtn.disabled = !selected;
@@ -3463,6 +3465,21 @@ function bindSettingsUi(){
     plexApplyMsg.textContent = text || '';
   }
 
+  async function selectPlexServerIfChanged(machineId){
+    const serverSelect = document.getElementById('setPlexServer');
+    const selectedMachineId = String(serverSelect?.getAttribute('data-selected-machine-id') || '').trim();
+    if (!machineId || machineId === selectedMachineId) return false;
+    const response = await fetch('/integrations/plex/server', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({machine_id:machineId}),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
+    if (serverSelect) serverSelect.setAttribute('data-selected-machine-id', machineId);
+    return true;
+  }
+
   async function applyPlexOnly(){
     const enabled = !!document.getElementById('setPlexEnabled')?.checked;
     const machineId = String(document.getElementById('setPlexServer')?.value || '').trim();
@@ -3472,6 +3489,7 @@ function bindSettingsUi(){
     if (plexTestBtn) plexTestBtn.disabled = true;
     setPlexMessage('Applying Plex settings…');
     try {
+      await selectPlexServerIfChanged(machineId);
       const settingsResponse = await fetch('/settings', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -3484,15 +3502,6 @@ function bindSettingsUi(){
       });
       const settingsBody = await settingsResponse.json().catch(() => ({}));
       if (!settingsResponse.ok) throw new Error(_plexErrorMessage(settingsBody, settingsResponse.status));
-      if (machineId) {
-        const serverResponse = await fetch('/integrations/plex/server', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({machine_id:machineId}),
-        });
-        const serverBody = await serverResponse.json().catch(() => ({}));
-        if (!serverResponse.ok) throw new Error(_plexErrorMessage(serverBody, serverResponse.status));
-      }
       await loadSettingsUi();
       setPlexMessage(enabled ? 'Plex settings applied.' : 'Plex disabled.', 'ok');
       return true;
@@ -3732,6 +3741,7 @@ function bindSettingsUi(){
     const jfSubLang = (document.getElementById('setJfSubLang')?.value || '').trim().toLowerCase();
     const jfPlaybackMode = (document.getElementById('setJfPlaybackMode')?.value || 'auto').trim().toLowerCase();
     const plexEnabled = !!document.getElementById('setPlexEnabled')?.checked;
+    const plexMachineId = String(document.getElementById('setPlexServer')?.value || '').trim();
     const plexPlaybackMode = String(document.getElementById('setPlexPlaybackMode')?.value || 'auto').trim().toLowerCase();
     const plexMaxBitrate = Number(document.getElementById('setPlexMaxBitrate')?.value || '0');
     const seerrEnabled = !!document.getElementById('setSeerrEnabled')?.checked;
@@ -3818,6 +3828,12 @@ function bindSettingsUi(){
     if (jfPass || jfClearPw) payload.jellyfin_password = jfClearPw ? '' : jfPass;
     if (seerrApiKey) payload.seerr_api_key = seerrApiKey;
     if (seerrClearApiKey) payload.seerr_api_key_clear = true;
+    try {
+      await selectPlexServerIfChanged(plexMachineId);
+    } catch (error) {
+      alert(error && error.message ? error.message : 'Failed to select Plex server');
+      return;
+    }
     const r = await fetch('/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     if (!r.ok) {
       alert('Failed to save settings');

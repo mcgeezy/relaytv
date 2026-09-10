@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from fastapi.testclient import TestClient
 
+from relaytv_app import state
 from relaytv_app.integrations import plex_auth, plex_service
 from relaytv_app.integrations.plex_client import PlexBinaryResponse, PlexStreamResponse
 from relaytv_app.main import create_app
@@ -88,6 +89,43 @@ def test_plex_errors_keep_upstream_secrets_out_of_route_response(monkeypatch) ->
         "message": "Plex authentication has expired; link the account again",
     }
     assert "498" not in response.text
+
+
+def test_plex_server_change_is_blocked_during_active_plex_playback(monkeypatch) -> None:
+    select_calls: list[str] = []
+    monkeypatch.setattr(
+        plex_auth.auth_manager,
+        "status",
+        lambda: {"server": {"machine_id": "server-1", "name": "Living Room"}},
+    )
+    monkeypatch.setattr(
+        plex_auth.auth_manager,
+        "select_server",
+        lambda machine_id: select_calls.append(machine_id) or {},
+    )
+    monkeypatch.setattr(state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(
+        state,
+        "NOW_PLAYING",
+        {"provider": "plex", "plex_item_id": "opaque-item"},
+        raising=False,
+    )
+    client = TestClient(create_app(testing=True))
+
+    unchanged = client.post(
+        "/integrations/plex/server",
+        json={"machine_id": "server-1"},
+    )
+    changed = client.post(
+        "/integrations/plex/server",
+        json={"machine_id": "server-2"},
+    )
+
+    assert unchanged.status_code == 200
+    assert unchanged.json()["server"]["machine_id"] == "server-1"
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "plex_playback_active"
+    assert select_calls == []
 
 
 def test_plex_catalog_routes_are_bounded_and_non_cacheable(monkeypatch) -> None:
