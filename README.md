@@ -44,8 +44,10 @@ notifications beside the screen.
 
 ### 🎬 Browse
 
-Explore Jellyfin or Emby from a responsive library built for phones and
-desktops, then launch playback on the connected display. Connect Seerr to
+Explore Plex, Jellyfin, or Emby from a responsive library built for phones and
+desktops, then launch playback on the connected display. Plex adds secure
+account linking, direct server discovery, version and track choices, resume,
+queueing, and automatic, direct, or transcoded playback. Connect Seerr to
 discover upcoming movies and series, follow request status, and request them
 under an explicit administrator or caller-specific identity. Bring optional
 IPTV playlists, curate **My Channels**, and favorite live sources you use.
@@ -137,6 +139,9 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
   services, automations, and dashboard workflows.
 - **[RelayTV for Android](https://github.com/mcgeezy/relaytv-android)** — share
   links directly to the TV and control playback from your phone.
+- **Plex** — secure account linking and server selection, responsive Home,
+  Movies, TV, search, season and episode browsing, media and track choices,
+  resume, queue, direct-play, and transcoding workflows.
 - **Jellyfin and Emby** — responsive Home, Movies, TV, series, season, episode,
   search, resume, and queue workflows.
 - **Seerr** — discovery, search, request tracking, deliberately selected
@@ -156,12 +161,13 @@ API directly to the public internet.
 | --- | --- |
 | [Installation](docs/INSTALL.md) | [HTTP API](docs/API.md) |
 | [Native runtime operations](docs/NATIVE_RUNTIME_OPERATIONS.md) | [Jellyfin/Emby operations](docs/JELLYFIN_OPERATIONS.md) |
-| [IPTV operations](docs/IPTV_OPERATIONS.md) | [Seerr operations](docs/SEERR_OPERATIONS.md) |
-| [Device sync operations](docs/DEVICE_SYNC_OPERATIONS.md) | [Architecture](docs/ARCHITECTURE.md) |
-| [Public documentation](https://relaytv.app/docs/) | [Release process](docs/RELEASE.md) |
+| [Plex operations](docs/PLEX_OPERATIONS.md) | [IPTV operations](docs/IPTV_OPERATIONS.md) |
+| [Seerr operations](docs/SEERR_OPERATIONS.md) | [Device sync operations](docs/DEVICE_SYNC_OPERATIONS.md) |
+| [Architecture](docs/ARCHITECTURE.md) | [Release process](docs/RELEASE.md) |
+| [Public documentation](https://relaytv.app/docs/) | [Documentation map](docs/README.md) |
 
-The [documentation map](docs/README.md) links the remaining runbooks and
-machine-checked inventories.
+The documentation map links the remaining runbooks and machine-checked
+inventories.
 
 ## Project and support
 

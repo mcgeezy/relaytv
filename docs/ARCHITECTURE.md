@@ -14,10 +14,11 @@ milestone logs live in git history.
   helpers and cross-domain glue.
 - `app/relaytv_app/static/ui/`: browser UI assets loaded by `/ui`.
   `app.js`/`app.css` own the shared remote, `jellyfin.js`/`jellyfin.css` own
-  the Jellyfin/Emby browse shell, `seerr.js`/`seerr.css` own the Seerr discovery
-  and request shell, and `peers.js`/`peers.css` own the send-to-device sheet.
-  These controllers consume public route payloads and do not own catalog,
-  request-policy, or playback product behavior.
+  the Jellyfin/Emby browse shell, `plex.js`/`plex.css` own the Plex browse
+  shell, `seerr.js`/`seerr.css` own the Seerr discovery and request shell, and
+  `peers.js`/`peers.css` own the send-to-device sheet. These controllers consume
+  public route payloads and do not own catalog, request-policy, or playback
+  product behavior.
 - `app/relaytv_app/config.py`: runtime config service — typed env
   parsing, the settings bus, and the explicit subprocess env-mirroring
   boundary. Runtime code reads configuration through it instead of
@@ -78,6 +79,18 @@ milestone logs live in git history.
   owns its threads, queue, and stop flag, and configuration changes run as
   transactions that suspend the socket — a retired generation can never be
   restarted, publish status, or reach the player.
+- `app/relaytv_app/integrations/plex_auth.py`: Plex device identity, account
+  linking and renewal, server discovery and selection, encrypted reference
+  keys, and credential generation checks. Private account and server state is
+  stored separately from ordinary settings.
+- `app/relaytv_app/integrations/plex_client.py`: bounded Plex HTTP transport
+  and secret-safe upstream error mapping.
+- `app/relaytv_app/integrations/plex_service.py`: Plex catalog normalization,
+  encrypted item/artwork/media references, playback decisions, direct relay,
+  transcoding, seeking, and timeline reporting.
+- `app/relaytv_app/routes/plex.py`: the public Plex account, catalog, artwork,
+  playback, and stream-relay endpoints. It accepts and returns opaque
+  references; upstream paths and tokens stay inside the integration services.
 - `app/relaytv_app/integrations/seerr_client.py`: immutable Seerr configuration
   snapshots and secret-safe HTTP transport. It bounds requests and response
   bodies, rejects cross-origin redirects, and maps upstream failures into safe
@@ -94,10 +107,6 @@ milestone logs live in git history.
   request models. Playback enters through the Jellyfin command sink and the
   established playback service; neither the route nor Seerr service writes
   playback globals.
-- Jellyfin shared-cast commands expose an initiating controller identity, but
-  RelayTV does not yet switch catalog/watch-state attribution per caller.
-  `jellyfin_auth_mode=user_login` is one operator-configured account, not a
-  caller session; dynamic caller attribution remains an open product follow-up.
 - `scripts/`: install, doctor, host operations, and release support.
 
 ## Concurrency Boundaries
@@ -116,7 +125,7 @@ milestone logs live in git history.
 
 ## Machine-Checked Guardrails
 
-Each boundary above is pinned by a test; three of them regenerate a
+Each boundary above is pinned by a test; five of them regenerate a
 companion inventory doc (rerun with the test's `--write` mode after
 intentional changes and commit the diff):
 
@@ -132,6 +141,9 @@ intentional changes and commit the diff):
 - Jellyfin route surface: `tests/test_jellyfin_inventory.py` →
   `JELLYFIN_INVENTORY.md`. Product logic belongs in
   `jellyfin_service.py`; the receiver stays transport-only.
+- Plex route surface: `tests/test_plex_inventory.py` →
+  `PLEX_INVENTORY.md`. Route registration stays in `routes/plex.py`; account,
+  transport, and product behavior stay in the Plex integration modules.
 - Runtime profiles: `tests/test_runtime_matrix.py` →
   `OPERATIONS_TEST_MATRIX.md` decision table.
 
@@ -174,16 +186,20 @@ indefinitely is preferable to breaking slowly updated companion installations.
 
 Carried from the review, in rough value order:
 
-1. Extend the checked-in browser smoke beyond the Jellyfin, IPTV, and
+1. Define caller-specific authorization and watch-state attribution for shared
+   Jellyfin casts. The API-key receiver remains userless, and
+   `jellyfin_auth_mode=user_login` is one operator-configured account rather
+   than the initiating controller's identity.
+2. Extend the checked-in browser smoke beyond the Jellyfin, Plex, IPTV, and
    send-to-device shells to settings, general queue actions, and the remaining
    `/ui` surfaces.
-2. Versioned models for queue/history/session/settings — migrations
+3. Versioned models for queue/history/session/settings — migrations
    remain implicit.
-3. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle
+4. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle
    behavior, status payload construction).
-4. Consolidate provider/URL classification, still duplicated between
+5. Consolidate provider/URL classification, still duplicated between
    resolver and player paths.
-5. Keep splitting `test_smoke.py` by behavior.
+6. Keep splitting `test_smoke.py` by behavior.
 
 ## Non-Goals
 

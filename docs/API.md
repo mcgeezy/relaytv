@@ -522,7 +522,7 @@ Send:
   - `move` drops only what the peer **accepted**, matched atomically by stable
     queue ID when the response arrives, never by position or URL. Accepted
     entries are removed even if reordered; already-removed entries are ignored.
-    Rejected items, items that could not travel (IPTV), and unsent entries
+    Rejected items, items that could not travel (IPTV or Plex), and unsent entries
     (including duplicates of a sent URL) stay local. If a peer reports no per-item
     results and its `accepted` count does not cover everything sent, nothing is
     dropped locally
@@ -530,8 +530,9 @@ Send:
     when all displayed items are selected; additions after submission are not
     included. Omitting selectors remains supported for other API clients
   - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
-  - IPTV items are reported in `rejected`, not sent: their stream URLs may
-    carry credentials anywhere in the path, so no portable URL exists
+  - IPTV and Plex items are reported in `rejected`, not sent. IPTV stream URLs
+    may carry credentials anywhere in the path; Plex references are encrypted
+    for the sending device's linked account and selected server
 - `POST /peers/{peer_id}/handoff`
   - body: `{"queue_ids"?, "indexes"?, "keep_local"?}`; an empty body (or none)
     hands over the current playback plus the whole queue and stops here
@@ -542,8 +543,9 @@ Send:
     so both devices play the same thing from the same position. This is the UI's
     **Copy**; it defaults to `false` so an unasked-for handoff still moves the
     session rather than duplicating it
-  - `409` when nothing is playing. IPTV sessions cannot be handed off: their
-    stream URLs are re-resolved from a local catalog the peer does not have
+  - `409` when nothing is playing. IPTV and Plex sessions cannot be handed off:
+    IPTV streams come from a local catalog the peer does not have, and Plex
+    references are bound to the sending device's account and server
   - ordering is deliberate — playback stops locally only after the peer reports
     it took over, so a failed handoff leaves this device playing
   - without `keep_local` the local session is cleared, not closed: the session
@@ -712,6 +714,11 @@ native Qt control surface.
     - `jellyfin_playback_mode`
     - `jellyfin_server_type` (`jellyfin | emby`; normally set by server-type
       detection, not by hand)
+    - `plex_enabled`
+    - `plex_server_machine_id`
+    - `plex_playback_mode` (`auto | direct | transcode`)
+    - `plex_max_bitrate` (`0 | 4000 | 8000 | 12000 | 20000`; kilobits per
+      second, with `0` meaning original quality)
     - `seerr_enabled`
     - `seerr_server_url`
     - `seerr_api_key` (write-only; an empty value preserves the stored key)
@@ -786,7 +793,8 @@ personal-library browsing, direct playback, and server transcoding. See
 - `GET /plex/servers`: returns sanitized directly reachable Plex servers for
   the linked account
 - `POST /integrations/plex/server`: selects and identity-checks a server by
-  machine ID
+  machine ID; changing servers while Plex is actively playing returns `409`
+  so the current direct relay or transcode is not invalidated
 - `POST /integrations/plex/test`: probes the saved server and reports its PMS
   version
 - `GET /plex/home`: returns normalized video rows from the selected server;
