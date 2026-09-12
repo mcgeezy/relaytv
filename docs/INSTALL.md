@@ -1,7 +1,7 @@
 # Install
 
 RelayTV supports a native Qt desktop runtime by default. Rollback for a broken
-runtime rollout is a tagged-baseline redeploy, not a parallel compatibility
+runtime rollout is an immutable release-image redeploy, not a parallel compatibility
 runtime.
 
 Supported default product profiles:
@@ -227,9 +227,11 @@ Examples:
 # force native Qt explicitly
 ./scripts/install.sh --mode wayland --native-qt
 
-# redeploy a tagged native baseline explicitly
-git checkout native-qt-baseline
-./scripts/install.sh --mode wayland --native-qt
+# deploy a known-good immutable release image
+RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:vX.Y.Z \
+  ./scripts/install.sh --mode wayland --native-qt
+docker compose pull relaytv
+docker compose up -d relaytv
 ```
 
 Decommission note:
