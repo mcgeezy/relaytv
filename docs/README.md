@@ -16,7 +16,7 @@ release branch.
 - `IPTV_OPERATIONS.md`: M3U sources, free-provider discovery, favorites,
   availability, credential handling, and troubleshooting
 - `PLEX_OPERATIONS.md`: Plex account linking, server selection, credential
-  storage, connection verification, and troubleshooting
+  storage, library browsing, playback modes, verification, and troubleshooting
 - `DEVICE_SYNC_OPERATIONS.md`: sending a queue or the running playback to
   another RelayTV device — adding devices, mDNS discovery requirements, peer
   token handling, what can travel between devices, and troubleshooting
@@ -47,12 +47,7 @@ mode after intentional changes and commit the diff):
 The public route surface is pinned directly in
 `tests/test_route_inventory.py` (hand-maintained, no companion doc).
 
-## Rule
-
-The maintainer-requested [Plex integration plan](PLEX_INTEGRATION_PLAN.md)
-is an explicit exception to the rule below. It records research, implementation
-status, proposed phases, and validation gates while the integration is built
-in the unified Plex PR.
+## Documentation rule
 
 Development history, migration notes, roadmaps, deep validation notes, and
 engineering-only guidance stay out of the public documentation tree (they
