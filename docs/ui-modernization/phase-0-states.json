@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-13T21:13:56.507Z",
+  "baseUrl": "http://127.0.0.1:8787",
+  "mode": "full",
+  "runner": {
+    "playwright": "1.62.0",
+    "browser": "chromium",
+    "browserVersion": "151.0.7922.34",
+    "platform": "linux/x64"
+  },
+  "fixtures": "All displayed media, account, device, provider, and network values are deterministic examples.",
+  "screenshots": [
+    "fixture-playing-queue-phone.png",
+    "fixture-queue-menu-phone.png",
+    "fixture-live-unseekable-phone.png",
+    "fixture-history-desktop.png",
+    "fixture-audio-tracks-desktop.png",
+    "fixture-subtitle-tracks-desktop.png",
+    "fixture-peer-transfer-desktop.png",
+    "fixture-jellyfin-desktop.png",
+    "fixture-jellyfin-detail-desktop.png",
+    "fixture-plex-desktop.png",
+    "fixture-plex-detail-desktop.png",
+    "fixture-iptv-desktop.png",
+    "fixture-seerr-desktop.png",
+    "fixture-seerr-detail-desktop.png",
+    "fixture-command-connection-failure-phone.png",
+    "fixture-reconnecting-phone.png",
+    "fixture-overlay-notification-1600x900.png"
+  ],
+  "assertions": {
+    "queueItems": 3,
+    "queueMenuActions": [
+      "Play now",
+      "Send to device",
+      "Remove"
+    ],
+    "liveProgressDisabled": "true",
+    "jellyfinItems": 3,
+    "jellyfinDetail": "Fixture movie",
+    "plexItems": 3,
+    "plexDetail": "Fixture Plex movie",
+    "iptvItems": 3,
+    "seerrItems": 3,
+    "seerrDetail": "Fixture discovery movie",
+    "connectionFailure": "Command failed — check connection",
+    "reconnecting": "Reconnecting…",
+    "overlayToasts": 1
+  },
+  "authorization": [
+    {
+      "accept": true,
+      "attempts": 2,
+      "authorized": true,
+      "stored": "[stored]"
+    },
+    {
+      "accept": false,
+      "attempts": 1,
+      "authorized": false,
+      "stored": ""
+    }
+  ],
+  "errors": []
+}

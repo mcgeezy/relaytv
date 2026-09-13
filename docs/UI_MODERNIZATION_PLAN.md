@@ -26,9 +26,10 @@ The review inspected source, existing tests, browser smoke scripts, and the
 checked-in remote and TV product screenshots. Those screenshots are illustrative
 and may predate the current source. A live browser audit and runtime inventory
 are now recorded in the
-[phase 0 baseline](ui-modernization/PHASE_0_BASELINE.md). Hardware interaction
-and the remaining deterministic state captures stay open until their evidence
-rows are complete.
+[phase 0 baseline](ui-modernization/PHASE_0_BASELINE.md). Deterministic browser
+surface and state captures are complete. Physical phone/PWA interaction, NUC
+native visuals, and active Pi playback, notification, and input checks remain
+open until their evidence rows are complete.
 
 | Surface | Current implementation | Proposed improvement |
 | --- | --- | --- |
