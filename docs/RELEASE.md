@@ -87,18 +87,30 @@ release pull request. That pull request owns:
 - the `pyproject.toml` version bump
 - the `.release-please-manifest.json` version update
 
-This repository was bootstrapped from the current `0.1.0` source baseline, so
+This repository was bootstrapped from the `0.1.0` source baseline, so
 the first Release Please run starts changelog collection at the configured
 `bootstrap-sha` instead of importing the entire pre-automation history.
 
+### Release Highlights
+
+Most releases use only the generated changelog. When a release contains a
+notable user-facing feature that warrants a short lead-in, add
+`docs/release-highlights/<version>.md` in the feature pull request, using the
+version without the leading `v`. Keep it to a heading and a couple of
+sentences, and end it with a `---` rule.
+
+After the release image is published, the workflow places the highlight below
+the hero image and above the generated notes. The file affects only the GitHub
+Release body; Release Please continues to own `CHANGELOG.md`.
+
 When the release pull request is merged, Release Please creates a draft GitHub
-Release and source tag, for example `v0.2.0`. The release workflow then builds
+Release and source tag, for example `vX.Y.Z`. The release workflow then builds
 and publishes immutable GHCR image tags:
 
 ```text
-ghcr.io/mcgeezy/relaytv:v0.2.0
-ghcr.io/mcgeezy/relaytv:0.2.0
-ghcr.io/mcgeezy/relaytv:0.2
+ghcr.io/mcgeezy/relaytv:vX.Y.Z
+ghcr.io/mcgeezy/relaytv:X.Y.Z
+ghcr.io/mcgeezy/relaytv:X.Y
 ghcr.io/mcgeezy/relaytv:latest
 ```
 

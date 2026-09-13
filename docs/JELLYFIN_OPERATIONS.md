@@ -336,7 +336,7 @@ changes):
    "Jellyfin"; full browse/play/progress flow re-verified;
    `PYTHONPATH=app pytest -q` green.
 
-## Settings UI Credentials (Current)
+## Settings UI Credentials
 
 RelayTV Settings now supports Jellyfin credential and playback policy management directly:
 
@@ -504,11 +504,11 @@ Use one of these paths instead:
    - first play command is accepted (no stale dedupe suppression)
    - playback controls still work (`Pause/Unpause/Seek/Stop`).
 
-## Final Validation
+## Validation Checklists
 
 Use this section instead of a separate Jellyfin checklist document.
 
-### Product-Branch Validation
+### Browser Validation
 
 ```bash
 cd /path/to/relaytv

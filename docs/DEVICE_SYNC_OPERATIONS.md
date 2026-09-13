@@ -18,9 +18,10 @@ the same thing; they differ only in what happens on *this* device:
 | **Copy** | Identical, except nothing here changes: both devices end up playing. |
 
 Under the device list, **What to send** lists what is playing plus every queue
-item, all selected. Tap a row's circle to leave it out. Live TV channels are
-listed but cannot be selected — their stream URLs can carry credentials, so they
-never leave the device.
+item, all selected. Tap a row's circle to leave it out. Live TV channels and
+Plex items are listed but cannot be selected. Live TV URLs can carry
+credentials, while Plex references are encrypted for one device's linked
+account and selected server, so neither can be transferred safely.
 
 Leaving the now-playing row out turns either mode into a plain queue transfer:
 **Send** moves the selected items off this device, **Copy** duplicates them.
@@ -115,11 +116,14 @@ they never cross.
 | Jellyfin/Emby | Travels if the receiving device has a server configured. Otherwise reported as rejected. |
 | Uploaded media | Travels, and the receiving device streams the file from the sender over HTTP. It plays only while the sending device is reachable. |
 | IPTV channel | Does not travel. Reported as rejected. |
+| Plex item | Does not travel. Its encrypted reference belongs to the sending device's linked account and selected server. |
 
 IPTV is excluded on purpose: those stream URLs can carry credentials anywhere in
 the path, and they are re-resolved from a catalog the other device does not
-have. The same applies to a live channel that is playing — it cannot be sent,
-and the sheet shows the row greyed out rather than failing after the fact.
+have. Plex is also excluded because its opaque item reference cannot be
+resolved with another device's credentials. A live channel or Plex title that
+is playing cannot be sent, and the sheet shows the row greyed out rather than
+failing after the fact.
 
 Per-item outcomes come back with the response, so a partial transfer is
 reported rather than silently trimmed. The UI shows

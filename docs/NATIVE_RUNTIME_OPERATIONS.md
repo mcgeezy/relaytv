@@ -22,7 +22,7 @@ cd /path/to/relaytv
 
 Use `native-ready` as the main runtime gate. It exits non-zero when the live runtime does not match the expected native profile, when configured/effective backend diverge, or when expected visual runtime mode does not match active runtime mode.
 
-Phase 2 contract gate:
+Full acceptance gate:
 
 ```bash
 cd /path/to/relaytv
@@ -371,13 +371,15 @@ cd /path/to/relaytv
 
 Rollback is now a deploy-time action, not a live compat runtime path.
 
-Use the tagged native baseline (or a later known-good rollback tag) if a decommissioned sidecar path needs to be restored:
+Redeploy a known-good immutable release image when the current release needs
+to be rolled back:
 
 ```bash
 cd /path/to/relaytv
-git checkout native-qt-baseline
-./scripts/install.sh
-./scripts/host-ops.sh up --wayland-native --native-playback
+RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:vX.Y.Z \
+  ./scripts/install.sh --mode wayland --native-qt
+docker compose pull relaytv
+docker compose up -d relaytv
 ```
 
 No live compat runtime, sidecar wrapper, or compat validation wrapper remains in the active operator surface.

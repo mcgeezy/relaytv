@@ -1,4 +1,4 @@
-# Plex integration operations
+# Plex Integration Operations
 
 RelayTV's Plex integration provides account linking, direct server discovery,
 server selection, connection testing, personal-library browsing, and direct
@@ -34,7 +34,7 @@ playback of movie and episode media that the selected server exposes.
 RelayTV uses Plex's Ed25519 device-key and PIN flow. It does not collect a Plex
 password. Server discovery prefers direct local connections, with verified
 HTTPS connections preferred when a server advertises more than one local
-address. Relay connections are excluded in this phase.
+address. Relay connections are not supported.
 
 Catalog responses expose authenticated encrypted IDs tied to the linked
 account and selected server. Artwork is fetched by RelayTV with the saved
@@ -115,8 +115,9 @@ create its own device identity and Plex authorization.
   Server and that Remote Access or a local connection is available. Relays are
   intentionally omitted.
 - **Server selection fails:** open Plex once, confirm the server reports
-  online, then reload RelayTV settings. RelayTV rejects a connection whose
-  reported machine identifier does not match the selected server.
+  online, then reload RelayTV settings. Stop active Plex playback before
+  switching servers. RelayTV rejects a connection whose reported machine
+  identifier does not match the selected server.
 - **Playback reports a Plex upstream error while browsing still works:** test
   the selected server, then retry the title. RelayTV automatically replaces an
   older JWT-backed server record with the machine-matched PMS token needed by
@@ -142,77 +143,3 @@ create its own device identity and Plex authorization.
 - **A track choice requires conversion:** switch from **Direct play** to
   **Automatic** or **Always transcode**. RelayTV asks Plex to produce the
   selected audio and burn the selected subtitle into the video.
-
-## Exercised contract
-
-The initial contract was exercised on 2026-09-05 against Plex Media Server
-`1.43.3.10828-00f62d37d`. The server returned JSON for identity, media-provider
-features, two video library sections, account resources, and direct connection
-probing. Its account exposed one owned server with local secure connections;
-RelayTV selected one and verified the server machine identifier. A live modern
-PIN/JWK request returned the documented 30-minute strong-PIN response shape.
-
-The read-only catalog path was also exercised against that PMS: Home returned
-a Recently Added Movies row; library paging reported 286 movies; item detail,
-search, and a 131,340-byte JPEG artwork proxy response all completed. The
-sanitized RelayTV results contained no upstream `/library/` paths.
-
-On 2026-09-07 the browser matrix exercised the configured live library in
-Chromium at 390×844 and 1440×900. Both layouts returned 7 Home cards, 2 video
-libraries, a bounded 60-item movie page, working search and artwork, full-width
-poster metadata, arrow-key card movement, focus return after closing details,
-and no viewport overflow or unexpected HTTP/browser errors.
-
-The direct media relay contract was exercised against this PMS with a 1,024-byte
-range from a Matroska movie; PMS returned `206 Partial Content` and the
-expected content range. The same PMS accepted the complete universal media
-decision contract, returned a forced-conversion decision, served a
-`video/x-matroska` HTTP transcode, and accepted the matching explicit stop.
-Stock mpv decoded its first H.264/AAC frame through an isolated RelayTV route
-in 1.25 seconds, and RelayTV observed successful PMS cleanup. A live 4 Mbps
-decision kept a 1,092 Kbps HEVC file direct and selected transcoding for a
-21,516 Kbps file. Live native-runtime playback and arbitrary seek are now
-exercised on amd64 and Raspberry Pi hardware. Human-observed picture,
-sound quality, and lip sync, remux-only media, and Plex controller behavior are
-not yet claimed. Audio/subtitle selection and version revalidation are
-fixture-tested. A later live probe against PMS `1.43.3.10896-cb3ebc72d`
-selected one embedded subtitle, received a conversion stream, and read its
-first 262,144 bytes before RelayTV closed and cleaned up the session.
-Alternate-audio and external-subtitle acceptance remain.
-Timeline request shape,
-throttling, and lifecycle ordering are fixture-tested; a live watch-history
-mutation was deliberately left for playback acceptance.
-
-The runtime-profile boundary is fixture-tested for AV1 conversion and a
-copy-only PMS result is retained as remux. On the live 1080p display, the only
-above-cap title in the recent 50-item sample was HEVC Dolby Vision Profile 5;
-RelayTV requested conversion and PMS explicitly rejected that color space as
-unplayable instead of RelayTV attempting unsafe direct playback.
-
-With no active Plex or RelayTV playback, the YAMS PMS container was stopped
-between requests from one authenticated RelayTV client. RelayTV returned its
-sanitized unreachable error during the outage and the same client reconnected
-on the fourth one-second probe after startup. The machine identifier and PMS
-version were unchanged, and identity plus both video libraries were available
-afterward.
-
-A live forced-conversion probe requested a 600-second start offset. PMS
-accepted `600.0`, RelayTV read the first 262,144 bytes, then closed and cleaned
-up the transient session. Route tests verify relative and absolute conversion
-seeks, duration clamping, queue and track preservation, paused-state restore,
-and direct-file fallback. A driven supersession race verifies that a losing
-play releases the exact Plex transcode it prepared.
-
-An isolated RelayTV process also accepted an item reference minted by a second
-process and served the movie to stock mpv. A cold, null-output first-frame
-decode completed in 0.92 seconds without warnings.
-
-The unified branch subsequently ran through the production Qt backend on both
-amd64 and a Raspberry Pi. The Pi used its generated `arm_safe` Wayland/DRM,
-audio, and CEC configuration. Automatic mode directly played an H.264/EAC3
-Matroska item; Always transcode converted the same item. Both paths reached an
-active native runtime with advancing clocks. Pause/resume and absolute seek
-worked in both modes, the conversion clock retained its requested 45-second
-offset, Stop left zero PMS sessions, and the log contained no stream 404,
-`IncompleteRead`, ASGI exception, or traceback. Human-observed picture, sound
-quality, and lip sync plus Pi seamless replacement remain open acceptance.
