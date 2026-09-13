@@ -103,7 +103,10 @@ identifier, playback mode, and bitrate preference.
 Unlinking removes the linked account and server credentials from RelayTV. It
 does not currently revoke the device through Plex's account service. You can
 remove an authorization separately from the Plex account's authorized-device
-controls.
+controls. Stop active Plex playback before disabling the integration,
+unlinking the account, or changing the selected server. RelayTV returns `409`
+for those lifecycle changes while a Plex title is playing or paused so it does
+not invalidate the active loopback stream.
 
 When cloning a RelayTV data directory for another physical device, remove both
 `plex_auth.json` and `device_id` from the clone before startup. Each TV should

@@ -12,7 +12,7 @@ from ..config import (
     runtime_config,
 )
 from ..debug import get_logger
-from ..integrations import jellyfin_receiver, seerr_sessions
+from ..integrations import jellyfin_receiver, plex_auth, seerr_sessions
 from ..integrations.seerr_client import normalize_server_url
 
 
@@ -216,8 +216,35 @@ def clear_youtube_cookies():
     }
 
 
+PLEX_SETTING_KEYS = {
+    "plex_enabled",
+    "plex_server_machine_id",
+    "plex_playback_mode",
+    "plex_max_bitrate",
+}
+
+
 @router.post("/settings")
 def update_settings(req: SettingsReq):
+    requested_fields = getattr(req, "model_fields_set", None)
+    if requested_fields is None:
+        requested_fields = getattr(req, "__fields_set__", set())
+    requested = set(requested_fields)
+    if requested.intersection(PLEX_SETTING_KEYS):
+        with plex_auth.PLEX_LIFECYCLE_LOCK:
+            if req.plex_enabled is False and plex_auth.playback_active():
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "plex_playback_active",
+                        "message": "Stop Plex playback before disabling Plex",
+                    },
+                )
+            return _update_settings(req)
+    return _update_settings(req)
+
+
+def _update_settings(req: SettingsReq):
     if hasattr(req, "model_dump"):
         patch = req.model_dump(exclude_unset=True)
     else:
@@ -574,7 +601,20 @@ def update_settings(req: SettingsReq):
         live_applied.append("cec_enabled")
 
     sess_for_apply = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
-    apply_restart_allowed = bool(apply_now and sess_for_apply in ("playing", "paused") and isinstance(state.NOW_PLAYING, dict))
+    active_provider = (
+        str(state.NOW_PLAYING.get("provider") or "").strip().lower()
+        if isinstance(state.NOW_PLAYING, dict)
+        else ""
+    )
+    plex_only_apply = bool(requested_keys) and requested_keys.issubset(
+        PLEX_SETTING_KEYS
+    )
+    apply_restart_allowed = bool(
+        apply_now
+        and sess_for_apply in ("playing", "paused")
+        and isinstance(state.NOW_PLAYING, dict)
+        and (not plex_only_apply or active_provider == "plex")
+    )
     now = None
     apply_performed = False
     apply_succeeded = False

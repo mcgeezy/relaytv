@@ -81,6 +81,101 @@ def test_settings_apply_response_sanitizes_restarted_media(monkeypatch) -> None:
     assert "header-secret" not in response.text
 
 
+def test_settings_rejects_disabling_plex_during_active_plex_playback(monkeypatch) -> None:
+    current = {"plex_enabled": True, "plex_playback_mode": "auto", "plex_max_bitrate": 0}
+    updates: list[dict] = []
+
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {"provider": "plex", "plex_item_id": "opaque-item"},
+        raising=False,
+    )
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(
+        routes.state,
+        "update_settings",
+        lambda patch: updates.append(dict(patch)) or {**current, **patch},
+    )
+    monkeypatch.setattr(
+        routes.player,
+        "restart_current",
+        lambda: (_ for _ in ()).throw(AssertionError("active Plex must not restart after disable")),
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/settings",
+        json={"plex_enabled": False, "apply_now": True},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "plex_playback_active"
+    assert updates == []
+
+
+def test_plex_only_apply_does_not_restart_another_provider(monkeypatch) -> None:
+    current = {"plex_enabled": True, "plex_playback_mode": "auto", "plex_max_bitrate": 0}
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(
+        routes.state,
+        "NOW_PLAYING",
+        {"provider": "youtube", "url": "https://youtube.com/watch?v=example"},
+        raising=False,
+    )
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes.player,
+        "restart_current",
+        lambda: (_ for _ in ()).throw(AssertionError("Plex settings must not restart YouTube")),
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/settings",
+        json={"plex_playback_mode": "transcode", "apply_now": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["apply_performed"] is False
+
+
+def test_plex_only_apply_restarts_active_plex_playback(monkeypatch) -> None:
+    current = {"plex_enabled": True, "plex_playback_mode": "auto", "plex_max_bitrate": 0}
+    restarted = {"provider": "plex", "plex_item_id": "opaque-item"}
+    restart_calls: list[bool] = []
+
+    def update(patch):
+        current.update(patch)
+        return dict(current)
+
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", dict(restarted), raising=False)
+    monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
+    monkeypatch.setattr(routes.state, "update_settings", update)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes.player,
+        "restart_current",
+        lambda: restart_calls.append(True) or dict(restarted),
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/settings",
+        json={"plex_playback_mode": "transcode", "apply_now": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["apply_succeeded"] is True
+    assert restart_calls == [True]
+
+
 def test_seerr_api_key_is_write_only_and_requires_explicit_clear(monkeypatch) -> None:
     current = {
         "seerr_enabled": True,

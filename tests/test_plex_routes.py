@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import threading
+
 from fastapi.testclient import TestClient
 
-from relaytv_app import state
+from relaytv_app import player, state
 from relaytv_app.integrations import plex_auth, plex_service
 from relaytv_app.integrations.plex_client import PlexBinaryResponse, PlexStreamResponse
 from relaytv_app.main import create_app
@@ -126,6 +128,92 @@ def test_plex_server_change_is_blocked_during_active_plex_playback(monkeypatch) 
     assert changed.status_code == 409
     assert changed.json()["detail"]["code"] == "plex_playback_active"
     assert select_calls == []
+
+
+def test_plex_disconnect_is_blocked_during_active_plex_playback(monkeypatch) -> None:
+    disconnect_calls: list[bool] = []
+    monkeypatch.setattr(
+        plex_auth.auth_manager,
+        "disconnect",
+        lambda: disconnect_calls.append(True) or {"linked": False},
+    )
+    monkeypatch.setattr(state, "SESSION_STATE", "paused", raising=False)
+    monkeypatch.setattr(
+        state,
+        "NOW_PLAYING",
+        {"provider": "plex", "plex_item_id": "opaque-item"},
+        raising=False,
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/integrations/plex/disconnect"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "plex_playback_active"
+    assert disconnect_calls == []
+
+
+def test_plex_server_selection_serializes_with_playback_start(monkeypatch) -> None:
+    selection_started = threading.Event()
+    release_selection = threading.Event()
+    playback_started = threading.Event()
+    outcomes: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        plex_auth.auth_manager,
+        "status",
+        lambda: {"server": {"machine_id": "server-1", "name": "Living Room"}},
+    )
+
+    def select_server(machine_id: str) -> dict[str, str]:
+        selection_started.set()
+        assert release_selection.wait(timeout=2.0)
+        return {"machine_id": machine_id}
+
+    def start_playback(*args, **kwargs) -> dict[str, str]:
+        playback_started.set()
+        return {"provider": "plex", "plex_item_id": "opaque-item"}
+
+    monkeypatch.setattr(plex_auth.auth_manager, "select_server", select_server)
+    monkeypatch.setattr(player, "_play_item_owned", start_playback)
+    monkeypatch.setattr(state, "SESSION_STATE", "idle", raising=False)
+    monkeypatch.setattr(state, "NOW_PLAYING", None, raising=False)
+    client = TestClient(create_app(testing=True))
+
+    select_thread = threading.Thread(
+        target=lambda: outcomes.update(
+            selection=client.post(
+                "/integrations/plex/server",
+                json={"machine_id": "server-2"},
+            )
+        )
+    )
+    select_thread.start()
+    assert selection_started.wait(timeout=2.0)
+
+    play_thread = threading.Thread(
+        target=lambda: outcomes.update(
+            playback=player.play_item(
+                {"provider": "plex", "plex_item_id": "opaque-item"},
+                use_resolver=False,
+                cec=False,
+                clear_queue=False,
+                mode="play",
+            )
+        )
+    )
+    play_thread.start()
+    assert not playback_started.wait(timeout=0.1)
+
+    release_selection.set()
+    select_thread.join(timeout=2.0)
+    play_thread.join(timeout=2.0)
+
+    assert not select_thread.is_alive()
+    assert not play_thread.is_alive()
+    assert outcomes["selection"].status_code == 200
+    assert playback_started.is_set()
 
 
 def test_plex_catalog_routes_are_bounded_and_non_cacheable(monkeypatch) -> None:
