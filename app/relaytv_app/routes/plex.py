@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from .. import state
 from ..integrations import plex_auth, plex_service
 from ..integrations.plex_client import PlexError
 
@@ -48,6 +47,16 @@ def _http_error(exc: PlexError) -> HTTPException:
 
 def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
+
+
+def _active_playback_error(action: str) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "plex_playback_active",
+            "message": f"Stop Plex playback before {action}",
+        },
+    )
 
 
 @router.get("/integrations/plex/status")
@@ -124,7 +133,10 @@ def plex_auth_cancel(req: PlexLinkFlowReq, request: Request, response: Response)
 def plex_disconnect(request: Request, response: Response):
     _no_store(response)
     try:
-        result = plex_auth.auth_manager.disconnect()
+        with plex_auth.PLEX_LIFECYCLE_LOCK:
+            if plex_auth.playback_active():
+                raise _active_playback_error("unlinking the account")
+            result = plex_auth.auth_manager.disconnect()
     except PlexError as exc:
         raise _http_error(exc) from None
     response.delete_cookie(
@@ -286,26 +298,19 @@ def plex_server_select(req: PlexServerSelectReq, response: Response):
     _no_store(response)
     requested = str(req.machine_id or "").strip()
     try:
-        status = plex_auth.auth_manager.status()
-        selected = status.get("server") if isinstance(status.get("server"), dict) else {}
-        selected_machine_id = str(selected.get("machine_id") or "").strip()
-        active_plex = (
-            str(getattr(state, "SESSION_STATE", "idle") or "").strip().lower()
-            in {"playing", "paused"}
-            and isinstance(getattr(state, "NOW_PLAYING", None), dict)
-            and str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "plex"
-        )
-        if active_plex:
-            if requested and requested == selected_machine_id:
-                return {"server": selected}
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "plex_playback_active",
-                    "message": "Stop Plex playback before changing the selected server",
-                },
+        with plex_auth.PLEX_LIFECYCLE_LOCK:
+            status = plex_auth.auth_manager.status()
+            selected = (
+                status.get("server")
+                if isinstance(status.get("server"), dict)
+                else {}
             )
-        return {"server": plex_auth.auth_manager.select_server(requested)}
+            selected_machine_id = str(selected.get("machine_id") or "").strip()
+            if plex_auth.playback_active():
+                if requested and requested == selected_machine_id:
+                    return {"server": selected}
+                raise _active_playback_error("changing the selected server")
+            return {"server": plex_auth.auth_manager.select_server(requested)}
     except PlexError as exc:
         raise _http_error(exc) from None
 

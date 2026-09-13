@@ -31,6 +31,22 @@ FLOW_MAX_AGE_SEC = 30 * 60
 REFRESH_WINDOW_SEC = 24 * 60 * 60
 JWT_SCOPE = "username,email,friendly_name,restricted,anonymous,joinedAt"
 
+# Serializes Plex playback startup with account/server lifecycle mutations.
+# A play holds this until its stream is loaded and session state is published;
+# server selection, unlink, and Plex settings changes use the same boundary.
+PLEX_LIFECYCLE_LOCK = threading.RLock()
+
+
+def playback_active() -> bool:
+    """Return whether the published session currently depends on Plex auth."""
+    with state.SESSION_LOCK:
+        now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        return bool(
+            str(state.SESSION_STATE or "").strip().lower() in {"playing", "paused"}
+            and now
+            and str(now.get("provider") or "").strip().lower() == "plex"
+        )
+
 
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")

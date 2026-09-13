@@ -47,6 +47,8 @@ function fixture(){
     ['/integrations/plex/test', {reachable:true, version:'1.43.3'}],
     ['/settings', {ok:true}],
   ]);
+  const responseMeta = new Map();
+  const alerts = [];
   const context = vm.createContext({
     document: {getElementById: id => elements.get(id) || null},
     window: {addEventListener(){}, relaytvSeerr:null},
@@ -55,11 +57,16 @@ function fixture(){
     jellyfinCredentialsError: () => '',
     SETTINGS_TV_CONTROL_BASELINE: {}, WEATHER_LOCATION_STATE: {},
     collectIdlePanelSettings: () => ({}),
-    alert(){},
+    alert(message){ alerts.push(message); },
     fetch: async(url, options={}) => {
       requests.push({url, body: options.body ? JSON.parse(options.body) : null});
       const body = responses.get(url) || {};
-      return {ok:true, status:200, json:async() => body};
+      const meta = responseMeta.get(url) || {};
+      return {
+        ok: meta.ok !== false,
+        status: Number(meta.status || 200),
+        json:async() => body,
+      };
     },
   });
   const helperStart = source.indexOf('let __plexLinkFlowId');
@@ -70,7 +77,7 @@ function fixture(){
   const bindStart = source.indexOf('function bindSettingsUi()');
   vm.runInContext(source.slice(bindStart, source.indexOf('// Consume the', bindStart)), context);
   vm.runInContext('bindSettingsUi()', context);
-  return {element, requests, context};
+  return {element, requests, context, responses, responseMeta, alerts};
 }
 
 test('Plex link start exposes the official authorization URL and polls its flow', async() => {
@@ -105,6 +112,19 @@ test('Apply Plex selects the server before applying restart-sensitive settings',
   assert.match(f.element('setPlexApplyResult').textContent, /settings applied/i);
 });
 
+test('Apply Plex reports a playback restart failure', async() => {
+  const f = fixture();
+  f.element('setPlexEnabled').checked = true;
+  f.element('setPlexServer').value = '';
+  f.responses.set('/settings', {ok:true, apply_performed:true, apply_succeeded:false});
+
+  const result = await f.element('setPlexApplyBtn').onclick();
+
+  assert.equal(result, false);
+  assert.match(f.element('setPlexApplyResult').textContent, /could not be restarted/i);
+  assert.equal(f.element('setPlexApplyResult').classList.contains('err'), true);
+});
+
 test('main Settings save applies a changed Plex server selection', async() => {
   const f = fixture();
   f.element('setPlexEnabled').checked = true;
@@ -123,4 +143,16 @@ test('main Settings save applies a changed Plex server selection', async() => {
   assert.equal(f.requests[1].body.plex_enabled, true);
   assert.equal(f.requests[1].body.plex_playback_mode, 'direct');
   assert.equal(f.requests[1].body.plex_max_bitrate, 12000);
+});
+
+test('main Settings surfaces an active Plex lifecycle conflict', async() => {
+  const f = fixture();
+  f.responses.set('/settings', {
+    detail:{code:'plex_playback_active', message:'Stop Plex playback before disabling Plex'},
+  });
+  f.responseMeta.set('/settings', {ok:false, status:409});
+
+  await f.element('settingsSaveBtn').onclick();
+
+  assert.deepEqual(f.alerts, ['Stop Plex playback before disabling Plex']);
 });

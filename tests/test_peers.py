@@ -1059,6 +1059,67 @@ def test_move_keeps_everything_when_the_peer_reports_nothing(client, peers_file,
         state.QUEUE.clear()
 
 
+def test_move_keeps_items_missing_from_a_partial_result_list(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(
+        peers,
+        "_request",
+        lambda *a, **k: {
+            "accepted": 1,
+            "queue_length": 1,
+            "results": [
+                {"url": "https://example.com/first", "title": "First", "accepted": True},
+            ],
+        },
+    )
+    _seed_queue("First", "Second")
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+
+    assert moved.status_code == 200
+    assert _queue_titles() == ["Second"]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
+def test_move_correlates_duplicate_urls_by_result_position(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
+    peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
+    monkeypatch.setattr(
+        peers,
+        "_request",
+        lambda *a, **k: {
+            "accepted": 1,
+            "queue_length": 1,
+            "results": [
+                {"url": "https://example.com/shared", "title": "First", "accepted": True},
+                {
+                    "url": "https://example.com/shared",
+                    "title": "Second",
+                    "accepted": False,
+                    "reason": "provider_not_configured",
+                },
+            ],
+        },
+    )
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+        state.QUEUE.append({"url": "https://example.com/shared", "title": "First"})
+        state.QUEUE.append({"url": "https://example.com/shared", "title": "Second"})
+
+    moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
+
+    assert moved.status_code == 200
+    assert _queue_titles() == ["Second"]
+
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
+
+
 def test_handoff_of_a_selection_leaves_the_unselected_items_here(
     client, peers_file, stub_identity, monkeypatch
 ) -> None:

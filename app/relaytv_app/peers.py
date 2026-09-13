@@ -523,16 +523,32 @@ def accepted_sources(
     """
     results = response.get("results") if isinstance(response.get("results"), list) else []
     if results:
-        rejected_urls = {
-            str(entry.get("url") or "")
-            for entry in results
-            if isinstance(entry, dict) and not entry.get("accepted")
-        }
-        return [
-            source
-            for entry, source in zip(entries, sources)
-            if str(entry.get("url") or "") not in rejected_urls
-        ]
+        accepted: list[object] = []
+        for index, (entry, source) in enumerate(zip(entries, sources)):
+            if index >= len(results):
+                logger.warning(
+                    "peer_send_partial_results sent=%d results=%d keeping_unconfirmed=%d",
+                    len(entries),
+                    len(results),
+                    len(entries) - index,
+                )
+                break
+            result = results[index]
+            if not isinstance(result, dict) or result.get("accepted") is not True:
+                continue
+            # The receiver emits one result for each request entry in request
+            # order. Confirm the echoed URL as well so a reordered or malformed
+            # response can duplicate an item locally but can never delete the
+            # wrong one. Position, rather than URL membership, distinguishes
+            # two queue instances that happen to share a URL.
+            if str(result.get("url") or "") != str(entry.get("url") or ""):
+                logger.warning(
+                    "peer_send_result_mismatch index=%d keeping_local_item",
+                    index,
+                )
+                continue
+            accepted.append(source)
+        return accepted
     if int(response.get("accepted") or 0) >= len(entries):
         return list(sources)
     logger.warning(
