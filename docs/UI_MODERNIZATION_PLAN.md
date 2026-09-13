@@ -1,7 +1,9 @@
 # UI modernization and implementation plan
 
-Status: proposed; implementation has not started. Created September 13, 2026.
+Status: active; phase 0 baseline and design work is in progress. Created
+September 13, 2026.
 Planning branch: `docs/ui-modernization-plan`, based on `main` at `385649b`.
+Unified pull request: #99. Intended release: `0.11.1`.
 
 ## Outcome and scope
 
@@ -22,8 +24,11 @@ clients for compatibility checks where available.
 
 The review inspected source, existing tests, browser smoke scripts, and the
 checked-in remote and TV product screenshots. Those screenshots are illustrative
-and may predate the current source. No live browser or hardware audit was
-performed for this planning document; phase 0 establishes the current baseline.
+and may predate the current source. A live browser audit and runtime inventory
+are now recorded in the
+[phase 0 baseline](ui-modernization/PHASE_0_BASELINE.md). Hardware interaction
+and the remaining deterministic state captures stay open until their evidence
+rows are complete.
 
 | Surface | Current implementation | Proposed improvement |
 | --- | --- | --- |
@@ -270,8 +275,10 @@ Implementation rules:
 
 ## Delivery sequence
 
-Each row is a separately reviewable milestone, potentially split into several
-PRs. Effort is a relative planning estimate, not a schedule commitment.
+Each row is a separately reviewable milestone within the same branch and pull
+request. Keep checkpoints independently testable and update the pull request
+description as its final squash grows. Effort is a relative planning estimate,
+not a schedule commitment.
 
 | Phase | Work and principal files | Dependency / effort | Exit evidence |
 | --- | --- | --- | --- |
@@ -284,11 +291,11 @@ PRs. Effort is a relative planning estimate, not a schedule commitment.
 | 6 — TV presentation | Browser idle/overlay assets, startup splash/brand fallbacks, and native Qt visual constants/layout; loading/weather/QR/toast parity | 1–2; integrate with 5 idle settings / L | Browser captures plus actual native device evidence; cold-start splash/playback, operator branding, idle return, overlay transparency and QR readability verified |
 | 7 — Hardening and release | Accessibility/responsive/performance matrix, stale-asset update checks, remove obsolete styles/bridges, refresh screenshots/docs | 3–6 / M | Full gates pass, all inventory entries covered, device sign-off evidence and release context recorded |
 
-Suggested implementation branches: `refactor/ui-foundations`,
-`feat/ui-remote-navigation`, `feat/ui-browse-consistency`,
-`feat/ui-settings-devices`, and `feat/ui-tv-presentation`. Create each from current
-`main` after its prerequisite merges; use fresh branches after squash merges.
-Avoid mixing provider behavior changes with a visual migration.
+All phases remain on `docs/ui-modernization-plan` and pull request #99 by user
+request. Keep provider behavior changes in clearly identified commits and avoid
+combining unrelated product changes with a visual migration. Before merging,
+refresh the branch from current `main`, resolve overlapping fixes deliberately,
+and rerun the entire gate and device matrix against the resulting squash.
 
 ## Validation and acceptance
 
@@ -375,12 +382,13 @@ or accessibility limitations are explicitly recorded rather than silently waived
 
 ## Rollout, risks, and release context
 
-Use small PRs that leave a working application at each merge. Record before/after
-evidence and the milestone checklist in each PR. Baseline tests land before
-behavioral extraction; provider migration proceeds one provider at a time. If
-a milestone is unstable, revert that PR and its directly dependent changes;
-retain compatibility adapters until the dependent migrations are complete.
-No new persistent setting or API migration is expected, making rollback simpler.
+Use small, reviewable commits that leave a working application at each
+checkpoint. Record before/after evidence and the milestone checklist in the
+unified PR. Baseline tests land before behavioral extraction; provider migration
+proceeds one provider at a time. If a milestone is unstable, revert its commits
+and directly dependent changes; retain compatibility adapters until dependent
+migrations are complete. No new persistent setting or API migration is expected,
+making rollback simpler.
 
 | Risk | Mitigation |
 | --- | --- |
@@ -392,9 +400,10 @@ No new persistent setting or API migration is expected, making rollback simpler.
 | Browser and native TV diverge | Maintain one visual specification with separate renderer acceptance evidence |
 | Scope grows into a product rewrite | Defer unified search, new integrations, offline control, backend rewrites, and companion redesigns |
 
-For this planning change: user impact is documentation only; operator/deployment
-impact is none; breaking changes are **None**; release highlight is **not needed**.
-Record checks run with the change/PR.
+Phase 0 has no runtime user or operator impact and no breaking changes. Its
+checked-in capture script, sanitized screenshots, runtime matrix, measurements,
+coverage inventory, and component specimen establish the comparison point for
+later implementation.
 
 Planning-change verification (September 13, 2026): `ruff check app tests`,
 `git diff --check`, both required static JS syntax checks, and the generated
@@ -404,12 +413,16 @@ and smoke scripts, the docs index link, and whitespace were checked. This run
 used local FastAPI **0.118.0** and pytest **9.0.2**, not a fresh CI dependency
 installation; it does not establish compatibility with every version allowed
 by `pyproject.toml`. No UI implementation, browser smoke, or device playback
-validation was performed for this documentation-only change.
+validation was performed for that documentation-only checkpoint. The linked
+phase 0 evidence supersedes that limitation where it records exact runtime and
+browser measurements.
 
-For implementation PRs: use Conventional Commit titles and include user impact,
-operator/deployment impact, breaking changes or **None**, test/device evidence,
-and a release-highlight decision. The completed visual refresh likely warrants
-a short lead-in under `docs/release-highlights/<next-version>.md`; determine the
-actual release version at that time. Leave normal versioning, tags, and
-`CHANGELOG.md` to Release Please. Regenerate machine-checked inventories only
-if an intentional public/config/runtime surface change requires it.
+The unified implementation PR uses a Conventional Commit title and includes user
+impact, operator/deployment impact, breaking changes or **None**, and full test
+and device evidence. The requested patch target is `0.11.1`; its release lead-in
+lives in `docs/release-highlights/0.11.1.md`. Keep the final PR title and squash
+metadata release-producing, and add `Release-As: 0.11.1` to the final squash
+only if other merged work would make Release Please choose a different version.
+Leave version files, tags, `CHANGELOG.md`, and the release PR to Release Please.
+Regenerate machine-checked inventories only if an intentional public, config, or
+runtime surface change requires it.
