@@ -3817,6 +3817,7 @@ def ui():
   <link rel="stylesheet" href="/static/ui/iptv.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/seerr.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/peers.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/foundation.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -3875,7 +3876,7 @@ def ui():
         <section class="amSection">
           <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 5.43" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M14 10a5 5 0 0 0-7.07 0L4.1 12.83a5 5 0 0 0 7.07 7.07l1.32-1.33" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Play a link</span></div>
           <div class="fieldRow">
-            <input id="addUrlInput" class="urlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
+            <input id="addUrlInput" class="urlInput ui-field" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
             <button id="addPasteBtn" class="iconBtn sm" title="Paste from clipboard" aria-label="Paste">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path d="M9 4h6a2 2 0 0 1 2 2v2H7V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
@@ -3884,27 +3885,27 @@ def ui():
             </button>
           </div>
           <div class="modalBtns amActions">
-            <button id="addQueueBtn" title="Add to queue">Queue</button>
-            <button id="addPlayBtn" class="good" title="Play now">Play</button>
+            <button id="addQueueBtn" class="ui-button" title="Add to queue">Queue</button>
+            <button id="addPlayBtn" class="good ui-button ui-button--primary" title="Play now">Play</button>
           </div>
-          <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
+          <div id="addHelperTxt" class="helperTxt ui-status-text" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
         </section>
 
         <section id="notifySection" class="amSection">
           <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Toast notification</span></div>
           <div class="notifyField">
             <label for="notifyTextInput">Text</label>
-            <textarea id="notifyTextInput" class="notifyInput" maxlength="500" placeholder="Notification text…"></textarea>
+            <textarea id="notifyTextInput" class="notifyInput ui-field" maxlength="500" placeholder="Notification text…"></textarea>
           </div>
           <div class="notifyGrid">
             <div class="notifyField">
               <label for="notifyImageInput">Image (optional)</label>
               <input id="notifyImageInput" class="notifyFile" type="file" accept="image/*" />
-              <input id="notifyImageUrlInput" class="notifyInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Or paste image URL…" />
+              <input id="notifyImageUrlInput" class="notifyInput ui-field" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Or paste image URL…" />
             </div>
             <div class="notifyField">
               <label for="notifyPositionSelect">Screen location</label>
-              <select id="notifyPositionSelect" class="notifyInput">
+              <select id="notifyPositionSelect" class="notifyInput ui-field">
                 <option value="top-left" selected>Top left</option>
                 <option value="top-right">Top right</option>
                 <option value="top-center">Top center</option>
@@ -3914,12 +3915,12 @@ def ui():
             </div>
             <div class="notifyField">
               <label for="notifyDurationInput">Seconds</label>
-              <input id="notifyDurationInput" class="notifyInput" type="number" inputmode="decimal" min="0.8" max="30" step="0.5" value="5" />
+              <input id="notifyDurationInput" class="notifyInput ui-field" type="number" inputmode="decimal" min="0.8" max="30" step="0.5" value="5" />
             </div>
           </div>
           <div class="notifyActions">
-            <div id="notifyHelperTxt" class="helperTxt" aria-live="polite"></div>
-            <button id="notifySendBtn" class="good" title="Send notification">Send</button>
+            <div id="notifyHelperTxt" class="helperTxt ui-status-text" aria-live="polite"></div>
+            <button id="notifySendBtn" class="good ui-button ui-button--primary" title="Send notification">Send</button>
           </div>
         </section>
       </div>
@@ -4034,17 +4035,17 @@ def ui():
       </div>
     </div>
 
-    <div id="aboutBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal">
-        <div class="modalTop">
-          <div class="modalTitle">About RelayTV</div>
+    <div id="aboutBackdrop" class="modalBackdrop ui-dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="aboutDialogTitle">
+      <div class="modal ui-dialog">
+        <div class="modalTop ui-dialog__header">
+          <div id="aboutDialogTitle" class="modalTitle ui-dialog__title">About RelayTV</div>
           <div class="modalBtns">
-            <button id="aboutCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
+            <button id="aboutCloseBtn" class="iconBtn sm ui-button ui-button--icon" title="Close" aria-label="Close">✕</button>
           </div>
         </div>
         <div class="settingsBody">
           <div class="hint">RelayTV is a local-first TV playback and automation endpoint.</div>
-          <div class="aboutMeta" aria-live="polite">
+          <div class="aboutMeta ui-panel" aria-live="polite">
             <div class="aboutMetaRow">
               <div class="aboutMetaKey">Version</div>
               <div id="aboutVersionValue" class="aboutMetaVal">Loading…</div>
@@ -4059,28 +4060,28 @@ def ui():
             </div>
           </div>
           <div class="aboutLinks">
-            <a id="aboutGithubLink" class="aboutLink" href="https://github.com/mcgeezy/relaytv" target="_blank" rel="noopener noreferrer">
+            <a id="aboutGithubLink" class="aboutLink ui-button" href="https://github.com/mcgeezy/relaytv" target="_blank" rel="noopener noreferrer">
               <span>
                 <strong>GitHub Repository</strong>
                 <small>Source code, issues, releases, and documentation.</small>
               </span>
               <span aria-hidden="true">↗</span>
             </a>
-            <a id="aboutChangelogLink" class="aboutLink" href="https://github.com/mcgeezy/relaytv/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">
+            <a id="aboutChangelogLink" class="aboutLink ui-button" href="https://github.com/mcgeezy/relaytv/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">
               <span>
                 <strong>Changelog</strong>
                 <small>Release notes generated from merged pull requests.</small>
               </span>
               <span aria-hidden="true">↗</span>
             </a>
-            <a id="aboutReleaseLink" class="aboutLink" href="https://github.com/mcgeezy/relaytv/releases" target="_blank" rel="noopener noreferrer">
+            <a id="aboutReleaseLink" class="aboutLink ui-button" href="https://github.com/mcgeezy/relaytv/releases" target="_blank" rel="noopener noreferrer">
               <span>
                 <strong>Latest Release</strong>
                 <small id="aboutReleaseLinkSub">Tags, release notes, and container image history.</small>
               </span>
               <span aria-hidden="true">↗</span>
             </a>
-            <a id="aboutSupportLink" class="aboutLink aboutSupportLink" href="https://buymeacoffee.com/relaytv" target="_blank" rel="noopener noreferrer" aria-label="Support RelayTV on Buy Me a Coffee">
+            <a id="aboutSupportLink" class="aboutLink aboutSupportLink ui-button" href="https://buymeacoffee.com/relaytv" target="_blank" rel="noopener noreferrer" aria-label="Support RelayTV on Buy Me a Coffee">
               <img class="aboutSupportImg" src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=relaytv&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me a Coffee"/>
             </a>
           </div>
@@ -4373,6 +4374,7 @@ def ui():
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/theme.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/seerr.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
@@ -4864,6 +4866,7 @@ def ui():
 def _ui_asset_version() -> str:
     stamp = 0
     for name in (
+        "foundation.css",
         "app.css",
         "jellyfin.css",
         "plex.css",
@@ -4871,6 +4874,7 @@ def _ui_asset_version() -> str:
         "seerr.css",
         "peers.css",
         "realtime_transport.js",
+        "theme.js",
         "app.js",
         "jellyfin.js",
         "plex.js",

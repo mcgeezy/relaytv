@@ -48,9 +48,11 @@ def test_ui_smoke() -> None:
 
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
+    foundation_css_response = client.get('/static/ui/foundation.css')
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
     plex_css_response = client.get('/static/ui/plex.css')
     realtime_policy_response = client.get('/static/ui/realtime_transport.js')
+    theme_response = client.get('/static/ui/theme.js')
     js_response = client.get('/static/ui/app.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
     plex_js_response = client.get('/static/ui/plex.js')
@@ -68,13 +70,16 @@ def test_ui_smoke() -> None:
     assert re.search(r'<link rel="stylesheet" href="/static/ui/app\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/plex\.css\?v=\d+" />', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/foundation\.css\?v=\d+" />', response.text)
     realtime_policy_tag = re.search(
         r'<script src="/static/ui/realtime_transport\.js\?v=\d+" defer></script>',
         response.text,
     )
     assert realtime_policy_tag
+    theme_tag = re.search(r'<script src="/static/ui/theme\.js\?v=\d+" defer></script>', response.text)
+    assert theme_tag
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
-    assert realtime_policy_tag.start() < response.text.index('<script src="/static/ui/app.js')
+    assert realtime_policy_tag.start() < theme_tag.start() < response.text.index('<script src="/static/ui/app.js')
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<script src="/static/ui/plex\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
@@ -87,6 +92,10 @@ def test_ui_smoke() -> None:
     assert css_response.status_code == 200
     assert 'text/css' in css_response.headers['content-type']
     css = css_response.text
+    assert foundation_css_response.status_code == 200
+    assert 'text/css' in foundation_css_response.headers['content-type']
+    assert '--surface-raised:' in foundation_css_response.text
+    assert '.modal.ui-dialog' in foundation_css_response.text
     assert jellyfin_css_response.status_code == 200
     assert plex_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
@@ -96,6 +105,12 @@ def test_ui_smoke() -> None:
     assert realtime_policy_response.status_code == 200
     assert 'javascript' in realtime_policy_response.headers['content-type']
     assert 'createPolicy' in realtime_policy_response.text
+    assert theme_response.status_code == 200
+    assert 'javascript' in theme_response.headers['content-type']
+    assert 'createThemeController' in theme_response.text
+    assert 'ui-dialog-backdrop' in response.text
+    assert 'ui-button--primary' in response.text
+    assert 'ui-field' in response.text
     assert 'text/css' in jellyfin_css_response.headers['content-type']
     jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200

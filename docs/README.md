@@ -37,6 +37,9 @@ release branch.
 - [UI phase 0 baseline](ui-modernization/PHASE_0_BASELINE.md): exact reference
   runtimes, initial measurements, sanitized screenshots, coverage inventory,
   and links to the design specimen used before implementation.
+- [UI phase 1 foundation](ui-modernization/PHASE_1_FOUNDATION.md): production
+  design tokens, shared controls/dialog, theme extraction, browser evidence,
+  and transfer-budget results.
 
 ## Machine-Checked Inventories
 

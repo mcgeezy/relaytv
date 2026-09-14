@@ -282,7 +282,7 @@ async function installDetailRoutes(page) {
   });
 }
 
-async function fixtureContext(browser, viewport, colorScheme) {
+async function fixtureContext(browser, viewport, colorScheme, themeMode) {
   const context = await browser.newContext({
     viewport,
     colorScheme,
@@ -297,12 +297,17 @@ async function fixtureContext(browser, viewport, colorScheme) {
     }
     Object.defineProperty(window, 'EventSource', {value:QuietEventSource, configurable:true});
     Object.defineProperty(window, 'WebSocket', {value:undefined, configurable:true});
-  }, colorScheme);
+  }, themeMode || colorScheme);
   return context;
 }
 
 async function newFixturePage(browser, baseUrl, status, scenario) {
-  const context = await fixtureContext(browser, scenario.viewport, scenario.colorScheme);
+  const context = await fixtureContext(
+    browser,
+    scenario.viewport,
+    scenario.colorScheme,
+    scenario.themeMode,
+  );
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
@@ -603,7 +608,11 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ok:true, reportPath, outputDirectory, screenshots:report.screenshots.length}, null, 2)}\n`);
 }
 
-main().catch((error) => {
-  process.stderr.write(`UI phase 0 state capture failed: ${error.stack || error}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`UI phase 0 state capture failed: ${error.stack || error}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {newFixturePage, playbackStatus};

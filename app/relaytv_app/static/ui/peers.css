@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Send-to-device sheet. Follows the app's glass system: dark by default with
    light styling in `prefers-color-scheme: light` blocks, which the manual
-   theme toggle rewrites at runtime (see applyTheme in app.js). */
+   theme toggle rewrites at runtime (see theme.js). */
 
 .peersModal{
   width: min(520px, 100%);

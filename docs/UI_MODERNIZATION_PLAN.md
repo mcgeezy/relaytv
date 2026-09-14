@@ -1,7 +1,7 @@
 # UI modernization and implementation plan
 
-Status: active; phase 0 baseline and design work is in progress. Created
-September 13, 2026.
+Status: active; phases 0 and 1 are implemented, with the remaining physical
+device evidence tracked in the phase 0 checklist. Created September 13, 2026.
 Planning branch: `docs/ui-modernization-plan`, based on `main` at `385649b`.
 Unified pull request: #99. Intended release: `0.11.1`.
 
@@ -30,6 +30,10 @@ are now recorded in the
 surface and state captures are complete. Physical phone/PWA interaction, NUC
 native visuals, and active Pi playback, notification, and input checks remain
 open until their evidence rows are complete.
+
+The [phase 1 foundation](ui-modernization/PHASE_1_FOUNDATION.md) now records the
+production tokens and shared components, extracted theme controller, transfer
+budget, and Auto/Dark/Light evidence across Chromium, Firefox, and WebKit.
 
 | Surface | Current implementation | Proposed improvement |
 | --- | --- | --- |
@@ -417,6 +421,15 @@ by `pyproject.toml`. No UI implementation, browser smoke, or device playback
 validation was performed for that documentation-only checkpoint. The linked
 phase 0 evidence supersedes that limitation where it records exact runtime and
 browser measurements.
+
+Phase 1 implementation verification (September 13, 2026): all required quality
+gates passed, including **1,134 Python tests** and **58 Node tests**. Its
+deterministic nine-scenario visual and accessibility evidence passed in
+Chromium 151, Firefox 153, and WebKit 26.5. The full 17-scenario phase 0 browser
+regression passed in Chromium, and the phase 0 compatibility scenario passed in
+Firefox and WebKit. See the [phase 1 checkpoint](ui-modernization/PHASE_1_FOUNDATION.md)
+for measured contrast, target size, reduced motion, theme, overflow, and asset
+transfer results.
 
 The unified implementation PR uses a Conventional Commit title and includes user
 impact, operator/deployment impact, breaking changes or **None**, and full test
