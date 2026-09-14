@@ -54,8 +54,8 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
 
   try {
     await page.goto(`${baseUrl}/ui`, {waitUntil:'domcontentloaded'});
-    await page.locator('#plexOpenBtn').waitFor({state:'visible', timeout:15000});
-    await page.locator('#plexOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browsePlexBtn').click();
     await page.locator('#plexShell:not(.hidden)').waitFor();
     const homeCards = await waitForCards(page);
     check(homeCards > 0, `${scenario.name}: Plex Home is empty`);

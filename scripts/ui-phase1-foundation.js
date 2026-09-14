@@ -129,7 +129,8 @@ async function providerEvidence(browser, baseUrl, outputDirectory, mode, report)
   });
   try {
     await applyMode(fixture.page, mode);
-    await fixture.page.locator('#jellyfinOpenBtn').click();
+    await fixture.page.locator('[data-destination="browse"]').click();
+    await fixture.page.locator('#browseJellyfinBtn').click();
     await fixture.page.locator('#jellyfinShell:not(.hidden)').waitFor();
     await fixture.page.locator('.jfItem').first().waitFor();
     const count = await fixture.page.locator('.jfItem').count();

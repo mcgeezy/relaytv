@@ -379,14 +379,15 @@ async function captureDialogs(browser, baseUrl, outputDirectory, report) {
 async function captureProviders(browser, baseUrl, outputDirectory, report) {
   const scenario = {viewport:{width:1280,height:800}, colorScheme:'light'};
   const providers = [
-    {name:'jellyfin', button:'#jellyfinOpenBtn', shell:'#jellyfinShell:not(.hidden)', ready:'.jfItem', detail:'#jfDetail[aria-hidden="false"]', detailTitle:'#jfDetailTitle'},
-    {name:'plex', button:'#plexOpenBtn', shell:'#plexShell:not(.hidden)', ready:'.plexCard', detail:'#plexDetail[aria-hidden="false"]', detailTitle:'#plexDetailTitle'},
-    {name:'iptv', button:'#iptvOpenBtn', shell:'#iptvShell:not(.hidden)', ready:'.iptvChannel'},
-    {name:'seerr', button:'#seerrOpenBtn', shell:'#seerrShell:not(.hidden)', ready:'.seerrCard', detail:'#seerrDetail:not(.hidden)', detailTitle:'#seerrDetailTitle'},
+    {name:'jellyfin', button:'#browseJellyfinBtn', shell:'#jellyfinShell:not(.hidden)', ready:'.jfItem', detail:'#jfDetail[aria-hidden="false"]', detailTitle:'#jfDetailTitle'},
+    {name:'plex', button:'#browsePlexBtn', shell:'#plexShell:not(.hidden)', ready:'.plexCard', detail:'#plexDetail[aria-hidden="false"]', detailTitle:'#plexDetailTitle'},
+    {name:'iptv', button:'#browseIptvBtn', shell:'#iptvShell:not(.hidden)', ready:'.iptvChannel'},
+    {name:'seerr', button:'#browseSeerrBtn', shell:'#seerrShell:not(.hidden)', ready:'.seerrCard', detail:'#seerrDetail:not(.hidden)', detailTitle:'#seerrDetailTitle'},
   ];
   for (const provider of providers) {
     const fixture = await newFixturePage(browser, baseUrl, playbackStatus(), scenario);
     try {
+      await fixture.page.locator('[data-destination="browse"]').click();
       await fixture.page.locator(provider.button).waitFor({state:'visible'});
       await fixture.page.locator(provider.button).click();
       await fixture.page.locator(provider.shell).waitFor();
@@ -510,8 +511,8 @@ async function captureCompatibility(browser, baseUrl, report) {
     colorScheme:'light',
   });
   try {
-    await fixture.page.locator('#jellyfinOpenBtn').waitFor({state:'visible'});
-    await fixture.page.locator('#jellyfinOpenBtn').click();
+    await fixture.page.locator('[data-destination="browse"]').click();
+    await fixture.page.locator('#browseJellyfinBtn').click();
     await fixture.page.locator('#jellyfinShell:not(.hidden)').waitFor();
     await fixture.page.locator('.jfItem').first().waitFor();
     report.assertions.jellyfinItems = await fixture.page.locator('.jfItem').count();
@@ -588,13 +589,13 @@ async function main() {
       reconnecting:'Reconnecting…',
       overlayToasts:1,
     };
-    const expectedActions = ['Play now', 'Send to device', 'Remove'];
+    const expectedActions = ['Play now', 'Send to device', 'Move up', 'Move down', 'Remove'];
     const mismatch = Object.entries(required).find(([key, value]) => report.assertions[key] !== value);
     if (mismatch || JSON.stringify(report.assertions.queueMenuActions) !== JSON.stringify(expectedActions)) {
       throw new Error(`full state evidence failed: ${JSON.stringify(report.assertions)}`);
     }
   } else {
-    const expectedActions = ['Play now', 'Send to device', 'Remove'];
+    const expectedActions = ['Play now', 'Send to device', 'Move up', 'Move down', 'Remove'];
     if (report.assertions.phoneHorizontalOverflow || report.assertions.desktopHorizontalOverflow
         || !report.assertions.darkThemeRequested
         || report.assertions.settingsDialogRole !== 'dialog'

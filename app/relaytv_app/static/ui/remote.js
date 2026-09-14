@@ -205,6 +205,58 @@ async function submitNotificationToast(){
   }
 }
 
+let uploadMediaSubmitting = false;
+
+function _setUploadHelper(message, kind){
+  const helper = document.getElementById('uploadHelperTxt');
+  if (!helper) return;
+  helper.classList.remove('err', 'ok');
+  if (kind === 'err' || kind === 'ok') helper.classList.add(kind);
+  helper.textContent = String(message || '').trim();
+}
+
+async function submitUploadedMedia(mode){
+  if (uploadMediaSubmitting) return;
+  const input = document.getElementById('uploadMediaInput');
+  const file = input?.files?.[0] || null;
+  if (!file) {
+    _setUploadHelper('Choose a video or audio file first.', 'err');
+    input?.focus();
+    return;
+  }
+  const form = new FormData();
+  form.append('file', file, file.name);
+  const title = String(document.getElementById('uploadTitleInput')?.value || '').trim();
+  if (title) form.append('title', title);
+  const buttons = ['uploadQueueBtn', 'uploadPlayBtn'].map((id) => document.getElementById(id)).filter(Boolean);
+  uploadMediaSubmitting = true;
+  buttons.forEach((button) => { button.disabled = true; });
+  _setUploadHelper(mode === 'queue' ? 'Uploading to queue…' : 'Uploading and preparing playback…', '');
+  try {
+    const response = await fetch(mode === 'queue' ? '/ingest/media/enqueue' : '/ingest/media/play', {
+      method:'POST',
+      body:form,
+    });
+    let payload = null;
+    try { payload = await response.json(); } catch (_error) {}
+    if (!response.ok) {
+      const detail = payload && payload.detail;
+      throw new Error(typeof detail === 'string' ? detail : `Upload failed (${response.status})`);
+    }
+    _setUploadHelper(mode === 'queue' ? 'Uploaded to queue.' : 'Upload started on the TV.', 'ok');
+    if (input) input.value = '';
+    const titleInput = document.getElementById('uploadTitleInput');
+    if (titleInput) titleInput.value = '';
+    closeAddUrl();
+    await refresh();
+  } catch (error) {
+    _setUploadHelper(error?.message || 'Upload failed. Try again.', 'err');
+  } finally {
+    uploadMediaSubmitting = false;
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
 function fmtTime(s){
   if (s == null || isNaN(s)) return '--:--';
   s = Math.max(0, Math.floor(s));
@@ -569,12 +621,21 @@ function _uiCloseTopLayerFromNav(){
     window.relaytvSeerr.close({fromNav:true, force:true});
     return true;
   }
+  if (window.relaytvIptv && window.relaytvIptv.isOpen()) {
+    window.relaytvIptv.close({fromNav:true, force:true});
+    return true;
+  }
   if (_jfIsDetailOpen()) {
     _jfCloseDetailPanel({fromNav:true});
     return true;
   }
   if (__jfUiVisible) {
     closeJellyfinShell({fromNav:true, force:true});
+    return true;
+  }
+  const subLangBd = document.getElementById('subLangBackdrop');
+  if (!_isHiddenEl(subLangBd)) {
+    closeNowSubtitleModal({fromNav:true});
     return true;
   }
   const langBd = document.getElementById('langBackdrop');
@@ -1119,6 +1180,7 @@ function _queueMenuItem(label, svgPath, onPick, cls){
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'qPopItem' + (cls ? ' ' + cls : '');
+  btn.setAttribute('role', 'menuitem');
   btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${svgPath}" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span></span>`;
   btn.querySelector('span').textContent = label;
   btn.onclick = () => { closeQueueMenu(); onPick(); };
@@ -1140,6 +1202,19 @@ function openQueueMenu(index, item, anchor){
   menu.appendChild(_queueMenuItem('Send to device', 'M4 12h13m0 0-4.5-4.5M17 12l-4.5 4.5M20 5v14', () => {
     if (window.relaytvPeers) window.relaytvPeers.open({index, queueId, title: (item && (item.title || item.url)) || ''});
   }));
+  const queue = Array.isArray(__lastStatus && __lastStatus.queue) ? __lastStatus.queue : [];
+  const moveUp = _queueMenuItem('Move up', 'M12 19V5m0 0-5 5m5-5 5 5', () => {
+    const target = queue[index - 1] || {};
+    qMove(index, index - 1, queueId, target.queue_id);
+  });
+  moveUp.disabled = index <= 0;
+  menu.appendChild(moveUp);
+  const moveDown = _queueMenuItem('Move down', 'M12 5v14m0 0-5-5m5 5 5-5', () => {
+    const target = queue[index + 1] || {};
+    qMove(index, index + 1, queueId, target.queue_id);
+  });
+  moveDown.disabled = index >= queue.length - 1;
+  menu.appendChild(moveDown);
   menu.appendChild(_queueMenuItem('Remove', 'M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12', () => qSoftRemove(index, queueId), 'danger'));
 
   document.body.appendChild(backdrop);
@@ -1503,13 +1578,23 @@ function renderStatus(st) {
     }
 
     // Drag handle (hamburger)
-    const handle = document.createElement('div');
+    const handle = document.createElement('button');
     handle.className = 'qHandle';
+    handle.type = 'button';
     handle.innerHTML = `
       <svg class="qGrip" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path d="M8 6h8M8 12h8M8 18h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>`;
-    handle.title = 'Drag to reorder';
+    handle.title = 'Drag to reorder; use Arrow keys to move';
+    handle.setAttribute('aria-label', `Reorder ${item.title || item.url || 'queue item'}`);
+    handle.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      const toIndex = event.key === 'ArrowUp' ? idx - 1 : idx + 1;
+      if (toIndex < 0 || toIndex >= (st.queue || []).length) return;
+      event.preventDefault();
+      const target = st.queue[toIndex] || {};
+      qMove(idx, toIndex, item.queue_id, target.queue_id).catch(() => {});
+    });
 
     const body = document.createElement('div');
     body.className = 'qBody';
@@ -2504,6 +2589,8 @@ function bindAddUrlUi(){
   const queueBtn = document.getElementById('addQueueBtn');
   const inp      = document.getElementById('addUrlInput');
   const notifyBtn = document.getElementById('notifySendBtn');
+  const uploadQueueBtn = document.getElementById('uploadQueueBtn');
+  const uploadPlayBtn = document.getElementById('uploadPlayBtn');
 
   if (btn) btn.onclick = openAddUrl;
   if (closeBtn) closeBtn.onclick = closeAddUrl;
@@ -2511,6 +2598,8 @@ function bindAddUrlUi(){
   if (playBtn) playBtn.onclick = ()=>submitAddUrl('play');
   if (queueBtn) queueBtn.onclick = ()=>submitAddUrl('queue');
   if (notifyBtn) notifyBtn.onclick = submitNotificationToast;
+  if (uploadQueueBtn) uploadQueueBtn.onclick = () => submitUploadedMedia('queue');
+  if (uploadPlayBtn) uploadPlayBtn.onclick = () => submitUploadedMedia('play');
 
   if (bd) bd.addEventListener('click', (e) => {
     if (e.target === bd) closeAddUrl();
@@ -2530,7 +2619,7 @@ function bindAddUrlUi(){
     if (!open || e.key !== 'Enter') return;
     const target = e.target;
     if (!(target && target.closest)) { submitAddUrl('play'); return; }
-    if (target.closest('#notifySection')) return;
+    if (target.closest('#notifySection, #uploadSection')) return;
     // A focused control already turns Enter into a click, so handling it here
     // too submits twice — and from the Queue button that meant one keypress
     // firing play_now *and* enqueue, adding the item twice and stealing

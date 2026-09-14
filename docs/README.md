@@ -43,6 +43,9 @@ release branch.
 - [UI phase 2 seams](ui-modernization/PHASE_2_SEAMS.md): API, state, navigation,
   dialog, remote, and settings ownership plus packaged markup and regression
   evidence.
+- [UI phase 3 remote](ui-modernization/PHASE_3_REMOTE.md): responsive app
+  navigation, compact playback, remote and queue layout, media upload, and
+  browser interaction evidence.
 
 ## Machine-Checked Inventories
 

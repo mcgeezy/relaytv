@@ -1,0 +1,258 @@
+/* Phase 3 application shell. This file follows the provider styles so the
+   shared navigation and remote density stay consistent across themes. */
+.providerLaunchHooks[hidden]{display:none !important}
+
+.primaryNav{
+  position:fixed;
+  z-index:10020;
+  right:0;
+  bottom:0;
+  left:0;
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:4px;
+  min-height:68px;
+  padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));
+  border-top:1px solid var(--border-subtle);
+  background:color-mix(in srgb,var(--surface-raised) 94%,transparent);
+  box-shadow:0 -12px 30px rgba(0,0,0,.18);
+  backdrop-filter:blur(18px) saturate(145%);
+  -webkit-backdrop-filter:blur(18px) saturate(145%);
+}
+.primaryNavItem{
+  display:flex;
+  min-width:0;
+  min-height:52px;
+  padding:5px 8px;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:3px;
+  border:0;
+  border-radius:12px;
+  background:transparent;
+  box-shadow:none;
+  color:var(--text-secondary);
+  font-size:11px;
+  font-weight:720;
+}
+.primaryNavItem:hover{background:var(--surface-hover);box-shadow:none;transform:none}
+.primaryNavItem.isActive{background:var(--accent-soft);color:var(--accent-strong)}
+.primaryNavItem svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.shellReady body{padding-bottom:max(86px,calc(env(safe-area-inset-bottom) + 76px))}
+.shellReady .wrap{padding-bottom:70px}
+.hdrAddBtn{min-width:44px !important;height:44px !important}
+.hdrAddLabel{font-size:13px;font-weight:750}
+.hdrMenuBtn{width:44px !important;height:44px !important;padding:0 !important}
+
+.browseDestination{
+  display:grid;
+  align-content:start;
+  gap:18px;
+  min-height:min(680px,calc(100vh - 150px));
+  padding:clamp(18px,4vw,32px);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-lg);
+  background:var(--surface);
+  box-shadow:var(--shadow-md);
+}
+.destinationHead{display:grid;gap:7px}
+.destinationHead h2{margin:0;color:var(--text-primary);font-size:clamp(27px,4vw,40px);letter-spacing:-.035em}
+.destinationHead p{max-width:620px;margin:0;color:var(--text-secondary);font-size:14px;line-height:1.5}
+.destinationKicker{color:var(--accent-strong);font-size:11px;font-weight:820;letter-spacing:.16em;text-transform:uppercase}
+.providerChoiceGrid{display:grid;gap:10px}
+.providerChoice{
+  display:grid;
+  grid-template-columns:48px minmax(0,1fr) auto;
+  align-items:center;
+  gap:13px;
+  min-height:76px;
+  width:100%;
+  padding:11px 14px;
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);
+  background:var(--surface-raised);
+  box-shadow:var(--shadow-sm);
+  color:var(--text-primary);
+  text-align:left;
+}
+.providerChoice:hover{border-color:var(--border-strong);background:var(--surface-hover);box-shadow:var(--shadow-md);transform:none}
+.providerChoice.isRecent{border-color:color-mix(in srgb,var(--accent) 62%,var(--border-subtle));box-shadow:inset 3px 0 0 var(--accent),var(--shadow-sm)}
+.providerChoice.isUnavailable{opacity:.68}
+.providerChoiceMark{display:grid;width:48px;height:48px;place-items:center;border-radius:14px;background:var(--accent-soft);color:var(--accent-strong);font-size:25px;font-weight:900}
+.providerChoice--plex .providerChoiceMark{background:rgba(229,160,13,.17);color:#e5a00d;font-size:36px}
+.providerChoice--seerr .providerChoiceMark{background:rgba(168,85,247,.16);color:#c084fc}
+.providerChoice--iptv .providerChoiceMark{background:rgba(34,197,94,.15);color:#4ade80}
+.providerChoiceCopy{display:grid;min-width:0;gap:3px}
+.providerChoiceCopy strong{overflow:hidden;color:var(--text-primary);font-size:16px;text-overflow:ellipsis;white-space:nowrap}
+.providerChoiceCopy small{color:var(--text-secondary);font-size:12px}
+.providerChoiceArrow{color:var(--text-secondary);font-size:20px}
+.browseConfigure{justify-self:start;min-height:44px}
+.uploadFields{display:grid;gap:10px}
+.uploadActions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.uploadActions .helperTxt{flex:1 1 220px}
+.uploadActions .amActions{flex:0 1 auto}
+
+.compactPlaybackBar{
+  position:fixed;
+  z-index:10010;
+  right:max(10px,env(safe-area-inset-right));
+  bottom:max(80px,calc(env(safe-area-inset-bottom) + 72px));
+  left:max(10px,env(safe-area-inset-left));
+  display:grid;
+  grid-template-columns:44px 44px minmax(0,1fr) 48px;
+  align-items:center;
+  gap:9px;
+  min-height:64px;
+  padding:8px;
+  border:1px solid var(--border-strong);
+  border-radius:18px;
+  background:color-mix(in srgb,var(--surface-raised) 96%,transparent);
+  box-shadow:0 18px 50px rgba(0,0,0,.35);
+  backdrop-filter:blur(18px) saturate(145%);
+  -webkit-backdrop-filter:blur(18px) saturate(145%);
+}
+.compactReturnBtn,.compactPlayPauseBtn{display:grid;width:44px;height:44px;min-height:44px;padding:0;place-items:center;border-radius:13px;box-shadow:none}
+.compactPlayPauseBtn{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-size:17px;font-weight:900}
+.compactArtwork{width:44px;height:44px;border:1px solid var(--border-subtle);border-radius:11px;background:linear-gradient(145deg,var(--accent-soft),var(--surface-hover));background-position:center;background-size:cover}
+.compactPlaybackCopy{display:grid;min-width:0;gap:2px}
+.compactPlaybackCopy strong,.compactPlaybackCopy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.compactPlaybackCopy strong{color:var(--text-primary);font-size:13px}
+.compactPlaybackCopy small{color:var(--text-secondary);font-size:11px}
+
+/* The core remote keeps every command directly reachable while using two
+   short rows on phones and one row on wider screens. */
+.topgrid{gap:12px}
+.nowCol{gap:12px}
+.remoteCard,.queueCard,.nowCard{border-radius:var(--radius-lg)}
+.remoteCard{padding:12px !important}
+.remoteCard .rGrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.remoteCard .rTile,.remoteCard .rBig,.remoteCard .rWide,.remoteCard .rSeek{
+  grid-column:auto;
+  min-height:58px;
+  aspect-ratio:auto;
+  padding:7px 5px;
+  flex-direction:column;
+  gap:4px;
+  border-radius:14px;
+}
+.remoteCard .rRing,.remoteCard .rWide .rRing,.remoteCard .rRingSeek{width:28px;height:28px;border-width:1px}
+.remoteCard .rGlyph{width:64%;height:64%}
+.remoteCard .rRingSeek .rGlyphSeek{width:100%;height:100%}
+.remoteCard .rLabel{font-size:10px;letter-spacing:.04em;text-transform:none}
+.remoteVolumeRow{min-height:44px;margin-top:7px !important;padding:3px 5px !important;gap:9px}
+.remoteVolumeSlider{height:36px}
+.remoteVolumeValue{min-width:44px;font-size:13px}
+
+.nowCard{padding:12px !important}
+.nowCard .nHero{max-height:172px;aspect-ratio:2.1/1}
+.nowCard .nHead{padding-bottom:8px;margin-bottom:8px}
+.nowCard .progress{height:7px;margin-top:8px}
+.nowCard .nTimeRow{margin-top:5px}
+.nowCard .nUpNext{margin-top:8px}
+.nowCard.isIdle{min-height:86px}
+
+.queueCard{padding:12px !important}
+.queueCard .qHead{min-height:44px;margin-bottom:8px;padding:0 0 8px}
+.queueCard .queueList{gap:7px}
+.queueCard .qTile{min-height:66px;gap:9px;padding:7px;border-radius:13px}
+.queueCard .qThumb{width:82px;border-radius:9px}
+.queueCard .qHandle,.queueCard .qMenuBtn{width:44px;height:44px;min-height:44px}
+.queueCard .qTitle{font-size:13px}
+.queueCard .qChan{font-size:11px}
+.queueCard .footerRow{padding-top:8px;font-size:11px}
+.qPopItem:disabled{opacity:.38;cursor:default}
+.qToast{bottom:max(86px,calc(env(safe-area-inset-bottom) + 78px))}
+
+@media (max-width:767px){
+  .queueCard .qHandle{display:none}
+}
+
+/* Provider browsing leaves room for the shared playback controls. */
+body:has(.compactPlaybackBar:not(.hidden)) .iptvShellInner,
+body:has(.compactPlaybackBar:not(.hidden)) .jfShellInner,
+body:has(.compactPlaybackBar:not(.hidden)) .plexShellInner,
+body:has(.compactPlaybackBar:not(.hidden)) .seerrShellInner{padding-bottom:150px}
+
+@media (max-width:520px){
+  .hdrKicker{display:none}
+  .hdrAddLabel{display:none}
+  .hdrAddBtn{width:44px !important;padding:0 !important}
+  .wrap > header{padding-inline:1px}
+  .nowCard .nHero{aspect-ratio:2.35/1;max-height:132px}
+  .nowCard .nHeroBody{padding:12px}
+  .nowCard .nTitle{font-size:17px}
+  .nowCard .nHead{top:18px;right:18px;left:18px}
+  .queueCard .qThumb{width:74px}
+  .queueCard .qTitleText{-webkit-line-clamp:2}
+  .addModal .amSection{padding:13px}
+  .addModal .amActions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .addModal .amActions button{width:100%;min-height:48px}
+}
+
+@media (min-width:768px){
+  body{padding:18px 18px 22px 18px}
+  .shellReady body{padding-bottom:22px}
+  .wrap{
+    max-width:1400px !important;
+    grid-template-columns:88px minmax(0,1fr);
+    grid-template-areas:"navigation header" "navigation content";
+    column-gap:18px;
+    align-items:start;
+    padding-bottom:0;
+  }
+  .wrap > header{grid-area:header}
+  #remoteDestination,.browseDestination{grid-area:content}
+  .primaryNav{grid-area:navigation}
+  .primaryNav{
+    position:sticky;
+    top:18px;
+    right:auto;
+    bottom:auto;
+    left:auto;
+    align-self:start;
+    display:grid;
+    grid-template-columns:1fr;
+    gap:7px;
+    min-height:0;
+    padding:8px;
+    border:1px solid var(--border-subtle);
+    border-radius:20px;
+    background:var(--surface);
+    box-shadow:var(--shadow-sm);
+  }
+  .primaryNavItem{min-height:66px;padding:8px 4px}
+  .topgrid{grid-template-columns:minmax(0,1.08fr) minmax(340px,.92fr) !important}
+  .remoteCard .rTile,.remoteCard .rBig,.remoteCard .rWide,.remoteCard .rSeek{min-height:68px}
+  .nowCard .nHero{max-height:190px;aspect-ratio:2.4/1}
+  .browseDestination{min-height:calc(100vh - 112px)}
+  .providerChoiceGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .compactPlaybackBar{right:24px;bottom:20px;left:auto;width:min(520px,calc(100vw - 136px))}
+  .qToast{bottom:22px}
+}
+
+@media (min-width:1100px){
+  .remoteCard .rGrid{grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+}
+
+@media (min-width:1200px){
+  .wrap{grid-template-columns:92px minmax(0,1fr);column-gap:22px}
+  .topgrid{grid-template-columns:minmax(0,1.18fr) minmax(430px,.82fr) !important}
+  .providerChoiceGrid{grid-template-columns:repeat(2,minmax(300px,1fr))}
+}
+
+@media (max-height:520px) and (orientation:landscape) and (max-width:900px){
+  .primaryNav{left:auto;top:0;width:78px;grid-template-columns:1fr;align-content:center;border-top:0;border-right:1px solid var(--border-subtle)}
+  .shellReady body{padding:10px 10px 10px 90px}
+  .wrap{gap:8px}
+  .topgrid{grid-template-columns:minmax(0,1fr) minmax(280px,.9fr)}
+  .remoteCard .rGrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .nowCard .nHero{max-height:105px}
+  .compactPlaybackBar{right:10px;bottom:10px;left:90px}
+}
+
+@supports not (color:color-mix(in srgb,black,white)){
+  .primaryNav,.compactPlaybackBar{background:var(--surface-raised)}
+  .providerChoice.isRecent{border-color:var(--accent)}
+}

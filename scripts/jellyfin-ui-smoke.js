@@ -54,8 +54,8 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
 
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
-    await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('#jellyfinOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseJellyfinBtn').click();
     await page.locator('#jellyfinShell:not(.hidden)').waitFor();
     await waitForItems(page, 'continue_watching');
 
@@ -233,8 +233,8 @@ async function runRecoveryScenario(browser, baseUrl) {
   }));
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
-    await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('#jellyfinOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseJellyfinBtn').click();
     await page.waitForFunction(() => {
       const label = document.querySelector('#jfConnectionLabel');
       const unavailable = document.querySelector('.jfUnavailable');

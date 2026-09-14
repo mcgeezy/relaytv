@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="/static/ui/seerr.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/peers.css?v=__UI_ASSET_V__" />
   <link rel="stylesheet" href="/static/ui/foundation.css?v=__UI_ASSET_V__" />
+  <link rel="stylesheet" href="/static/ui/shell.css?v=__UI_ASSET_V__" />
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -34,11 +35,7 @@
         <h1 id="appBrandName">RelayTV</h1>
       </div>
       <div class="hdrRight">
-        <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
-        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
-        <button id="plexOpenBtn" class="plexLaunch" title="Open Plex" aria-label="Open Plex"><span class="plexLaunchMark" aria-hidden="true">›</span><span>Plex</span></button>
-        <button id="seerrOpenBtn" class="seerrLaunch" title="Open Seerr" aria-label="Open Seerr"><span aria-hidden="true">✦</span><span>Seerr</span></button>
-        <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
+        <button id="addUrlBtn" class="hdrAddBtn" title="Add media" aria-label="Add media"><span aria-hidden="true">＋</span><span class="hdrAddLabel">Add media</span></button>
         <div id="hdrMenuWrap" class="hdrMenuWrap">
           <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
             <svg class="menuGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
@@ -61,7 +58,51 @@
       </div>
     </header>
 
+    <div class="providerLaunchHooks" hidden aria-hidden="true">
+      <button id="iptvOpenBtn" class="iptvLaunch" tabindex="-1"><span aria-hidden="true">▦</span><span>IPTV</span></button>
+      <button id="jellyfinOpenBtn" class="jfLaunch" tabindex="-1"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
+      <button id="plexOpenBtn" class="plexLaunch" tabindex="-1"><span class="plexLaunchMark" aria-hidden="true">›</span><span>Plex</span></button>
+      <button id="seerrOpenBtn" class="seerrLaunch" tabindex="-1"><span aria-hidden="true">✦</span><span>Seerr</span></button>
+    </div>
+
+    <nav id="primaryNav" class="primaryNav" aria-label="Primary">
+      <button class="primaryNavItem isActive" type="button" data-destination="remote" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h8a5 5 0 0 1 5 5v4a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5v-4a5 5 0 0 1 5-5Z"/><path d="M8 10v4M6 12h4M16.5 10.5v.01M18.5 13.5v.01"/></svg>
+        <span>Remote</span>
+      </button>
+      <button class="primaryNavItem" type="button" data-destination="browse">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h4A2.5 2.5 0 0 1 13 6.5v4a2.5 2.5 0 0 1-2.5 2.5h-4A2.5 2.5 0 0 1 4 10.5v-4ZM15 5h3a2 2 0 0 1 2 2v3M5 15v3a2 2 0 0 0 2 2h3M15 15h5v5h-5z"/></svg>
+        <span>Browse</span>
+      </button>
+      <button class="primaryNavItem" type="button" data-destination="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="m19.4 15 .1.1a2 2 0 0 1-2.8 2.8l-.1-.1a2 2 0 0 0-2.1-.4 2 2 0 0 0-1.2 1.8v.3a2 2 0 0 1-4 0v-.2A2 2 0 0 0 8 17.4a2 2 0 0 0-2.1.4l-.1.1A2 2 0 0 1 3 15.1l.1-.1a2 2 0 0 0 .4-2.1A2 2 0 0 0 1.7 12h-.2a2 2 0 0 1 0-4h.2a2 2 0 0 0 1.8-1.3 2 2 0 0 0-.4-2.1L3 4.5a2 2 0 0 1 2.8-2.8l.1.1A2 2 0 0 0 8 2.2 2 2 0 0 0 9.3.4V.2a2 2 0 0 1 4 0v.2a2 2 0 0 0 1.2 1.8 2 2 0 0 0 2.1-.4l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a2 2 0 0 0-.4 2.1A2 2 0 0 0 20.8 8h.2a2 2 0 0 1 0 4h-.2a2 2 0 0 0-1.8.9 2 2 0 0 0 .4 2.1Z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+
     <div id="connBadge" class="connBadge hidden" role="status" aria-live="polite">Reconnecting…</div>
+
+    <section id="browseDestination" class="browseDestination hidden" aria-labelledby="browseTitle">
+      <div class="destinationHead">
+        <div><span class="destinationKicker">Your media</span><h2 id="browseTitle">Browse</h2></div>
+        <p>Choose a connected service. RelayTV remembers your last choice.</p>
+      </div>
+      <div class="providerChoiceGrid">
+        <button id="browseJellyfinBtn" class="providerChoice providerChoice--jellyfin" type="button" data-provider-target="jellyfinOpenBtn">
+          <span class="providerChoiceMark" aria-hidden="true">▶</span><span class="providerChoiceCopy"><strong class="jfBrand">Jellyfin</strong><small data-provider-status>Checking connection…</small></span><span class="providerChoiceArrow" aria-hidden="true">→</span>
+        </button>
+        <button id="browsePlexBtn" class="providerChoice providerChoice--plex" type="button" data-provider-target="plexOpenBtn">
+          <span class="providerChoiceMark" aria-hidden="true">›</span><span class="providerChoiceCopy"><strong>Plex</strong><small data-provider-status>Checking connection…</small></span><span class="providerChoiceArrow" aria-hidden="true">→</span>
+        </button>
+        <button id="browseIptvBtn" class="providerChoice providerChoice--iptv" type="button" data-provider-target="iptvOpenBtn">
+          <span class="providerChoiceMark" aria-hidden="true">▦</span><span class="providerChoiceCopy"><strong>IPTV</strong><small data-provider-status>Checking connection…</small></span><span class="providerChoiceArrow" aria-hidden="true">→</span>
+        </button>
+        <button id="browseSeerrBtn" class="providerChoice providerChoice--seerr" type="button" data-provider-target="seerrOpenBtn">
+          <span class="providerChoiceMark" aria-hidden="true">✦</span><span class="providerChoiceCopy"><strong>Seerr</strong><small data-provider-status>Checking connection…</small></span><span class="providerChoiceArrow" aria-hidden="true">→</span>
+        </button>
+      </div>
+      <button id="browseConfigureBtn" class="browseConfigure ui-button" type="button">Configure services in Settings</button>
+    </section>
 
     <!-- Hidden by default: manual URL modal (opened via ＋ button) -->
     <div id="addBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
@@ -89,6 +130,21 @@
             <button id="addPlayBtn" class="good ui-button ui-button--primary" title="Play now">Play</button>
           </div>
           <div id="addHelperTxt" class="helperTxt ui-status-text" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
+        </section>
+
+        <section id="uploadSection" class="amSection">
+          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span>Upload media</span></div>
+          <div class="uploadFields">
+            <label class="notifyField"><span>Video or audio file</span><input id="uploadMediaInput" class="notifyFile" type="file" accept="video/mp4,video/webm,audio/mpeg,audio/mp4,audio/aac,audio/flac,audio/ogg,audio/opus,audio/wav,.m4a" /></label>
+            <label class="notifyField"><span>Title <small>optional</small></span><input id="uploadTitleInput" class="notifyInput ui-field" maxlength="200" placeholder="Use the file name" /></label>
+          </div>
+          <div class="uploadActions">
+            <div id="uploadHelperTxt" class="helperTxt ui-status-text" role="status" aria-live="polite">The file stays on this RelayTV device according to its storage settings.</div>
+            <div class="modalBtns amActions">
+              <button id="uploadQueueBtn" class="ui-button" type="button">Upload to queue</button>
+              <button id="uploadPlayBtn" class="good ui-button ui-button--primary" type="button">Upload and play</button>
+            </div>
+          </div>
         </section>
 
         <section id="notifySection" class="amSection">
@@ -289,7 +345,7 @@
       </div>
     </div>
 
-    <div class="topgrid">
+    <div id="remoteDestination" class="topgrid">
       <div class="nowCol">
       <section id="nowTopCard" class="card nowCard">
         <div class="nHead">
@@ -570,6 +626,13 @@
         <aside id="plexDetail" class="plexDetail hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="plexDetailTitle"></aside>
       </div>
     </div>
+
+    <aside id="compactPlaybackBar" class="compactPlaybackBar hidden" aria-label="Now playing controls">
+      <button id="compactReturnBtn" class="compactReturnBtn" type="button" aria-label="Return to Remote">←</button>
+      <span id="compactArtwork" class="compactArtwork" aria-hidden="true"></span>
+      <span class="compactPlaybackCopy"><strong id="compactTitle">Nothing playing</strong><small id="compactMeta">RelayTV</small></span>
+      <button id="compactPlayPauseBtn" class="compactPlayPauseBtn" type="button" aria-label="Pause">Ⅱ</button>
+    </aside>
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
@@ -587,6 +650,7 @@
   <script src="/static/ui/plex.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/iptv.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/peers.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/shell.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
 <!-- Settings modal -->

@@ -3,12 +3,12 @@
 // Settings controller extracted from app.js. It retains the existing global
 // function bridge until the responsive settings destination lands in Phase 5.
 
-function openSettings(){
+function openSettings(opts){
   closeHeaderMenu();
   const bd = document.getElementById('settingsBackdrop');
   if (!bd || !bd.classList.contains('hidden')) return;
   bd.classList.remove('hidden');
-  _uiPushLayer();
+  if (!(opts && opts.fromDestination)) _uiPushLayer();
   loadSettingsUi().catch(console.warn);
 }
 function closeSettings(opts){

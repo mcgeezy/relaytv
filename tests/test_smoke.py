@@ -49,6 +49,7 @@ def test_ui_smoke() -> None:
     response = client.get('/ui')
     css_response = client.get('/static/ui/app.css')
     foundation_css_response = client.get('/static/ui/foundation.css')
+    shell_css_response = client.get('/static/ui/shell.css')
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
     plex_css_response = client.get('/static/ui/plex.css')
     realtime_policy_response = client.get('/static/ui/realtime_transport.js')
@@ -60,6 +61,7 @@ def test_ui_smoke() -> None:
     js_response = client.get('/static/ui/app.js')
     remote_js_response = client.get('/static/ui/remote.js')
     settings_js_response = client.get('/static/ui/settings.js')
+    shell_js_response = client.get('/static/ui/shell.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
     plex_js_response = client.get('/static/ui/plex.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
@@ -77,6 +79,7 @@ def test_ui_smoke() -> None:
     assert re.search(r'<link rel="stylesheet" href="/static/ui/jellyfin\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/plex\.css\?v=\d+" />', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/foundation\.css\?v=\d+" />', response.text)
+    assert re.search(r'<link rel="stylesheet" href="/static/ui/shell\.css\?v=\d+" />', response.text)
     realtime_policy_tag = re.search(
         r'<script src="/static/ui/realtime_transport\.js\?v=\d+" defer></script>',
         response.text,
@@ -104,6 +107,8 @@ def test_ui_smoke() -> None:
         settings_tag.start(),
     ]
     assert positions == sorted(positions)
+    shell_tag = re.search(r'<script src="/static/ui/shell\.js\?v=\d+" defer></script>', response.text)
+    assert shell_tag and shell_tag.start() > settings_tag.start()
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<script src="/static/ui/plex\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
@@ -120,12 +125,16 @@ def test_ui_smoke() -> None:
     assert 'text/css' in foundation_css_response.headers['content-type']
     assert '--surface-raised:' in foundation_css_response.text
     assert '.modal.ui-dialog' in foundation_css_response.text
+    assert shell_css_response.status_code == 200
+    assert '.primaryNav' in shell_css_response.text
     assert jellyfin_css_response.status_code == 200
     assert plex_css_response.status_code == 200
     assert iptv_css_response.status_code == 200
     assert iptv_js_response.status_code == 200
     assert seerr_css_response.status_code == 200
     assert seerr_js_response.status_code == 200
+    assert shell_js_response.status_code == 200
+    assert 'createDestinationState' in shell_js_response.text
     assert realtime_policy_response.status_code == 200
     assert 'javascript' in realtime_policy_response.headers['content-type']
     assert 'createPolicy' in realtime_policy_response.text

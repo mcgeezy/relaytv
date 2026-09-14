@@ -1,6 +1,6 @@
 # UI modernization and implementation plan
 
-Status: active; phases 0–2 are implemented, with the remaining physical
+Status: active; phases 0–3 are implemented, with the remaining physical
 device evidence tracked in the phase 0 checklist. Created September 13, 2026.
 Planning branch: `docs/ui-modernization-plan`, based on `main` at `385649b`.
 Unified pull request: #99. Intended release: `0.11.1`.
@@ -37,6 +37,9 @@ budget, and Auto/Dark/Light evidence across Chromium, Firefox, and WebKit.
 The [phase 2 seams](ui-modernization/PHASE_2_SEAMS.md) record the API, store,
 navigation, dialog, remote, and settings boundaries plus packaged browser
 documents and cross-browser regression evidence.
+The [phase 3 remote checkpoint](ui-modernization/PHASE_3_REMOTE.md) records the
+responsive shell, public destination navigation, compact playback bar, denser
+remote and queue, media upload composer, and end-to-end browser actions.
 
 | Surface | Current implementation | Proposed improvement |
 | --- | --- | --- |
@@ -440,6 +443,16 @@ Phase 1 Chromium regression matrices also passed after extraction. All required
 repository gates passed with **1,135 Python tests** and **68 Node tests**. See
 the [phase 2 checkpoint](ui-modernization/PHASE_2_SEAMS.md) for request, focus,
 cleanup, packaged-document, script-order, and transfer evidence.
+
+Phase 3 implementation verification (September 14, 2026): the responsive shell
+matrix passed in Chromium 151 at six planned viewport shapes; its complete
+action fixture passed, and Firefox 153 passed the layout and share-target
+subset. The full Phase 0 and Phase 1 Chromium matrices still pass. All required
+repository gates passed with **1,135 Python tests** and **72 Node tests**. The
+installed WebKit runner is currently blocked by its missing host
+`libavif.so.16`; see the [phase 3 checkpoint](ui-modernization/PHASE_3_REMOTE.md)
+for the exact behavior, screenshots, transfer budget, revert proof, and pending
+device evidence.
 
 The unified implementation PR uses a Conventional Commit title and includes user
 impact, operator/deployment impact, breaking changes or **None**, and full test

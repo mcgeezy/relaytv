@@ -68,8 +68,8 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
         });
       }
     });
-    await page.locator('#iptvOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('#iptvOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseIptvBtn').click();
     await page.locator('#iptvShell:not(.hidden)').waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.iptvChannel').length === 3);
 
