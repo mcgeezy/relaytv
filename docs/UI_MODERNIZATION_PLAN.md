@@ -1,6 +1,6 @@
 # UI modernization and implementation plan
 
-Status: active; phases 0 and 1 are implemented, with the remaining physical
+Status: active; phases 0–2 are implemented, with the remaining physical
 device evidence tracked in the phase 0 checklist. Created September 13, 2026.
 Planning branch: `docs/ui-modernization-plan`, based on `main` at `385649b`.
 Unified pull request: #99. Intended release: `0.11.1`.
@@ -34,6 +34,9 @@ open until their evidence rows are complete.
 The [phase 1 foundation](ui-modernization/PHASE_1_FOUNDATION.md) now records the
 production tokens and shared components, extracted theme controller, transfer
 budget, and Auto/Dark/Light evidence across Chromium, Firefox, and WebKit.
+The [phase 2 seams](ui-modernization/PHASE_2_SEAMS.md) record the API, store,
+navigation, dialog, remote, and settings boundaries plus packaged browser
+documents and cross-browser regression evidence.
 
 | Surface | Current implementation | Proposed improvement |
 | --- | --- | --- |
@@ -225,10 +228,10 @@ Proposed ownership within `static/ui/`:
 | --- | --- |
 | `tokens.css`, `base.css`, `components.css` | Theme roles, typography, shared controls, states, dialogs, and layers |
 | `app.css` and provider CSS | Layout and remaining feature-specific presentation |
-| `core/api.js` | Explicit same-origin auth, request timeout/cancellation, normalized outcomes |
-| `core/theme.js` | Auto/Dark/Light, initial theme bootstrap, preference compatibility |
-| `core/navigation.js`, `core/overlays.js` | Destination/back behavior; dialog stack and focus lifecycle |
-| `core/store.js` | Read-only server snapshots plus separate transient UI state/subscriptions |
+| `api.js` | Explicit same-origin auth, request timeout/cancellation, normalized outcomes |
+| `theme.js` | Auto/Dark/Light, initial theme bootstrap, preference compatibility |
+| `navigation.js`, `overlays.js` | Destination/back behavior; dialog stack and focus lifecycle |
+| `store.js` | Read-only server snapshots plus separate transient UI state and subscriptions |
 | `components/` | Reusable rendering and interaction primitives with explicit inputs/callbacks |
 | `remote.js`, `queue.js`, `settings.js`, `history.js`, `media-input.js` | Extracted feature controllers with mount/unmount cleanup |
 | Existing provider and peer controllers | Provider-specific interaction and public API adaptation |
@@ -430,6 +433,13 @@ regression passed in Chromium, and the phase 0 compatibility scenario passed in
 Firefox and WebKit. See the [phase 1 checkpoint](ui-modernization/PHASE_1_FOUNDATION.md)
 for measured contrast, target size, reduced motion, theme, overflow, and asset
 transfer results.
+
+Phase 2 implementation verification (September 13, 2026): the controller seam
+runner passed in Chromium 151, Firefox 153, and WebKit 26.5; the Phase 0 and
+Phase 1 Chromium regression matrices also passed after extraction. All required
+repository gates passed with **1,135 Python tests** and **68 Node tests**. See
+the [phase 2 checkpoint](ui-modernization/PHASE_2_SEAMS.md) for request, focus,
+cleanup, packaged-document, script-order, and transfer evidence.
 
 The unified implementation PR uses a Conventional Commit title and includes user
 impact, operator/deployment impact, breaking changes or **None**, and full test

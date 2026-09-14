@@ -330,9 +330,15 @@ def pwa_weather_asset(asset_name: str, theme: str | None = None):
 def ui_static_asset(asset_name: str):
     safe_name = os.path.basename(asset_name)
     if safe_name != asset_name or safe_name not in {
+        "api.js",
         "foundation.css",
         "app.css",
         "app.js",
+        "navigation.js",
+        "overlays.js",
+        "remote.js",
+        "settings.js",
+        "store.js",
         "theme.js",
         "realtime_transport.js",
         "jellyfin.css",

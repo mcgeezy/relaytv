@@ -13,11 +13,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const APP_JS = fs.readFileSync(
-  path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'),
+  path.join(__dirname, '../../app/relaytv_app/static/ui/remote.js'),
   'utf8',
 );
 
-// app.js is a single large script with a lot of ambient DOM state, so pull out
+// remote.js still has ambient DOM state, so pull out
 // the one function under test rather than evaluating the whole file.
 function extractFunction(name){
   const start = APP_JS.indexOf(`async function ${name}(`);

@@ -496,7 +496,7 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
 
 
 def test_browser_delegates_application_sequence_handling(realtime_client) -> None:
-    source = realtime_client.get("/static/ui/app.js")
+    source = realtime_client.get("/static/ui/remote.js")
 
     assert source.status_code == 200
     assert "RelayTVRealtime.createSequenceTracker()" in source.text
@@ -504,11 +504,13 @@ def test_browser_delegates_application_sequence_handling(realtime_client) -> Non
 
 
 def test_browser_delegates_stale_and_reprobe_policy(realtime_client) -> None:
-    source = realtime_client.get("/static/ui/app.js")
+    source = realtime_client.get("/static/ui/remote.js")
+    bootstrap = realtime_client.get("/static/ui/app.js")
 
     assert source.status_code == 200
+    assert bootstrap.status_code == 200
     assert "_closeUiEventStream('stale')" in source.text
-    assert "_loadUiRealtimeCapabilities({force:true})" in source.text
+    assert "_loadUiRealtimeCapabilities({force:true})" in bootstrap.text
 
 
 def test_nginx_tls_example_forwards_scheme_to_trusted_uvicorn() -> None:

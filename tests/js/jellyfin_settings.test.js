@@ -5,7 +5,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const source = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'), 'utf8');
+const source = fs.readFileSync(
+  path.join(__dirname, '../../app/relaytv_app/static/ui/settings.js'),
+  'utf8',
+);
 
 function fixture(){
   const elements = new Map();
@@ -30,7 +33,10 @@ function fixture(){
   }
   // Use only real IDs from the served settings markup, so removed selectors
   // cannot quietly remain available to the event handlers under test.
-  const markup = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/routes/__init__.py'), 'utf8');
+  const markup = fs.readFileSync(
+    path.join(__dirname, '../../app/relaytv_app/static/ui/index.html'),
+    'utf8',
+  );
   for (const match of markup.matchAll(/id="((?:set|settings)[^"]+)"/g)) element(match[1]);
   const requests = [];
   const alerts = [];
@@ -50,7 +56,7 @@ function fixture(){
   const helpersStart = source.indexOf('function syncJellyfinAuthModeUi()');
   vm.runInContext(source.slice(helpersStart, source.indexOf('async function loadSettingsUi()', helpersStart)), context);
   const bindStart = source.indexOf('function bindSettingsUi()');
-  vm.runInContext(source.slice(bindStart, source.indexOf('// Consume the', bindStart)), context);
+  vm.runInContext(source.slice(bindStart), context);
   vm.runInContext('bindSettingsUi()', context);
   element('setJfEnabled').checked = true;
   element('setJfServerUrl').value = 'http://jf.example';

@@ -7,7 +7,11 @@
     document: root && root.document,
     storage,
   });
-  if (root) root.relaytvTheme = api;
+  if (root) {
+    root.RelayTV = root.RelayTV || {};
+    root.RelayTV.theme = api;
+    root.relaytvTheme = api;
+  }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {createThemeController: factory};
   }

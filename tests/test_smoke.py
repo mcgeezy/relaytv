@@ -52,8 +52,14 @@ def test_ui_smoke() -> None:
     jellyfin_css_response = client.get('/static/ui/jellyfin.css')
     plex_css_response = client.get('/static/ui/plex.css')
     realtime_policy_response = client.get('/static/ui/realtime_transport.js')
+    api_response = client.get('/static/ui/api.js')
+    store_response = client.get('/static/ui/store.js')
+    navigation_response = client.get('/static/ui/navigation.js')
+    overlays_response = client.get('/static/ui/overlays.js')
     theme_response = client.get('/static/ui/theme.js')
     js_response = client.get('/static/ui/app.js')
+    remote_js_response = client.get('/static/ui/remote.js')
+    settings_js_response = client.get('/static/ui/settings.js')
     jellyfin_js_response = client.get('/static/ui/jellyfin.js')
     plex_js_response = client.get('/static/ui/plex.js')
     iptv_css_response = client.get('/static/ui/iptv.css')
@@ -76,10 +82,28 @@ def test_ui_smoke() -> None:
         response.text,
     )
     assert realtime_policy_tag
+    core_tags = [
+        re.search(rf'<script src="/static/ui/{name}\.js\?v=\d+" defer></script>', response.text)
+        for name in ('api', 'store', 'navigation', 'overlays')
+    ]
+    assert all(core_tags)
     theme_tag = re.search(r'<script src="/static/ui/theme\.js\?v=\d+" defer></script>', response.text)
     assert theme_tag
-    assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
-    assert realtime_policy_tag.start() < theme_tag.start() < response.text.index('<script src="/static/ui/app.js')
+    app_tag = re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
+    remote_tag = re.search(
+        r'<script src="/static/ui/remote\.js\?v=\d+" defer></script>', response.text
+    )
+    settings_tag = re.search(r'<script src="/static/ui/settings\.js\?v=\d+" defer></script>', response.text)
+    assert app_tag and remote_tag and settings_tag
+    positions = [
+        realtime_policy_tag.start(),
+        *(tag.start() for tag in core_tags),
+        theme_tag.start(),
+        app_tag.start(),
+        remote_tag.start(),
+        settings_tag.start(),
+    ]
+    assert positions == sorted(positions)
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<script src="/static/ui/plex\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)
@@ -105,6 +129,17 @@ def test_ui_smoke() -> None:
     assert realtime_policy_response.status_code == 200
     assert 'javascript' in realtime_policy_response.headers['content-type']
     assert 'createPolicy' in realtime_policy_response.text
+    for asset_response, marker in (
+        (api_response, 'createApi'),
+        (store_response, 'createStore'),
+        (navigation_response, 'createLayerNavigation'),
+        (overlays_response, 'createDialogController'),
+        (remote_js_response, 'function renderStatus'),
+        (settings_js_response, 'function bindSettingsUi'),
+    ):
+        assert asset_response.status_code == 200
+        assert 'javascript' in asset_response.headers['content-type']
+        assert marker in asset_response.text
     assert theme_response.status_code == 200
     assert 'javascript' in theme_response.headers['content-type']
     assert 'createThemeController' in theme_response.text
@@ -115,7 +150,11 @@ def test_ui_smoke() -> None:
     jellyfin_css = jellyfin_css_response.text
     assert js_response.status_code == 200
     assert 'javascript' in js_response.headers['content-type']
-    js = js_response.text
+    app_js = js_response.text
+    js = f'{app_js}\n{remote_js_response.text}'
+    settings_js = settings_js_response.text
+    assert 'window.RelayTV.runtime' in app_js
+    assert 'bindSettingsUi();' in app_js
     assert jellyfin_js_response.status_code == 200
     assert 'javascript' in jellyfin_js_response.headers['content-type']
     jellyfin_js = jellyfin_js_response.text
@@ -123,7 +162,7 @@ def test_ui_smoke() -> None:
     assert 'javascript' in plex_js_response.headers['content-type']
     plex_js = plex_js_response.text
     seerr_js = seerr_js_response.text
-    assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in js
+    assert 'const IDLE_PANEL_CATALOG = window.RELAYTV_IDLE_PANEL_CATALOG || {};' in settings_js
     assert 'RelayTV' in response.text
     assert 'id="jfActionStatus"' in response.text
     assert 'id="jellyfinOpenBtn"' in response.text
@@ -153,7 +192,7 @@ def test_ui_smoke() -> None:
     assert 'nestedInteractive' in plex_playwright
     assert '<option value="shared_admin">Shared administrator API</option>' in response.text
     assert '<option value="caller_session">Caller-specific sign-in</option>' in response.text
-    assert 'administrator API identity and may auto-approve' in js
+    assert 'administrator API identity and may auto-approve' in settings_js
     assert 'function _seerrAbortBrowse' in seerr_js
     assert 'new AbortController()' in seerr_js
     assert 'const __SEERR_REQUEST_POLL_MS = 30000;' in seerr_js
@@ -180,9 +219,9 @@ def test_ui_smoke() -> None:
     assert 'id="setTvTakeoverEnabled"' in response.text
     assert 'id="setTvPauseOnInputChange"' in response.text
     assert 'id="setTvAutoResumeOnReturn"' in response.text
-    assert "fetch('/tv/status')" in js
-    assert "SETTINGS_TV_CONTROL_BASELINE" in js
-    assert "Object.entries(tvControl).forEach" in js
+    assert "fetch('/tv/status')" in settings_js
+    assert "SETTINGS_TV_CONTROL_BASELINE" in settings_js
+    assert "Object.entries(tvControl).forEach" in settings_js
     assert 'id="aboutGithubLink"' in response.text
     assert 'id="aboutVersionValue"' in response.text
     assert 'id="aboutRevisionValue"' in response.text
@@ -243,15 +282,15 @@ def test_ui_smoke() -> None:
     assert 'id="setJfCastHeading"' in response.text
     assert 'id="setJfApiKey"' in response.text
     assert 'id="setJfClearApiKey"' in response.text
-    assert js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
-    assert js.count("jellyfin_auth_mode: jfAuthMode") == 2
+    assert settings_js.count("payload.jellyfin_api_key = jfClearApiKey ? '' : jfApiKey;") == 2
+    assert settings_js.count("jellyfin_auth_mode: jfAuthMode") == 2
     assert 'id="setJfClearPassword"' in response.text
     assert "menu.appendChild(_queueMenuItem('Remove'" in js
     assert "qDelBtn" not in js
     assert 'id="setJfStatus" class="sectionStatus unknown">Disabled</span>' in response.text
-    assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in js
+    assert "castScope === 'shared' ? 'Shared Cast' : 'Cast Ready'" in settings_js
     assert 'class="toggleSwitch"' in response.text
-    assert 'data-idle-enable="${key}"' in js
+    assert 'data-idle-enable="${key}"' in settings_js
     assert 'class="chk"' not in response.text
     assert '.settingsBody input.input:not([type])' in css
     assert '.settingsBody select.input{' in css
@@ -333,6 +372,24 @@ def test_ui_smoke() -> None:
     assert "await fetch('/jellyfin/subtitle/select'" in js
     assert 'id="setAboutGithubLink"' not in response.text
     assert 'id="setAboutSupportLink"' not in response.text
+
+
+def test_browser_documents_are_packaged_and_substituted() -> None:
+    static_ui = ROOT_DIR / 'app' / 'relaytv_app' / 'static' / 'ui'
+    route_source = (ROOT_DIR / 'app' / 'relaytv_app' / 'routes' / '__init__.py').read_text(
+        encoding='utf-8'
+    )
+    for name in ('index.html', 'idle.html', 'x11-overlay.html'):
+        document = (static_ui / name).read_text(encoding='utf-8')
+        assert document.startswith('<!doctype html>')
+    assert '<!doctype html>' not in route_source
+
+    client = TestClient(create_app(testing=True))
+    for path in ('/ui', '/idle', '/x11/overlay'):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert '__UI_ASSET_V__' not in response.text
+    assert client.get('/static/ui/index.html').status_code == 400
 
 
 def test_health_endpoint() -> None:

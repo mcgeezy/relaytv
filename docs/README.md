@@ -40,6 +40,9 @@ release branch.
 - [UI phase 1 foundation](ui-modernization/PHASE_1_FOUNDATION.md): production
   design tokens, shared controls/dialog, theme extraction, browser evidence,
   and transfer-budget results.
+- [UI phase 2 seams](ui-modernization/PHASE_2_SEAMS.md): API, state, navigation,
+  dialog, remote, and settings ownership plus packaged markup and regression
+  evidence.
 
 ## Machine-Checked Inventories
 
