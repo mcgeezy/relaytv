@@ -55,8 +55,8 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
   await page.route('**/seerr/requests**', route => route.fulfill({json:{page:1,total_pages:1,total_results:1,results:[{request_id:4,status:'pending',media_type:'movie',media_id:10,media_status:'pending',is_4k:false,created_at:'',updated_at:''}]}}));
   try {
     await page.goto(`${baseUrl}/ui`, {waitUntil:'domcontentloaded'});
-    await page.locator('#seerrOpenBtn').waitFor({state:'visible', timeout:15000});
-    await page.locator('#seerrOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseSeerrBtn').click();
     await page.locator('#seerrShell:not(.hidden)').waitFor();
     if (scenario.caller) {
       await page.waitForFunction(() => document.querySelector('#seerrConnectCode')?.textContent === '123456');

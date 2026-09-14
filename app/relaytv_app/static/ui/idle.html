@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>RelayTV Idle</title>
+  <style>
+    :root{
+      --bg:#08111d;
+      --bg2:#0d1827;
+      --txt:#eef5ff;
+      --muted:#b9cbe4;
+      --panel:rgba(13,24,38,.36);
+      --panel-strong:rgba(13,24,38,.56);
+      --stroke:rgba(205,226,255,.18);
+      --stroke-strong:rgba(205,226,255,.28);
+      --accent:#57a3ff;
+    }
+    html{font-size:clamp(12px,1.4815vmin,32px)}
+    *{box-sizing:border-box;cursor:none!important}
+    html,body{margin:0;height:100%;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--txt);cursor:none!important}
+    body{
+      background:
+        radial-gradient(56.25rem 32.5rem at 18% 82%, rgba(25,75,138,.20), transparent 68%),
+        radial-gradient(68.75rem 40rem at 50% -12%, rgba(145,190,255,.12), transparent 60%),
+        linear-gradient(180deg,var(--bg),var(--bg2));
+      overflow:hidden;
+      cursor:none!important
+    }
+    .wrap{height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:1.125rem;padding:1.625rem 1.875rem 1.625rem}
+    .top{display:flex;justify-content:center;align-items:flex-start;pointer-events:none;width:100%;overflow:visible}
+    .heroLogo{
+      display:block;
+      width:min(36vw,22.5rem);
+      max-width:calc(100vw - 3.75rem);
+      height:auto;
+      object-fit:contain;
+      object-position:center;
+      filter:drop-shadow(0 0 1.75rem rgba(133,191,255,.12));
+      opacity:.96;
+      margin-top:.125rem
+    }
+    .stage{
+      min-height:0;
+      display:flex;
+      align-items:center;
+      justify-content:center
+    }
+    .heroRail{
+      width:min(100%,70rem);
+      display:grid;
+      gap:1.625rem;
+      align-content:center
+    }
+    .timePanel{
+      display:grid;
+      grid-template-columns:minmax(0,1fr);
+      grid-template-rows:auto auto;
+      column-gap:2.125rem;
+      row-gap:1.125rem;
+      align-items:center;
+      min-height:18.75rem;
+      padding:.5rem .75rem 0;
+    }
+    .timePanel.hasWeather{
+      grid-template-columns:minmax(0,1fr) minmax(18.75rem,26.875rem);
+    }
+    .timeMain{
+      display:grid;
+      justify-items:end;
+      align-content:center;
+      gap:.625rem;
+      padding-right:.75rem
+    }
+    .timeDivider{
+      display:none
+    }
+    .weatherHeroPanel{
+      display:none;
+      align-content:center;
+      gap:.5rem;
+      padding-left:2.125rem;
+      position:relative
+    }
+    .timePanel.hasWeather .weatherHeroPanel{
+      display:grid
+    }
+    .timePanel.hasWeather .weatherHeroPanel::before{
+      content:"";
+      position:absolute;
+      left:0;
+      top:0;
+      bottom:0;
+      width:1px;
+      background:linear-gradient(180deg, transparent, rgba(235,242,255,.28), transparent)
+    }
+    .time{font-size:8rem;font-weight:300;font-variant-numeric:tabular-nums;line-height:.88;letter-spacing:-.05em;text-shadow:0 .625rem 2.25rem rgba(0,0,0,.16)}
+    .date{margin-top:0;color:rgba(230,239,251,.86);font-size:2.125rem;letter-spacing:.01em}
+    .urls{display:none}
+    .pill{
+      padding:.625rem 1rem;
+      border-radius:999px;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(205,226,255,.16);
+      color:#e8f2ff;
+      font:600 1.125rem/1.2 ui-monospace,Menlo,monospace
+    }
+    .forecastStrip{
+      grid-column:1 / -1;
+      display:none;
+      grid-template-columns:minmax(0,1fr);
+      align-content:start
+    }
+    .timePanel.hasWeather .forecastStrip{
+      display:grid
+    }
+    .panel{
+      background:none;
+      border:none;
+      border-radius:0;
+      padding:0;
+      box-shadow:none;
+      backdrop-filter:none
+    }
+    .cardTitle{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:rgba(230,241,255,.44)}
+    .cardDesc{margin-top:.375rem;color:rgba(197,214,235,.66);font-size:.8125rem}
+    .cardValue{margin-top:.75rem;font-size:1.5rem;font-weight:750}
+    .weatherNow{
+      margin-top:0;
+      position:relative;
+      padding-right:0;
+      display:grid;
+      grid-template-columns:auto 1fr;
+      gap:1.125rem;
+      align-items:center
+    }
+    .weatherHeading{display:block}
+    .weatherHeading .cardDesc{margin-top:.25rem}
+    .weatherCurrent{display:block;margin-top:0}
+    .weatherTemp{font-size:3.625rem;font-weight:400;line-height:.9;letter-spacing:-.04em}
+    .weatherSummary{font-size:1.5rem;color:rgba(230,241,255,.90);margin-top:.25rem}
+    .weatherMeta{margin-top:.625rem;display:flex;flex-wrap:wrap;gap:.4375rem .75rem;font-size:.8125rem;color:#dce9ff}
+    .weatherMeta b{font-weight:760;color:#f3f8ff}
+    .wxHero{
+      position:relative;
+      top:auto;
+      right:auto;
+      bottom:auto;
+      display:grid;
+      justify-items:center;
+      align-items:center;
+      width:7rem;
+      min-width:7rem;
+      height:7rem;
+      padding-top:0;
+      border-radius:0;
+      border:none;
+      background:none;
+      overflow:visible
+    }
+    .wxHero::before{content:none}
+    .wxCode{position:relative;width:7rem;height:7rem;object-fit:contain;filter:drop-shadow(0 .5rem 1rem rgba(0,0,0,.18))}
+    .weatherDays{
+      margin-top:0;
+      padding-top:1.125rem;
+      padding-bottom:1.125rem;
+      position:relative;
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(7.375rem,1fr));
+      gap:0
+    }
+    .weatherDays::before,
+    .weatherDays::after{
+      content:"";
+      position:absolute;
+      left:0;
+      right:0;
+      height:1px;
+      background:linear-gradient(90deg, transparent, rgba(235,242,255,.28), transparent)
+    }
+    .weatherDays::before{top:0}
+    .weatherDays::after{bottom:0}
+    .weatherDay{
+      display:grid;
+      justify-items:center;
+      align-content:center;
+      gap:.5rem;
+      min-height:8.5rem;
+      padding:.875rem .625rem .75rem;
+      position:relative
+    }
+    .weatherDay + .weatherDay::before{
+      content:"";
+      position:absolute;
+      left:0;
+      top:1.125rem;
+      bottom:1.125rem;
+      width:1px;
+      background:linear-gradient(180deg, transparent, rgba(235,242,255,.28), transparent)
+    }
+    .weatherDow{font-size:.875rem;font-weight:700;color:#f0f6ff;text-transform:none;letter-spacing:.01em}
+    .weatherCond{display:grid;justify-items:center;gap:.375rem;min-width:0}
+    .weatherIcon{width:3.625rem;height:3.625rem;display:block;object-fit:contain}
+    .weatherLabel{font-size:.8125rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .weatherRange{font-size:1.125rem;color:#f1f6ff;font-weight:500;white-space:nowrap}
+    .weatherDatapoint{display:none}
+    .footer{
+      display:flex;
+      justify-content:space-between;
+      align-items:end;
+      gap:1.125rem;
+      min-height:3.375rem
+    }
+    .deviceName{
+      font-size:1.875rem;
+      font-weight:700;
+      letter-spacing:.01em;
+      color:#edf5ff;
+      text-shadow:0 .375rem 1.5rem rgba(0,0,0,.25)
+    }
+    .statusWrap{
+      display:grid;
+      justify-items:end;
+      gap:.3125rem;
+      min-width:0;
+      max-width:100%
+    }
+    .footerStatus{
+      color:rgba(221,233,248,.7);
+      font-size:.875rem;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      max-width:100%;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis
+    }
+    /* Keep the status line clear of the fixed QR card */
+    body.hasQr .footer{padding-right:calc(var(--idleQrSizePx,10.5rem) + 1.5rem)}
+    @media (max-width:760px){
+      body.hasQr .footer{padding-right:calc(var(--idleQrSizeMobilePx,7.25rem) + 1.25rem)}
+    }
+    .footerMeta{
+      color:rgba(197,214,235,.56);
+      font-size:.75rem;
+      letter-spacing:.08em;
+      text-transform:uppercase
+    }
+    @media (max-width:760px){
+      html{font-size:16px}
+      .wrap{padding:18px 18px 20px}
+      .stage{align-items:start}
+      .heroRail{width:100%;justify-self:stretch}
+      .heroLogo{width:min(92vw,360px);max-width:calc(100vw - 36px)}
+      .timePanel{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto;row-gap:18px;min-height:0;padding-top:0}
+      .timeMain{justify-items:start;padding-right:0}
+      .timeDivider{display:none}
+      .weatherHeroPanel{padding-left:0}
+      .time{font-size:78px}
+      .date{font-size:22px}
+      .pill{font-size:13px;padding:8px 12px}
+      .footer{align-items:start;flex-direction:column;gap:8px}
+      .statusWrap{justify-items:start}
+      .deviceName{font-size:22px}
+      .weatherNow{grid-template-columns:1fr;justify-items:start}
+      .wxHero{width:84px;min-width:84px;height:84px}
+      .wxCode{width:84px;height:84px}
+      .weatherDays{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .weatherDay{min-height:122px}
+      .weatherDay + .weatherDay::before{top:14px;bottom:14px}
+    }
+    .hidden{display:none !important}
+    .idleQrWrap{
+      position:fixed;right:1.125rem;bottom:1.125rem;z-index:40;
+      display:flex;flex-direction:column;align-items:center;gap:.5rem;
+      background:rgba(8,15,27,.84);border:1px solid rgba(116,162,230,.28);border-radius:.875rem;
+      padding:.625rem .625rem .5rem;box-shadow:0 .875rem 1.75rem rgba(0,0,0,.38);backdrop-filter:blur(.375rem)
+    }
+    .idleQrImg{
+      width:var(--idleQrSizePx,10.5rem);height:var(--idleQrSizePx,10.5rem);display:block;background:#fff;border-radius:.625rem;
+      border:1px solid rgba(116,162,230,.32)
+    }
+    .idleQrLabel{
+      max-width:calc(var(--idleQrSizePx,10.5rem) + .25rem);color:#d8e8ff;font-size:.6875rem;line-height:1.2;text-align:center;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+    }
+    @media (max-width:760px){
+      .idleQrWrap{right:10px;bottom:10px;padding:8px 8px 6px}
+      .idleQrImg{width:var(--idleQrSizeMobilePx,7.25rem);height:var(--idleQrSizeMobilePx,7.25rem)}
+      .idleQrLabel{max-width:calc(var(--idleQrSizeMobilePx,7.25rem) + 2px);font-size:10px}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <img class="heroLogo" src="/pwa/brand/banner.png" alt="RelayTV banner"/>
+    </div>
+    <section class="stage">
+      <div class="heroRail">
+        <section class="timePanel">
+          <div class="timeMain">
+            <div id="clock" class="time">--:--</div>
+            <div id="date" class="date">---</div>
+            <div id="urls" class="urls"></div>
+          </div>
+          <div class="timeDivider"></div>
+          <div id="weatherHeroPanel" class="weatherHeroPanel"></div>
+          <div id="forecastStrip" class="forecastStrip"></div>
+        </section>
+      </div>
+    </section>
+    <div class="footer">
+      <div id="idleDeviceName" class="deviceName">RelayTV</div>
+      <div class="statusWrap">
+        <div id="now" class="footerStatus">Idle</div>
+        <div class="footerMeta">RelayTV Idle Dashboard</div>
+      </div>
+    </div>
+  </div>
+  <div id="idleQrWrap" class="idleQrWrap hidden" aria-hidden="true">
+    <img id="idleQrImg" class="idleQrImg" src="" alt="Scan to open RelayTV remote"/>
+    <div id="idleQrLabel" class="idleQrLabel"></div>
+  </div>
+  <script>
+    const CATALOG = __IDLE_CATALOG__;
+    const CLOCK_OFFSET_MINUTES = Number(__CLOCK_OFFSET_MINUTES__) || 0;
+    const SERVER_NOW_MS = Number(__SERVER_NOW_MS__) || Date.now();
+    const CLOCK_SKEW_MS = SERVER_NOW_MS - Date.now();
+    let __idleQrEnabled = true;
+    let __idleQrSize = 168;
+    let __idleQrUrl = '';
+
+    function _serverClockDate(){
+      return new Date(Date.now() + CLOCK_SKEW_MS + (CLOCK_OFFSET_MINUTES * 60000));
+    }
+    function _fmtClockTime(date){
+      const h24 = date.getUTCHours();
+      const h12 = (h24 % 12) || 12;
+      const min = String(date.getUTCMinutes()).padStart(2,'0');
+      const ampm = h24 >= 12 ? 'PM' : 'AM';
+      return `${h12}:${min} ${ampm}`;
+    }
+    function _fmtClockDate(date){
+      const dow = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][date.getUTCDay()];
+      const mon = ['January','February','March','April','May','June','July','August','September','October','November','December'][date.getUTCMonth()];
+      return `${dow}, ${mon} ${date.getUTCDate()}`;
+    }
+    function tick(){ const d=_serverClockDate(); document.getElementById('clock').textContent=_fmtClockTime(d); document.getElementById('date').textContent=_fmtClockDate(d); }
+    setInterval(tick,1000); tick();
+
+    function _applyIdleQrSizing(px){
+      let size = Number(px);
+      if (!Number.isFinite(size)) size = 168;
+      size = Math.max(96, Math.min(280, Math.round(size)));
+      __idleQrSize = size;
+      const mobile = Math.max(88, Math.min(220, Math.round(size * 0.7)));
+      const root = document.documentElement;
+      if (root && root.style) {
+        root.style.setProperty('--idleQrSizePx', `${size / 16}rem`);
+        root.style.setProperty('--idleQrSizeMobilePx', `${mobile / 16}rem`);
+      }
+    }
+    _applyIdleQrSizing(__idleQrSize);
+
+    function setIdleQr(url){
+      const wrap = document.getElementById('idleQrWrap');
+      const img = document.getElementById('idleQrImg');
+      const label = document.getElementById('idleQrLabel');
+      if (!wrap || !img || !label) return;
+      const show = !!(__idleQrEnabled && url && String(url).trim());
+      document.body.classList.toggle('hasQr', show);
+      if (!show) {
+        wrap.classList.add('hidden');
+        wrap.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      const target = String(url || '').trim();
+      if (__idleQrUrl !== target) {
+        __idleQrUrl = target;
+        img.src = `/qr/connect.svg?logo=1&u=${encodeURIComponent(target)}&ts=${Date.now()}`;
+      }
+      label.textContent = target.replace(/^https?:\/\//i, '');
+      wrap.classList.remove('hidden');
+      wrap.setAttribute('aria-hidden', 'false');
+    }
+
+    async function refreshUrls(){
+      try{
+        const r=await fetch('/x11/host_urls',{cache:'no-store'});
+        const j=await r.json();
+        const el=document.getElementById('urls');
+        const src=((j.public_urls&&j.public_urls.length)?j.public_urls:(j.urls||[])).filter(u=>!u.includes('127.0.0.1')&&!u.includes('localhost'));
+        if (el){
+          el.innerHTML='';
+          src.slice(0,4).forEach(u=>{ const p=document.createElement('div'); p.className='pill'; p.textContent=u; el.appendChild(p); });
+        }
+        setIdleQr(src[0] || '');
+      }catch(_e){
+        setIdleQr('');
+      }
+    }
+    setInterval(refreshUrls,30000); refreshUrls();
+
+    function wxCodeToAsset(code, isDay=true){
+      if (code === 0) return isDay ? 'clear_day.svg' : 'clear_night.svg';
+      if (code === 1) return isDay ? 'mostly_clear_day.svg' : 'mostly_clear_night.svg';
+      if (code === 2) return isDay ? 'partly_cloudy_day.svg' : 'partly_cloudy_night.svg';
+      if (code === 3) return 'cloudy.svg';
+      if ([45,48].includes(code)) return 'haze_fog_dust_smoke.svg';
+      if ([51,53,55,56,57].includes(code)) return 'drizzle.svg';
+      if ([61,63,80,81].includes(code)) return 'showers_rain.svg';
+      if ([65,82].includes(code)) return 'heavy_rain.svg';
+      if ([66,67].includes(code)) return 'mixed_rain_hail_sleet.svg';
+      if ([71,73,85].includes(code)) return 'flurries.svg';
+      if ([75,86].includes(code)) return 'heavy_snow.svg';
+      if (code === 77) return 'icy.svg';
+      if (code === 95) return 'thunderstorms.svg';
+      if ([96,99].includes(code)) return 'strong_thunderstorms.svg';
+      return 'not-available.svg';
+    }
+
+    function wxTheme(){
+      try{
+        return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+      }catch(_e){
+        return 'dark';
+      }
+    }
+
+    function wxAssetImg(code, isDay, className='weatherIcon'){
+      const asset = wxCodeToAsset(code, isDay);
+      const label = wxCodeToLabel(code);
+      const theme = wxTheme();
+      return `<img class="${className}" src="/pwa/weather/${asset}?theme=${encodeURIComponent(theme)}" alt="${label}" loading="lazy" decoding="async"/>`;
+    }
+
+    function wxCodeToLabel(code){
+      if (code === 0) return 'Clear';
+      if ([1,2].includes(code)) return 'Partly cloudy';
+      if (code === 3) return 'Overcast';
+      if ([45,48].includes(code)) return 'Fog';
+      if ([51,53,55,56,57].includes(code)) return 'Drizzle';
+      if ([61,63,65,80,81,82].includes(code)) return 'Rain';
+      if ([66,67].includes(code)) return 'Freezing rain';
+      if ([71,73,75,77,85,86].includes(code)) return 'Snow';
+      if ([95,96,99].includes(code)) return 'Thunderstorm';
+      return 'Mixed';
+    }
+
+    async function fetchWeather(settings){
+      const w = settings?.weather || {};
+      const lat = Number.isFinite(Number(w.latitude)) ? Number(w.latitude) : 40.7128;
+      const lon = Number.isFinite(Number(w.longitude)) ? Number(w.longitude) : -74.006;
+      const forecastDays = [1,3,7].includes(Number(w.forecast_days)) ? Number(w.forecast_days) : 7;
+      const units = (w.units === 'metric') ? 'celsius' : 'fahrenheit';
+      const windUnits = (w.units === 'metric') ? 'kmh' : 'mph';
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,apparent_temperature,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max&temperature_unit=${units}&wind_speed_unit=${windUnits}&forecast_days=${forecastDays}`;
+      const r = await fetch(url, {cache:'no-store'});
+      if (!r.ok) throw new Error('weather fetch failed');
+      return await r.json();
+    }
+
+    const WEATHER_REFRESH_MS = 180000; // 3 minutes
+    const WEATHER_REQUEST_TIMEOUT_MS = 9000;
+    let __weatherCache = null;
+    let __weatherCacheAt = 0;
+    let __weatherInflight = null;
+    let __weatherSig = '';
+    let __idlePanelsRenderSig = '';
+
+    function weatherSignature(settings){
+      const w = settings?.weather || {};
+      const lat = Number.isFinite(Number(w.latitude)) ? Number(w.latitude).toFixed(4) : '40.7128';
+      const lon = Number.isFinite(Number(w.longitude)) ? Number(w.longitude).toFixed(4) : '-74.0060';
+      const units = (w.units === 'metric') ? 'metric' : 'imperial';
+      const days = [1,3,7].includes(Number(w.forecast_days)) ? String(Number(w.forecast_days)) : '7';
+      return `${lat}|${lon}|${units}|${days}`;
+    }
+
+    function weatherViewSignature(settings, weatherData){
+      const w = settings?.weather || {};
+      const location = String(w.location_name || '').trim();
+      const hasCurrent = !!(weatherData && weatherData.current);
+      return `${weatherSignature(settings)}|${location}|${__weatherCacheAt}|${hasCurrent ? '1' : '0'}`;
+    }
+
+    async function weatherForIdle(settings){
+      const sig = weatherSignature(settings);
+      if (sig !== __weatherSig) {
+        __weatherSig = sig;
+        __weatherCache = null;
+        __weatherCacheAt = 0;
+      }
+
+      const now = Date.now();
+      if (__weatherCache && (now - __weatherCacheAt) < WEATHER_REFRESH_MS) {
+        return __weatherCache;
+      }
+      if (__weatherInflight) {
+        try { return await __weatherInflight; } catch(_e) {}
+      }
+
+      __weatherInflight = (async () => {
+        try {
+          const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('weather timeout')), WEATHER_REQUEST_TIMEOUT_MS));
+          const fresh = await Promise.race([fetchWeather(settings), timeout]);
+          __weatherCache = fresh;
+          __weatherCacheAt = Date.now();
+          return fresh;
+        } catch (_e) {
+          // Keep last good weather data visible during API/rate-limit hiccups.
+          if (__weatherCache) return __weatherCache;
+          return null;
+        } finally {
+          __weatherInflight = null;
+        }
+      })();
+      return await __weatherInflight;
+    }
+
+    function renderWeatherCard(heroCard, forecastCard, panel, settings, weatherData){
+      const wset = settings?.weather || {};
+      const unitSym = (wset.units === 'metric') ? '°C' : '°F';
+      if (!weatherData || !weatherData.current){
+        heroCard.innerHTML = `<div class="cardTitle">Weather</div><div class="cardDesc">Live forecast unavailable</div><div class="cardValue">${wxAssetImg(-1, true, "weatherIcon")} --</div>`;
+        forecastCard.innerHTML = '';
+        return;
+      }
+      const cur = weatherData.current;
+      const temp = Number(cur.temperature_2m);
+      const feelsLike = Number(cur.apparent_temperature);
+      const windNow = Number(cur.wind_speed_10m);
+      const code = Number(cur.weather_code);
+      const days = [1,3,7].includes(Number(wset.forecast_days)) ? Number(wset.forecast_days) : 7;
+      const layout = (panel.layout||'split');
+      const daily = weatherData.daily || {};
+      const times = Array.isArray(daily.time) ? daily.time : [];
+      const mins = Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min : [];
+      const maxs = Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max : [];
+      const codes = Array.isArray(daily.weather_code) ? daily.weather_code : [];
+      const rainChance = Array.isArray(daily.precipitation_probability_max) ? daily.precipitation_probability_max : [];
+      const winds = Array.isArray(daily.wind_speed_10m_max) ? daily.wind_speed_10m_max : [];
+      const isDay = Number(cur.is_day) === 1;
+      const icon = wxAssetImg(code, isDay, "wxCode");
+      const location = String(wset.location_name || '').trim();
+      const windUnit = (wset.units === 'metric') ? 'km/h' : 'mph';
+      const safeTemp = Number.isFinite(temp) ? `${Math.round(temp)}${unitSym}` : '--';
+      const safeFeels = Number.isFinite(feelsLike) ? `${Math.round(feelsLike)}${unitSym}` : '--';
+      const safeWind = Number.isFinite(windNow) ? `${Math.round(windNow)} ${windUnit}` : '--';
+      const forecast = times.slice(0, days).map((t, i) => {
+        const d = new Date(`${t}T00:00:00`);
+        const dow = Number.isFinite(d.getTime()) ? d.toLocaleDateString([], {weekday:'short'}) : '--';
+        const lo = Number(mins[i]);
+        const hi = Number(maxs[i]);
+        const c = Number(codes[i]);
+        const rain = Number(rainChance[i]);
+        const wind = Number(winds[i]);
+        const condLabel = wxCodeToLabel(c);
+        const range = `${Number.isFinite(hi) ? Math.round(hi) : '--'}${unitSym}/${Number.isFinite(lo) ? Math.round(lo) : '--'}${unitSym}`;
+        return `<div class="weatherDay"><div class="weatherDow">${dow}</div><div class="weatherCond">${wxAssetImg(c, true)}<div class="weatherLabel">${condLabel}</div></div><div class="weatherRange">${range}</div><div class="weatherDatapoint rain">Rain ${Number.isFinite(rain) ? Math.round(rain) + '%' : '--'}</div><div class="weatherDatapoint wind">Wind ${Number.isFinite(wind) ? Math.round(wind) + ' ' + windUnit : '--'}</div></div>`;
+      }).join('');
+      heroCard.innerHTML = `
+        <div class="weatherHero">
+          <div class="weatherNow">
+            <div class="wxHero">${icon}</div>
+            <div class="weatherCurrent">
+              <div class="weatherTemp">${safeTemp}</div>
+              <div class="weatherSummary">${wxCodeToLabel(code)}</div>
+              <div class="cardDesc">${location || 'Open-Meteo local forecast'}</div>
+              <div class="weatherMeta"><span><b>Feels</b> ${safeFeels}</span><span><b>Wind</b> ${safeWind}</span></div>
+            </div>
+          </div>
+        </div>
+      `;
+      forecastCard.innerHTML = `<div class="weatherDays">${forecast || '<div class="weatherDay"><div class="weatherDow">--</div><img class="weatherIcon" src="/pwa/weather/not-available.svg" alt="Unavailable"/><div class="weatherRange">--</div></div>'}</div>`;
+    }
+
+    function renderPanels(cfg, settings, weatherData){
+      const timePanel = document.querySelector('.timePanel');
+      const hero=document.getElementById('weatherHeroPanel');
+      const forecast=document.getElementById('forecastStrip');
+      if (!hero || !forecast || !timePanel) return;
+      const weatherPanel = ((cfg && cfg.weather) || {});
+      const weatherLayout = String(weatherPanel.layout || 'split');
+      const renderSig = weatherPanel.enabled
+        ? `weather|${weatherLayout}|${weatherViewSignature(settings, weatherData)}`
+        : 'weather|disabled';
+      if (renderSig === __idlePanelsRenderSig) return;
+      __idlePanelsRenderSig = renderSig;
+      timePanel.classList.toggle('hasWeather', !!weatherPanel.enabled);
+      hero.innerHTML='';
+      forecast.innerHTML='';
+      if (!weatherPanel.enabled) return;
+      renderWeatherCard(hero, forecast, weatherPanel, settings, weatherData);
+    }
+
+    async function refresh(){
+      try{
+        const [setRes, stRes] = await Promise.all([fetch('/settings',{cache:'no-store'}), fetch('/status',{cache:'no-store'})]);
+        const settings=await setRes.json();
+        const st=await stRes.json();
+        const name = (settings.device_name || st.device_name || 'RelayTV');
+        const dn = document.getElementById('idleDeviceName');
+        if (dn) dn.textContent = name;
+        __idleQrEnabled = (settings.idle_qr_enabled !== false);
+        _applyIdleQrSizing(settings.idle_qr_size);
+        if (!__idleQrEnabled) setIdleQr('');
+        else if (__idleQrUrl) setIdleQr(__idleQrUrl);
+        let weatherData = null;
+        if (((settings.idle_panels||{}).weather||{}).enabled) {
+          weatherData = await weatherForIdle(settings);
+        }
+        renderPanels(settings.idle_panels||{}, settings, weatherData);
+        const np=st.now_playing||null;
+        // Only live sessions may say Now Playing; a retained item after close
+        // is "Ended", not something still on the screen.
+        const sessState = String(st.state || '').trim().toLowerCase();
+        const npTitle = np ? String(np.title || np.url || 'Playing') : '';
+        let nowText = 'Idle';
+        if (np && (st.playing || st.paused || sessState === 'playing' || sessState === 'paused')) {
+          nowText = `${(st.paused || sessState === 'paused') ? 'Paused' : 'Now Playing'}: ${npTitle}`;
+        } else if (np && sessState === 'closed') {
+          nowText = `Ended: ${npTitle}`;
+        }
+        document.getElementById('now').textContent = nowText;
+      }catch(_e){}
+    }
+    setInterval(refresh,3000); refresh();
+  </script>
+</body>
+</html>

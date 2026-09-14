@@ -21,8 +21,10 @@ jobs:
           node-version: '24'
       - run: pip install -e '.[dev]'
       - run: ruff check app tests
-      - run: node --check app/relaytv_app/static/ui/realtime_transport.js
-      - run: node --check app/relaytv_app/static/ui/app.js
+      - name: Check browser JavaScript syntax
+        run: >-
+          find app/relaytv_app/static/ui -maxdepth 1 -name '*.js' -print0
+          | xargs -0 -n1 node --check
       - name: Check generated X11 overlay JavaScript
         run: >-
           PYTHONPATH=app python3 -c

@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-14T12:56:22.309Z",
+  "baseUrl": "http://127.0.0.1:8790",
+  "runner": {
+    "playwright": "1.62.0",
+    "browser": "chromium",
+    "browserVersion": "151.0.7922.34",
+    "platform": "linux/x64"
+  },
+  "layouts": {
+    "320x720": {
+      "hash": "#remote",
+      "horizontalOverflow": false,
+      "queueRows": 3,
+      "smallTargets": []
+    },
+    "390x844": {
+      "hash": "#remote",
+      "horizontalOverflow": false,
+      "queueRows": 3,
+      "smallTargets": []
+    },
+    "768x1024": {
+      "hash": "#remote",
+      "horizontalOverflow": false,
+      "queueRows": 3,
+      "smallTargets": []
+    },
+    "1280x800": {
+      "hash": "#remote",
+      "horizontalOverflow": false,
+      "queueRows": 3,
+      "smallTargets": []
+    },
+    "1920x1080": {
+      "hash": "#remote",
+      "horizontalOverflow": false,
+      "queueRows": 3,
+      "smallTargets": []
+    },
+    "844x390": {
+      "hash": "#remote",
+      "horizontalOverflow": false,
+      "queueRows": 3,
+      "smallTargets": []
+    }
+  },
+  "interactions": {
+    "commandPaths": [
+      "/enqueue",
+      "/history/play",
+      "/history/requeue",
+      "/ingest/media/enqueue",
+      "/ingest/media/play",
+      "/jellyfin/audio/select",
+      "/jellyfin/subtitle/select",
+      "/overlay",
+      "/play_now",
+      "/playback/toggle",
+      "/queue/move",
+      "/queue/remove"
+    ],
+    "historyDepth": 0,
+    "rememberedProvider": "iptvOpenBtn",
+    "uploadQueueAttempts": 2
+  },
+  "share": {
+    "hash": "#remote",
+    "search": "",
+    "value": "https://video.example.test/shared"
+  },
+  "screenshots": [
+    "phase3-remote-390x844.png",
+    "phase3-remote-1280x800.png",
+    "phase3-browse-phone.png"
+  ],
+  "errors": []
+}

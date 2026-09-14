@@ -1,0 +1,489 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>RelayTV Overlay</title>
+  <style>
+    :root{
+      --overlay-debug-bg:__OVERLAY_DEBUG_BG__;
+      --bg0:#070b13;
+      --bg1:#0b1220;
+      --card:rgba(15,22,36,.72);
+      --card-border:rgba(42,168,255,.22);
+      --txt:rgba(241,247,255,.96);
+      --muted:rgba(208,222,245,.72);
+      --accent:#2aa8ff;
+      --ok:#33d18f;
+      --warn:#ffbf43;
+      --err:#ff6f91;
+      --shadow:0 22px 44px rgba(0,0,0,.40);
+      --radius:20px;
+      --overlay-scale:1;
+      --toast-width:430px;
+      --toast-gap:11px;
+      --toast-edge:22px;
+      --toast-edge-center:20px;
+      --toast-pad-y:13px;
+      --toast-pad-x:14px;
+      --toast-radius:15px;
+      --toast-shadow-y:16px;
+      --toast-shadow-blur:36px;
+      --toast-accent-width:4px;
+      --toast-accent-glow:16px;
+      --toast-top-gap:10px;
+      --toast-icon-size:24px;
+      --toast-icon-font:13px;
+      --toast-text-font:14px;
+      --toast-link-font:14px;
+      --toast-link-gap:6px;
+      --toast-image-gap:10px;
+      --toast-image-height:124px;
+      --toast-image-radius:11px;
+    }
+    html,body{height:100%;margin:0;overflow:hidden;background:var(--overlay-debug-bg);color:var(--txt);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;cursor:none!important;}
+    body *{cursor:none!important;}
+    body,.stage{pointer-events:none;}
+    .stage{position:fixed;inset:0;opacity:0;visibility:hidden;transition:opacity .20s ease,visibility .20s ease;}
+    body.idle .stage{opacity:1;visibility:visible;}
+    .idleFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;}
+
+    .toasts{position:fixed;width:min(var(--toast-width),70vw);display:flex;flex-direction:column;gap:var(--toast-gap);pointer-events:none;}
+    .toasts.top-left{top:var(--toast-edge);left:var(--toast-edge);right:auto;bottom:auto;transform:none;}
+    .toasts.top-right{top:var(--toast-edge);right:var(--toast-edge);left:auto;bottom:auto;transform:none;}
+    .toasts.bottom-right{bottom:var(--toast-edge);right:var(--toast-edge);left:auto;top:auto;transform:none;}
+    .toasts.bottom-left{bottom:var(--toast-edge);left:var(--toast-edge);right:auto;top:auto;transform:none;}
+    .toasts.top-center{top:var(--toast-edge-center);left:50%;right:auto;bottom:auto;transform:translateX(-50%);}
+    .toast{position:relative;overflow:hidden;padding:var(--toast-pad-y) var(--toast-pad-x);border-radius:var(--toast-radius);background:rgba(9,16,28,.82);border:1px solid rgba(42,168,255,.26);box-shadow:0 var(--toast-shadow-y) var(--toast-shadow-blur) rgba(0,0,0,.44);
+      opacity:0;transform:translateY(-8px) scale(.98);transition:opacity __PLAYBACK_NOTIFY_FADE_MS__ms ease,transform __PLAYBACK_NOTIFY_FADE_MS__ms ease,border-color __PLAYBACK_NOTIFY_FADE_MS__ms ease;pointer-events:auto;}
+    .toast.show{opacity:1;transform:translateY(0) scale(1);}
+    .toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--toast-accent-width);background:var(--accent);box-shadow:0 0 var(--toast-accent-glow) var(--accent);}
+    .toast.success{--accent:var(--ok)} .toast.warn{--accent:var(--warn)} .toast.error{--accent:var(--err)}
+    .toastTop{display:flex;align-items:center;gap:var(--toast-top-gap);}
+    .ico{width:var(--toast-icon-size);height:var(--toast-icon-size);border-radius:999px;background:rgba(255,255,255,.08);display:grid;place-items:center;font-size:var(--toast-icon-font);}
+    .tTxt{font-size:var(--toast-text-font);line-height:1.28;white-space:pre-line;}
+    .toast a{color:inherit;text-decoration:underline;font-weight:600;font-size:var(--toast-link-font);display:inline-block;margin-top:var(--toast-link-gap);pointer-events:auto;}
+    .toast .img{margin-top:var(--toast-image-gap);width:100%;height:var(--toast-image-height);display:none;object-fit:cover;border-radius:var(--toast-image-radius);border:1px solid rgba(130,170,220,.25);background:rgba(255,255,255,.04)}
+    .toast .img.ready{display:block;}
+
+  </style>
+</head>
+<body class="playing">
+  <div class="stage">
+    <iframe class="idleFrame" src="about:blank" title="RelayTV Idle" aria-label="RelayTV Idle"></iframe>
+  </div>
+
+  <div class="toasts top-left" id="toasts"></div>
+
+  <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__"></script>
+  <script>
+    const $ = (id)=>document.getElementById(id);
+    const iconMap = {share:"↗",check:"✓",warn:"!",camera:"📷",play:"▶",info:"i"};
+    const overlayAllowToastImages = __OVERLAY_ALLOW_IMAGES__;
+    let _wasPlaying = true;
+    let _overlayRealtimeTransport = null;
+    let _overlayRealtimeGeneration = 0;
+    let _overlayRealtimeConnecting = false;
+    let _overlayRealtimeCapabilities = null;
+    let _overlayRealtimeRetryTimer = 0;
+    let _overlayRealtimeFailures = 0;
+    let _overlayLastEventTs = Date.now();
+    let _overlayReportedState = '';
+    const _overlayRealtimePolicy = RelayTVRealtime.createPolicy({
+      fallbackCapabilities:{
+        protocol_version:0,
+        websocket:{enabled:false},
+        sse:{enabled:true, overlay:'/x11/overlay/events'},
+      },
+      capabilityTtlMs:300000,
+      websocketCooldownMs:60000,
+    });
+    const overlayToastMetrics = [
+      ['--toast-width', 430],
+      ['--toast-gap', 11],
+      ['--toast-edge', 22],
+      ['--toast-edge-center', 20],
+      ['--toast-pad-y', 13],
+      ['--toast-pad-x', 14],
+      ['--toast-radius', 15],
+      ['--toast-shadow-y', 16],
+      ['--toast-shadow-blur', 36],
+      ['--toast-accent-width', 4],
+      ['--toast-accent-glow', 16],
+      ['--toast-top-gap', 10],
+      ['--toast-icon-size', 24],
+      ['--toast-icon-font', 13],
+      ['--toast-text-font', 14],
+      ['--toast-link-font', 14],
+      ['--toast-link-gap', 6],
+      ['--toast-image-gap', 10],
+      ['--toast-image-height', 124],
+      ['--toast-image-radius', 11],
+    ];
+
+    function updateOverlayToastScale(){
+      try{
+        const vw = Math.max(1, Number(window.innerWidth || 1920));
+        const vh = Math.max(1, Number(window.innerHeight || 1080));
+        const scale = Math.min(4, Math.max(0.75, Math.min(vw / 1920, vh / 1080)));
+        const root = document.documentElement;
+        root.style.setProperty('--overlay-scale', scale.toFixed(3));
+        for(const [name, base] of overlayToastMetrics){
+          root.style.setProperty(name, `${Math.round(Number(base) * scale)}px`);
+        }
+      }catch(_e){}
+    }
+
+    updateOverlayToastScale();
+    window.addEventListener('resize', updateOverlayToastScale, {passive:true});
+
+    function overlayPlaybackVisible(state){
+      const j = state || {};
+      const sessionState = String(j.state || '').trim().toLowerCase();
+      if (sessionState === 'closed') return false;
+      const runtimeState = String(j.playback_runtime_state || '').trim().toLowerCase();
+      const qtRuntimeActive = (
+        j.native_qt_mpv_runtime_playback_active === true
+        || j.native_qt_mpv_runtime_stream_loaded === true
+        || j.native_qt_mpv_runtime_playback_started === true
+      );
+      const sessionActive = (
+        j.playing === true
+        || sessionState === 'playing'
+        || sessionState === 'paused'
+        || runtimeState === 'playing'
+        || runtimeState === 'paused'
+        || runtimeState === 'buffering'
+        || runtimeState === 'degraded'
+        || j.transition_in_progress === true
+        || j.transitioning_between_items === true
+      );
+      if (j.native_qt_telemetry_selected) {
+        return qtRuntimeActive || sessionActive;
+      }
+      return sessionActive;
+    }
+
+    function _overlayToastCount(){
+      try{return document.querySelectorAll('#toasts .toast').length;}catch(_e){return 0;}
+    }
+
+    function reportOverlayState(state, reason='', clientEvent='client', clientReason='', force=false){
+      try{
+        const nextState = String(state || '').trim().toLowerCase() || 'connected';
+        const nextReason = String(reason || '').trim().toLowerCase();
+        if(!force && nextState === _overlayReportedState) return;
+        _overlayReportedState = nextState;
+        fetch('/x11/overlay/client_state', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          keepalive:true,
+          body: JSON.stringify({
+            state: nextState,
+            reason: nextReason,
+            client_event: String(clientEvent || 'client').trim().toLowerCase(),
+            client_reason: String(clientReason || nextReason).trim().toLowerCase(),
+            active_toasts: _overlayToastCount(),
+          })
+        }).catch(()=>{});
+      }catch(_e){}
+    }
+
+    function refreshIdleFrame(force=false){
+      const frame = document.querySelector('.idleFrame');
+      if (!frame) return;
+      if (!force && !document.body.classList.contains('idle')) return;
+      frame.src = `/idle?ts=${Date.now()}`;
+    }
+
+    function idleDashboardEnabled(state){
+      return !(state && state.idle_dashboard_enabled === false);
+    }
+
+    let _statusPollTimer = null;
+    let _statusPollInFlight = false;
+
+    function scheduleNowPlayingPoll(delayMs){
+      if (_statusPollTimer) clearTimeout(_statusPollTimer);
+      const ms = Math.max(250, Number(delayMs || 800));
+      _statusPollTimer = setTimeout(refreshNowPlaying, ms);
+    }
+
+    async function refreshNowPlaying(){
+      if (_statusPollInFlight) return;
+      _statusPollInFlight = true;
+      let timeoutId = null;
+      let nextDelay = 900;
+      try{
+        const ctrl = new AbortController();
+        timeoutId = setTimeout(() => ctrl.abort(), 1200);
+        let j = null;
+        try {
+          const fast = await fetch('/playback/state', {cache:'no-store', signal: ctrl.signal});
+          if (fast.ok) j = await fast.json();
+        } catch(_e) {}
+        if (!j) {
+          const r = await fetch('/status', {cache:'no-store', signal: ctrl.signal});
+          j = await r.json();
+        }
+        const isPlaying = overlayPlaybackVisible(j);
+        const idleEnabled = idleDashboardEnabled(j);
+        if (isPlaying){
+          document.body.classList.add('playing');
+          document.body.classList.remove('idle');
+          _wasPlaying = true;
+          nextDelay = 450;
+        } else if (idleEnabled) {
+          document.body.classList.remove('playing');
+          document.body.classList.add('idle');
+          if (_wasPlaying) refreshIdleFrame(true);
+          _wasPlaying = false;
+          nextDelay = 900;
+        } else {
+          document.body.classList.remove('playing');
+          document.body.classList.remove('idle');
+          _wasPlaying = false;
+          nextDelay = 900;
+        }
+      }catch(_e){
+        nextDelay = 1200;
+      }finally{
+        if (timeoutId) clearTimeout(timeoutId);
+        _statusPollInFlight = false;
+        scheduleNowPlayingPoll(nextDelay);
+      }
+    }
+    refreshNowPlaying();
+
+    function addToast(msg){
+      const root = $('toasts');
+      if(!root) return;
+      try{
+        const allowedPositions = new Set(['top-right', 'top-left', 'bottom-right', 'bottom-left', 'top-center']);
+        const position = allowedPositions.has(msg.position) ? msg.position : 'top-left';
+        root.className = `toasts ${position}`;
+        const el = document.createElement('div');
+        const level = (msg.level || 'info').toLowerCase();
+        el.className = `toast ${level === 'success' ? 'success' : level === 'warn' ? 'warn' : level === 'error' ? 'error' : ''}`;
+        const top = document.createElement('div'); top.className='toastTop';
+        const ico = document.createElement('div'); ico.className='ico'; ico.textContent = iconMap[msg.icon] || iconMap[level] || '•';
+        const txt = document.createElement('div'); txt.className='tTxt'; txt.textContent = msg.text || '';
+        top.append(ico, txt); el.appendChild(top);
+        const linkUrl = msg.link_url;
+        const linkText = msg.link_text || msg.link_url;
+        if(linkUrl){
+          const a = document.createElement('a');
+          a.href = linkUrl;
+          a.textContent = linkText;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          el.appendChild(a);
+        }
+        const rawImageUrl = String(msg.image_url || '').trim();
+        if(overlayAllowToastImages && rawImageUrl){
+          const safeImageUrl = /^(https?:\/\/|\/|data:image\/)/i.test(rawImageUrl) ? rawImageUrl : '';
+          if(safeImageUrl){
+            const img = document.createElement('img');
+            img.className = 'img';
+            img.alt = '';
+            img.decoding = 'async';
+            img.loading = 'eager';
+            img.referrerPolicy = 'no-referrer';
+            let imgSettled = false;
+            const dropImg = ()=>{
+              if(imgSettled) return;
+              imgSettled = true;
+              try{ clearTimeout(imgTimeout); }catch(_e){}
+              try{ img.removeAttribute('src'); }catch(_e){}
+              try{ img.remove(); }catch(_e){}
+            };
+            img.onload = ()=>{
+              if(imgSettled) return;
+              imgSettled = true;
+              try{ clearTimeout(imgTimeout); }catch(_e){}
+              img.classList.add('ready');
+            };
+            img.onerror = ()=>{ dropImg(); };
+            const imgTimeout = setTimeout(()=>{ dropImg(); }, 4000);
+            img.src = safeImageUrl;
+            el.appendChild(img);
+          }
+        }
+        root.prepend(el);
+        while(root.children.length > 4){
+          try{ root.lastElementChild?.remove(); }catch(_e){ break; }
+        }
+        reportOverlayState('displaying', 'toast_visible', 'toast', 'toast_visible', true);
+        requestAnimationFrame(()=>el.classList.add('show'));
+        const ttlSec = Number(msg.duration || __PLAYBACK_NOTIFY_DISPLAY_SEC__);
+        const ttl = Math.min(30000, Math.max(800, Number.isFinite(ttlSec) ? Math.round(ttlSec * 1000) : Math.round(__PLAYBACK_NOTIFY_DISPLAY_SEC__ * 1000)));
+        setTimeout(()=>{
+          reportOverlayState('draining', 'toast_draining', 'toast', 'toast_draining', true);
+          el.classList.remove('show');
+          setTimeout(()=>{
+            try{ el.remove(); }catch(_e){}
+            if(_overlayToastCount() <= 0) reportOverlayState('connected', 'toast_drained', 'toast', 'toast_drained', true);
+          }, __PLAYBACK_NOTIFY_FADE_MS__);
+        }, ttl);
+      }catch(_e){}
+    }
+
+    async function loadOverlayRealtimeCapabilities(options){
+      const settings = (options && typeof options === 'object') ? options : {};
+      _overlayRealtimeCapabilities = await _overlayRealtimePolicy.discover(async()=>{
+        const ctrl = new AbortController();
+        const timeout = setTimeout(()=>ctrl.abort(), 2500);
+        try{
+          const response = await fetch('/realtime/capabilities', {cache:'no-store', signal:ctrl.signal});
+          if(!response.ok){
+            const error = new Error(`capabilities ${response.status}`);
+            error.status = response.status;
+            error.legacy = response.status === 404;
+            throw error;
+          }
+          const payload = await response.json();
+          if(Number(payload?.protocol_version) !== 1){
+            const error = new Error('unsupported protocol');
+            error.cacheFallback = true;
+            throw error;
+          }
+          return payload;
+        }finally{
+          clearTimeout(timeout);
+        }
+      }, {force:settings.force === true});
+      return _overlayRealtimeCapabilities;
+    }
+
+    function dispatchOverlayRealtime(msg, kind){
+      if(!msg || typeof msg !== 'object') return;
+      _overlayLastEventTs = Date.now();
+      _overlayRealtimeFailures = 0;
+      const event = String(msg.type || '').trim();
+      reportOverlayState(
+        'connected',
+        'stream_connected',
+        kind,
+        event === 'ping' ? 'stream_ping' : (event || 'stream_event'),
+        true
+      );
+      if(event === 'toast') addToast(msg);
+    }
+
+    function scheduleOverlayRealtimeRetry(){
+      if(_overlayRealtimeRetryTimer) return;
+      _overlayRealtimeFailures += 1;
+      const exponent = Math.min(5, Math.max(0, _overlayRealtimeFailures - 1));
+      const base = Math.min(30000, 1000 * (2 ** exponent));
+      const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+      _overlayRealtimeRetryTimer = setTimeout(()=>{
+        _overlayRealtimeRetryTimer = 0;
+        connectEvents();
+      }, delay);
+    }
+
+    function retireOverlayRealtime(active, reason, policyReason=reason){
+      if(_overlayRealtimeTransport !== active || active.generation !== _overlayRealtimeGeneration) return;
+      _overlayRealtimeTransport = null;
+      _overlayRealtimeGeneration += 1;
+      try{ active.handle.close(); }catch(_e){}
+      _overlayRealtimePolicy.retire(active.kind, policyReason, active.websocketAttempt);
+      reportOverlayState('retrying', reason, active.kind, reason, true);
+      scheduleOverlayRealtimeRetry();
+    }
+
+    function openOverlaySse(capabilities, generation){
+      if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+      const path = String(capabilities?.sse?.overlay || '/x11/overlay/events');
+      let es = null;
+      try{ es = new EventSource(path); }catch(_e){ scheduleOverlayRealtimeRetry(); return; }
+      const active = {kind:'sse', handle:es, generation};
+      _overlayRealtimeTransport = active;
+      es.onmessage = (ev)=>{
+        if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+        try{ dispatchOverlayRealtime(JSON.parse(ev.data || '{}'), 'sse'); }catch(_e){}
+      };
+      es.onerror = ()=>retireOverlayRealtime(active, 'eventsource_error', 'error');
+    }
+
+    function openOverlayWebSocket(capabilities, generation){
+      if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+      const path = String(capabilities?.websocket?.overlay || '/x11/overlay/ws');
+      const url = new URL(path, window.location.href);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      let socket = null;
+      try{ socket = new WebSocket(url.toString(), 'relaytv.realtime.v1'); }
+      catch(_e){
+        _overlayRealtimePolicy.retire('websocket', 'open_error', null);
+        openOverlaySse(capabilities, generation);
+        return;
+      }
+      const active = {
+        kind:'websocket',
+        handle:socket,
+        generation,
+        websocketAttempt:_overlayRealtimePolicy.createWebSocketAttempt(capabilities),
+      };
+      _overlayRealtimeTransport = active;
+      socket.onmessage = (ev)=>{
+        if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+        let envelope = null;
+        try{ envelope = JSON.parse(ev.data || '{}'); }
+        catch(_e){
+          retireOverlayRealtime(active, 'websocket_protocol_error', 'protocol_error');
+          return;
+        }
+        const accepted = _overlayRealtimePolicy.acceptWebSocketEnvelope(active.websocketAttempt, envelope);
+        if(!accepted){
+          retireOverlayRealtime(active, 'websocket_protocol_error', 'protocol_error');
+          return;
+        }
+        if(!accepted.payload.type) accepted.payload.type = accepted.event;
+        dispatchOverlayRealtime(accepted.payload, 'websocket');
+      };
+      socket.onerror = ()=>{};
+      socket.onclose = ()=>retireOverlayRealtime(active, 'websocket_closed', 'closed');
+    }
+
+    async function connectEvents(){
+      if(_overlayRealtimeTransport || _overlayRealtimeConnecting) return;
+      const generation = ++_overlayRealtimeGeneration;
+      _overlayRealtimeConnecting = true;
+      reportOverlayState('retrying', 'connect_start', 'realtime', 'connect_start', true);
+      try{
+        const capabilities = await loadOverlayRealtimeCapabilities();
+        if(generation !== _overlayRealtimeGeneration || _overlayRealtimeTransport) return;
+        const selected = _overlayRealtimePolicy.select(capabilities, {
+          websocketAvailable:typeof window.WebSocket === 'function',
+        });
+        if(selected === 'websocket') openOverlayWebSocket(capabilities, generation);
+        else openOverlaySse(capabilities, generation);
+      }catch(_e){
+        scheduleOverlayRealtimeRetry();
+      }finally{
+        if(generation === _overlayRealtimeGeneration) _overlayRealtimeConnecting = false;
+      }
+    }
+    connectEvents();
+    setInterval(()=>{
+      const active = _overlayRealtimeTransport;
+      if(!active) return;
+      if((Date.now() - _overlayLastEventTs) < 30000) return;
+      reportOverlayState('stale', 'stream_stale', active.kind, 'stream_stale', true);
+      retireOverlayRealtime(active, 'stream_stale', 'stale');
+    }, 10000);
+    setInterval(async()=>{
+      const active = _overlayRealtimeTransport;
+      if(!active || active.kind !== 'sse') return;
+      const generation = active.generation;
+      const capabilities = await loadOverlayRealtimeCapabilities({force:true});
+      if(_overlayRealtimeTransport !== active || generation !== _overlayRealtimeGeneration) return;
+      const selected = _overlayRealtimePolicy.select(capabilities, {
+        websocketAvailable:typeof window.WebSocket === 'function',
+      });
+      if(selected !== 'websocket') return;
+      retireOverlayRealtime(active, 'websocket_reprobe', 'upgrade');
+    }, 300000);
+  </script>
+</body>
+</html>

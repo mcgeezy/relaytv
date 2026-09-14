@@ -66,8 +66,8 @@ async function captureLibrary(browser, baseUrl) {
   const { context, page } = await newProductPage(browser, { width: 430, height: 932 });
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
-    await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('#jellyfinOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseJellyfinBtn').click();
     await page.locator('[data-jf-tab="tv"]').click();
     await page.waitForFunction(() => document.querySelectorAll('[data-row-id="tv_series"] .jfItem').length > 0);
     const preferred = page.locator('[data-row-id="tv_series"] .jfItem', { hasText: 'House of the Dragon' }).first();

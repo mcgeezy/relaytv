@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(
-  path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'),
+  path.join(__dirname, '../../app/relaytv_app/static/ui/settings.js'),
   'utf8',
 );
 
@@ -33,7 +33,7 @@ function fixture(){
     return elements.get(id);
   }
   const markup = fs.readFileSync(
-    path.join(__dirname, '../../app/relaytv_app/routes/__init__.py'),
+    path.join(__dirname, '../../app/relaytv_app/static/ui/index.html'),
     'utf8',
   );
   for (const match of markup.matchAll(/id="((?:set|settings)[^"]+)"/g)) element(match[1]);
@@ -68,7 +68,7 @@ function fixture(){
     context,
   );
   const bindStart = source.indexOf('function bindSettingsUi()');
-  vm.runInContext(source.slice(bindStart, source.indexOf('// Consume the', bindStart)), context);
+  vm.runInContext(source.slice(bindStart), context);
   vm.runInContext('bindSettingsUi()', context);
   return {element, requests, context};
 }
