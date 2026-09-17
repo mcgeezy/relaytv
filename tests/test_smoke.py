@@ -35,6 +35,9 @@ from relaytv_app.qt_shell_app import (
     _native_overlay_toasts_enabled,
     _overlay_software_mode_enabled,
     _native_idle_weather_layout,
+    _overlay_watchdog_enabled,
+    _overlay_max_rss_mb,
+    _overlay_watchdog_interval_ms,
 )
 from relaytv_app.routes import _notification_capabilities, _overlay_prefers_native_qt_toast
 
@@ -2008,6 +2011,53 @@ def test_qt_overlay_fallback_hides_cursor() -> None:
     assert 'from PySide6.QtGui import QCursor' in text
     assert 'blank_cursor = QCursor(Qt.BlankCursor)' in text
     assert 'cursor_timer.timeout.connect(_hide_cursor)' in text
+
+
+def test_qt_overlay_watchdog_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_WATCHDOG', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_MAX_RSS_MB', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_WATCHDOG_INTERVAL_MS', raising=False)
+
+    assert _overlay_watchdog_enabled() is True
+    assert _overlay_max_rss_mb() == 600.0
+    assert _overlay_watchdog_interval_ms() == 15000
+
+
+def test_qt_overlay_watchdog_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_WATCHDOG', '0')
+    assert _overlay_watchdog_enabled() is False
+
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_WATCHDOG', '1')
+    assert _overlay_watchdog_enabled() is True
+
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_MAX_RSS_MB', '850.5')
+    assert _overlay_max_rss_mb() == 850.5
+
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_WATCHDOG_INTERVAL_MS', '5000')
+    assert _overlay_watchdog_interval_ms() == 5000
+
+
+def test_qt_overlay_watchdog_implementation_guards() -> None:
+    text = (ROOT_DIR / 'app/relaytv_app/qt_shell_app.py').read_text()
+
+    assert 'overlay.renderProcessTerminated.connect(_on_overlay_render_process_terminated)' in text
+    assert 'def _recycle_overlay(' in text
+    assert 'def _check_overlay_watchdog(' in text
+    assert 'overlay.page().runJavaScript("Date.now()", _on_heartbeat_response)' in text
+    assert '"qt_overlay_watchdog_enabled": bool(overlay_health.get("watchdog_enabled"))' in text
+    assert '"qt_overlay_heartbeat_ok": overlay_health.get("heartbeat_ok")' in text
+    assert '"qt_overlay_renderer_rss_mb": float(overlay_health.get("renderer_rss_mb") or 0.0)' in text
+
+
+def test_idle_and_overlay_html_freeze_prevention_guards() -> None:
+    routes_text = (ROOT_DIR / 'app/relaytv_app/routes/__init__.py').read_text()
+    assert 'clockEl.textContent !== timeStr' in routes_text
+    assert 'dateEl.textContent !== dateStr' in routes_text
+    assert '__cachedSettings' in routes_text
+
+    assert '_overlayLastReportTs' in routes_text
+    assert 'stream_ping' in routes_text
+    assert 'nextDelay = 2500' in routes_text
 
 
 def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatch) -> None:

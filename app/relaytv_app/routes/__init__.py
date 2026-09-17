@@ -699,6 +699,11 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "native_qt_overlay_software_mode": qt_runtime_telemetry.get("qt_overlay_software_mode"),
         "native_qt_overlay_load_ok": qt_runtime_telemetry.get("qt_overlay_load_ok"),
         "native_qt_overlay_load_failures": qt_runtime_telemetry.get("qt_overlay_load_failures"),
+        "native_qt_overlay_watchdog_enabled": qt_runtime_telemetry.get("qt_overlay_watchdog_enabled"),
+        "native_qt_overlay_heartbeat_ok": qt_runtime_telemetry.get("qt_overlay_heartbeat_ok"),
+        "native_qt_overlay_recycles": qt_runtime_telemetry.get("qt_overlay_recycles"),
+        "native_qt_overlay_last_recycle_reason": qt_runtime_telemetry.get("qt_overlay_last_recycle_reason"),
+        "native_qt_overlay_renderer_rss_mb": qt_runtime_telemetry.get("qt_overlay_renderer_rss_mb"),
         "native_qt_overlay_visible": qt_runtime_telemetry.get("qt_overlay_visible"),
         "native_qt_native_idle_enabled": qt_runtime_telemetry.get("qt_native_idle_enabled"),
         "native_qt_native_idle_visible": qt_runtime_telemetry.get("qt_native_idle_visible"),
@@ -1655,7 +1660,19 @@ def _idle_html() -> str:
       const mon = ['January','February','March','April','May','June','July','August','September','October','November','December'][date.getUTCMonth()];
       return `${dow}, ${mon} ${date.getUTCDate()}`;
     }
-    function tick(){ const d=_serverClockDate(); document.getElementById('clock').textContent=_fmtClockTime(d); document.getElementById('date').textContent=_fmtClockDate(d); }
+    function tick(){
+      const d=_serverClockDate();
+      const clockEl = document.getElementById('clock');
+      const timeStr = _fmtClockTime(d);
+      if (clockEl && clockEl.textContent !== timeStr) {
+        clockEl.textContent = timeStr;
+      }
+      const dateEl = document.getElementById('date');
+      const dateStr = _fmtClockDate(d);
+      if (dateEl && dateEl.textContent !== dateStr) {
+        dateEl.textContent = dateStr;
+      }
+    }
     setInterval(tick,1000); tick();
 
     function _applyIdleQrSizing(px){
@@ -1689,7 +1706,10 @@ def _idle_html() -> str:
         __idleQrUrl = target;
         img.src = `/qr/connect.svg?logo=1&u=${encodeURIComponent(target)}&ts=${Date.now()}`;
       }
-      label.textContent = target.replace(/^https?:\/\//i, '');
+      const targetLabel = target.replace(/^https?:\/\//i, '');
+      if (label.textContent !== targetLabel) {
+        label.textContent = targetLabel;
+      }
       wrap.classList.remove('hidden');
       wrap.setAttribute('aria-hidden', 'false');
     }
@@ -1902,16 +1922,29 @@ def _idle_html() -> str:
       forecast.innerHTML='';
       if (!weatherPanel.enabled) return;
       renderWeatherCard(hero, forecast, weatherPanel, settings, weatherData);
+    let __cachedSettings = null;
+    let __cachedSettingsAt = 0;
+
+    async function getSettings(){
+      const now = Date.now();
+      if (__cachedSettings && (now - __cachedSettingsAt) < 20000) {
+        return __cachedSettings;
+      }
+      try {
+        const setRes = await fetch('/settings', {cache:'no-store'});
+        __cachedSettings = await setRes.json();
+        __cachedSettingsAt = now;
+      } catch (_e) {}
+      return __cachedSettings || {};
     }
 
     async function refresh(){
       try{
-        const [setRes, stRes] = await Promise.all([fetch('/settings',{cache:'no-store'}), fetch('/status',{cache:'no-store'})]);
-        const settings=await setRes.json();
+        const [settings, stRes] = await Promise.all([getSettings(), fetch('/status',{cache:'no-store'})]);
         const st=await stRes.json();
         const name = (settings.device_name || st.device_name || 'RelayTV');
         const dn = document.getElementById('idleDeviceName');
-        if (dn) dn.textContent = name;
+        if (dn && dn.textContent !== name) dn.textContent = name;
         __idleQrEnabled = (settings.idle_qr_enabled !== false);
         _applyIdleQrSizing(settings.idle_qr_size);
         if (!__idleQrEnabled) setIdleQr('');
@@ -1932,10 +1965,13 @@ def _idle_html() -> str:
         } else if (np && sessState === 'closed') {
           nowText = `Ended: ${npTitle}`;
         }
-        document.getElementById('now').textContent = nowText;
+        const nowEl = document.getElementById('now');
+        if (nowEl && nowEl.textContent !== nowText) {
+          nowEl.textContent = nowText;
+        }
       }catch(_e){}
     }
-    setInterval(refresh,3000); refresh();
+    setInterval(refresh,4000); refresh();
   </script>
 </body>
 </html>"""
@@ -2110,24 +2146,64 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       try{return document.querySelectorAll('#toasts .toast').length;}catch(_e){return 0;}
     }
 
+    let _overlayReportTimer = null;
+    let _overlayPendingReport = null;
+    let _overlayLastReportTs = 0;
+    let _overlayReportedReason = '';
+
+    function _sendOverlayState(payload){
+      try{
+        fetch('/x11/overlay/client_state', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        }).catch(()=>{});
+      }catch(_e){}
+    }
+
     function reportOverlayState(state, reason='', clientEvent='client', clientReason='', force=false){
       try{
         const nextState = String(state || '').trim().toLowerCase() || 'connected';
         const nextReason = String(reason || '').trim().toLowerCase();
-        if(!force && nextState === _overlayReportedState) return;
+        const evt = String(clientEvent || 'client').trim().toLowerCase();
+        const creason = String(clientReason || nextReason).trim().toLowerCase();
+        const isPing = (creason === 'stream_ping' || evt === 'stream_ping');
+        // Do not spam reports for routine transport pings when already connected
+        if(isPing && nextState === _overlayReportedState) return;
+
+        if(!force && nextState === _overlayReportedState && nextReason === _overlayReportedReason) return;
         _overlayReportedState = nextState;
-        fetch('/x11/overlay/client_state', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          keepalive:true,
-          body: JSON.stringify({
-            state: nextState,
-            reason: nextReason,
-            client_event: String(clientEvent || 'client').trim().toLowerCase(),
-            client_reason: String(clientReason || nextReason).trim().toLowerCase(),
-            active_toasts: _overlayToastCount(),
-          })
-        }).catch(()=>{});
+        _overlayReportedReason = nextReason;
+
+        const payload = {
+          state: nextState,
+          reason: nextReason,
+          client_event: evt,
+          client_reason: creason,
+          active_toasts: _overlayToastCount(),
+        };
+
+        const now = Date.now();
+        const isUrgent = (nextState === 'displaying' || nextState === 'draining' || evt === 'toast');
+        if(isUrgent || (now - _overlayLastReportTs) >= 500){
+          if(_overlayReportTimer){ clearTimeout(_overlayReportTimer); _overlayReportTimer = null; }
+          _overlayPendingReport = null;
+          _overlayLastReportTs = now;
+          _sendOverlayState(payload);
+        } else {
+          _overlayPendingReport = payload;
+          if(!_overlayReportTimer){
+            _overlayReportTimer = setTimeout(()=>{
+              _overlayReportTimer = null;
+              if(_overlayPendingReport){
+                _overlayLastReportTs = Date.now();
+                const p = _overlayPendingReport;
+                _overlayPendingReport = null;
+                _sendOverlayState(p);
+              }
+            }, 500);
+          }
+        }
       }catch(_e){}
     }
 
@@ -2180,12 +2256,12 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
           document.body.classList.add('idle');
           if (_wasPlaying) refreshIdleFrame(true);
           _wasPlaying = false;
-          nextDelay = 900;
+          nextDelay = 2500;
         } else {
           document.body.classList.remove('playing');
           document.body.classList.remove('idle');
           _wasPlaying = false;
-          nextDelay = 900;
+          nextDelay = 2500;
         }
       }catch(_e){
         nextDelay = 1200;
