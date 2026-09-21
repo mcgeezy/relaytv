@@ -1922,6 +1922,8 @@ def _idle_html() -> str:
       forecast.innerHTML='';
       if (!weatherPanel.enabled) return;
       renderWeatherCard(hero, forecast, weatherPanel, settings, weatherData);
+    }
+
     let __cachedSettings = null;
     let __cachedSettingsAt = 0;
 
@@ -2150,6 +2152,7 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     let _overlayPendingReport = null;
     let _overlayLastReportTs = 0;
     let _overlayReportedReason = '';
+    const _overlayClientHeartbeatMs = 20000;
 
     function _sendOverlayState(payload){
       try{
@@ -2168,8 +2171,13 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         const evt = String(clientEvent || 'client').trim().toLowerCase();
         const creason = String(clientReason || nextReason).trim().toLowerCase();
         const isPing = (creason === 'stream_ping' || evt === 'stream_ping');
-        // Do not spam reports for routine transport pings when already connected
-        if(isPing && nextState === _overlayReportedState) return;
+        const now = Date.now();
+        // Keep server-side delivery health current without reporting every stream ping.
+        if(
+          isPing &&
+          nextState === _overlayReportedState &&
+          (now - _overlayLastReportTs) < _overlayClientHeartbeatMs
+        ) return;
 
         if(!force && nextState === _overlayReportedState && nextReason === _overlayReportedReason) return;
         _overlayReportedState = nextState;
@@ -2183,7 +2191,6 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
           active_toasts: _overlayToastCount(),
         };
 
-        const now = Date.now();
         const isUrgent = (nextState === 'displaying' || nextState === 'draining' || evt === 'toast');
         if(isUrgent || (now - _overlayLastReportTs) >= 500){
           if(_overlayReportTimer){ clearTimeout(_overlayReportTimer); _overlayReportTimer = null; }

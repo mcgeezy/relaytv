@@ -2060,6 +2060,63 @@ def test_idle_and_overlay_html_freeze_prevention_guards() -> None:
     assert 'nextDelay = 2500' in routes_text
 
 
+def test_idle_dashboard_inline_script_is_valid_javascript() -> None:
+    node = shutil.which('node')
+    assert node is not None, 'node is required by the JavaScript quality gates'
+    scripts = re.findall(r'<script>(.*?)</script>', routes._idle_html(), re.S)
+    assert scripts
+
+    for script in scripts:
+        result = subprocess.run(
+            [node, '--check', '-'],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+
+def test_overlay_stream_pings_keep_server_delivery_health_current() -> None:
+    node = shutil.which('node')
+    assert node is not None, 'node is required by the JavaScript quality gates'
+    html = routes.x11_overlay_page().body.decode()
+    script = re.findall(r'<script>(.*?)</script>', html, re.S)[0]
+    reporting = script[
+        script.index('let _overlayReportTimer') : script.index('function refreshIdleFrame')
+    ]
+    harness = """
+let nowMs = 1000;
+Date.now = () => nowMs;
+let _overlayReportedState = '';
+const sent = [];
+const _overlayToastCount = () => 0;
+const fetch = (_url, options) => {
+  sent.push({at: nowMs, payload: JSON.parse(options.body)});
+  return {catch() {}};
+};
+""" + reporting + """
+reportOverlayState('connected', 'stream_connected', 'sse', 'hello', true);
+for(let index = 0; index < 12; index += 1) {
+  nowMs += 5000;
+  reportOverlayState('connected', 'stream_connected', 'sse', 'stream_ping', true);
+}
+console.log(JSON.stringify(sent));
+"""
+    result = subprocess.run(
+        [node, '-'],
+        input=harness,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    sent = json.loads(result.stdout)
+
+    assert [item['at'] for item in sent] == [1000, 21000, 41000, 61000]
+    assert sent[-1]['payload']['client_reason'] == 'stream_ping'
+
+
 def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('RELAYTV_QT_LIBMPV', raising=False)
     monkeypatch.setattr('relaytv_app.qt_shell_app.platform.machine', lambda: 'aarch64')
