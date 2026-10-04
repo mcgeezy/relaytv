@@ -26,7 +26,6 @@ docs/TRANSITION_INVENTORY.md). Delegation goes through
 module attributes (``player.play_item``) on purpose: tests monkeypatch those
 attributes and must keep intercepting the calls.
 """
-
 from __future__ import annotations
 
 import math
@@ -88,7 +87,8 @@ def seek_plex_conversion(
     if (
         not now
         or str(now.get("provider") or "").strip().lower() != "plex"
-        or str(now.get("plex_stream_mode") or "").strip().lower() not in {"remux", "transcode"}
+        or str(now.get("plex_stream_mode") or "").strip().lower()
+        not in {"remux", "transcode"}
         or not now.get("plex_item_id")
     ):
         return None
@@ -394,11 +394,7 @@ def preserve_current_to_queue_front() -> dict | None:
 
     iptv_sid = str(now.get("iptv_source_id") or "").strip()
     iptv_cid = str(now.get("iptv_channel_id") or "").strip()
-    is_iptv = (
-        str(now.get("provider") or "").strip().lower() == "iptv"
-        and bool(iptv_sid)
-        and bool(iptv_cid)
-    )
+    is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" and bool(iptv_sid) and bool(iptv_cid)
     plex_item_id = str(now.get("plex_item_id") or "").strip()
     is_plex = str(now.get("provider") or "").strip().lower() == "plex" and bool(plex_item_id)
 
@@ -410,8 +406,9 @@ def preserve_current_to_queue_front() -> dict | None:
             if is_iptv
             else ("https://plex.invalid/item" if is_plex else url.strip())
         ),
-        "title": now.get("title")
-        or ("IPTV channel" if is_iptv else ("Plex item" if is_plex else url.strip())),
+        "title": now.get("title") or (
+            "IPTV channel" if is_iptv else ("Plex item" if is_plex else url.strip())
+        ),
         "provider": now.get("provider"),
         "_relaytv_interrupt_preserved": True,
         "_relaytv_interrupt_preserved_at": int(time.time()),
@@ -518,12 +515,7 @@ def handoff_snapshot() -> dict[str, Any] | None:
         duration = None
     if not player.playback_intent_current(intent):
         return None
-    return {
-        "item": dict(now),
-        "position": position,
-        "duration": duration,
-        "playback_intent": intent,
-    }
+    return {"item": dict(now), "position": position, "duration": duration, "playback_intent": intent}
 
 
 def complete_peer_handoff(snapshot: dict, *, idle_surface_enabled: bool) -> bool:
@@ -717,8 +709,9 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     # reference, so reloading the retained URL would only get a 404. Re-resolve
     # from the durable item instead — that also mints a conversion starting at
     # the resume offset, which the retained zero-based URL could not represent.
-    plex_item = str(now.get("provider") or "").strip().lower() == "plex" and bool(
-        str(now.get("plex_item_id") or "").strip()
+    plex_item = (
+        str(now.get("provider") or "").strip().lower() == "plex"
+        and bool(str(now.get("plex_item_id") or "").strip())
     )
     if plex_item or not isinstance(stream, str) or not stream.strip():
         resumed = play_now(

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Plex account linking, renewable device credentials, and server selection."""
-
 from __future__ import annotations
 
 import base64
@@ -458,7 +457,9 @@ class PlexAuthManager:
             latest_account = (
                 latest.get("account") if isinstance(latest.get("account"), dict) else {}
             )
-            latest_server = latest.get("server") if isinstance(latest.get("server"), dict) else {}
+            latest_server = (
+                latest.get("server") if isinstance(latest.get("server"), dict) else {}
+            )
             latest_token = str(latest_server.get("access_token") or "")
             same_selection = (
                 str(latest_account.get("id") or "") == account_id
@@ -531,7 +532,9 @@ class PlexAuthManager:
             account_id=account_id,
             machine_id=machine_id,
             generation=generation,
-            reference_key=hashlib.sha256(b"relaytv-plex-reference-v1\0" + private_key).digest(),
+            reference_key=hashlib.sha256(
+                b"relaytv-plex-reference-v1\0" + private_key
+            ).digest(),
         )
 
     def assert_server_session_current(self, session: PlexServerSession) -> None:
@@ -597,7 +600,9 @@ class PlexAuthManager:
             )
         if self._looks_like_jwt(server_token):
             try:
-                server_token = self._server_device_token(account_token, requested) or server_token
+                server_token = (
+                    self._server_device_token(account_token, requested) or server_token
+                )
             except PlexError:
                 pass
 
@@ -607,9 +612,7 @@ class PlexAuthManager:
                 client = self._client_factory(str(connection["uri"]), server_token)
                 identity = client.get("/identity")
                 container = identity.get("MediaContainer") if isinstance(identity, dict) else None
-                actual = str(
-                    container.get("machineIdentifier") if isinstance(container, dict) else ""
-                )
+                actual = str(container.get("machineIdentifier") if isinstance(container, dict) else "")
                 if actual != requested:
                     continue
             except (PlexError, ValueError) as exc:
@@ -742,7 +745,9 @@ class PlexAuthManager:
     def _prune_flows_locked(self) -> None:
         now = self._clock()
         self._flows = {
-            flow_id: flow for flow_id, flow in self._flows.items() if flow.expires_at > now
+            flow_id: flow
+            for flow_id, flow in self._flows.items()
+            if flow.expires_at > now
         }
 
     def _signed_device_jwt(self, device: dict, *, nonce: str | None) -> str:

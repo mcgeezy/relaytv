@@ -21,18 +21,10 @@ def _client_with_queue_patches(monkeypatch):
     monkeypatch.setattr(
         routes,
         "_smart_item_from_url",
-        lambda url, **kwargs: {
-            "url": str(url),
-            "title": str(url).rsplit("/", 1)[-1],
-            "lightweight": bool(kwargs.get("lightweight")),
-        },
+        lambda url, **kwargs: {"url": str(url), "title": str(url).rsplit("/", 1)[-1], "lightweight": bool(kwargs.get("lightweight"))},
     )
     monkeypatch.setattr(routes.player, "prefetch_queue_item_stream", lambda item: None)
-    monkeypatch.setattr(
-        routes.player,
-        "prime_mpv_up_next_from_queue",
-        lambda force=True: prime_calls.append(bool(force)),
-    )
+    monkeypatch.setattr(routes.player, "prime_mpv_up_next_from_queue", lambda force=True: prime_calls.append(bool(force)))
     monkeypatch.setattr(routes, "_push_queue_added_toast_async", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         routes,
@@ -77,27 +69,18 @@ def test_queue_remove_move_dedupe_and_clear(monkeypatch) -> None:
     removed = client.post("/queue/remove", json={"index": 1})
     assert removed.status_code == 200
     assert removed.json()["removed"]["url"] == "https://example.com/b.mp4"
-    assert [item["url"] for item in routes.state.QUEUE] == [
-        "https://example.com/a.mp4",
-        "https://example.com/c.mp4",
-    ]
+    assert [item["url"] for item in routes.state.QUEUE] == ["https://example.com/a.mp4", "https://example.com/c.mp4"]
 
     moved = client.post("/queue/move", json={"from_index": 1, "to_index": 0})
     assert moved.status_code == 200
-    assert [item["url"] for item in moved.json()["queue"]] == [
-        "https://example.com/c.mp4",
-        "https://example.com/a.mp4",
-    ]
+    assert [item["url"] for item in moved.json()["queue"]] == ["https://example.com/c.mp4", "https://example.com/a.mp4"]
 
     routes.state.QUEUE.append({"url": "https://example.com/a.mp4", "title": "A duplicate"})
     deduped = client.post("/queue/dedupe")
     assert deduped.status_code == 200
     assert deduped.json()["changed"] is True
     assert deduped.json()["removed_count"] == 1
-    assert [item["url"] for item in deduped.json()["queue"]] == [
-        "https://example.com/c.mp4",
-        "https://example.com/a.mp4",
-    ]
+    assert [item["url"] for item in deduped.json()["queue"]] == ["https://example.com/c.mp4", "https://example.com/a.mp4"]
 
     cleared = client.post("/clear")
     assert cleared.status_code == 200
@@ -151,9 +134,7 @@ def test_queue_and_history_read_shapes(monkeypatch) -> None:
     history_response = client.get("/history")
     assert history_response.status_code == 200
     history_body = history_response.json()
-    assert history_body["history"] == [
-        {"url": "https://example.com/history.mp4", "title": "History"}
-    ]
+    assert history_body["history"] == [{"url": "https://example.com/history.mp4", "title": "History"}]
     assert history_body["history_length"] == 1
     assert history_body["limit"] == routes.state.HISTORY_LIMIT
 
@@ -265,20 +246,12 @@ def test_history_clear_and_play_delegate_to_play_now(monkeypatch) -> None:
     monkeypatch.setattr(
         routes,
         "play_now",
-        lambda req: (
-            play_now_requests.append(req)
-            or {"ok": True, "action": "played", "url": req.url, "resume_pos": req.resume_pos}
-        ),
+        lambda req: play_now_requests.append(req) or {"ok": True, "action": "played", "url": req.url, "resume_pos": req.resume_pos},
     )
 
     played = client.post("/history/play", json={"index": 0})
     assert played.status_code == 200
-    assert played.json() == {
-        "ok": True,
-        "action": "played",
-        "url": "https://example.com/history.mp4",
-        "resume_pos": 12.5,
-    }
+    assert played.json() == {"ok": True, "action": "played", "url": "https://example.com/history.mp4", "resume_pos": 12.5}
     assert len(play_now_requests) == 1
     req = play_now_requests[0]
     assert req.url == "https://example.com/history.mp4"
@@ -325,10 +298,8 @@ def test_queue_play_delegates_and_consumes_item(monkeypatch) -> None:
     monkeypatch.setattr(
         routes,
         "_play_now_item",
-        lambda item, **kwargs: (
-            play_now_calls.append((item, kwargs))
-            or {"ok": True, "action": "played", "url": item["url"]}
-        ),
+        lambda item, **kwargs: play_now_calls.append((item, kwargs))
+        or {"ok": True, "action": "played", "url": item["url"]},
     )
 
     played = client.post("/queue/play", json={"index": 1})
@@ -393,9 +364,7 @@ def test_queue_play_preserves_opaque_provider_metadata(monkeypatch) -> None:
     response = client.post("/queue/play", json={"index": 0})
 
     assert response.status_code == 200
-    assert played == [
-        {key: value for key, value in queued.items() if key != routes.state.QUEUE_ITEM_ID_KEY}
-    ]
+    assert played == [{key: value for key, value in queued.items() if key != routes.state.QUEUE_ITEM_ID_KEY}]
     assert len(routes.state.queue_item_id(queued)) == 32
     assert played[0]["provider"] == "iptv"
     assert played[0]["iptv_source_id"] == "source-1"

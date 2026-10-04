@@ -29,24 +29,10 @@ def test_ingest_media_enqueue_route_uploads_and_queues(monkeypatch, tmp_path) ->
         raising=False,
     )
     monkeypatch.setattr(routes.state, "persist_queue", lambda: persist_calls.append(True))
-    monkeypatch.setattr(
-        routes.player, "prefetch_queue_item_stream", lambda item: prefetch_calls.append(dict(item))
-    )
-    monkeypatch.setattr(
-        routes.player,
-        "prime_mpv_up_next_from_queue",
-        lambda force=False: prime_calls.append(bool(force)),
-    )
-    monkeypatch.setattr(
-        routes,
-        "_push_queue_added_toast_async",
-        lambda item, label: toast_calls.append((dict(item), label)),
-    )
-    monkeypatch.setattr(
-        routes,
-        "_ui_event_push_queue",
-        lambda action, **payload: queue_events.append({"action": action, **payload}),
-    )
+    monkeypatch.setattr(routes.player, "prefetch_queue_item_stream", lambda item: prefetch_calls.append(dict(item)))
+    monkeypatch.setattr(routes.player, "prime_mpv_up_next_from_queue", lambda force=False: prime_calls.append(bool(force)))
+    monkeypatch.setattr(routes, "_push_queue_added_toast_async", lambda item, label: toast_calls.append((dict(item), label)))
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda action, **payload: queue_events.append({"action": action, **payload}))
 
     client = TestClient(create_app(testing=True))
     response = client.post(
@@ -80,24 +66,20 @@ def test_ingest_media_play_route_stores_and_plays_full_upload(monkeypatch, tmp_p
 
     monkeypatch.setenv("RELAYTV_UPLOADS_DIR", str(uploads_dir))
     monkeypatch.setattr(upload_store, "_UPLOADS_ROOT", str(uploads_dir), raising=False)
-    monkeypatch.setattr(
-        upload_store, "progressive_start_ready", lambda meta, session: (False, "waiting_for_upload")
-    )
+    monkeypatch.setattr(upload_store, "progressive_start_ready", lambda meta, session: (False, "waiting_for_upload"))
     monkeypatch.setattr(
         routes.player,
         "play_item",
-        lambda item, use_resolver=True, cec=False, clear_queue=False, mode="play_now": (
-            play_calls.append(
-                {
-                    "item": dict(item),
-                    "use_resolver": use_resolver,
-                    "cec": cec,
-                    "clear_queue": clear_queue,
-                    "mode": mode,
-                }
-            )
-            or {"url": item["url"], "provider": "upload", "title": item["title"]}
-        ),
+        lambda item, use_resolver=True, cec=False, clear_queue=False, mode="play_now": play_calls.append(
+            {
+                "item": dict(item),
+                "use_resolver": use_resolver,
+                "cec": cec,
+                "clear_queue": clear_queue,
+                "mode": mode,
+            }
+        )
+        or {"url": item["url"], "provider": "upload", "title": item["title"]},
     )
 
     client = TestClient(create_app(testing=True))

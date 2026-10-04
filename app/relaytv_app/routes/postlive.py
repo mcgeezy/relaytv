@@ -7,7 +7,6 @@ pipeline behind it. Tokens are single-use capabilities minted per
 session; the route is a read (GET), so the optional ``RELAYTV_API_TOKEN``
 write guard never applies — mpv sends no credentials, by design.
 """
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 

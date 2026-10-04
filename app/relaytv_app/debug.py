@@ -78,9 +78,7 @@ def configure_logging() -> None:
 
     log_level = _env_log_level("RELAYTV_LOG_LEVEL", "INFO")
     access_level = _env_log_level("RELAYTV_ACCESS_LOG_LEVEL", "INFO")
-    resolver_level = _env_log_level(
-        "RELAYTV_RESOLVER_LOG_LEVEL", os.getenv("RELAYTV_LOG_LEVEL", "INFO")
-    )
+    resolver_level = _env_log_level("RELAYTV_RESOLVER_LOG_LEVEL", os.getenv("RELAYTV_LOG_LEVEL", "INFO"))
 
     root = logging.getLogger()
     if not root.handlers:

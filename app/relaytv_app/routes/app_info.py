@@ -22,9 +22,7 @@ def _env_choice(name: str) -> bool | None:
 
 
 def _pyproject_version() -> str:
-    path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "pyproject.toml")
-    )
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "pyproject.toml"))
     try:
         text = open(path, encoding="utf-8").read()
     except Exception:
@@ -62,11 +60,7 @@ def _latest_release_from_github() -> tuple[dict[str, object] | None, str, float]
         cached_at = float(_APP_INFO_CACHE.get("checked_at") or 0.0)
         if cached_at and (now - cached_at) < ttl:
             latest = _APP_INFO_CACHE.get("latest")
-            return (
-                latest if isinstance(latest, dict) else None,
-                str(_APP_INFO_CACHE.get("error") or ""),
-                cached_at,
-            )
+            return (latest if isinstance(latest, dict) else None, str(_APP_INFO_CACHE.get("error") or ""), cached_at)
 
     latest: dict[str, object] | None = None
     error = ""
@@ -103,25 +97,13 @@ def _app_info_payload() -> dict[str, object]:
     image_version = str(os.getenv("RELAYTV_IMAGE_VERSION") or "").strip()
     package_version = _pyproject_version()
     release_version = image_version if _release_version_parts(image_version) else package_version
-    display_version = (
-        image_version
-        if image_version and image_version != "local"
-        else (package_version or "local")
-    )
+    display_version = image_version if image_version and image_version != "local" else (package_version or "local")
     revision = str(os.getenv("RELAYTV_IMAGE_REVISION") or "").strip()
     created = str(os.getenv("RELAYTV_IMAGE_CREATED") or "").strip()
-    source_url = str(
-        os.getenv("RELAYTV_IMAGE_SOURCE") or f"https://github.com/{_APP_INFO_REPO}"
-    ).strip()
+    source_url = str(os.getenv("RELAYTV_IMAGE_SOURCE") or f"https://github.com/{_APP_INFO_REPO}").strip()
     if not source_url:
         source_url = f"https://github.com/{_APP_INFO_REPO}"
-    release_tag = (
-        release_version
-        if str(release_version or "").startswith("v")
-        else f"v{release_version}"
-        if release_version
-        else ""
-    )
+    release_tag = release_version if str(release_version or "").startswith("v") else f"v{release_version}" if release_version else ""
 
     latest: dict[str, object] | None = None
     update_error = ""

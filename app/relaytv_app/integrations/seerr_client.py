@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Secret-safe HTTP transport for the allowlisted Seerr product adapter."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -110,7 +109,9 @@ class SeerrConfig:
             configuration_error = str(exc)
         request_mode = normalize_seerr_request_mode(
             snapshot.raw("RELAYTV_SEERR_REQUEST_MODE"),
-            shared_requests_enabled=snapshot.flag("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False),
+            shared_requests_enabled=snapshot.flag(
+                "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
+            ),
         )
         return cls(
             enabled=snapshot.flag("RELAYTV_SEERR_ENABLED", False),
@@ -239,9 +240,7 @@ class SeerrClient:
                 status_code=502,
             )
         get_all = getattr(_headers, "get_all", None)
-        set_cookies = (
-            tuple(str(value) for value in (get_all("Set-Cookie") or [])) if get_all else ()
-        )
+        set_cookies = tuple(str(value) for value in (get_all("Set-Cookie") or [])) if get_all else ()
         return SeerrJsonResponse(data=parsed, status=status, set_cookies=set_cookies)
 
     def get_binary(

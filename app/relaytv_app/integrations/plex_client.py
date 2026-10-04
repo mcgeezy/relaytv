@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Secret-safe HTTP transport for Plex cloud and media-server APIs."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -403,7 +402,8 @@ class PlexClient:
         url = f"{self.base_url}{parsed_route.path}"
         pairs = urllib.parse.parse_qsl(parsed_route.query, keep_blank_values=True)
         if any(
-            key.strip().lower() in {"access_token", "auth_token", "token", "x-plex-token"}
+            key.strip().lower()
+            in {"access_token", "auth_token", "token", "x-plex-token"}
             for key, _value in pairs
         ):
             raise ValueError("Plex client paths must not carry credentials")

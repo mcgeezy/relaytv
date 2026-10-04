@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Behavior tests for the shared env parsing helpers and RuntimeConfig (Phase 2 M2/M3)."""
-
 import os
 
 import pytest

@@ -18,7 +18,6 @@ Two contracts matter here:
   returned by an endpoint, never logged, and lives only in the 0600 peer file
   (never ``settings.json``).
 """
-
 from __future__ import annotations
 
 import json
@@ -264,9 +263,7 @@ def add_peer(
         record = {
             "id": f"p_{uuid.uuid4().hex[:16]}",
             "device_id": remote_device_id,
-            "name": _clean_name(
-                name, fallback=_clean_name(identity.get("device_name"), fallback="RelayTV")
-            ),
+            "name": _clean_name(name, fallback=_clean_name(identity.get("device_name"), fallback="RelayTV")),
             "base_url": normalized,
             "source": str(source or "manual"),
             "token": str(token or "").strip(),
@@ -371,9 +368,7 @@ def _request(
         headers["Content-Type"] = "application/json"
     if str(token or "").strip():
         headers["Authorization"] = f"Bearer {str(token).strip()}"
-    request = urllib.request.Request(
-        url, data=data, headers=headers, method="POST" if data else "GET"
-    )
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
     try:
         with urllib.request.urlopen(request, timeout=float(timeout)) as response:
             body = response.read(1_000_000)
@@ -415,9 +410,7 @@ def probe_peer(peer_id: str) -> dict:
     """Probe a saved peer and fold the result into its stored record."""
     record = require_record(peer_id)
     try:
-        identity = probe_identity(
-            str(record.get("base_url") or ""), token=str(record.get("token") or "")
-        )
+        identity = probe_identity(str(record.get("base_url") or ""), token=str(record.get("token") or ""))
     except PeerError as exc:
         _record_contact(peer_id, ok=False, error=exc.message)
         return {"online": False, "error": exc.message, "peer": public_peer(require_record(peer_id))}
@@ -498,11 +491,7 @@ def wire_entries(items: list[object] | None) -> tuple[list[dict], list[dict], li
             entries.append(entry)
             sources.append(item)
             continue
-        provider = (
-            str((item or {}).get("provider") or "").strip().lower()
-            if isinstance(item, dict)
-            else ""
-        )
+        provider = str((item or {}).get("provider") or "").strip().lower() if isinstance(item, dict) else ""
         if provider == "iptv":
             reason = "iptv_channels_stay_on_this_device"
         elif provider == "plex":
@@ -580,9 +569,7 @@ def _post_to_peer(peer_id: str, record: dict, path: str, payload: dict) -> dict:
     return response
 
 
-def send_queue(
-    peer_id: str, *, items: list[object], mode: str = "append"
-) -> tuple[dict, list[object]]:
+def send_queue(peer_id: str, *, items: list[object], mode: str = "append") -> tuple[dict, list[object]]:
     """Send queue items to a peer and normalize its import response.
 
     Returns the response alongside the local items the peer accepted, so a

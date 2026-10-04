@@ -21,9 +21,7 @@ def test_resolve_xauthority_replaces_stale_mutter_session_file(tmp_path: Path) -
     assert refresh_display_credentials(env)["XAUTHORITY"] == str(current)
 
 
-def test_resolve_xauthority_uses_valid_explicit_file_without_newer_session_file(
-    tmp_path: Path,
-) -> None:
+def test_resolve_xauthority_uses_valid_explicit_file_without_newer_session_file(tmp_path: Path) -> None:
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir()
     explicit = tmp_path / ".Xauthority"
