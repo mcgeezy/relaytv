@@ -24,9 +24,8 @@ def _read_first_line(path: str) -> str | None:
 
 def _read_modes(path: str) -> list[str]:
     try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                return [ln.strip() for ln in f.read().splitlines() if ln.strip()][:50]
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return [ln.strip() for ln in f.read().splitlines() if ln.strip()][:50]
     except Exception:
         pass
     return []
