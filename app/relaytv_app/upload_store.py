@@ -641,6 +641,16 @@ def cleanup_uploads(settings_payload: dict | None = None) -> dict[str, int]:
         metas = list_upload_metadata()
         deleted = 0
         total_bytes = sum(int(meta.get("size_bytes") or 0) for meta in metas if meta.get("available"))
+
+        def _purge(meta: dict) -> None:
+            nonlocal deleted, total_bytes
+            upload_id = str(meta.get("id") or "").strip()
+            delete_upload(upload_id)
+            deleted += 1
+            if meta.get("available"):
+                total_bytes -= int(meta.get("size_bytes") or 0)
+            metas.remove(meta)
+
         for meta in list(metas):
             upload_id = str(meta.get("id") or "").strip()
             if _upload_is_active(upload_id):
@@ -649,24 +659,17 @@ def cleanup_uploads(settings_payload: dict | None = None) -> dict[str, int]:
             available = bool(meta.get("available"))
             expired = (created_unix > 0.0) and (created_unix < expire_before)
             if (not available) or expired:
-                delete_upload(upload_id)
-                deleted += 1
-                if available:
-                    total_bytes -= int(meta.get("size_bytes") or 0)
-                metas.remove(meta)
+                _purge(meta)
+
         if total_bytes > max_bytes:
             for meta in list(metas):
                 if total_bytes <= max_bytes:
                     break
                 upload_id = str(meta.get("id") or "").strip()
-                if not upload_id:
+                if not upload_id or _upload_is_active(upload_id):
                     continue
-                if _upload_is_active(upload_id):
-                    continue
-                delete_upload(upload_id)
-                deleted += 1
-                total_bytes -= int(meta.get("size_bytes") or 0)
-                metas.remove(meta)
+                _purge(meta)
+
         pruned = _prune_missing_upload_refs()
     return {
         "deleted_uploads": deleted,
