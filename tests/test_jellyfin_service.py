@@ -1187,3 +1187,75 @@ def test_progress_still_reports_a_paused_item(monkeypatch) -> None:
     assert payload is not None
     assert payload["IsPaused"] is True
     assert payload["PositionTicks"] == 420_000_000
+
+
+def test_apply_startup_stream_tracks_selects_language(monkeypatch) -> None:
+    set_calls: list[tuple[str, object]] = []
+    track_list = [
+        {"id": 1, "type": "audio", "lang": "jpn", "src-id": 1, "selected": True},
+        {"id": 2, "type": "audio", "lang": "eng", "src-id": 2, "selected": False},
+        {"id": 3, "type": "sub", "lang": "eng", "src-id": 3, "selected": False},
+    ]
+
+    def fake_mpv_get(key):
+        if key == "track-list":
+            return track_list
+        return None
+
+    def fake_mpv_set(key, val):
+        set_calls.append((key, val))
+        if key == "aid":
+            for t in track_list:
+                if t.get("type") == "audio":
+                    t["selected"] = t.get("id") == val
+        elif key == "sid":
+            for t in track_list:
+                if t.get("type") == "sub":
+                    t["selected"] = t.get("id") == val
+
+    monkeypatch.setattr(player, "mpv_get", fake_mpv_get)
+    monkeypatch.setattr(player, "mpv_set", fake_mpv_set)
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "item1", "url": "http://jf/stream"})
+    monkeypatch.setattr(playback_service, "update_now_playing", lambda n: None)
+
+    jellyfin_service.apply_startup_stream_tracks(
+        audio_language="eng",
+        subtitle_stream_index="-1",
+        run_async=False,
+        expected_item_id="item1",
+    )
+
+    assert ("aid", 2) in set_calls
+    assert ("sid", "no") in set_calls
+
+
+def test_enrich_now_stream_metadata_uses_runtime_mpv_track(monkeypatch) -> None:
+    track_list = [
+        {"id": 1, "type": "audio", "lang": "jpn", "ff-index": 1, "selected": False},
+        {"id": 2, "type": "audio", "lang": "eng", "ff-index": 2, "selected": True},
+    ]
+    monkeypatch.setattr(player, "mpv_get", lambda k: track_list if k == "track-list" else None)
+
+    detail = {
+        "audio_streams": [
+            {"index": 1, "language": "jpn", "display": "Japanese"},
+            {"index": 2, "language": "eng", "display": "English"},
+        ]
+    }
+    now = {"url": "http://jf/stream?audioStreamIndex=1", "jellyfin_item_id": "abc"}
+    enriched = jellyfin_service.enrich_now_stream_metadata(now, detail=detail)
+
+    # Runtime track 2 (English) overrides stale URL param 1 (Japanese)
+    assert enriched.get("audio_language") == "eng"
+    assert enriched.get("jellyfin_audio_language") == "eng"
+
+
+def test_smart_item_from_url_includes_preferred_stream_indices(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "status", lambda: {"server_url": "http://jf"})
+    monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lambda item_id, user_id_override=None: (2, 5))
+    monkeypatch.setattr(jellyfin_service, "select_playback_url", lambda **kwargs: {"url": "http://jf/stream", "mode": "direct"})
+    monkeypatch.setattr(jellyfin_receiver, "get_item_metadata", lambda *args, **kwargs: {})
+
+    item = jellyfin_service.smart_item_from_url("http://jf/Items/123/Download")
+    assert item["jellyfin_audio_stream_index"] == 2
+    assert item["jellyfin_subtitle_stream_index"] == 5
