@@ -23,6 +23,7 @@ Parsing here never raises. Callers decide what a malformed URL means: input
 validation rejects it, serialization omits it, classification calls it
 ``other``.
 """
+
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -73,28 +74,19 @@ def parse_url(value: object) -> ParsedUrl | None:
         return None
     try:
         parts = urlsplit(raw)
-    except Exception:
-        return None
-    try:
-        # The accessor that validates. Both of these raise ValueError:
-        # a non-numeric port, and one outside 0-65535.
-        port = parts.port
-        hostname = parts.hostname or ""
-        username = parts.username or ""
-        password = parts.password or ""
+        return ParsedUrl(
+            scheme=(parts.scheme or "").lower(),
+            hostname=(parts.hostname or "").lower().rstrip("."),
+            port=parts.port,
+            raw_netloc=parts.netloc or "",
+            path=parts.path or "",
+            query=parts.query or "",
+            fragment=parts.fragment or "",
+            username=parts.username or "",
+            password=parts.password or "",
+        )
     except ValueError:
         return None
-    return ParsedUrl(
-        scheme=(parts.scheme or "").lower(),
-        hostname=hostname.lower().rstrip("."),
-        port=port,
-        raw_netloc=parts.netloc or "",
-        path=parts.path or "",
-        query=parts.query or "",
-        fragment=parts.fragment or "",
-        username=username,
-        password=password,
-    )
 
 
 def host_matches(host: str, domain: str) -> bool:
