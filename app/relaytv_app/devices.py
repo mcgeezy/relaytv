@@ -15,12 +15,14 @@ def _connector_index(connector: str) -> int | None:
     except Exception:
         return None
 
+
 def _read_first_line(path: str) -> str | None:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return (f.readline() or "").strip()
     except Exception:
         return None
+
 
 def list_drm_connectors() -> list[dict[str, Any]]:
     """Return HDMI/DP connectors with connection status (best-effort)."""
@@ -47,13 +49,16 @@ def list_drm_connectors() -> list[dict[str, Any]]:
             modes = []
         # connector_id is the part after 'cardX-'
         connector_id = name.split("-", 1)[1] if "-" in name else name
-        out.append({
-            "sys_name": name,
-            "connector": connector_id,
-            "status": status,
-            "modes": modes,
-        })
+        out.append(
+            {
+                "sys_name": name,
+                "connector": connector_id,
+                "status": status,
+                "modes": modes,
+            }
+        )
     return out
+
 
 def list_cec_devices() -> list[str]:
     devs = []
@@ -61,7 +66,6 @@ def list_cec_devices() -> list[str]:
         if os.path.exists(p):
             devs.append(p)
     return devs
-
 
 
 def cec_client_probe() -> dict[str, Any]:
@@ -109,12 +113,13 @@ def list_alsa_devices() -> list[dict[str, str]]:
 
     # Prefer common HDMI entries at top (stable UX)
     def key(d):
-        i = d.get("id","")
+        i = d.get("id", "")
         if i.startswith("hdmi:") or "hdmi" in i.lower():
             return (0, i)
-        if i in ("default","pipewire","pulse"):
+        if i in ("default", "pipewire", "pulse"):
             return (1, i)
         return (2, i)
+
     devices.sort(key=key)
     return devices
 
@@ -148,7 +153,9 @@ def detect_audio_device(drm_connector: str = "") -> str:
     # If connector is not explicitly supplied, inspect currently connected outputs.
     connector = (drm_connector or "").strip()
     if not connector:
-        connected = [c for c in list_drm_connectors() if str(c.get("status", "")).lower() == "connected"]
+        connected = [
+            c for c in list_drm_connectors() if str(c.get("status", "")).lower() == "connected"
+        ]
         if connected:
             connector = str(connected[0].get("connector") or "").strip()
 
@@ -172,6 +179,7 @@ def detect_audio_device(drm_connector: str = "") -> str:
 
     # Fall back to first HDMI-like entry.
     return _normalize_for_mpv(hdmi_ids[0])
+
 
 def discover() -> dict:
     cec_probe = cec_client_probe()

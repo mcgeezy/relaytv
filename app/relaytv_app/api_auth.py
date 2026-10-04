@@ -25,6 +25,7 @@ instead of starting playback.
 The token is env-only: read through runtime config snapshots, never
 persisted with settings, never returned by ``/settings``, never logged.
 """
+
 import hmac
 from urllib.parse import urlsplit
 
@@ -140,9 +141,7 @@ def cross_site_mutating_get(
     return source != target
 
 
-def write_request_allowed(
-    method: str, authorization: str | None, *, path: str = ""
-) -> bool:
+def write_request_allowed(method: str, authorization: str | None, *, path: str = "") -> bool:
     """Return True when a request may proceed under the token policy."""
     token = configured_api_token()
     if not token:

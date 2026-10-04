@@ -316,7 +316,12 @@ def _apply_peer_import(
         except Exception as exc:
             logger.warning("queue_import_item_failed error=%s", exc)
             results.append(
-                {"url": entry.url, "title": entry.title, "accepted": False, "reason": "item could not be built"}
+                {
+                    "url": entry.url,
+                    "title": entry.title,
+                    "accepted": False,
+                    "reason": "item could not be built",
+                }
             )
 
     if mode == "replace":
@@ -585,7 +590,12 @@ def queue_remove(req: QueueRemoveReq):
         player.prime_mpv_up_next_from_queue(force=True)
     except Exception:
         pass
-    _ui_event_push_queue("remove", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_remove")
+    _ui_event_push_queue(
+        "remove",
+        queue=snapshot["queue"],
+        queue_length=len(snapshot["queue"]),
+        source="queue_remove",
+    )
 
     return {
         "status": "removed",
@@ -655,9 +665,13 @@ def queue_play(req: QueueRemoveReq):
     except Exception as exc:
         restored = _restore(owned_mutations=play_scope.mutations)
         if restored is not None:
-            _ui_event_push_queue("add", queue=restored, queue_length=len(restored), source="queue_play_restore")
+            _ui_event_push_queue(
+                "add", queue=restored, queue_length=len(restored), source="queue_play_restore"
+            )
         if isinstance(exc, player.PlaybackSupersededError):
-            raise HTTPException(status_code=409, detail="playback superseded by a newer action") from exc
+            raise HTTPException(
+                status_code=409, detail="playback superseded by a newer action"
+            ) from exc
         raise
 
     try:
@@ -668,10 +682,20 @@ def queue_play(req: QueueRemoveReq):
         queue_snapshot = list(state.QUEUE)
     # play_now only pushes its queue event when something was preserved or the
     # queue is non-empty; the pop must be announced either way.
-    _ui_event_push_queue("remove", queue=queue_snapshot, queue_length=len(queue_snapshot), source="queue_play")
+    _ui_event_push_queue(
+        "remove", queue=queue_snapshot, queue_length=len(queue_snapshot), source="queue_play"
+    )
     if isinstance(result, dict):
-        return {**result, "queue": _annotate_queue_items(queue_snapshot), "queue_length": len(queue_snapshot)}
-    return {"status": "playing", "queue": _annotate_queue_items(queue_snapshot), "queue_length": len(queue_snapshot)}
+        return {
+            **result,
+            "queue": _annotate_queue_items(queue_snapshot),
+            "queue_length": len(queue_snapshot),
+        }
+    return {
+        "status": "playing",
+        "queue": _annotate_queue_items(queue_snapshot),
+        "queue_length": len(queue_snapshot),
+    }
 
 
 def _queue_item_dedupe_key(item: object) -> tuple[str, str]:
@@ -722,7 +746,9 @@ def queue_dedupe():
     except Exception:
         pass
     if changed:
-        _ui_event_push_queue("dedupe", queue=list(state.QUEUE), queue_length=len(state.QUEUE), source="queue_dedupe")
+        _ui_event_push_queue(
+            "dedupe", queue=list(state.QUEUE), queue_length=len(state.QUEUE), source="queue_dedupe"
+        )
     return {
         "status": "deduped",
         "changed": changed,
@@ -753,6 +779,12 @@ def queue_move(req: QueueMoveReq):
         player.prime_mpv_up_next_from_queue(force=True)
     except Exception:
         pass
-    _ui_event_push_queue("move", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_move")
+    _ui_event_push_queue(
+        "move", queue=snapshot["queue"], queue_length=len(snapshot["queue"]), source="queue_move"
+    )
 
-    return {"status": "moved", "queue": _annotate_queue_items(snapshot["queue"]), "queue_length": len(snapshot["queue"])}
+    return {
+        "status": "moved",
+        "queue": _annotate_queue_items(snapshot["queue"]),
+        "queue_length": len(snapshot["queue"]),
+    }

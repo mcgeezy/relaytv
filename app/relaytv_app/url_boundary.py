@@ -23,6 +23,7 @@ Parsing here never raises. Callers decide what a malformed URL means: input
 validation rejects it, serialization omits it, classification calls it
 ``other``.
 """
+
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 

@@ -31,7 +31,18 @@ _DEFAULT_PROGRESSIVE_WEBM_READY_MB = 12.0
 _DEFAULT_PROGRESSIVE_MAX_STALL_SEC = 2.0
 _DEFAULT_PROGRESSIVE_MIN_THROUGHPUT_KBPS = 256.0
 _ALLOWED_MIME_TYPES: dict[str, tuple[str, ...]] = {
-    "application/octet-stream": (".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".mp4", ".m4v", ".webm"),
+    "application/octet-stream": (
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".opus",
+        ".mp4",
+        ".m4v",
+        ".webm",
+    ),
     "application/ogg": (".ogg", ".opus"),
     "audio/aac": (".aac",),
     "audio/flac": (".flac",),
@@ -50,7 +61,9 @@ _ALLOWED_MIME_TYPES: dict[str, tuple[str, ...]] = {
     "video/webm": (".webm",),
 }
 
-_ALLOWED_UPLOAD_EXTENSIONS = tuple(sorted({ext for exts in _ALLOWED_MIME_TYPES.values() for ext in exts}))
+_ALLOWED_UPLOAD_EXTENSIONS = tuple(
+    sorted({ext for exts in _ALLOWED_MIME_TYPES.values() for ext in exts})
+)
 
 
 def default_upload_settings() -> dict[str, float | int]:
@@ -111,7 +124,9 @@ def is_valid_upload_id(upload_id: object) -> bool:
 def _is_contained(path: str, root: str) -> bool:
     """Return True when ``path`` resolves inside ``root``."""
     try:
-        return os.path.commonpath([os.path.abspath(root), os.path.abspath(path)]) == os.path.abspath(root)
+        return os.path.commonpath(
+            [os.path.abspath(root), os.path.abspath(path)]
+        ) == os.path.abspath(root)
     except (ValueError, OSError):
         # Different drives, or a path that cannot be resolved at all.
         return False
@@ -162,7 +177,7 @@ def upload_ref_from_url(url: object) -> tuple[str, str] | None:
         path = urlparse(str(url or "")).path or ""
     except Exception:
         return None
-    rel = path[len(_UPLOAD_URL_PREFIX):].strip("/")
+    rel = path[len(_UPLOAD_URL_PREFIX) :].strip("/")
     parts = [unquote(part) for part in rel.split("/") if part]
     if len(parts) != 2:
         return None
@@ -370,7 +385,9 @@ def mark_session_progress(
     out["chunk_count"] = max(0, int(out.get("chunk_count") or 0) + (1 if chunk_size > 0 else 0))
     out["last_chunk_unix"] = float(chunk_finished_unix)
     out["last_updated_unix"] = float(chunk_finished_unix)
-    out["throughput_bps"] = current_bps if prior_bps <= 0.0 else ((prior_bps * 0.6) + (current_bps * 0.4))
+    out["throughput_bps"] = (
+        current_bps if prior_bps <= 0.0 else ((prior_bps * 0.6) + (current_bps * 0.4))
+    )
     out["path"] = str(path or "").strip()
     return out
 
@@ -449,7 +466,7 @@ def progressive_probe_ready(path: str, *, content_type: str, size_bytes: int | N
             return False
         return b"moov" in head
     if mime == "video/webm":
-        return head.startswith(b"\x1A\x45\xDF\xA3")
+        return head.startswith(b"\x1a\x45\xdf\xa3")
     return False
 
 
@@ -472,7 +489,9 @@ def progressive_start_ready(meta: dict, session: dict) -> tuple[bool, str]:
     path = str(session.get("path") or stored_file_path(meta) or "").strip()
     if not path or not os.path.exists(path):
         return False, "file_missing"
-    if not progressive_probe_ready(path, content_type=str(meta.get("mime_type") or ""), size_bytes=size_bytes):
+    if not progressive_probe_ready(
+        path, content_type=str(meta.get("mime_type") or ""), size_bytes=size_bytes
+    ):
         return False, "probe_failed"
     return True, ""
 
@@ -498,14 +517,17 @@ def media_exists(upload_id: str) -> bool:
 
 def build_item(meta: dict, *, absolute_url: str | None = None) -> dict:
     upload_id = str(meta.get("id") or "").strip()
-    public_name = os.path.basename(str(meta.get("public_name") or meta.get("filename") or "").strip())
+    public_name = os.path.basename(
+        str(meta.get("public_name") or meta.get("filename") or "").strip()
+    )
     url = str(absolute_url or upload_public_path(upload_id, public_name))
     path = stored_file_path(meta)
     available = bool(path) and os.path.exists(path)
     item = {
         "url": url,
         "provider": "upload",
-        "title": str(meta.get("title") or meta.get("filename") or public_name or url).strip() or url,
+        "title": str(meta.get("title") or meta.get("filename") or public_name or url).strip()
+        or url,
         "upload_id": upload_id,
         "upload_filename": str(meta.get("filename") or public_name or "").strip(),
         "mime_type": str(meta.get("mime_type") or "").strip(),
@@ -581,12 +603,14 @@ def list_upload_metadata() -> list[dict]:
         else:
             size_bytes = int(meta.get("size_bytes") or 0)
         created_unix = float(meta.get("created_unix") or 0.0)
-        out.append({
-            **meta,
-            "size_bytes": size_bytes,
-            "created_unix": created_unix,
-            "available": bool(file_path) and os.path.exists(file_path),
-        })
+        out.append(
+            {
+                **meta,
+                "size_bytes": size_bytes,
+                "created_unix": created_unix,
+                "available": bool(file_path) and os.path.exists(file_path),
+            }
+        )
     out.sort(key=lambda m: float(m.get("created_unix") or 0.0))
     return out
 
@@ -618,7 +642,11 @@ def _prune_missing_upload_refs() -> dict[str, int]:
         updated: list[dict] = []
         for item in list(state.QUEUE):
             annotated = annotate_item(item)
-            if isinstance(annotated, dict) and annotated.get("provider") == "upload" and (annotated.get("available") is False):
+            if (
+                isinstance(annotated, dict)
+                and annotated.get("provider") == "upload"
+                and (annotated.get("available") is False)
+            ):
                 removed += 1
                 continue
             updated.append(item)
@@ -640,7 +668,9 @@ def cleanup_uploads(settings_payload: dict | None = None) -> dict[str, int]:
         expire_before = time.time() - retention_seconds(settings_payload)
         metas = list_upload_metadata()
         deleted = 0
-        total_bytes = sum(int(meta.get("size_bytes") or 0) for meta in metas if meta.get("available"))
+        total_bytes = sum(
+            int(meta.get("size_bytes") or 0) for meta in metas if meta.get("available")
+        )
         for meta in list(metas):
             upload_id = str(meta.get("id") or "").strip()
             if _upload_is_active(upload_id):
@@ -685,6 +715,7 @@ def start_cleanup_worker() -> None:
         while True:
             try:
                 from . import state
+
                 settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
                 cleanup_uploads(settings_snapshot)
             except Exception as exc:

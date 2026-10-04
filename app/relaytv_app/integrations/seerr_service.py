@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """RelayTV-facing Seerr product behavior and sanitized integration status."""
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -80,9 +81,7 @@ _REQUEST_METADATA_FIELDS = (
     "rating",
 )
 _REQUEST_METADATA_LOCK = threading.Lock()
-_REQUEST_METADATA_CACHE: dict[
-    tuple[str, str, int], tuple[float, dict[str, object]]
-] = {}
+_REQUEST_METADATA_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, object]]] = {}
 
 
 def _config_status(config: SeerrConfig) -> dict[str, object]:
@@ -107,9 +106,7 @@ def _config_status(config: SeerrConfig) -> dict[str, object]:
     }
 
 
-def integration_status(
-    *, probe: bool = True, session_id: str | None = None
-) -> dict[str, object]:
+def integration_status(*, probe: bool = True, session_id: str | None = None) -> dict[str, object]:
     config = SeerrConfig.current()
     out = _config_status(config)
     caller = seerr_sessions.status(session_id)
@@ -359,14 +356,10 @@ def create_request(
         "created": True,
         "request": {
             "request_id": _safe_int(response.data.get("id")),
-            "status": _REQUEST_STATUSES.get(
-                _safe_int(response.data.get("status")), "unknown"
-            ),
+            "status": _REQUEST_STATUSES.get(_safe_int(response.data.get("status")), "unknown"),
             "media_type": _media_type_or_none(media.get("mediaType")) or kind,
             "media_id": _safe_int(media.get("tmdbId")) or tmdb_id,
-            "media_status": _MEDIA_STATUSES.get(
-                _safe_int(media.get("status")), "unknown"
-            ),
+            "media_status": _MEDIA_STATUSES.get(_safe_int(media.get("status")), "unknown"),
             "is_4k": bool(response.data.get("is4k")),
         },
     }
@@ -432,8 +425,7 @@ def playback_action(
         "command": selected,
         "queued": str(result.get("action") or "").strip() == "queue_only",
         "suppressed": bool(
-            result.get("suppressed_duplicate")
-            or result.get("suppressed_duplicate_ui_action")
+            result.get("suppressed_duplicate") or result.get("suppressed_duplicate_ui_action")
         ),
     }
 
@@ -494,9 +486,7 @@ def _base_config() -> SeerrConfig:
     return config
 
 
-def _client_with_config(
-    *, session_id: str | None = None
-) -> tuple[SeerrConfig, SeerrClient]:
+def _client_with_config(*, session_id: str | None = None) -> tuple[SeerrConfig, SeerrClient]:
     config = _base_config()
     if _request_mode(config) == "caller_session":
         session = seerr_sessions.resolve(session_id)
@@ -575,9 +565,7 @@ def _validated_playback(
     if not isinstance(media_info, dict):
         return {}
     item_id = str(
-        media_info.get("jellyfinMediaId")
-        or media_info.get("JellyfinMediaId")
-        or ""
+        media_info.get("jellyfinMediaId") or media_info.get("JellyfinMediaId") or ""
     ).strip()
     if not item_id:
         return {}
@@ -671,9 +659,7 @@ def _enrich_request_metadata(
                     item.update(metadata)
 
 
-def _fetch_request_metadata(
-    client: SeerrClient, kind: str, media_id: int
-) -> dict[str, object]:
+def _fetch_request_metadata(client: SeerrClient, kind: str, media_id: int) -> dict[str, object]:
     payload = client.get(f"/{kind}/{media_id}")
     if not isinstance(payload, dict):
         raise _invalid_upstream()
