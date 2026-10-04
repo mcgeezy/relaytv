@@ -593,14 +593,17 @@ class IptvStore:
                 index = len(ordered)
             ordered.insert(index, channel_id)
             conn.execute("BEGIN IMMEDIATE")
-            for idx, item_id in enumerate(ordered, 1):
-                conn.execute(
-                    """
-                    UPDATE iptv_channels SET manual_rank = ?
-                    WHERE source_id = ? AND channel_id = ?
-                    """,
-                    (idx * RANK_STEP, source_id, item_id),
-                )
+            update_data = [
+                (idx * RANK_STEP, source_id, item_id)
+                for idx, item_id in enumerate(ordered, 1)
+            ]
+            conn.executemany(
+                """
+                UPDATE iptv_channels SET manual_rank = ?
+                WHERE source_id = ? AND channel_id = ?
+                """,
+                update_data,
+            )
             conn.commit()
         return True
 
