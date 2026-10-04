@@ -410,46 +410,29 @@ def _youtube_strategy_related_retry(low_err: str) -> bool:
 
 def _preferred_js_runtime_spec() -> str:
     override = (
-        os.getenv("RELAYTV_YTDLP_JS_RUNTIME")
-        or os.getenv("YTDLP_JS_RUNTIME")
-        or ""
+        os.getenv("RELAYTV_YTDLP_JS_RUNTIME") or os.getenv("YTDLP_JS_RUNTIME") or ""
     ).strip()
-    legacy_force_node = str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on")
 
     if override:
         low = override.lower()
         if low in ("0", "false", "no", "off", "none", "disable", "disabled"):
             return ""
-        if low == "auto":
-            override = ""
-        elif ":" in override:
-            runtime_name = override.split(":", 1)[0].strip().lower()
+        if low != "auto":
+            runtime_name = low.split(":", 1)[0].strip()
             if runtime_name in ("deno", "node"):
-                binary_name = "node" if runtime_name == "node" else "deno"
-                if shutil.which(binary_name):
+                if shutil.which(runtime_name):
                     return override
                 logger.warning("configured_js_runtime_unavailable runtime=%s", override)
                 return ""
             return override
-        else:
-            if low in ("deno", "node"):
-                if shutil.which(low):
-                    return low
-                logger.warning("configured_js_runtime_unavailable runtime=%s", low)
-                return ""
-            return override
 
-    if legacy_force_node:
+    if str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on"):
         if shutil.which("node"):
             return "node"
         logger.warning("ytdlp_node_requested_but_unavailable")
         return ""
 
-    if shutil.which("deno"):
-        return "deno"
-    if shutil.which("node"):
-        return "node"
-    return ""
+    return "deno" if shutil.which("deno") else "node" if shutil.which("node") else ""
 
 
 def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
