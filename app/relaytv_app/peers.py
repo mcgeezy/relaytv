@@ -521,7 +521,10 @@ def accepted_sources(
     not account for everything sent, nothing is claimed, because deleting on a
     guess is the one outcome this transfer must never produce.
     """
-    results = response.get("results") if isinstance(response.get("results"), list) else []
+    results = response.get("results", [])
+    if not isinstance(results, list):
+        results = []
+
     if results:
         rejected_urls = {
             str(entry.get("url") or "")
@@ -533,8 +536,10 @@ def accepted_sources(
             for entry, source in zip(entries, sources)
             if str(entry.get("url") or "") not in rejected_urls
         ]
+
     if int(response.get("accepted") or 0) >= len(entries):
         return list(sources)
+
     logger.warning(
         "peer_send_unverified sent=%d accepted=%s results=0 keeping_local_items",
         len(entries),
