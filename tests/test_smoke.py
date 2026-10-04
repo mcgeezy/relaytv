@@ -1,4 +1,3 @@
-import pytest
 # SPDX-License-Identifier: GPL-3.0-only
 from pathlib import Path
 import json
@@ -10,6 +9,7 @@ import threading
 import tomllib
 
 
+import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app.main import create_app
@@ -7249,13 +7249,12 @@ def test_rotation_follows_an_operator_log_file_override(monkeypatch, tmp_path) -
 
 def test_ytdlp_update_start_worker_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     from relaytv_app import ytdlp_update
-    import threading
 
     monkeypatch.setattr(ytdlp_update, "_WORKER_STARTED", False)
 
-    starts = []
+    starts: list[int] = []
 
-    def mock_start(self):
+    def mock_start(self: object) -> None:
         starts.append(1)
 
     monkeypatch.setattr(threading.Thread, "start", mock_start)
