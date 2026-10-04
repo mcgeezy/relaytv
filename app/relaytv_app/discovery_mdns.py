@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+from contextlib import suppress
 import socket
 import threading
 import time
@@ -331,16 +332,16 @@ def discovered_record_from_service(name: str, info: object) -> dict[str, object]
     """
     if info is None:
         return None
-    try:
+
+    addresses = []
+    with suppress(Exception):
         addresses = list(info.parsed_addresses())
-    except Exception:
-        addresses = []
     address = _preferred_address(addresses)
+
     port = 0
-    try:
+    with suppress(Exception):
         port = int(info.port or 0)
-    except Exception:
-        port = 0
+
     if not address or port <= 0:
         return None
 
