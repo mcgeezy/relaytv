@@ -352,15 +352,7 @@ def _record_contact(
 # =========================
 
 
-def _request(
-    base_url: str,
-    path: str,
-    *,
-    token: str = "",
-    payload: dict | None = None,
-    timeout: float = PROBE_TIMEOUT_SEC,
-) -> dict:
-    url = f"{base_url}{path}"
+def _build_request(url: str, token: str, payload: dict | None) -> urllib.request.Request:
     data = None
     headers = {"Accept": "application/json", "User-Agent": "RelayTV peer"}
     if payload is not None:
@@ -368,7 +360,10 @@ def _request(
         headers["Content-Type"] = "application/json"
     if str(token or "").strip():
         headers["Authorization"] = f"Bearer {str(token).strip()}"
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    return urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+
+
+def _execute_request(request: urllib.request.Request, timeout: float) -> dict:
     try:
         with urllib.request.urlopen(request, timeout=float(timeout)) as response:
             body = response.read(1_000_000)
@@ -389,6 +384,18 @@ def _request(
     except Exception:
         raise PeerError("device returned an unexpected response", status_code=502)
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _request(
+    base_url: str,
+    path: str,
+    *,
+    token: str = "",
+    payload: dict | None = None,
+    timeout: float = PROBE_TIMEOUT_SEC,
+) -> dict:
+    request = _build_request(f"{base_url}{path}", token, payload)
+    return _execute_request(request, timeout)
 
 
 def probe_identity(base_url: str, *, token: str = "") -> dict[str, str]:
