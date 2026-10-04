@@ -7245,3 +7245,13 @@ def test_rotation_follows_an_operator_log_file_override(monkeypatch, tmp_path) -
 
     assert not custom.exists(), "the operator's log was left to grow unbounded"
     assert reopened == [str(custom)]
+
+def test_youtube_progressive_startup_candidates() -> None:
+    expected = [
+        'best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best',
+        'best*[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best',
+        'best[height<=1080]/best'
+    ]
+    assert ytdlp_format_policy.youtube_progressive_startup_candidates({}, profile={}) == expected
+    assert ytdlp_format_policy.youtube_progressive_startup_candidates({}, profile=None) == expected
+    assert ytdlp_format_policy.youtube_progressive_startup_candidates({}, profile={'decode_profile': 'unknown'}) == expected
