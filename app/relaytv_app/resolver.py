@@ -414,31 +414,23 @@ def _preferred_js_runtime_spec() -> str:
         or os.getenv("YTDLP_JS_RUNTIME")
         or ""
     ).strip()
-    legacy_force_node = str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on")
 
     if override:
         low = override.lower()
         if low in ("0", "false", "no", "off", "none", "disable", "disabled"):
             return ""
-        if low == "auto":
-            override = ""
-        elif ":" in override:
-            runtime_name = override.split(":", 1)[0].strip().lower()
-            if runtime_name in ("deno", "node"):
-                binary_name = "node" if runtime_name == "node" else "deno"
-                if shutil.which(binary_name):
-                    return override
-                logger.warning("configured_js_runtime_unavailable runtime=%s", override)
-                return ""
-            return override
-        else:
-            if low in ("deno", "node"):
-                if shutil.which(low):
-                    return low
-                logger.warning("configured_js_runtime_unavailable runtime=%s", low)
-                return ""
-            return override
+        if low != "auto":
+            runtime = low.split(":", 1)[0].strip() if ":" in low else low
+            if runtime not in ("deno", "node"):
+                return override
 
+            spec = override if ":" in override else low
+            if shutil.which(runtime):
+                return spec
+            logger.warning("configured_js_runtime_unavailable runtime=%s", spec)
+            return ""
+
+    legacy_force_node = str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on")
     if legacy_force_node:
         if shutil.which("node"):
             return "node"
@@ -447,9 +439,7 @@ def _preferred_js_runtime_spec() -> str:
 
     if shutil.which("deno"):
         return "deno"
-    if shutil.which("node"):
-        return "node"
-    return ""
+    return "node" if shutil.which("node") else ""
 
 
 def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
