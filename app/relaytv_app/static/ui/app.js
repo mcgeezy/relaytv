@@ -3502,6 +3502,10 @@ function bindSettingsUi(){
       });
       const settingsBody = await settingsResponse.json().catch(() => ({}));
       if (!settingsResponse.ok) throw new Error(_plexErrorMessage(settingsBody, settingsResponse.status));
+      if (settingsBody.apply_performed && settingsBody.apply_succeeded === false) {
+        setPlexMessage('Plex settings saved, but current playback could not be restarted.', 'err');
+        return false;
+      }
       await loadSettingsUi();
       setPlexMessage(enabled ? 'Plex settings applied.' : 'Plex disabled.', 'ok');
       return true;
@@ -3835,8 +3839,9 @@ function bindSettingsUi(){
       return;
     }
     const r = await fetch('/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const settingsBody = await r.json().catch(() => ({}));
     if (!r.ok) {
-      alert('Failed to save settings');
+      alert(_plexErrorMessage(settingsBody, r.status));
       return;
     }
     // Server-type detection runs during apply; rebrand right away instead of

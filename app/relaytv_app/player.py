@@ -5139,6 +5139,23 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     # superseded itself.
     intent = claim_playback_intent()
     try:
+        if (
+            isinstance(item_or_text, dict)
+            and str(item_or_text.get("provider") or "").strip().lower() == "plex"
+            and bool(str(item_or_text.get("plex_item_id") or "").strip())
+        ):
+            from .integrations import plex_auth
+
+            with plex_auth.PLEX_LIFECYCLE_LOCK:
+                return _play_item_owned(
+                    item_or_text,
+                    intent,
+                    use_resolver=use_resolver,
+                    cec=cec,
+                    clear_queue=clear_queue,
+                    mode=mode,
+                    start_pos=start_pos,
+                )
         return _play_item_owned(
             item_or_text,
             intent,
