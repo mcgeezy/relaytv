@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-only
-import pytest
 
 from relaytv_app.ytdlp_format_policy import _parse_cap
 
