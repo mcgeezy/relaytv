@@ -503,6 +503,8 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--user-agent",
         "--referrer",
         "--start",
+        "--alang",
+        "--sid",
     )
     seen: set[str] = set()
     out: list[str] = []
@@ -592,6 +594,7 @@ def _build_mpv_args(
     ipc_path: str | None = None,
     audio_device: str | None = None,
     sub_lang: str | None = None,
+    audio_lang: str | None = None,
     volume: float | None = None,
     ytdl_enabled: bool = True,
     ytdl_path: str | None = None,
@@ -659,6 +662,8 @@ def _build_mpv_args(
     if sub_lang:
         args.append("--sub-auto=fuzzy")
         args.append(f"--slang={sub_lang}")
+    if audio_lang:
+        args.append(f"--alang={audio_lang}")
     if volume is not None:
         args.append(f"--volume={float(volume):g}")
     if ytdl_enabled:
@@ -1163,6 +1168,7 @@ class _QtLibMpvPlayer:
         ipc_path: str | None,
         audio_device: str | None,
         sub_lang: str | None,
+        audio_lang: str | None = None,
         volume: float | None,
         ytdl_enabled: bool,
         ytdl_path: str | None,
@@ -1205,6 +1211,8 @@ class _QtLibMpvPlayer:
         if sub_lang:
             self._set_opt_best_effort("sub-auto", "fuzzy")
             self._set_opt_best_effort("slang", sub_lang)
+        if audio_lang:
+            self._set_opt_best_effort("alang", audio_lang)
         if volume is not None:
             self._set_opt_best_effort("volume", f"{float(volume):g}")
         if user_agent:
@@ -1372,6 +1380,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ipc-path", default=os.getenv("MPV_IPC_PATH", "/tmp/mpv.sock"))
     ap.add_argument("--audio-device", default="")
     ap.add_argument("--sub-lang", default="")
+    ap.add_argument("--audio-lang", default="")
     ap.add_argument("--volume", type=float, default=None)
     ap.add_argument("--ytdl-enabled", default="1")
     ap.add_argument("--ytdl-path", default="")
@@ -2223,6 +2232,7 @@ def main(argv: list[str] | None = None) -> int:
                 ipc_path=(ipc_path or None),
                 audio_device=((args.audio_device or "").strip() or None),
                 sub_lang=((args.sub_lang or "").strip() or None),
+                audio_lang=((args.audio_lang or "").strip() or None),
                 volume=args.volume,
                 ytdl_enabled=((args.ytdl_enabled or "1").strip().lower() in ("1", "true", "yes", "on")),
                 ytdl_path=((args.ytdl_path or "").strip() or None),
@@ -3232,6 +3242,7 @@ def main(argv: list[str] | None = None) -> int:
                 ipc_path=(ipc_path or None),
                 audio_device=((args.audio_device or "").strip() or None),
                 sub_lang=((args.sub_lang or "").strip() or None),
+                audio_lang=((args.audio_lang or "").strip() or None),
                 volume=args.volume,
                 ytdl_enabled=((args.ytdl_enabled or "1").strip().lower() in ("1", "true", "yes", "on")),
                 ytdl_path=((args.ytdl_path or "").strip() or None),

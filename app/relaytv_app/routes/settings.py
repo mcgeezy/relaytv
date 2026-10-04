@@ -505,6 +505,43 @@ def _update_settings(req: SettingsReq):
         except Exception:
             live_apply_failed.append("sub_lang")
         try:
+            if "jellyfin_audio_lang" in requested_keys and updated.get("jellyfin_audio_lang") is not None:
+                cur_audio = str(updated.get("jellyfin_audio_lang") or "").strip()
+                formatted_audio = getattr(player, "_format_mpv_lang_list", lambda x: x)(cur_audio)
+                if formatted_audio:
+                    player.mpv_set("alang", formatted_audio)
+                cur_now = getattr(state, "NOW_PLAYING", None)
+                if isinstance(cur_now, dict) and str(cur_now.get("provider") or "").strip().lower() == "jellyfin":
+                    try:
+                        from ..integrations import jellyfin_service
+                        jellyfin_service.try_set_mpv_audio_track(language=cur_audio)
+                    except Exception:
+                        pass
+                live_applied.append("jellyfin_audio_lang")
+        except Exception:
+            live_apply_failed.append("jellyfin_audio_lang")
+        try:
+            if "jellyfin_sub_lang" in requested_keys and updated.get("jellyfin_sub_lang") is not None:
+                cur_sub = str(updated.get("jellyfin_sub_lang") or "").strip()
+                sub_off = cur_sub.lower() in {"off", "none", "disabled", "no", "false", "0"}
+                if sub_off:
+                    player.mpv_set("sid", "no")
+                else:
+                    formatted_sub = getattr(player, "_format_mpv_lang_list", lambda x: x)(cur_sub)
+                    if formatted_sub:
+                        player.mpv_set("sub-auto", "fuzzy")
+                        player.mpv_set("slang", formatted_sub)
+                cur_now = getattr(state, "NOW_PLAYING", None)
+                if isinstance(cur_now, dict) and str(cur_now.get("provider") or "").strip().lower() == "jellyfin":
+                    try:
+                        from ..integrations import jellyfin_service
+                        jellyfin_service.try_set_mpv_subtitle_track(language=cur_sub, off=sub_off)
+                    except Exception:
+                        pass
+                live_applied.append("jellyfin_sub_lang")
+        except Exception:
+            live_apply_failed.append("jellyfin_sub_lang")
+        try:
             if requested_keys.intersection({"ytdlp_format", "quality_mode", "quality_cap"}):
                 fmt_settings = dict(updated or {})
                 if "quality_mode" not in fmt_settings and ("ytdlp_format" in requested_keys):
