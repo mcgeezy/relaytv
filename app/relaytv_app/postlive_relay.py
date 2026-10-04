@@ -388,20 +388,17 @@ def iter_stream(token: str, chunk_size: int = 65536):
                 time.sleep(_SPOOL_POLL_SEC)
             with open(session.spool_path, "rb") as spool:
                 while True:
-                    chunk = spool.read(chunk_size)
-                    if chunk:
+                    if chunk := spool.read(chunk_size):
                         yield chunk
-                        continue
-                    if session.closed:
+                    elif session.closed:
                         return
-                    if session.ffmpeg_proc.poll() is not None:
+                    elif session.ffmpeg_proc.poll() is not None:
                         # The mux exited; drain whatever it flushed last.
-                        tail = spool.read(chunk_size)
-                        while tail:
+                        while tail := spool.read(chunk_size):
                             yield tail
-                            tail = spool.read(chunk_size)
                         return
-                    time.sleep(_SPOOL_POLL_SEC)
+                    else:
+                        time.sleep(_SPOOL_POLL_SEC)
         finally:
             session.reader_detached = True
             close_session(session.token, reason="reader closed")
