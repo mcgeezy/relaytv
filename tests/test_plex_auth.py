@@ -470,11 +470,17 @@ def test_status_reports_a_server_credential_that_never_resolved(tmp_path) -> Non
     fails at PMS with an unexplained 400, so status has to say so.
     """
     store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
-    store.save({
-        "device": {},
-        "account": {"auth_token": "account-token", "id": "1", "username": "gavin"},
-        "server": {"machine_id": "m1", "access_token": _jwt_like(), "server_url": "https://pms:32400"},
-    })
+    store.save(
+        {
+            "device": {},
+            "account": {"auth_token": "account-token", "id": "1", "username": "gavin"},
+            "server": {
+                "machine_id": "m1",
+                "access_token": _jwt_like(),
+                "server_url": "https://pms:32400",
+            },
+        }
+    )
     manager = plex_auth.PlexAuthManager(store=store)
 
     status = manager.status()
@@ -485,11 +491,17 @@ def test_status_reports_a_server_credential_that_never_resolved(tmp_path) -> Non
 
 def test_status_is_quiet_once_the_server_credential_is_a_real_token(tmp_path) -> None:
     store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
-    store.save({
-        "device": {},
-        "account": {"auth_token": "account-token", "id": "1", "username": "gavin"},
-        "server": {"machine_id": "m1", "access_token": "plain-server-token", "server_url": "https://pms:32400"},
-    })
+    store.save(
+        {
+            "device": {},
+            "account": {"auth_token": "account-token", "id": "1", "username": "gavin"},
+            "server": {
+                "machine_id": "m1",
+                "access_token": "plain-server-token",
+                "server_url": "https://pms:32400",
+            },
+        }
+    )
     manager = plex_auth.PlexAuthManager(store=store)
 
     assert manager.status()["server_token_unresolved"] is False
@@ -509,11 +521,13 @@ def test_an_impossible_server_token_upgrade_is_attempted_once(tmp_path, monkeypa
     request, for an upgrade that cannot succeed.
     """
     store = plex_auth.PlexAuthStore(str(tmp_path / "plex_auth.json"))
-    store.save({
-        "device": {},
-        "account": {"auth_token": "account-token", "id": "acct"},
-        "server": {"machine_id": "m1", "access_token": "header.payload.signature"},
-    })
+    store.save(
+        {
+            "device": {},
+            "account": {"auth_token": "account-token", "id": "acct"},
+            "server": {"machine_id": "m1", "access_token": "header.payload.signature"},
+        }
+    )
     manager = plex_auth.PlexAuthManager(store=store)
     lookups: list[str] = []
     monkeypatch.setattr(

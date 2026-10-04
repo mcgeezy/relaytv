@@ -81,7 +81,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 <!-- BEGIN GENERATED ENV TABLE (tests/test_env_inventory.py) -->
 | Variable | Referenced in | Runtime writers | Classification |
 | --- | --- | --- | --- |
-| `INVIDIOUS_BASE` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `INVIDIOUS_BASE` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `MPV_ARGS` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `MPV_AUDIO_DEVICE` | `config.py`<br>`player.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `MPV_DEBUG` | `player.py`<br>`qt_shell_app.py` | - | child process input |
@@ -139,15 +139,15 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_IPTV_CHECK_BATCH` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_CHECK_INTERVAL_SEC` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_DB_PATH` | `integrations/iptv_service.py` | - | static env |
-| `RELAYTV_IPTV_ENABLED` | `config.py`<br>`integrations/iptv_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_IPTV_ENABLED` | `config.py`<br>`integrations/iptv_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_IPTV_FETCH_TIMEOUT_SEC` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_MAX_CHANNELS` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_MAX_PLAYLIST_BYTES` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_IPTV_PROBE_TIMEOUT_SEC` | `integrations/iptv_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_ADJACENT_SEASON_PROBE_MAX` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_API_KEY` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_AUDIO_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_AUTH_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_API_KEY` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_AUDIO_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_AUTH_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_AUTH_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_AUTO_REGISTER` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_CATALOG_MAX_ENTRIES` | `integrations/jellyfin_receiver.py` | - | static env |
@@ -160,14 +160,14 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_DETAIL_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_DEVICE_ID` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_DEVICE_NAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_ENABLED` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_HEARTBEAT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_MAX_STREAMING_BITRATE` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_METADATA_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_NATIVE_AUTO_TRANSCODE` | `integrations/jellyfin_service.py` | - | static env |
-| `RELAYTV_JELLYFIN_PASSWORD` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_PASSWORD` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_PLAYBACK_MODE` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_PLAYING_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_PLAY_DEBOUNCE_SEC` | `integrations/jellyfin_service.py` | - | static env |
 | `RELAYTV_JELLYFIN_PROGRESS_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
@@ -179,14 +179,14 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_JELLYFIN_REGISTER_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_SEARCH_TTL_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_SERVER_TYPE` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_receiver.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_SERVER_URL` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_SERVER_URL` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_STOPPED_DEDUPE_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_PATH` | `integrations/jellyfin_receiver.py` | - | static env |
 | `RELAYTV_JELLYFIN_STOPPED_TIMEOUT_SEC` | `integrations/jellyfin_receiver.py` | - | static env |
-| `RELAYTV_JELLYFIN_SUB_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_SUB_LANG` | `config.py`<br>`integrations/jellyfin_service.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `integrations/jellyfin_service.py`<br>`routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_UI_ACTION_DEDUPE_SEC` | `integrations/jellyfin_service.py` | - | static env |
-| `RELAYTV_JELLYFIN_USERNAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_JELLYFIN_USER_ID` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_USERNAME` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_JELLYFIN_USER_ID` | `config.py`<br>`integrations/jellyfin_receiver.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_JELLYFIN_WS_CONNECT_TIMEOUT_SEC` | `integrations/jellyfin_ws.py` | - | static env |
 | `RELAYTV_JELLYFIN_WS_ENABLED` | `integrations/jellyfin_ws.py` | - | static env |
 | `RELAYTV_JELLYFIN_WS_RETRY_BASE_SEC` | `integrations/jellyfin_ws.py` | - | static env |
@@ -296,12 +296,12 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_SEAMLESS_REPLACE_RETRIES` | `player.py` | - | static env |
 | `RELAYTV_SEAMLESS_REPLACE_RETRY_DELAY_SEC` | `player.py` | - | static env |
 | `RELAYTV_SEEK_TRANSITION_HOLD_SEC` | `routes/__init__.py` | - | static env |
-| `RELAYTV_SEERR_API_KEY` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_SEERR_ENABLED` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_API_KEY` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_ENABLED` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_SEERR_REQUEST_MODE` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_SEERR_REQUEST_USER_ID` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_SEERR_SERVER_URL` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
-| `RELAYTV_SEERR_SHARED_REQUESTS_ENABLED` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_REQUEST_USER_ID` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_SERVER_URL` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
+| `RELAYTV_SEERR_SHARED_REQUESTS_ENABLED` | `config.py`<br>`integrations/seerr_client.py`<br>`main.py`<br>`routes/settings.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_SESSION_FILE` | `state.py` | - | static env |
 | `RELAYTV_SETTINGS_FILE` | `state.py` | - | static env |
 | `RELAYTV_SHELL_V2_NATIVE_PLAYING_GRACE_SEC` | `player.py` | - | static env |
@@ -343,19 +343,19 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_VIDEO_PROFILE_TTL_SEC` | `video_profile.py` | - | static env |
 | `RELAYTV_X11_OVERLAY` | `player.py`<br>`routes/__init__.py`<br>`x11_overlay.py` | - | static env |
 | `RELAYTV_YOUTUBE_PROGRESSIVE_FIRST` | `ytdlp_format_policy.py` | - | static env |
-| `RELAYTV_YTDLP_AUTO_UPDATE` | `container_entrypoint.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_update.py` | `main.py`<br>`routes/settings.py` | settings bus, entrypoint input |
+| `RELAYTV_YTDLP_AUTO_UPDATE` | `container_entrypoint.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_update.py` | `routes/settings.py` | settings bus, entrypoint input |
 | `RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC` | `ytdlp_update.py` | - | static env |
 | `RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC` | `container_entrypoint.py` | - | pre-app entrypoint |
-| `RELAYTV_YTDLP_COOKIES` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `RELAYTV_YTDLP_COOKIES` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_YTDLP_COOKIES_FROM_BROWSER` | `resolver.py` | - | static env |
 | `RELAYTV_YTDLP_COOKIES_UPLOAD_PATH` | `routes/settings.py` | - | static env |
 | `RELAYTV_YTDLP_JS_RUNTIME` | `resolver.py` | - | static env |
 | `RELAYTV_YTDLP_UPDATE_CHANNEL` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_UPDATE_DIR` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_USE_NODE` | `resolver.py` | - | static env |
-| `USE_INVIDIOUS` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `main.py`<br>`routes/settings.py` | settings bus |
+| `USE_INVIDIOUS` | `config.py`<br>`main.py`<br>`resolver.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus |
 | `YTDLP_ARGS` | `resolver.py` | - | static env |
 | `YTDLP_COOKIES` | `resolver.py`<br>`routes/settings.py`<br>`state.py` | - | static env |
 | `YTDLP_COOKIES_FROM_BROWSER` | `resolver.py` | - | static env |

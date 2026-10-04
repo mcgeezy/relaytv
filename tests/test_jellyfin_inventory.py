@@ -11,6 +11,7 @@ Regenerate the doc listing after intentional changes with:
 
     PYTHONPATH=app python3 tests/test_jellyfin_inventory.py --write
 """
+
 from __future__ import annotations
 
 import re

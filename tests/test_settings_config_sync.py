@@ -7,6 +7,7 @@ the RuntimeConfig snapshot with the same normalization the legacy env bus
 used, and ``os.environ`` receives only the pinned subprocess mirroring
 contract (``MIRRORED_TO_ENV``).
 """
+
 import os
 
 import pytest
@@ -40,7 +41,9 @@ def quiet_settings_apply(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(routes.player, "stop_cec_monitor", lambda: None)
     monkeypatch.setattr(settings_routes.upload_store, "cleanup_uploads", lambda settings: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "set_device_identity", lambda name: None)
-    monkeypatch.setattr(settings_routes.jellyfin_receiver, "set_server_type", lambda server_type: None)
+    monkeypatch.setattr(
+        settings_routes.jellyfin_receiver, "set_server_type", lambda server_type: None
+    )
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "connect", lambda **kwargs: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "disconnect", lambda: None)
     monkeypatch.setattr(settings_routes.jellyfin_receiver, "mark_error", lambda reason: None)
@@ -175,7 +178,9 @@ def test_settings_apply_syncs_jellyfin_config(quiet_settings_apply) -> None:
 
 
 def test_legacy_jellyfin_api_key_settings_infer_shared_auth_mode(monkeypatch) -> None:
-    monkeypatch.setattr(state, "_load_json", lambda path, default: {"jellyfin_api_key": "legacy-key"})
+    monkeypatch.setattr(
+        state, "_load_json", lambda path, default: {"jellyfin_api_key": "legacy-key"}
+    )
     monkeypatch.setattr(state, "SETTINGS", {})
 
     state.load_settings()
@@ -200,7 +205,9 @@ def test_settings_apply_syncs_seerr_config(quiet_settings_apply) -> None:
     assert _cfg("RELAYTV_SEERR_REQUEST_USER_ID") == "7"
 
 
-def test_settings_apply_syncs_server_type_to_live_receiver(quiet_settings_apply, monkeypatch) -> None:
+def test_settings_apply_syncs_server_type_to_live_receiver(
+    quiet_settings_apply, monkeypatch
+) -> None:
     applied: list[str] = []
     monkeypatch.setattr(
         settings_routes.jellyfin_receiver,

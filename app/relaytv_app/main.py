@@ -31,7 +31,12 @@ from . import postlive_relay
 from . import video_profile
 from . import upload_store
 from . import ytdlp_update
-from .debug import configure_logging, get_logger, slow_request_threshold_ms, skip_slow_request_logging
+from .debug import (
+    configure_logging,
+    get_logger,
+    slow_request_threshold_ms,
+    skip_slow_request_logging,
+)
 
 
 def create_app(*, testing: bool = False) -> FastAPI:
@@ -46,32 +51,43 @@ def create_app(*, testing: bool = False) -> FastAPI:
             s = {}
         if not isinstance(s, dict):
             return
-        runtime_config.set_value("RELAYTV_YTDLP_COOKIES", str(s.get("youtube_cookies_path") or "").strip())
-        runtime_config.set_value("RELAYTV_YTDLP_AUTO_UPDATE", "1" if bool(s.get("ytdlp_auto_update_enabled")) else "0")
-        runtime_config.set_value("USE_INVIDIOUS", "true" if bool(s.get("youtube_use_invidious")) else "false")
-        runtime_config.set_value("INVIDIOUS_BASE", str(s.get("youtube_invidious_base") or "").strip())
-        runtime_config.set_value("RELAYTV_JELLYFIN_ENABLED", "1" if bool(s.get("jellyfin_enabled")) else "0")
-        runtime_config.set_value("RELAYTV_JELLYFIN_SERVER_URL", str(s.get("jellyfin_server_url") or "").strip())
-        runtime_config.set_value("RELAYTV_JELLYFIN_API_KEY", str(s.get("jellyfin_api_key") or "").strip())
-        runtime_config.set_value("RELAYTV_JELLYFIN_AUTH_ENABLED", "1" if bool(s.get("jellyfin_auth_enabled", True)) else "0")
-        runtime_config.set_value("RELAYTV_JELLYFIN_USERNAME", str(s.get("jellyfin_username") or "").strip())
-        runtime_config.set_value("RELAYTV_JELLYFIN_PASSWORD", str(s.get("jellyfin_password") or "").strip())
-        runtime_config.set_value("RELAYTV_JELLYFIN_USER_ID", str(s.get("jellyfin_user_id") or "").strip())
-        runtime_config.set_value("RELAYTV_JELLYFIN_AUDIO_LANG", str(s.get("jellyfin_audio_lang") or "").strip().lower())
-        runtime_config.set_value("RELAYTV_JELLYFIN_SUB_LANG", str(s.get("jellyfin_sub_lang") or "").strip().lower())
-        runtime_config.set_value("RELAYTV_JELLYFIN_PLAYBACK_MODE", str(s.get("jellyfin_playback_mode") or "auto").strip().lower())
-        runtime_config.set_value("RELAYTV_IPTV_ENABLED", "1" if bool(s.get("iptv_enabled")) else "0")
-        runtime_config.set_value("RELAYTV_SEERR_ENABLED", "1" if bool(s.get("seerr_enabled")) else "0")
-        runtime_config.set_value(
-            "RELAYTV_SEERR_SERVER_URL", str(s.get("seerr_server_url") or "").strip()
+
+        def _set(env, key, default="", is_bool=False, lower=False, true_val="1", false_val="0"):
+            if is_bool:
+                val = bool(s.get(key, default) if key in s else default)
+                runtime_config.set_value(env, true_val if val else false_val)
+            else:
+                val = str(s.get(key) or default).strip()
+                runtime_config.set_value(env, val.lower() if lower else val)
+
+        _set("RELAYTV_YTDLP_COOKIES", "youtube_cookies_path")
+        _set("RELAYTV_YTDLP_AUTO_UPDATE", "ytdlp_auto_update_enabled", is_bool=True)
+        _set(
+            "USE_INVIDIOUS",
+            "youtube_use_invidious",
+            is_bool=True,
+            true_val="true",
+            false_val="false",
         )
-        runtime_config.set_value(
-            "RELAYTV_SEERR_API_KEY", str(s.get("seerr_api_key") or "").strip()
-        )
-        runtime_config.set_value(
-            "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED",
-            "1" if bool(s.get("seerr_shared_requests_enabled")) else "0",
-        )
+        _set("INVIDIOUS_BASE", "youtube_invidious_base")
+        _set("RELAYTV_JELLYFIN_ENABLED", "jellyfin_enabled", is_bool=True)
+        _set("RELAYTV_JELLYFIN_AUTH_ENABLED", "jellyfin_auth_enabled", is_bool=True, default=True)
+        _set("RELAYTV_JELLYFIN_PLAYBACK_MODE", "jellyfin_playback_mode", default="auto", lower=True)
+        _set("RELAYTV_IPTV_ENABLED", "iptv_enabled", is_bool=True)
+        _set("RELAYTV_SEERR_ENABLED", "seerr_enabled", is_bool=True)
+        _set("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", "seerr_shared_requests_enabled", is_bool=True)
+
+        _set("RELAYTV_JELLYFIN_SERVER_URL", "jellyfin_server_url")
+        _set("RELAYTV_JELLYFIN_API_KEY", "jellyfin_api_key")
+        _set("RELAYTV_JELLYFIN_USERNAME", "jellyfin_username")
+        _set("RELAYTV_JELLYFIN_PASSWORD", "jellyfin_password")
+        _set("RELAYTV_JELLYFIN_USER_ID", "jellyfin_user_id")
+        _set("RELAYTV_JELLYFIN_AUDIO_LANG", "jellyfin_audio_lang", lower=True)
+        _set("RELAYTV_JELLYFIN_SUB_LANG", "jellyfin_sub_lang", lower=True)
+        _set("RELAYTV_SEERR_SERVER_URL", "seerr_server_url")
+        _set("RELAYTV_SEERR_API_KEY", "seerr_api_key")
+        _set("RELAYTV_SEERR_REQUEST_USER_ID", "seerr_request_user_id")
+
         runtime_config.set_value(
             "RELAYTV_SEERR_REQUEST_MODE",
             normalize_seerr_request_mode(
@@ -79,13 +95,14 @@ def create_app(*, testing: bool = False) -> FastAPI:
                 shared_requests_enabled=bool(s.get("seerr_shared_requests_enabled")),
             ),
         )
-        runtime_config.set_value(
-            "RELAYTV_SEERR_REQUEST_USER_ID",
-            str(s.get("seerr_request_user_id") or "").strip(),
-        )
+
         uploads = s.get("uploads") if isinstance(s.get("uploads"), dict) else {}
-        runtime_config.set_value("RELAYTV_UPLOAD_MAX_SIZE_GB", str(uploads.get("max_size_gb") or 5.0))
-        runtime_config.set_value("RELAYTV_UPLOAD_RETENTION_HOURS", str(uploads.get("retention_hours") or 24))
+        runtime_config.set_value(
+            "RELAYTV_UPLOAD_MAX_SIZE_GB", str(uploads.get("max_size_gb") or 5.0)
+        )
+        runtime_config.set_value(
+            "RELAYTV_UPLOAD_RETENTION_HOURS", str(uploads.get("retention_hours") or 24)
+        )
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -107,7 +124,8 @@ def create_app(*, testing: bool = False) -> FastAPI:
             video_profile.warm_profile()
         await start_realtime_runtime()
         workers_enabled = not (
-            testing or os.getenv("RELAYTV_DISABLE_WORKERS", "0").strip() in ("1", "true", "yes", "on")
+            testing
+            or os.getenv("RELAYTV_DISABLE_WORKERS", "0").strip() in ("1", "true", "yes", "on")
         )
         if workers_enabled:
             start_autoplay_worker()

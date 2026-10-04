@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Peer device endpoints: identity, registry CRUD, reachability, and send."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -131,11 +132,15 @@ def _remove_local_queue_items(items: list[object]) -> int:
     accepted_ids = {state.queue_item_id(item) for item in items if state.queue_item_id(item)}
     removed, snapshot = playback_service.remove_queue_items_by_id(accepted_ids)
     if removed:
-        _ui_event_push_queue("remove", queue=snapshot, queue_length=len(snapshot), source="peer_transfer")
+        _ui_event_push_queue(
+            "remove", queue=snapshot, queue_length=len(snapshot), source="peer_transfer"
+        )
     return len(snapshot)
 
 
-def _selected_indexes(queue_length: int, *, index: int | None, indexes: list[int] | None) -> list[int] | None:
+def _selected_indexes(
+    queue_length: int, *, index: int | None, indexes: list[int] | None
+) -> list[int] | None:
     """Resolve a selection to sorted queue indexes, or None for the whole queue.
 
     An explicit empty list is a real answer ("send nothing from the queue"),
@@ -261,7 +266,8 @@ def peers_handoff(peer_id: str, req: PeerHandoffReq | None = None) -> dict[str, 
         # offering to resume it — playing the same thing in two rooms. The
         # session moved, so it is cleared here.
         stopped = playback_service.complete_peer_handoff(
-            snapshot, idle_surface_enabled=_idle_visual_surface_enabled_for_player(),
+            snapshot,
+            idle_surface_enabled=_idle_visual_surface_enabled_for_player(),
         )
     except Exception as exc:  # pragma: no cover - local teardown is best effort
         logger.warning("peer_handoff_local_stop_failed error=%s", exc)

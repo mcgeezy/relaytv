@@ -5,6 +5,7 @@ Capture used to discard mpv's result and return ``ok: true`` with an
 ``image_url`` before any file existed, so a client could be handed a URL that
 404s immediately or stays empty forever.
 """
+
 import os
 import threading
 import time

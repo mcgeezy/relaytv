@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Public RelayTV route surface for Plex account and server setup."""
+
 from __future__ import annotations
 
 import secrets

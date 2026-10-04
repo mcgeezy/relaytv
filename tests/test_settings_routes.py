@@ -181,15 +181,18 @@ def test_seerr_identity_change_retires_sessions_but_noop_does_not(monkeypatch) -
     monkeypatch.setattr(routes.state, "get_settings", lambda: dict(current))
     monkeypatch.setattr(routes.state, "update_settings", update)
     monkeypatch.setattr(routes.player, "is_playing", lambda: False)
-    monkeypatch.setattr(
-        settings_routes.seerr_sessions, "retire_all", lambda: retired.append(True)
-    )
+    monkeypatch.setattr(settings_routes.seerr_sessions, "retire_all", lambda: retired.append(True))
     client = TestClient(create_app(testing=True))
 
-    assert client.post("/settings", json={"seerr_request_mode": "caller_session"}).status_code == 200
+    assert (
+        client.post("/settings", json={"seerr_request_mode": "caller_session"}).status_code == 200
+    )
     assert retired == []
 
-    assert client.post("/settings", json={"seerr_server_url": "https://new.example"}).status_code == 200
+    assert (
+        client.post("/settings", json={"seerr_server_url": "https://new.example"}).status_code
+        == 200
+    )
     assert retired == [True]
 
 
@@ -203,8 +206,13 @@ def test_settings_normalize_jellyfin_server_type(monkeypatch) -> None:
     assert state._default_settings()["jellyfin_server_type"] == "jellyfin"
 
     monkeypatch.setattr(state, "_atomic_write_json", lambda path, payload: True)
-    assert state.update_settings({"jellyfin_server_type": " EMBY "})["jellyfin_server_type"] == "emby"
-    assert state.update_settings({"jellyfin_server_type": "bogus"})["jellyfin_server_type"] == "jellyfin"
+    assert (
+        state.update_settings({"jellyfin_server_type": " EMBY "})["jellyfin_server_type"] == "emby"
+    )
+    assert (
+        state.update_settings({"jellyfin_server_type": "bogus"})["jellyfin_server_type"]
+        == "jellyfin"
+    )
 
 
 def test_settings_normalize_plex_playback_mode() -> None:
@@ -219,7 +227,9 @@ def test_settings_normalize_plex_playback_mode() -> None:
     assert state._default_settings()["plex_max_bitrate"] == 0
 
 
-def test_settings_api_key_omission_preserves_and_explicit_values_replace_or_clear(monkeypatch) -> None:
+def test_settings_api_key_omission_preserves_and_explicit_values_replace_or_clear(
+    monkeypatch,
+) -> None:
     stored: dict[str, object] = {
         "jellyfin_enabled": True,
         "jellyfin_server_url": "https://jf.example",
@@ -272,12 +282,16 @@ def test_youtube_cookies_routes_upload_and_clear(monkeypatch, tmp_path) -> None:
     target = tmp_path / "cookies.txt"
 
     monkeypatch.setenv("RELAYTV_YTDLP_COOKIES_UPLOAD_PATH", str(target))
-    monkeypatch.setattr(routes.state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
+    monkeypatch.setattr(
+        routes.state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch)
+    )
 
     client = TestClient(create_app(testing=True))
     upload = client.post(
         "/settings/youtube/cookies",
-        json={"cookies_text": "# Netscape HTTP Cookie File\n.example\tTRUE\t/\tFALSE\t0\tname\tvalue\n"},
+        json={
+            "cookies_text": "# Netscape HTTP Cookie File\n.example\tTRUE\t/\tFALSE\t0\tname\tvalue\n"
+        },
     )
 
     assert upload.status_code == 200
@@ -334,10 +348,15 @@ def test_update_settings_route_rejects_invidious_without_server(monkeypatch) -> 
     monkeypatch.setattr(routes.state, "get_settings", lambda: {})
 
     client = TestClient(create_app(testing=True))
-    response = client.post("/settings", json={"youtube_use_invidious": True, "youtube_invidious_base": "not-a-url"})
+    response = client.post(
+        "/settings", json={"youtube_use_invidious": True, "youtube_invidious_base": "not-a-url"}
+    )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "YouTube Invidious server is required when Invidious mode is enabled"
+    assert (
+        response.json()["detail"]
+        == "YouTube Invidious server is required when Invidious mode is enabled"
+    )
 
 
 def test_update_settings_route_syncs_runtime_env_and_live_settings(monkeypatch) -> None:
@@ -352,19 +371,27 @@ def test_update_settings_route_syncs_runtime_env_and_live_settings(monkeypatch) 
     monkeypatch.setattr(
         routes.state,
         "update_settings",
-        lambda patch: updates.append(dict(patch))
-        or {
-            "cec_enabled": "0",
-            "quality_mode": "auto_profile",
-            "uploads": {"max_size_gb": 2.5, "retention_hours": 48},
-            "idle_dashboard_enabled": False,
-        },
+        lambda patch: (
+            updates.append(dict(patch))
+            or {
+                "cec_enabled": "0",
+                "quality_mode": "auto_profile",
+                "uploads": {"max_size_gb": 2.5, "retention_hours": 48},
+                "idle_dashboard_enabled": False,
+            }
+        ),
     )
     monkeypatch.setattr(routes.player, "is_playing", lambda: False)
     monkeypatch.setattr(routes.player, "stop_cec_monitor", lambda: cec_stops.append(True))
     monkeypatch.setattr(routes.player, "start_cec_monitor", lambda: None)
-    monkeypatch.setattr(routes.upload_store, "cleanup_uploads", lambda settings: cleanup_calls.append(dict(settings)) or {})
-    monkeypatch.setattr(routes, "_sync_idle_visual_surfaces_after_settings", lambda: idle_syncs.append(True))
+    monkeypatch.setattr(
+        routes.upload_store,
+        "cleanup_uploads",
+        lambda settings: cleanup_calls.append(dict(settings)) or {},
+    )
+    monkeypatch.setattr(
+        routes, "_sync_idle_visual_surfaces_after_settings", lambda: idle_syncs.append(True)
+    )
 
     client = TestClient(create_app(testing=True))
     response = client.post(
