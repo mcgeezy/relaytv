@@ -1,3 +1,4 @@
+import pytest
 # SPDX-License-Identifier: GPL-3.0-only
 from pathlib import Path
 import json
@@ -8,7 +9,6 @@ import subprocess
 import threading
 import tomllib
 
-import pytest
 
 from fastapi.testclient import TestClient
 
@@ -7245,3 +7245,24 @@ def test_rotation_follows_an_operator_log_file_override(monkeypatch, tmp_path) -
 
     assert not custom.exists(), "the operator's log was left to grow unbounded"
     assert reopened == [str(custom)]
+
+
+def test_ytdlp_update_start_worker_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import ytdlp_update
+    import threading
+
+    monkeypatch.setattr(ytdlp_update, "_WORKER_STARTED", False)
+
+    starts = []
+
+    def mock_start(self):
+        starts.append(1)
+
+    monkeypatch.setattr(threading.Thread, "start", mock_start)
+
+    ytdlp_update.start_worker()
+
+    ytdlp_update.start_worker()
+    ytdlp_update.start_worker()
+
+    assert len(starts) == 1, "worker thread should only be started once"
