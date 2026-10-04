@@ -2,8 +2,6 @@
 import os
 from unittest.mock import patch, MagicMock
 
-import pytest
-
 from relaytv_app.ytdlp_format_policy import (
     normalize_quality_mode,
     _parse_cap,
