@@ -390,11 +390,14 @@ def discovered() -> list[dict[str, object]]:
     return records
 
 
+def _is_session_owned_locked(session: "_BrowseSession | None") -> bool:
+    """Check if the session is still active (assumes _BROWSE_LOCK is held)."""
+    return session is None or (_BROWSE_SESSION is session and not session.stop.is_set())
+
+
 def _browse_session_owned(session: "_BrowseSession | None") -> bool:
-    if session is None:
-        return True
     with _BROWSE_LOCK:
-        return _BROWSE_SESSION is session and not session.stop.is_set()
+        return _is_session_owned_locked(session)
 
 
 def _resolve_service(
@@ -413,9 +416,7 @@ def _resolve_service(
         return False
     record = discovered_record_from_service(name, info)
     with _BROWSE_LOCK:
-        if session is not None and (
-            _BROWSE_SESSION is not session or session.stop.is_set()
-        ):
+        if not _is_session_owned_locked(session):
             logger.info(
                 "mdns_resolution_retired generation=%s name=%s",
                 session.generation,
