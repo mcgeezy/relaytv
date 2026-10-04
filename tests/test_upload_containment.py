@@ -6,6 +6,7 @@ an encoded separator survived inside a single component: "..%2F..%2Fdata"
 arrived as one part and unquoted into "../../data". Only the filename was ever
 basename'd, so the id went straight into os.path.join with the upload root.
 """
+
 import os
 
 import pytest
@@ -34,11 +35,11 @@ def uploads_root(tmp_path, monkeypatch):
         "..",
         "/etc",
         "u_short",
-        "u_" + "a" * 19,          # one too few
-        "u_" + "a" * 21,          # one too many
-        "u_" + "g" * 20,          # not hex
-        "U_" + "a" * 20,          # wrong case
-        "u_" + "a" * 20 + "/x",   # separator smuggled in
+        "u_" + "a" * 19,  # one too few
+        "u_" + "a" * 21,  # one too many
+        "u_" + "g" * 20,  # not hex
+        "U_" + "a" * 20,  # wrong case
+        "u_" + "a" * 20 + "/x",  # separator smuggled in
         "",
         None,
     ],

@@ -7,6 +7,7 @@ and the newer mutation was lost, reappearing missing after a restart. Separately
 _atomic_write_json swallowed every failure into a log line, so a full or
 read-only disk produced a successful API response.
 """
+
 import json
 import os
 import threading
@@ -142,12 +143,12 @@ def test_stale_queue_payload_cannot_replace_current_queue(state_dir) -> None:
 def test_composite_session_change_persists_once(state_dir, monkeypatch) -> None:
     writes: list[dict] = []
     monkeypatch.setattr(
-        state, "_persist_session_payload", lambda payload, version=None: writes.append(payload) or True
+        state,
+        "_persist_session_payload",
+        lambda payload, version=None: writes.append(payload) or True,
     )
 
-    state.update_session(
-        now_playing={"title": "x"}, session_state="playing", pause_reason=None
-    )
+    state.update_session(now_playing={"title": "x"}, session_state="playing", pause_reason=None)
 
     assert len(writes) == 1
     assert writes[0]["now_playing"] == {"title": "x"}
@@ -158,7 +159,9 @@ def test_no_intermediate_combination_is_ever_written(state_dir, monkeypatch) -> 
     """The three-setter form wrote now_playing while the state still said idle."""
     writes: list[dict] = []
     monkeypatch.setattr(
-        state, "_persist_session_payload", lambda payload, version=None: writes.append(payload) or True
+        state,
+        "_persist_session_payload",
+        lambda payload, version=None: writes.append(payload) or True,
     )
     monkeypatch.setattr(state, "SESSION_STATE", "idle", raising=False)
     monkeypatch.setattr(state, "NOW_PLAYING", None, raising=False)
@@ -187,7 +190,9 @@ def test_individual_setters_still_work(state_dir, monkeypatch) -> None:
 def test_update_session_can_skip_persistence(state_dir, monkeypatch) -> None:
     writes: list[dict] = []
     monkeypatch.setattr(
-        state, "_persist_session_payload", lambda payload, version=None: writes.append(payload) or True
+        state,
+        "_persist_session_payload",
+        lambda payload, version=None: writes.append(payload) or True,
     )
 
     state.update_session(session_state="playing", persist=False)
@@ -248,7 +253,9 @@ def test_write_failure_is_reported_not_swallowed(state_dir, monkeypatch) -> None
     assert "No space left" in health["failing"][state.SETTINGS_STATE_FILE]["last_error"]
 
 
-def test_update_settings_does_not_report_success_when_disk_write_fails(state_dir, monkeypatch) -> None:
+def test_update_settings_does_not_report_success_when_disk_write_fails(
+    state_dir, monkeypatch
+) -> None:
     monkeypatch.setattr(state, "_atomic_write_json", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="settings persistence failed"):

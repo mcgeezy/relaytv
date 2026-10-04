@@ -535,9 +535,7 @@ def test_automatic_quality_cap_uses_media_decision_transcode(service, monkeypatc
     )
     assert decision[1]["directPlay"] == 1
     assert decision[1]["maxVideoBitrate"] == 4000
-    assert "name=video.bitrate&value=4000" in decision[1][
-        "X-Plex-Client-Profile-Extra"
-    ]
+    assert "name=video.bitrate&value=4000" in decision[1]["X-Plex-Client-Profile-Extra"]
     assert plex_service.stop_transcode_stream(resolved["url"]) is True
 
 
@@ -630,15 +628,16 @@ def test_media_decision_preserves_copy_only_remux_result(service) -> None:
 def test_media_decision_accepts_directplay_part_without_top_level_code(service) -> None:
     catalog, auth = service
     auth.client.get = lambda path, *, query=None, auth=True: {
-        "MediaContainer": {
-            "Metadata": [{"Media": [{"Part": [{"decision": "directplay"}]}]}]
-        }
+        "MediaContainer": {"Metadata": [{"Media": [{"Part": [{"decision": "directplay"}]}]}]}
     }
 
-    assert catalog._playback_decision(
-        auth.session,
-        {"directPlay": 1},
-    ) == "direct"
+    assert (
+        catalog._playback_decision(
+            auth.session,
+            {"directPlay": 1},
+        )
+        == "direct"
+    )
 
 
 def test_selected_media_version_is_kept_separate_and_revalidated(service) -> None:
@@ -701,9 +700,7 @@ def test_track_choices_are_opaque_and_drive_plex_conversion(service, monkeypatch
     assert decision[1]["advancedSubtitles"] == "text"
     assert "/library/streams/" not in repr(detail) + repr(durable) + repr(resolved)
     for opaque_id in (audio["id"], subtitle["id"]):
-        decoded = base64.urlsafe_b64decode(
-            opaque_id + ("=" * (-len(opaque_id) % 4))
-        )
+        decoded = base64.urlsafe_b64decode(opaque_id + ("=" * (-len(opaque_id) % 4)))
         assert b"/library/streams/" not in decoded
     assert plex_service.stop_transcode_stream(resolved["url"]) is True
 
@@ -794,12 +791,15 @@ def test_timeline_reports_milliseconds_from_encrypted_item_reference(service) ->
     item_id = catalog.home()["rows"][0]["items"][0]["id"]
     now = catalog.durable_item(item_id)
 
-    assert catalog.report_timeline(
-        now,
-        playback_state="paused",
-        position_sec=12.345,
-        duration_sec=7200.0,
-    ) is True
+    assert (
+        catalog.report_timeline(
+            now,
+            playback_state="paused",
+            position_sec=12.345,
+            duration_sec=7200.0,
+        )
+        is True
+    )
 
     method, path, query, authenticated = auth.client.calls[-1]
     assert (method, path, authenticated) == ("POST", "/:/timeline", True)
@@ -1008,18 +1008,14 @@ def test_a_repeat_stopped_report_is_dropped(monkeypatch, timeline_registry) -> N
 
 
 def test_a_stop_after_playing_still_reports(monkeypatch, timeline_registry) -> None:
-    monkeypatch.setattr(
-        plex_service.catalog_service, "report_timeline", lambda now, **kw: None
-    )
+    monkeypatch.setattr(plex_service.catalog_service, "report_timeline", lambda now, **kw: None)
 
     assert plex_service.emit_timeline_hint(_plex_now(), playback_state="playing") is True
     assert plex_service.emit_timeline_hint(_plex_now(), playback_state="stopped") is True
 
 
 def test_each_item_is_tracked_separately(monkeypatch, timeline_registry) -> None:
-    monkeypatch.setattr(
-        plex_service.catalog_service, "report_timeline", lambda now, **kw: None
-    )
+    monkeypatch.setattr(plex_service.catalog_service, "report_timeline", lambda now, **kw: None)
 
     assert plex_service.emit_timeline_hint(_plex_now("a"), playback_state="stopped") is True
     assert plex_service.emit_timeline_hint(_plex_now("b"), playback_state="stopped") is True

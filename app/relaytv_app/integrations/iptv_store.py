@@ -5,6 +5,7 @@ This store owns versioned catalog state. It intentionally stays separate from
 ``state.py`` because playlist refreshes can touch tens of thousands of rows and
 must not rewrite or lock playback queue/session JSON.
 """
+
 from __future__ import annotations
 
 import os
@@ -110,9 +111,13 @@ class IptvStore:
                 )
                 # Backward-compatible column add: "added" (My Channels membership)
                 # arrived after the initial schema; ALTER any pre-existing table.
-                channel_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iptv_channels)").fetchall()}
+                channel_cols = {
+                    r["name"] for r in conn.execute("PRAGMA table_info(iptv_channels)").fetchall()
+                }
                 if "added" not in channel_cols:
-                    conn.execute("ALTER TABLE iptv_channels ADD COLUMN added INTEGER NOT NULL DEFAULT 0")
+                    conn.execute(
+                        "ALTER TABLE iptv_channels ADD COLUMN added INTEGER NOT NULL DEFAULT 0"
+                    )
                 row = conn.execute("SELECT version FROM iptv_schema LIMIT 1").fetchone()
                 if row is None:
                     conn.execute("INSERT INTO iptv_schema(version) VALUES (?)", (SCHEMA_VERSION,))

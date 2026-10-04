@@ -2,6 +2,7 @@
 import os
 from unittest.mock import patch, MagicMock
 
+
 from relaytv_app.ytdlp_format_policy import (
     normalize_quality_mode,
     _parse_cap,
@@ -149,13 +150,24 @@ def test__arm_default_quality_cap():
 
 
 def test__auto_provider_format():
-    assert _auto_provider_format("rumble", 1080, av1_allowed=True) == "best*[height<=1080][fps<=60]/best*[height<=1080]/best[height<=1080][fps<=60]/best"
-    assert _auto_provider_format("twitch", 720, av1_allowed=False) == "best[height<=720][fps<=60]/best"
+    assert (
+        _auto_provider_format("rumble", 1080, av1_allowed=True)
+        == "best*[height<=1080][fps<=60]/best*[height<=1080]/best[height<=1080][fps<=60]/best"
+    )
+    assert (
+        _auto_provider_format("twitch", 720, av1_allowed=False) == "best[height<=720][fps<=60]/best"
+    )
 
     # AV1 allowed
-    assert _auto_provider_format("youtube", 1080, av1_allowed=True) == "bestvideo[height<=1080][fps<=60]+bestaudio/best[height<=1080]/best"
+    assert (
+        _auto_provider_format("youtube", 1080, av1_allowed=True)
+        == "bestvideo[height<=1080][fps<=60]+bestaudio/best[height<=1080]/best"
+    )
     # AV1 not allowed
-    assert _auto_provider_format("youtube", 1080, av1_allowed=False) == "bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best[vcodec!*=av01][height<=1080]/best"
+    assert (
+        _auto_provider_format("youtube", 1080, av1_allowed=False)
+        == "bestvideo[vcodec!*=av01][height<=1080][fps<=60]+bestaudio/best[vcodec!*=av01][height<=1080]/best"
+    )
 
 
 @patch("relaytv_app.ytdlp_format_policy.runtime_config")
@@ -166,15 +178,28 @@ def test_youtube_progressive_startup_format(mock_runtime_config):
 
     with patch("relaytv_app.ytdlp_format_policy._target_cap", return_value=1080):
         with patch("platform.machine", return_value="x86_64"):
-            assert youtube_progressive_startup_format({}, profile={}) == "best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best"
+            assert (
+                youtube_progressive_startup_format({}, profile={})
+                == "best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best"
+            )
 
         with patch("platform.machine", return_value="aarch64"):
-            with patch("relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=720):
-                assert youtube_progressive_startup_format({}, profile={}) == "best*[height<=720][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=720][fps<=30][vcodec!=none][acodec!=none]/best[height<=720]/best"
+            with patch(
+                "relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=720
+            ):
+                assert (
+                    youtube_progressive_startup_format({}, profile={})
+                    == "best*[height<=720][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=720][fps<=30][vcodec!=none][acodec!=none]/best[height<=720]/best"
+                )
 
         with patch("platform.machine", return_value="x86_64"):
-            with patch("relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=720):
-                assert youtube_progressive_startup_format({}, profile={"decode_profile": "arm_safe"}) == "best*[height<=720][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=720][fps<=30][vcodec!=none][acodec!=none]/best[height<=720]/best"
+            with patch(
+                "relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=720
+            ):
+                assert (
+                    youtube_progressive_startup_format({}, profile={"decode_profile": "arm_safe"})
+                    == "best*[height<=720][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=720][fps<=30][vcodec!=none][acodec!=none]/best[height<=720]/best"
+                )
 
 
 @patch("relaytv_app.ytdlp_format_policy.runtime_config")
@@ -187,8 +212,14 @@ def test_youtube_progressive_startup_candidates(mock_runtime_config):
         with patch("platform.machine", return_value="x86_64"):
             candidates = youtube_progressive_startup_candidates({}, profile={})
             assert len(candidates) == 3
-            assert candidates[0] == "best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best"
-            assert candidates[1] == "best*[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best"
+            assert (
+                candidates[0]
+                == "best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best"
+            )
+            assert (
+                candidates[1]
+                == "best*[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best"
+            )
             assert candidates[2] == "best[height<=1080]/best"
 
 
@@ -219,46 +250,87 @@ def test__arm_safe_if_needed():
     # ARM and enforced
     with patch("platform.machine", return_value="aarch64"):
         with patch("relaytv_app.ytdlp_format_policy._env_bool", return_value=True):
-            with patch("relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=720):
+            with patch(
+                "relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=720
+            ):
                 expected_safe_fmt_720 = "best[height<=720][fps<=30][vcodec^=avc1]/best[height<=720][fps<=30]/best[height<=720]/best"
 
                 # Auto profile -> safe fmt
-                assert _arm_safe_if_needed("bestvideo+bestaudio", mode="auto_profile", cap=1080) == expected_safe_fmt_720
+                assert (
+                    _arm_safe_if_needed("bestvideo+bestaudio", mode="auto_profile", cap=1080)
+                    == expected_safe_fmt_720
+                )
 
                 # Heavy format -> safe fmt
-                assert _arm_safe_if_needed("bestvideo+bestaudio", mode="manual", cap=1080) == expected_safe_fmt_720
-                assert _arm_safe_if_needed("bv*+ba/best", mode="manual", cap=1080) == expected_safe_fmt_720
+                assert (
+                    _arm_safe_if_needed("bestvideo+bestaudio", mode="manual", cap=1080)
+                    == expected_safe_fmt_720
+                )
+                assert (
+                    _arm_safe_if_needed("bv*+ba/best", mode="manual", cap=1080)
+                    == expected_safe_fmt_720
+                )
 
                 # Non-heavy format -> original
                 assert _arm_safe_if_needed("best", mode="manual", cap=1080) == "best"
 
-            with patch("relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=1080):
+            with patch(
+                "relaytv_app.ytdlp_format_policy._arm_default_quality_cap", return_value=1080
+            ):
                 expected_safe_fmt_1080 = "best[height<=1080][fps<=30][vcodec^=avc1]/best[height<=1080][fps<=30]/best[height<=1080]/best"
                 # cap > arm_cap
-                assert _arm_safe_if_needed("bestvideo", mode="auto_profile", cap=1440) == expected_safe_fmt_1080
+                assert (
+                    _arm_safe_if_needed("bestvideo", mode="auto_profile", cap=1440)
+                    == expected_safe_fmt_1080
+                )
 
 
 @patch("relaytv_app.ytdlp_format_policy.runtime_config")
 def test_effective_ytdlp_format(mock_runtime_config):
     mock_snapshot = MagicMock()
-    mock_snapshot.raw.side_effect = lambda key: {"RELAYTV_QUALITY_MODE": "auto_profile", "YTDLP_FORMAT": ""}.get(key)
+    mock_snapshot.raw.side_effect = lambda key: {
+        "RELAYTV_QUALITY_MODE": "auto_profile",
+        "YTDLP_FORMAT": "",
+    }.get(key)
     mock_runtime_config.snapshot.return_value = mock_snapshot
 
     with patch("relaytv_app.ytdlp_format_policy._target_cap", return_value=1080):
         # Provider specific env override
-        with patch("relaytv_app.ytdlp_format_policy._provider_specific_env", return_value="provider_fmt"):
-            with patch("relaytv_app.ytdlp_format_policy._arm_safe_if_needed", return_value="provider_fmt_safe"):
+        with patch(
+            "relaytv_app.ytdlp_format_policy._provider_specific_env", return_value="provider_fmt"
+        ):
+            with patch(
+                "relaytv_app.ytdlp_format_policy._arm_safe_if_needed",
+                return_value="provider_fmt_safe",
+            ):
                 assert effective_ytdlp_format({}) == "provider_fmt_safe"
 
         # Explicit manual setting
-        mock_snapshot.raw.side_effect = lambda key: {"RELAYTV_QUALITY_MODE": "manual", "YTDLP_FORMAT": "manual_fmt"}.get(key)
+        mock_snapshot.raw.side_effect = lambda key: {
+            "RELAYTV_QUALITY_MODE": "manual",
+            "YTDLP_FORMAT": "manual_fmt",
+        }.get(key)
         with patch("relaytv_app.ytdlp_format_policy._provider_specific_env", return_value=""):
-            with patch("relaytv_app.ytdlp_format_policy._arm_safe_if_needed", return_value="manual_fmt_safe"):
-                assert effective_ytdlp_format({"quality_mode": "manual", "ytdlp_format": "manual_fmt"}) == "manual_fmt_safe"
+            with patch(
+                "relaytv_app.ytdlp_format_policy._arm_safe_if_needed",
+                return_value="manual_fmt_safe",
+            ):
+                assert (
+                    effective_ytdlp_format({"quality_mode": "manual", "ytdlp_format": "manual_fmt"})
+                    == "manual_fmt_safe"
+                )
 
         # Auto provider fallback
-        mock_snapshot.raw.side_effect = lambda key: {"RELAYTV_QUALITY_MODE": "auto_profile", "YTDLP_FORMAT": ""}.get(key)
+        mock_snapshot.raw.side_effect = lambda key: {
+            "RELAYTV_QUALITY_MODE": "auto_profile",
+            "YTDLP_FORMAT": "",
+        }.get(key)
         with patch("relaytv_app.ytdlp_format_policy._provider_specific_env", return_value=""):
-            with patch("relaytv_app.ytdlp_format_policy._auto_provider_format", return_value="auto_fmt"):
-                with patch("relaytv_app.ytdlp_format_policy._arm_safe_if_needed", return_value="auto_fmt_safe"):
+            with patch(
+                "relaytv_app.ytdlp_format_policy._auto_provider_format", return_value="auto_fmt"
+            ):
+                with patch(
+                    "relaytv_app.ytdlp_format_policy._arm_safe_if_needed",
+                    return_value="auto_fmt_safe",
+                ):
                     assert effective_ytdlp_format({}) == "auto_fmt_safe"

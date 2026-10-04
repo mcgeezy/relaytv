@@ -7,6 +7,7 @@ so whichever resolve finished last won: a Play issued during a slow resolve
 could be overwritten by the older one, and a Stop issued during a resolve was
 undone the moment that resolve completed.
 """
+
 import inspect
 import threading
 import time
@@ -24,8 +25,12 @@ def _isolated_playback(monkeypatch):
     monkeypatch.setattr(state, "NOW_PLAYING", None, raising=False)
     monkeypatch.setattr(state, "SESSION_STATE", "idle", raising=False)
     monkeypatch.setattr(state, "QUEUE", [], raising=False)
-    monkeypatch.setattr(state, "set_now_playing", lambda value: setattr(state, "NOW_PLAYING", value))
-    monkeypatch.setattr(state, "set_session_state", lambda value: setattr(state, "SESSION_STATE", value))
+    monkeypatch.setattr(
+        state, "set_now_playing", lambda value: setattr(state, "NOW_PLAYING", value)
+    )
+    monkeypatch.setattr(
+        state, "set_session_state", lambda value: setattr(state, "SESSION_STATE", value)
+    )
     monkeypatch.setattr(state, "set_pause_reason", lambda value: None)
     monkeypatch.setattr(state, "set_session_position", lambda value: None)
 
@@ -70,13 +75,17 @@ def harness(monkeypatch):
     monkeypatch.setattr(player, "_add_history_entry", lambda now: history.append(now))
     monkeypatch.setattr(player, "_arm_playback_start_watchdog", lambda now: watchdogs.append(now))
     monkeypatch.setattr(player, "_prime_mpv_up_next_from_queue", lambda **k: None)
-    monkeypatch.setattr(player, "_load_stream_in_existing_mpv", lambda *a, **k: loaded.append(a[0]) or True)
+    monkeypatch.setattr(
+        player, "_load_stream_in_existing_mpv", lambda *a, **k: loaded.append(a[0]) or True
+    )
     monkeypatch.setattr(player, "start_mpv", lambda *a, **k: loaded.append(a[0]))
     monkeypatch.setattr(player, "cec_auto_on_switch", lambda cec: False)
     monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: False)
     monkeypatch.setattr(player, "note_playback_started", lambda pos: None)
     monkeypatch.setattr(
-        player, "_resolved_playback_source", lambda item, raw, result: (result.stream, None, None, None)
+        player,
+        "_resolved_playback_source",
+        lambda item, raw, result: (result.stream, None, None, None),
     )
     monkeypatch.setattr(player, "_fresh_prefetched_stream", lambda item: None)
     monkeypatch.setattr(player, "_providers_forced_to_resolve", lambda: {"youtube"})
@@ -93,7 +102,9 @@ def harness(monkeypatch):
 def _play_in_thread(url, results, errors):
     def _run():
         try:
-            results.append(player.play_item(url, use_resolver=True, cec=False, clear_queue=False, mode="test"))
+            results.append(
+                player.play_item(url, use_resolver=True, cec=False, clear_queue=False, mode="test")
+            )
         except BaseException as exc:  # noqa: BLE001 - surfaced by the caller
             errors.append(exc)
 
@@ -107,9 +118,15 @@ def _play_in_thread(url, results, errors):
 
 @pytest.mark.parametrize("clear_queue", [False, True])
 def test_queue_play_superseded_during_resolution(harness, monkeypatch, clear_queue):
-    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([
-        {"url": "https://youtu.be/slow", "title": "Selected"},
-    ]))
+    monkeypatch.setattr(
+        state,
+        "QUEUE",
+        state._RevisionedQueue(
+            [
+                {"url": "https://youtu.be/slow", "title": "Selected"},
+            ]
+        ),
+    )
     selected_id = state.queue_item_id(state.QUEUE[0])
     monkeypatch.setattr(state, "persist_queue_payload", lambda payload: True)
     monkeypatch.setattr(player, "is_playing", lambda: False)
@@ -120,9 +137,15 @@ def test_queue_play_superseded_during_resolution(harness, monkeypatch, clear_que
     monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *a, **kw: None)
     client = TestClient(create_app(testing=True))
     responses = []
-    worker = threading.Thread(target=lambda: responses.append(client.post(
-        "/queue/play", json={"queue_id": selected_id},
-    )), daemon=True)
+    worker = threading.Thread(
+        target=lambda: responses.append(
+            client.post(
+                "/queue/play",
+                json={"queue_id": selected_id},
+            )
+        ),
+        daemon=True,
+    )
     worker.start()
     try:
         assert harness["resolving"].wait(5)
@@ -136,14 +159,20 @@ def test_queue_play_superseded_during_resolution(harness, monkeypatch, clear_que
     assert responses and responses[0].status_code == 409
     assert "superseded" in responses[0].json()["detail"]
     assert harness["loaded"] == []
-    assert [state.queue_item_id(item) for item in state.QUEUE] == ([] if clear_queue else [selected_id])
+    assert [state.queue_item_id(item) for item in state.QUEUE] == (
+        [] if clear_queue else [selected_id]
+    )
 
 
 def test_strict_play_still_loads_when_not_superseded(harness):
     harness["gate"].set()
     result = player.play_item(
-        {"url": "https://youtu.be/normal"}, use_resolver=True, cec=False,
-        clear_queue=False, mode="queue_play", raise_on_superseded=True,
+        {"url": "https://youtu.be/normal"},
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode="queue_play",
+        raise_on_superseded=True,
     )
     assert result["url"] == "https://youtu.be/normal"
     assert len(harness["loaded"]) == 1
@@ -167,9 +196,15 @@ def test_handoff_teardown_serializes_with_a_new_play_claim(monkeypatch):
         claimed.set()
 
     monkeypatch.setattr(player, "stop_mpv", stop)
-    finisher = threading.Thread(target=lambda: results.append(playback_service.complete_peer_handoff(
-        {"playback_intent": intent}, idle_surface_enabled=False,
-    )), daemon=True)
+    finisher = threading.Thread(
+        target=lambda: results.append(
+            playback_service.complete_peer_handoff(
+                {"playback_intent": intent},
+                idle_surface_enabled=False,
+            )
+        ),
+        daemon=True,
+    )
     newcomer = threading.Thread(target=claim, daemon=True)
     finisher.start()
     try:
@@ -201,7 +236,9 @@ def test_handoff_snapshot_rejects_generation_change_during_position_read(monkeyp
 
     monkeypatch.setattr(player, "mpv_get", get)
     results = []
-    worker = threading.Thread(target=lambda: results.append(playback_service.handoff_snapshot()), daemon=True)
+    worker = threading.Thread(
+        target=lambda: results.append(playback_service.handoff_snapshot()), daemon=True
+    )
     worker.start()
     try:
         assert entered.wait(5)
@@ -668,7 +705,9 @@ def test_retired_play_closes_the_relay_it_prepared(harness, monkeypatch) -> None
         return _PostLiveResult()
 
     monkeypatch.setattr(player, "resolve_streams", _slow_postlive)
-    monkeypatch.setattr(player, "_post_live_relay_source", lambda item, result: "http://127.0.0.1:9/relay/tok123")
+    monkeypatch.setattr(
+        player, "_post_live_relay_source", lambda item, result: "http://127.0.0.1:9/relay/tok123"
+    )
     monkeypatch.setattr(player, "_relay_token_from_url", lambda url: "tok123")
     monkeypatch.setattr(player, "_clear_prefetched_stream", lambda item: None)
     monkeypatch.setattr(
@@ -782,8 +821,11 @@ def test_replacing_a_plex_item_reports_it_stopped(harness, monkeypatch) -> None:
     harness["gate"].set()
 
     player.play_item(
-        {"url": "https://youtu.be/incoming"}, use_resolver=True, cec=False,
-        clear_queue=False, mode="test",
+        {"url": "https://youtu.be/incoming"},
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode="test",
     )
 
     assert ("outgoing", "stopped") in emitted
@@ -802,8 +844,11 @@ def test_a_first_play_reports_no_outgoing_stop(harness, monkeypatch) -> None:
     harness["gate"].set()
 
     player.play_item(
-        {"url": "https://youtu.be/first"}, use_resolver=True, cec=False,
-        clear_queue=False, mode="test",
+        {"url": "https://youtu.be/first"},
+        use_resolver=True,
+        cec=False,
+        clear_queue=False,
+        mode="test",
     )
 
     assert emitted == ["playing"]
