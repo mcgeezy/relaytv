@@ -22,6 +22,15 @@ def _read_first_line(path: str) -> str | None:
     except Exception:
         return None
 
+def _read_modes(path: str) -> list[str]:
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return [ln.strip() for ln in f.read().splitlines() if ln.strip()][:50]
+    except Exception:
+        pass
+    return []
+
 def list_drm_connectors() -> list[dict[str, Any]]:
     """Return HDMI/DP connectors with connection status (best-effort)."""
     out: list[dict[str, Any]] = []
@@ -37,14 +46,7 @@ def list_drm_connectors() -> list[dict[str, Any]]:
         if not pat.match(name):
             continue
         status = _read_first_line(os.path.join(base, name, "status")) or "unknown"
-        modes = []
-        try:
-            mp = os.path.join(base, name, "modes")
-            if os.path.exists(mp):
-                with open(mp, "r", encoding="utf-8", errors="ignore") as f:
-                    modes = [ln.strip() for ln in f.read().splitlines() if ln.strip()][:50]
-        except Exception:
-            modes = []
+        modes = _read_modes(os.path.join(base, name, "modes"))
         # connector_id is the part after 'cardX-'
         connector_id = name.split("-", 1)[1] if "-" in name else name
         out.append({
