@@ -295,19 +295,48 @@ class IptvStore:
             next_rank = int(max_row["n"] if max_row else 0)
             conn.execute("UPDATE iptv_channels SET active = 0 WHERE source_id = ?", (source_id,))
             inserted = 0
+
+            existing_ranks = {
+                row["channel_id"]: row["manual_rank"]
+                for row in conn.execute(
+                    "SELECT channel_id, manual_rank FROM iptv_channels WHERE source_id = ?",
+                    (source_id,)
+                ).fetchall()
+            }
+
+            params = []
+
             for entry in channels:
                 _require_publishable()
-                existing = conn.execute(
-                    "SELECT manual_rank FROM iptv_channels WHERE source_id = ? AND channel_id = ?",
-                    (source_id, entry["channel_id"]),
-                ).fetchone()
-                if existing is None:
+                channel_id = entry["channel_id"]
+                if channel_id not in existing_ranks:
                     next_rank += RANK_STEP
                     rank = next_rank
                     inserted += 1
+                    existing_ranks[channel_id] = rank
                 else:
-                    rank = int(existing["manual_rank"])
-                conn.execute(
+                    rank = int(existing_ranks[channel_id])
+
+                params.append((
+                    source_id,
+                    entry["channel_id"],
+                    entry["identity_key"],
+                    entry.get("tvg_id", ""),
+                    entry.get("tvg_name", ""),
+                    entry["name"],
+                    entry.get("group_title", ""),
+                    entry.get("logo_url", ""),
+                    entry["stream_url"],
+                    entry.get("user_agent", ""),
+                    entry.get("referrer", ""),
+                    int(entry.get("upstream_index", 0)),
+                    rank,
+                    now,
+                    now,
+                ))
+
+            if params:
+                conn.executemany(
                     """
                     INSERT INTO iptv_channels(
                         source_id, channel_id, identity_key, tvg_id, tvg_name,
@@ -328,25 +357,8 @@ class IptvStore:
                         upstream_index = excluded.upstream_index,
                         active = 1,
                         last_seen_at = excluded.last_seen_at
-                    """,
-                    (
-                        source_id,
-                        entry["channel_id"],
-                        entry["identity_key"],
-                        entry.get("tvg_id", ""),
-                        entry.get("tvg_name", ""),
-                        entry["name"],
-                        entry.get("group_title", ""),
-                        entry.get("logo_url", ""),
-                        entry["stream_url"],
-                        entry.get("user_agent", ""),
-                        entry.get("referrer", ""),
-                        int(entry.get("upstream_index", 0)),
-                        rank,
-                        now,
-                        now,
-                    ),
-                )
+                    """, params)
+
             count = len(channels)
             _require_publishable()
             conn.execute(
