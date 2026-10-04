@@ -458,19 +458,15 @@ def _prune_completed_spools(*, keep: int, max_age_sec: float | None = None) -> N
         _remove_file(path)
 
 
-def close_session(token: str, *, reason: str) -> None:
-    with _LOCK:
-        session = _SESSIONS.pop(str(token or ""), None)
-    if session is None or session.closed:
-        return
-    session.closed = True
-    session.close_reason = reason
+def _terminate_session_processes(session: RelaySession) -> None:
     # ffmpeg first so its inherited read fds close and the yt-dlp children
     # see EPIPE instead of blocking on a full pipe while we wait on them.
     _end_process(session.ffmpeg_proc)
     for proc in session.ytdlp_procs:
         _end_process(proc)
-    _remove_workdirs(session.workdirs)
+
+
+def _finalize_session_spool(session: RelaySession) -> bool:
     spool_kept = False
     if _mux_finished(session) and os.path.exists(session.spool_path):
         # Finalized spool: keep it (newest only) so the player's seek
@@ -481,6 +477,10 @@ def close_session(token: str, *, reason: str) -> None:
         spool_kept = True
     else:
         _remove_file(session.spool_path)
+    return spool_kept
+
+
+def _log_session_closure(session: RelaySession, reason: str, spool_kept: bool) -> None:
     tails = {
         name: " | ".join(list(tail)[-3:])
         for name, tail in session.stderr_tails.items()
@@ -493,6 +493,19 @@ def close_session(token: str, *, reason: str) -> None:
         spool_kept,
         tails or "{}",
     )
+
+
+def close_session(token: str, *, reason: str) -> None:
+    with _LOCK:
+        session = _SESSIONS.pop(str(token or ""), None)
+    if session is None or session.closed:
+        return
+    session.closed = True
+    session.close_reason = reason
+    _terminate_session_processes(session)
+    _remove_workdirs(session.workdirs)
+    spool_kept = _finalize_session_spool(session)
+    _log_session_closure(session, reason, spool_kept)
 
 
 def close_all(*, reason: str = "shutdown") -> None:
