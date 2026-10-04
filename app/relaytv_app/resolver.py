@@ -452,6 +452,27 @@ def _preferred_js_runtime_spec() -> str:
     return ""
 
 
+def _add_js_and_remote(args: list[str], js_runtime: str) -> list[str]:
+    res = list(args)
+    if not _has_opt(res, "--js-runtimes") and js_runtime:
+        res += ["--js-runtimes", js_runtime]
+    if not _has_opt(res, "--remote-components"):
+        res += ["--remote-components", "ejs:github"]
+    return res
+
+
+def _deduplicate_strategies(strategies: list[tuple[list[str], list[str]]]) -> list[tuple[list[str], list[str]]]:
+    out: list[tuple[list[str], list[str]]] = []
+    seen: set[tuple[str, ...]] = set()
+    for args_base, strategy_candidates in strategies:
+        key = tuple(args_base)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((args_base, strategy_candidates))
+    return out
+
+
 def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
     has_cookie_auth = _has_opt(base, "--cookies") or _has_opt(base, "--cookies-from-browser")
     default_args = _without_opts(base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components")
@@ -459,57 +480,30 @@ def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -
     strategies: list[tuple[list[str], list[str]]] = []
 
     if has_cookie_auth:
-        challenge_cookie = list(base)
-        if not _has_opt(challenge_cookie, "--js-runtimes") and js_runtime:
-            challenge_cookie += ["--js-runtimes", js_runtime]
-        if not _has_opt(challenge_cookie, "--remote-components"):
-            challenge_cookie += ["--remote-components", "ejs:github"]
-        strategies.append((challenge_cookie, candidates))
+        strategies.append((_add_js_and_remote(base, js_runtime), candidates))
 
     challenge_public = _without_opts(base, "--cookies", "--cookies-from-browser")
-    if not _has_opt(challenge_public, "--js-runtimes") and js_runtime:
-        challenge_public += ["--js-runtimes", js_runtime]
-    if not _has_opt(challenge_public, "--remote-components"):
-        challenge_public += ["--remote-components", "ejs:github"]
-    strategies.append((challenge_public, candidates))
+    strategies.append((_add_js_and_remote(challenge_public, js_runtime), candidates))
     strategies.append((default_args, candidates))
-    out: list[tuple[list[str], list[str]]] = []
-    seen: set[tuple[str, ...]] = set()
-    for args_base, strategy_candidates in strategies:
-        key = tuple(args_base)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((args_base, strategy_candidates))
-    return out
+
+    return _deduplicate_strategies(strategies)
 
 
 def _build_youtube_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
     has_cookie_auth = _has_opt(base, "--cookies") or _has_opt(base, "--cookies-from-browser")
     public_base = _without_opts(base, "--cookies", "--cookies-from-browser")
     default_args = _without_opts(base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components")
-    strategies: list[tuple[list[str], list[str]]] = []
     has_extractor_args = _has_opt(public_base, "--extractor-args")
-    has_js_runtimes = _has_opt(public_base, "--js-runtimes")
-    has_remote_components = _has_opt(public_base, "--remote-components")
     js_runtime = _preferred_js_runtime_spec()
+    strategies: list[tuple[list[str], list[str]]] = []
 
     challenge_candidates = ["", "best"] if any(c in ("", "best", "b") for c in candidates) else candidates
     if has_cookie_auth:
-        challenge_cookie = list(base)
-        if not _has_opt(challenge_cookie, "--js-runtimes") and js_runtime:
-            challenge_cookie += ["--js-runtimes", js_runtime]
-        if not _has_opt(challenge_cookie, "--remote-components"):
-            challenge_cookie += ["--remote-components", "ejs:github"]
-        strategies.append((challenge_cookie, challenge_candidates))
+        strategies.append((_add_js_and_remote(base, js_runtime), challenge_candidates))
 
-    challenge_public = list(public_base)
-    if not has_js_runtimes and js_runtime:
-        challenge_public += ["--js-runtimes", js_runtime]
-    if not has_remote_components:
-        challenge_public += ["--remote-components", "ejs:github"]
-    strategies.append((challenge_public, challenge_candidates))
+    strategies.append((_add_js_and_remote(public_base, js_runtime), challenge_candidates))
     strategies.append((default_args, candidates))
+
     if tuple(public_base) != tuple(default_args):
         strategies.append((public_base, candidates))
 
@@ -517,15 +511,8 @@ def _build_youtube_strategies(base: list[str], candidates: list[str]) -> list[tu
     if not has_extractor_args and not has_cookie_auth:
         android_last = [*public_base, "--extractor-args", "youtube:player_client=android"]
         strategies.append((android_last, candidates))
-    out: list[tuple[list[str], list[str]]] = []
-    seen: set[tuple[str, ...]] = set()
-    for args_base, strategy_candidates in strategies:
-        key = tuple(args_base)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((args_base, strategy_candidates))
-    return out
+
+    return _deduplicate_strategies(strategies)
 
 
 def build_ytdlp_base_args() -> list[str]:
