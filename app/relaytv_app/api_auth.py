@@ -102,6 +102,30 @@ def _request_authority(value: str, *, absolute: bool) -> tuple[str, int | None] 
         return None
 
 
+def _is_cross_site(
+    sec_fetch_site: str | None = None,
+    referer: str | None = None,
+    host: str | None = None,
+) -> bool:
+    """Return True if the request headers indicate a cross-site context."""
+    fetch_site = str(sec_fetch_site or "").strip().lower()
+    if fetch_site in {"same-origin", "none"}:
+        return False
+    if fetch_site in {"cross-site", "same-site"}:
+        return True
+
+    source = _request_authority(str(referer or ""), absolute=True)
+    target = _request_authority(str(host or ""), absolute=False)
+    if source is None or target is None:
+        # Headerless non-browser API clients retain the local-first behavior.
+        return False
+    # Host has no scheme, so normalize an omitted port to the Referer's scheme
+    # default before comparing.
+    if target[1] is None:
+        target = (target[0], source[1])
+    return source != target
+
+
 def cross_site_mutating_get(
     method: str,
     path: str,
@@ -122,22 +146,11 @@ def cross_site_mutating_get(
     if _normalized_path(path) not in MUTATING_GET_PATHS:
         return False
 
-    fetch_site = str(sec_fetch_site or "").strip().lower()
-    if fetch_site == "same-origin" or fetch_site == "none":
-        return False
-    if fetch_site in {"cross-site", "same-site"}:
-        return True
-
-    source = _request_authority(str(referer or ""), absolute=True)
-    target = _request_authority(str(host or ""), absolute=False)
-    if source is None or target is None:
-        # Headerless non-browser API clients retain the local-first behavior.
-        return False
-    # Host has no scheme, so normalize an omitted port to the Referer's scheme
-    # default before comparing.
-    if target[1] is None:
-        target = (target[0], source[1])
-    return source != target
+    return _is_cross_site(
+        sec_fetch_site=sec_fetch_site,
+        referer=referer,
+        host=host,
+    )
 
 
 def write_request_allowed(
