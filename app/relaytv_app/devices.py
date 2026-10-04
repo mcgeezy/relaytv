@@ -85,6 +85,16 @@ def cec_client_probe() -> dict[str, Any]:
     return out
 
 
+def _alsa_device_sort_key(d: dict[str, str]) -> tuple[int, str]:
+    """Prefer common HDMI entries at top (stable UX)"""
+    i = d.get("id", "")
+    if i.startswith("hdmi:") or "hdmi" in i.lower():
+        return (0, i)
+    if i in ("default", "pipewire", "pulse"):
+        return (1, i)
+    return (2, i)
+
+
 def list_alsa_devices() -> list[dict[str, str]]:
     """Parse `aplay -L` into a list of devices."""
     try:
@@ -93,29 +103,17 @@ def list_alsa_devices() -> list[dict[str, str]]:
     except Exception:
         return []
 
-    lines = txt.splitlines()
     devices: list[dict[str, str]] = []
-    cur = None
-    for ln in lines:
+    for ln in txt.splitlines():
         if not ln.strip():
             continue
-        if ln and not ln.startswith(" "):
+        if not ln.startswith(" "):
             # new device id
-            cur = {"id": ln.strip(), "desc": ""}
-            devices.append(cur)
-        else:
-            if cur is not None and not cur["desc"]:
-                cur["desc"] = ln.strip()
+            devices.append({"id": ln.strip(), "desc": ""})
+        elif devices and not devices[-1]["desc"]:
+            devices[-1]["desc"] = ln.strip()
 
-    # Prefer common HDMI entries at top (stable UX)
-    def key(d):
-        i = d.get("id","")
-        if i.startswith("hdmi:") or "hdmi" in i.lower():
-            return (0, i)
-        if i in ("default","pipewire","pulse"):
-            return (1, i)
-        return (2, i)
-    devices.sort(key=key)
+    devices.sort(key=_alsa_device_sort_key)
     return devices
 
 
