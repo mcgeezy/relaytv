@@ -1708,7 +1708,7 @@ def test_pi_youtube_resolver_does_not_fall_back_to_auto_when_av1_disallowed(monk
     )
     monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, timeout=None):
         calls.append(list(cmd))
         return Proc()
 
@@ -4257,7 +4257,7 @@ def _patch_resolver_ytdlp_env(monkeypatch: pytest.MonkeyPatch, stdout: str) -> l
     )
     monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, timeout=None):
         calls.append(list(cmd))
         return Proc()
 
@@ -4318,7 +4318,7 @@ def test_resolver_raises_post_live_processing_when_replay_is_unready(
     )
     monkeypatch.setattr(resolver.shutil, 'which', lambda name: None)
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, timeout=None):
         calls.append(list(cmd))
         return Proc()
 

@@ -593,14 +593,8 @@ def _run_ytdlp_provider_command(
     same options to mpv's yt-dlp hook.
     """
 
-    def _invoke(args: list[str]) -> subprocess.CompletedProcess:
-        kwargs: dict[str, object] = {"check": False}
-        if timeout is not None:
-            kwargs["timeout"] = timeout
-        return run([*args, *command_args, url], **kwargs)
-
     selected_args = list(base_args)
-    result = _invoke(selected_args)
+    result = run([*selected_args, *command_args, url], check=False, timeout=timeout)
     provider = provider_from_url(url)
     challenged = provider == "rumble" and _rumble_error_is_http_challenge(result.stderr)
     if not challenged or _has_opt(selected_args, "--impersonate"):
@@ -610,7 +604,8 @@ def _run_ytdlp_provider_command(
     logger.info(
         "ytdlp_strategy_retry provider=rumble reason=http_403 strategy=impersonate_chrome"
     )
-    return _invoke(selected_args), selected_args, True
+    result = run([*selected_args, *command_args, url], check=False, timeout=timeout)
+    return result, selected_args, True
 
 
 def resolve_streams_ytdlp(url: str):
