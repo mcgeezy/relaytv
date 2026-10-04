@@ -352,14 +352,12 @@ def _record_contact(
 # =========================
 
 
-def _request(
+def _build_request(
     base_url: str,
     path: str,
-    *,
-    token: str = "",
-    payload: dict | None = None,
-    timeout: float = PROBE_TIMEOUT_SEC,
-) -> dict:
+    token: str,
+    payload: dict | None,
+) -> urllib.request.Request:
     url = f"{base_url}{path}"
     data = None
     headers = {"Accept": "application/json", "User-Agent": "RelayTV peer"}
@@ -368,10 +366,13 @@ def _request(
         headers["Content-Type"] = "application/json"
     if str(token or "").strip():
         headers["Authorization"] = f"Bearer {str(token).strip()}"
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    return urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+
+
+def _execute_request(request: urllib.request.Request, timeout: float) -> bytes:
     try:
         with urllib.request.urlopen(request, timeout=float(timeout)) as response:
-            body = response.read(1_000_000)
+            return response.read(1_000_000)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             raise PeerError("device requires an API token", status_code=502)
@@ -384,11 +385,27 @@ def _request(
         raise PeerError("device is unreachable", status_code=502) from exc
     except Exception as exc:
         raise PeerError("device request failed", status_code=502) from exc
+
+
+def _parse_response(body: bytes) -> dict:
     try:
         parsed = json.loads(body.decode("utf-8"))
     except Exception:
         raise PeerError("device returned an unexpected response", status_code=502)
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _request(
+    base_url: str,
+    path: str,
+    *,
+    token: str = "",
+    payload: dict | None = None,
+    timeout: float = PROBE_TIMEOUT_SEC,
+) -> dict:
+    request = _build_request(base_url, path, token, payload)
+    body = _execute_request(request, timeout)
+    return _parse_response(body)
 
 
 def probe_identity(base_url: str, *, token: str = "") -> dict[str, str]:
