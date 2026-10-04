@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 
 from relaytv_app.ytdlp_format_policy import (
