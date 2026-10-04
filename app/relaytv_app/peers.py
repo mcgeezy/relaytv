@@ -352,6 +352,19 @@ def _record_contact(
 # =========================
 
 
+def _build_request(url: str, token: str, payload: dict | None) -> urllib.request.Request:
+    data = None
+    headers = {"Accept": "application/json", "User-Agent": "RelayTV peer"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if str(token or "").strip():
+        headers["Authorization"] = f"Bearer {str(token).strip()}"
+    return urllib.request.Request(
+        url, data=data, headers=headers, method="POST" if data else "GET"
+    )
+
+
 def _request(
     base_url: str,
     path: str,
@@ -361,14 +374,7 @@ def _request(
     timeout: float = PROBE_TIMEOUT_SEC,
 ) -> dict:
     url = f"{base_url}{path}"
-    data = None
-    headers = {"Accept": "application/json", "User-Agent": "RelayTV peer"}
-    if payload is not None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    if str(token or "").strip():
-        headers["Authorization"] = f"Bearer {str(token).strip()}"
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    request = _build_request(url, token, payload)
     try:
         with urllib.request.urlopen(request, timeout=float(timeout)) as response:
             body = response.read(1_000_000)
