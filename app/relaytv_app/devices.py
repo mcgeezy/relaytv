@@ -119,6 +119,23 @@ def list_alsa_devices() -> list[dict[str, str]]:
     return devices
 
 
+def _normalize_for_mpv(dev_id: str) -> str:
+    d = (dev_id or "").strip()
+    if not d:
+        return ""
+    low = d.lower()
+    if low.startswith("alsa/"):
+        return d
+    if low in ("pulse", "pipewire", "jack", "sndio", "null", "auto"):
+        return d
+    if ":" in d:
+        return f"alsa/{d}"
+    return d
+
+def _get_active_drm_connector() -> str:
+    connected = [c for c in list_drm_connectors() if str(c.get("status", "")).lower() == "connected"]
+    return str(connected[0].get("connector") or "").strip() if connected else ""
+
 def detect_audio_device(drm_connector: str = "") -> str:
     """Best-effort HDMI-aware ALSA device detection.
 
@@ -128,19 +145,6 @@ def detect_audio_device(drm_connector: str = "") -> str:
     if not alsa:
         return ""
 
-    def _normalize_for_mpv(dev_id: str) -> str:
-        d = (dev_id or "").strip()
-        if not d:
-            return ""
-        low = d.lower()
-        if low.startswith("alsa/"):
-            return d
-        if low in ("pulse", "pipewire", "jack", "sndio", "null", "auto"):
-            return d
-        if ":" in d:
-            return f"alsa/{d}"
-        return d
-
     hdmi_ids = [d.get("id", "") for d in alsa if "hdmi" in d.get("id", "").lower()]
     if not hdmi_ids:
         return ""
@@ -148,9 +152,7 @@ def detect_audio_device(drm_connector: str = "") -> str:
     # If connector is not explicitly supplied, inspect currently connected outputs.
     connector = (drm_connector or "").strip()
     if not connector:
-        connected = [c for c in list_drm_connectors() if str(c.get("status", "")).lower() == "connected"]
-        if connected:
-            connector = str(connected[0].get("connector") or "").strip()
+        connector = _get_active_drm_connector()
 
     # Only map connector index for HDMI connectors. DP/eDP index values do not
     # correspond to ALSA HDMI DEV numbering and can pick the wrong sink.
