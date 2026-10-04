@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-only
-
 import os
 from unittest import mock
 
@@ -11,13 +10,21 @@ from relaytv_app.config import runtime_config
 
 @pytest.fixture(autouse=True)
 def _reset_runtime_config():
-    # Make sure we start with a clean state
-    with mock.patch.dict(os.environ, {}, clear=True):
-        runtime_config.refresh_from_env()
+    # Store old values
+    old_values = dict(runtime_config._values)
+    # Clear the config for the test
+    runtime_config._values.clear()
+    # Re-create the snapshot
+    runtime_config.set_value("dummy", "dummy")
+    del runtime_config._values["dummy"]
+    runtime_config._snapshot = type(runtime_config.snapshot())(runtime_config._values)
+
     yield
-    # Clean up after test
-    with mock.patch.dict(os.environ, {}, clear=True):
-        runtime_config.refresh_from_env()
+
+    # Restore old values
+    runtime_config._values.clear()
+    runtime_config._values.update(old_values)
+    runtime_config._snapshot = type(runtime_config.snapshot())(runtime_config._values)
 
 
 def test_enabled_default():
@@ -41,20 +48,22 @@ def test_enabled_false():
 
 
 def test_poll_interval_sec_default():
-    with mock.patch.dict(os.environ, {}, clear=True):
+    with mock.patch.dict(os.environ, {}, clear=False):
+        if "RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC" in os.environ:
+             del os.environ["RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC"]
         assert ytdlp_update._poll_interval_sec() == 3600.0
 
 
 def test_poll_interval_sec_custom():
-    with mock.patch.dict(os.environ, {"RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC": "7200"}, clear=True):
+    with mock.patch.dict(os.environ, {"RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC": "7200"}):
         assert ytdlp_update._poll_interval_sec() == 7200.0
 
 
 def test_poll_interval_sec_minimum():
-    with mock.patch.dict(os.environ, {"RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC": "30"}, clear=True):
+    with mock.patch.dict(os.environ, {"RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC": "30"}):
         assert ytdlp_update._poll_interval_sec() == 60.0
 
 
 def test_poll_interval_sec_invalid():
-    with mock.patch.dict(os.environ, {"RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC": "invalid"}, clear=True):
+    with mock.patch.dict(os.environ, {"RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC": "invalid"}):
         assert ytdlp_update._poll_interval_sec() == 3600.0
