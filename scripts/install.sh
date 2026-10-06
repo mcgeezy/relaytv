@@ -163,6 +163,23 @@ detect_host_profile() {
   esac
 }
 
+detect_pi_generation() {
+  local model="$1"
+  local model_lc
+  model_lc="$(printf "%s" "$model" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$model_lc" == *raspberry*pi*5* ]]; then
+    printf "5"
+  elif [[ "$model_lc" == *raspberry*pi*4* || "$model_lc" == *compute*module*4* || "$model_lc" == *pi*400* ]]; then
+    printf "4"
+  elif [[ "$model_lc" == *raspberry*pi*3* || "$model_lc" == *zero*2* ]]; then
+    printf "3"
+  elif [[ "$model_lc" == *raspberry*pi* ]]; then
+    printf "4"
+  else
+    printf "0"
+  fi
+}
+
 HOST_PROFILE="${RELAYTV_HOST_PROFILE:-$(detect_host_profile "$HOST_ARCH" "$HOST_MODEL")}"
 
 DISPLAY_VAL=""
@@ -220,9 +237,29 @@ CEC_ENABLED_VAL="${RELAYTV_CEC_ENABLED:-auto}"
 CEC_RUNTIME_VAL="${RELAYTV_CEC:-}"
 CEC_MONITOR_VAL="${RELAYTV_CEC_MONITOR:-}"
 
-# bcm2835-codec V4L2 decode/encode nodes. Present on Pi 4 and earlier; the
-# Pi 5 dropped that codec block, so these nodes do not exist there.
-PI_VIDEO_DECODE_NODES="/dev/video10 /dev/video11 /dev/video12 /dev/video13"
+# bcm2835-codec V4L2 decode/encode nodes (Pi 4 and earlier) and rpivid HEVC / DMA nodes (Pi 4 & Pi 5)
+PI_VIDEO_DECODE_NODES="/dev/video10 /dev/video11 /dev/video12 /dev/video13 /dev/video19 /dev/media0 /dev/dma_heap"
+
+ARM_FAST_PROFILE_VAL="${RELAYTV_ARM_FAST_PROFILE:-}"
+ARM_FAST_PROFILE_FROM_ENV="0"
+if [ "${RELAYTV_ARM_FAST_PROFILE+x}" = "x" ]; then
+  ARM_FAST_PROFILE_FROM_ENV="1"
+fi
+ARM_ENFORCE_SAFE_YTDL_FORMAT_VAL="${RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT:-}"
+ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV="0"
+if [ "${RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT+x}" = "x" ]; then
+  ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV="1"
+fi
+ARM_DEFAULT_QUALITY_VAL="${RELAYTV_ARM_DEFAULT_QUALITY:-}"
+ARM_DEFAULT_QUALITY_FROM_ENV="0"
+if [ "${RELAYTV_ARM_DEFAULT_QUALITY+x}" = "x" ]; then
+  ARM_DEFAULT_QUALITY_FROM_ENV="1"
+fi
+DISPLAY_CAP_HEIGHT_VAL="${RELAYTV_DISPLAY_CAP_HEIGHT:-}"
+DISPLAY_CAP_HEIGHT_FROM_ENV="0"
+if [ "${RELAYTV_DISPLAY_CAP_HEIGHT+x}" = "x" ]; then
+  DISPLAY_CAP_HEIGHT_FROM_ENV="1"
+fi
 
 detect_pi_video_default() {
   local node
@@ -1013,7 +1050,8 @@ installer_owned_env_key() {
     RELAYTV_MODE|RELAYTV_PLAYER_BACKEND|RELAYTV_QT_RUNTIME_MODE|RELAYTV_QT_SHELL_MODULE|\
     RELAYTV_QT_SHELL_MPV_ARGS|RELAYTV_RENDER_GID|RELAYTV_VIDEO_MODE|RELAYTV_X11_OVERLAY|\
     RELAYTV_XAUTHORITY_HOST_PATH|RELAYTV_YTDLP_AUTO_UPDATE|RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS|\
-    RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE|RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC)
+    RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE|RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC|\
+    RELAYTV_PI_GENERATION|RELAYTV_ARM_FAST_PROFILE|RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT|RELAYTV_ARM_DEFAULT_QUALITY|RELAYTV_DISPLAY_CAP_HEIGHT)
       return 0
       ;;
     *) return 1 ;;
@@ -1119,6 +1157,62 @@ fi
 
 if [ -n "${HOST_PROFILE}" ] && [ "${HOST_PROFILE}" != "generic" ]; then
   HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_HOST_PROFILE" "${HOST_PROFILE}")
+  HOST_ENV_BLOCK+=$'\n'
+fi
+
+if [ "${HOST_PROFILE}" = "raspi" ]; then
+  pi_gen="$(detect_pi_generation "$HOST_MODEL")"
+  if [ -n "$pi_gen" ] && [ "$pi_gen" != "0" ]; then
+    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_PI_GENERATION" "${pi_gen}")
+    HOST_ENV_BLOCK+=$'\n'
+  fi
+
+  if [ "${ARM_FAST_PROFILE_FROM_ENV}" = "1" ]; then
+    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_FAST_PROFILE" "${ARM_FAST_PROFILE_VAL}")
+    HOST_ENV_BLOCK+=$'\n'
+  else
+    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_FAST_PROFILE" "1")
+    HOST_ENV_BLOCK+=$'\n'
+  fi
+
+  if [ "${ARM_DEFAULT_QUALITY_FROM_ENV}" = "1" ]; then
+    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_DEFAULT_QUALITY" "${ARM_DEFAULT_QUALITY_VAL}")
+    HOST_ENV_BLOCK+=$'\n'
+  else
+    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_DEFAULT_QUALITY" "1080")
+    HOST_ENV_BLOCK+=$'\n'
+  fi
+
+  if [ "$pi_gen" = "4" ] || [ "$pi_gen" = "3" ]; then
+    if [ "${ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV}" = "1" ]; then
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "${ARM_ENFORCE_SAFE_YTDL_FORMAT_VAL}")
+      HOST_ENV_BLOCK+=$'\n'
+    else
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "1")
+      HOST_ENV_BLOCK+=$'\n'
+    fi
+    if [ "${DISPLAY_CAP_HEIGHT_FROM_ENV}" = "1" ]; then
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_DISPLAY_CAP_HEIGHT" "${DISPLAY_CAP_HEIGHT_VAL}")
+      HOST_ENV_BLOCK+=$'\n'
+    else
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_DISPLAY_CAP_HEIGHT" "1080")
+      HOST_ENV_BLOCK+=$'\n'
+    fi
+  elif [ "$pi_gen" = "5" ]; then
+    if [ "${ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV}" = "1" ]; then
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "${ARM_ENFORCE_SAFE_YTDL_FORMAT_VAL}")
+      HOST_ENV_BLOCK+=$'\n'
+    else
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "0")
+      HOST_ENV_BLOCK+=$'\n'
+    fi
+    if [ "${DISPLAY_CAP_HEIGHT_FROM_ENV}" = "1" ]; then
+      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_DISPLAY_CAP_HEIGHT" "${DISPLAY_CAP_HEIGHT_VAL}")
+      HOST_ENV_BLOCK+=$'\n'
+    fi
+  fi
+elif [ "${ARM_FAST_PROFILE_FROM_ENV}" = "1" ]; then
+  HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_FAST_PROFILE" "${ARM_FAST_PROFILE_VAL}")
   HOST_ENV_BLOCK+=$'\n'
 fi
 
