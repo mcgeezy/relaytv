@@ -104,9 +104,7 @@ def _auto_provider_format(provider: str, cap: int, *, av1_allowed: bool) -> str:
         # Rumble HLS manifests have shown that plain `best[...]` can still pick
         # the uncapped top rendition. Prefer `best*` first so yt-dlp applies the
         # height cap to the actual stream variant we hand off to mpv/resolver.
-        return (
-            f"best*[height<={cap}][fps<=60]/best*[height<={cap}]/best[height<={cap}][fps<=60]/best"
-        )
+        return f"best*[height<={cap}][fps<=60]/best*[height<={cap}]/best[height<={cap}][fps<=60]/best"
     if p in ("twitch", "tiktok", "bitchute"):
         return f"best[height<={cap}][fps<=60]/best"
     vcodec = "" if av1_allowed else "[vcodec!*=av01]"
@@ -119,18 +117,13 @@ def youtube_progressive_startup_format(
     profile: dict[str, Any] | None = None,
 ) -> str:
     s = settings if isinstance(settings, dict) else {}
-    mode = normalize_quality_mode(
-        s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE")
-    )
+    mode = normalize_quality_mode(s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE"))
     cap = _target_cap(s, profile, mode)
     if cap <= 0:
         cap = 720
     arm_cap = _arm_default_quality_cap()
     machine = (platform.machine() or "").lower()
-    if machine in ("aarch64", "arm64") or (
-        isinstance(profile, dict)
-        and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"
-    ):
+    if machine in ("aarch64", "arm64") or (isinstance(profile, dict) and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"):
         cap = min(cap, arm_cap)
     return f"best*[height<={cap}][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<={cap}][fps<=30][vcodec!=none][acodec!=none]/best[height<={cap}]/best"
 
@@ -142,18 +135,13 @@ def youtube_progressive_startup_candidates(
 ) -> list[str]:
     strict = youtube_progressive_startup_format(settings, profile=profile)
     s = settings if isinstance(settings, dict) else {}
-    mode = normalize_quality_mode(
-        s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE")
-    )
+    mode = normalize_quality_mode(s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE"))
     cap = _target_cap(s, profile, mode)
     if cap <= 0:
         cap = 720
     arm_cap = _arm_default_quality_cap()
     machine = (platform.machine() or "").lower()
-    if machine in ("aarch64", "arm64") or (
-        isinstance(profile, dict)
-        and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"
-    ):
+    if machine in ("aarch64", "arm64") or (isinstance(profile, dict) and str(profile.get("decode_profile") or "").strip().lower() == "arm_safe"):
         cap = min(cap, arm_cap)
     return list(
         dict.fromkeys(
@@ -198,18 +186,14 @@ def effective_ytdlp_format(
     profile: dict[str, Any] | None = None,
 ) -> str:
     s = settings if isinstance(settings, dict) else {}
-    mode = normalize_quality_mode(
-        s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE")
-    )
+    mode = normalize_quality_mode(s.get("quality_mode") or runtime_config.snapshot().raw("RELAYTV_QUALITY_MODE"))
     cap = _target_cap(s, profile, mode)
 
     provider_override = _provider_specific_env(provider)
     if provider_override:
         return _arm_safe_if_needed(provider_override, mode=mode, cap=cap)
 
-    explicit = (
-        s.get("ytdlp_format") or runtime_config.snapshot().raw("YTDLP_FORMAT") or ""
-    ).strip()
+    explicit = (s.get("ytdlp_format") or runtime_config.snapshot().raw("YTDLP_FORMAT") or "").strip()
     if mode == "manual" and explicit:
         return _arm_safe_if_needed(explicit, mode=mode, cap=cap)
 

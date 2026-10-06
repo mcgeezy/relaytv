@@ -194,15 +194,13 @@ def test_detail_exposes_playback_only_after_exact_jellyfin_validation(monkeypatc
     monkeypatch.setattr(
         seerr_service.jellyfin_service,
         "validate_external_item",
-        lambda item_id, **kwargs: (
-            calls.append((item_id, kwargs))
-            or {
-                "item_id": item_id,
-                "media_type": kwargs["media_type"],
-                "tmdb_id": kwargs["tmdb_id"],
-                "generation": 7,
-            }
-        ),
+        lambda item_id, **kwargs: calls.append((item_id, kwargs))
+        or {
+            "item_id": item_id,
+            "media_type": kwargs["media_type"],
+            "tmdb_id": kwargs["tmdb_id"],
+            "generation": 7,
+        },
     )
 
     result = seerr_service.item_detail("movie", 329865)
@@ -214,7 +212,9 @@ def test_detail_exposes_playback_only_after_exact_jellyfin_validation(monkeypatc
         "media_id": 329865,
     }
     assert "jellyfin-item-1" not in str(result)
-    assert calls == [("jellyfin-item-1", {"media_type": "movie", "tmdb_id": 329865})]
+    assert calls == [
+        ("jellyfin-item-1", {"media_type": "movie", "tmdb_id": 329865})
+    ]
 
 
 def test_detail_keeps_mismatched_jellyfin_item_request_only(monkeypatch) -> None:
@@ -368,7 +368,9 @@ def test_request_metadata_failure_keeps_other_cards_usable(monkeypatch) -> None:
                 }
             if path == "/movie/11":
                 return {"id": 11, "title": "Recognizable Movie"}
-            raise SeerrError("seerr_timeout", "Seerr timed out", status_code=504)
+            raise SeerrError(
+                "seerr_timeout", "Seerr timed out", status_code=504
+            )
 
     monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
     monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
@@ -409,7 +411,9 @@ def test_image_uses_only_allowlisted_tmdb_proxy_path(monkeypatch) -> None:
     "content_type",
     ["image/svg+xml", "image/gif", "text/html", "application/octet-stream", ""],
 )
-def test_image_rejects_active_or_unexpected_content_types(monkeypatch, content_type: str) -> None:
+def test_image_rejects_active_or_unexpected_content_types(
+    monkeypatch, content_type: str
+) -> None:
     image = SeerrBinaryResponse(
         content=b"untrusted",
         content_type=content_type,
@@ -603,7 +607,9 @@ def test_request_creation_is_rejected_when_policy_is_disabled(monkeypatch) -> No
     _install_client(monkeypatch, {})
 
     try:
-        seerr_service.create_request(media_type="movie", media_id=11, seasons=None, is_4k=False)
+        seerr_service.create_request(
+            media_type="movie", media_id=11, seasons=None, is_4k=False
+        )
     except Exception as exc:
         assert getattr(exc, "code", "") == "seerr_requests_disabled"
         assert getattr(exc, "status_code", None) == 403
@@ -628,7 +634,9 @@ def test_no_requestable_seasons_is_a_successful_semantic_result(monkeypatch) -> 
     monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
     monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
 
-    result = seerr_service.create_request(media_type="tv", media_id=44, seasons="all", is_4k=False)
+    result = seerr_service.create_request(
+        media_type="tv", media_id=44, seasons="all", is_4k=False
+    )
 
     assert result == {
         "created": False,
@@ -696,7 +704,9 @@ def test_caller_mode_without_session_never_falls_back_to_admin_key(monkeypatch) 
         request_mode = "caller_session"
 
     monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: _CallerConfig())
-    monkeypatch.setattr(seerr_service.seerr_sessions, "resolve", lambda session_id: None)
+    monkeypatch.setattr(
+        seerr_service.seerr_sessions, "resolve", lambda session_id: None
+    )
     monkeypatch.setattr(
         seerr_service,
         "SeerrClient",
@@ -746,7 +756,9 @@ def test_expired_caller_status_retires_session_and_disables_writes(monkeypatch) 
         "status",
         lambda session_id: {"connected": True, "identity": session.identity},
     )
-    monkeypatch.setattr(seerr_service.seerr_sessions, "resolve", lambda session_id: session)
+    monkeypatch.setattr(
+        seerr_service.seerr_sessions, "resolve", lambda session_id: session
+    )
     monkeypatch.setattr(
         seerr_service.seerr_sessions,
         "retire",
@@ -789,10 +801,8 @@ def test_seerr_playback_revalidates_and_uses_jellyfin_command_sink(monkeypatch) 
     monkeypatch.setattr(
         seerr_service.jellyfin_service,
         "dispatch_external_item",
-        lambda identity, **kwargs: (
-            dispatched.append((identity, kwargs))
-            or {"ok": True, "action": "queue_only", "private_url": "must-not-escape"}
-        ),
+        lambda identity, **kwargs: dispatched.append((identity, kwargs))
+        or {"ok": True, "action": "queue_only", "private_url": "must-not-escape"},
     )
 
     result = seerr_service.playback_action(
@@ -840,7 +850,9 @@ def test_seerr_playback_rejects_unvalidated_item_without_dispatch(monkeypatch) -
     )
 
     with pytest.raises(SeerrError) as exc_info:
-        seerr_service.playback_action(media_type="movie", media_id=329865, command="play_now")
+        seerr_service.playback_action(
+            media_type="movie", media_id=329865, command="play_now"
+        )
 
     assert exc_info.value.code == "seerr_playback_unavailable"
     assert exc_info.value.status_code == 409
@@ -874,7 +886,9 @@ def test_seerr_playback_discards_result_after_configuration_change(monkeypatch) 
     )
 
     with pytest.raises(SeerrError) as exc_info:
-        seerr_service.playback_action(media_type="movie", media_id=329865, command="play_now")
+        seerr_service.playback_action(
+            media_type="movie", media_id=329865, command="play_now"
+        )
 
     assert exc_info.value.code == "seerr_playback_unavailable"
     assert validated == []

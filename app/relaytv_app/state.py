@@ -24,21 +24,11 @@ logger = get_logger("state")
 # =========================
 
 STATE_DIR = os.getenv("RELAYTV_STATE_DIR") or os.getenv("BRAVECAST_STATE_DIR", "/data")
-QUEUE_STATE_FILE = os.getenv("RELAYTV_QUEUE_FILE") or os.getenv(
-    "BRAVECAST_QUEUE_FILE", "queue.json"
-)
-HISTORY_STATE_FILE = os.getenv("RELAYTV_HISTORY_FILE") or os.getenv(
-    "BRAVECAST_HISTORY_FILE", "history.json"
-)
-SESSION_STATE_FILE = os.getenv("RELAYTV_SESSION_FILE") or os.getenv(
-    "BRAVECAST_SESSION_FILE", "session.json"
-)
-SETTINGS_STATE_FILE = os.getenv("RELAYTV_SETTINGS_FILE") or os.getenv(
-    "BRAVECAST_SETTINGS_FILE", "settings.json"
-)
-HISTORY_LIMIT = int(
-    os.getenv("RELAYTV_HISTORY_LIMIT") or os.getenv("BRAVECAST_HISTORY_LIMIT", "200")
-)
+QUEUE_STATE_FILE = os.getenv("RELAYTV_QUEUE_FILE") or os.getenv("BRAVECAST_QUEUE_FILE", "queue.json")
+HISTORY_STATE_FILE = os.getenv("RELAYTV_HISTORY_FILE") or os.getenv("BRAVECAST_HISTORY_FILE", "history.json")
+SESSION_STATE_FILE = os.getenv("RELAYTV_SESSION_FILE") or os.getenv("BRAVECAST_SESSION_FILE", "session.json")
+SETTINGS_STATE_FILE = os.getenv("RELAYTV_SETTINGS_FILE") or os.getenv("BRAVECAST_SETTINGS_FILE", "settings.json")
+HISTORY_LIMIT = int(os.getenv("RELAYTV_HISTORY_LIMIT") or os.getenv("BRAVECAST_HISTORY_LIMIT", "200"))
 
 
 def _default_ytdlp_format() -> str:
@@ -217,9 +207,7 @@ def _atomic_write_json(path: str, obj) -> bool:
         _ensure_state_dir()
         # Use a per-write unique temp file so concurrent writers don't stomp one
         # another and race on a shared "*.tmp" path.
-        fd, tmp = tempfile.mkstemp(
-            prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=os.path.dirname(path) or None
-        )
+        fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=os.path.dirname(path) or None)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
@@ -347,7 +335,6 @@ def _is_safe_thumb_filename(fn: str) -> bool:
         return False
     return re.fullmatch(r"[A-Za-z0-9_.-]+", fn) is not None
 
-
 def _sanitize_thumb_for_persist(item: dict):
     """Return a safe thumbnail reference to persist (or None)."""
     try:
@@ -367,7 +354,7 @@ def _sanitize_thumb_ref(th: object) -> str | None:
         return th
 
     if th.startswith("/thumbs/"):
-        fn = th[len("/thumbs/") :]
+        fn = th[len("/thumbs/"):]
         return f"/thumbs/{fn}" if _is_safe_thumb_filename(fn) else None
 
     if th.startswith("/plex/artwork/"):
@@ -628,11 +615,7 @@ class _RevisionedQueue(list):
     def __setitem__(self, key, value):
         remaining = list(self)
         del remaining[key]
-        value = (
-            self._prepare(value, remaining)
-            if isinstance(key, slice)
-            else self._prepare([value], remaining)[0]
-        )
+        value = self._prepare(value, remaining) if isinstance(key, slice) else self._prepare([value], remaining)[0]
         super().__setitem__(key, value)
         _advance_queue_revision()
 
@@ -723,9 +706,7 @@ def ensure_queue_item_ids(items: list[object]) -> None:
 
 QUEUE: list[dict] = _RevisionedQueue()  # each item: {"url":..., "title":..., "provider":...}
 QUEUE_LOCK = threading.Lock()
-NOW_PLAYING: dict | None = (
-    None  # {"input","url","title","provider","stream","audio","started","mode"}
-)
+NOW_PLAYING: dict | None = None  # {"input","url","title","provider","stream","audio","started","mode"}
 
 # Lightweight session state (Phase 1 UX)
 SESSION_STATE: str = "idle"  # idle|playing|paused|closed
@@ -745,9 +726,7 @@ PLAYBACK_RUNTIME_LAST_RECOVERY_ACTION: str = ""
 PLAYBACK_RUNTIME_LAST_RECOVERY_UNIX: float = 0.0
 
 # Explicit overlay delivery-state diagnostics (runtime-only; not persisted).
-OVERLAY_DELIVERY_STATE: str = (
-    "disconnected"  # headless|disconnected|connected|displaying|stale|retrying|draining
-)
+OVERLAY_DELIVERY_STATE: str = "disconnected"  # headless|disconnected|connected|displaying|stale|retrying|draining
 OVERLAY_DELIVERY_STATE_REASON: str = "startup_default"
 OVERLAY_DELIVERY_PREVIOUS_STATE: str = ""
 OVERLAY_DELIVERY_PREVIOUS_REASON: str = ""
@@ -799,7 +778,6 @@ def _persist_session_payload(payload: dict, version: int | None = None) -> bool:
     return _SESSION_PUBLISHER.publish(
         _SESSION_PUBLISHER.reserve() if version is None else version, payload
     )
-
 
 SESSION_LOCK = threading.RLock()
 
@@ -905,7 +883,6 @@ def _persist_history() -> bool:
         payload = {"history": history, "saved_at": int(time.time())}
     return _persist_history_payload(payload, version)
 
-
 def _history_add(entry: dict) -> None:
     with HISTORY_LOCK:
         HISTORY.insert(0, entry)
@@ -926,9 +903,7 @@ def _history_update(history_id: str, updates: dict) -> bool:
                 continue
             # A completed entry intentionally retains its 00:00 position.
             if entry.get("completed") is True and updates.get("completed") is not False:
-                updates = {
-                    k: v for k, v in updates.items() if k not in ("resume_pos", "duration_sec")
-                }
+                updates = {k: v for k, v in updates.items() if k not in ("resume_pos", "duration_sec")}
             for field, value in updates.items():
                 if entry.get(field) != value:
                     entry[field] = value
@@ -1015,33 +990,25 @@ def _load_persisted_session() -> None:
             if isinstance(prev_reason_val, str):
                 PLAYBACK_RUNTIME_PREVIOUS_REASON = prev_reason_val.strip()
             try:
-                PLAYBACK_RUNTIME_STATE_SINCE_UNIX = float(
-                    pr.get("state_since_unix") or PLAYBACK_RUNTIME_STATE_SINCE_UNIX
-                )
+                PLAYBACK_RUNTIME_STATE_SINCE_UNIX = float(pr.get("state_since_unix") or PLAYBACK_RUNTIME_STATE_SINCE_UNIX)
             except Exception:
                 pass
             try:
-                PLAYBACK_RUNTIME_LAST_TRANSITION_UNIX = float(
-                    pr.get("last_transition_unix") or PLAYBACK_RUNTIME_LAST_TRANSITION_UNIX
-                )
+                PLAYBACK_RUNTIME_LAST_TRANSITION_UNIX = float(pr.get("last_transition_unix") or PLAYBACK_RUNTIME_LAST_TRANSITION_UNIX)
             except Exception:
                 pass
             failure_class_val = pr.get("last_failure_class")
             if isinstance(failure_class_val, str):
                 PLAYBACK_RUNTIME_LAST_FAILURE_CLASS = failure_class_val.strip()
             try:
-                PLAYBACK_RUNTIME_LAST_FAILURE_UNIX = float(
-                    pr.get("last_failure_unix") or PLAYBACK_RUNTIME_LAST_FAILURE_UNIX
-                )
+                PLAYBACK_RUNTIME_LAST_FAILURE_UNIX = float(pr.get("last_failure_unix") or PLAYBACK_RUNTIME_LAST_FAILURE_UNIX)
             except Exception:
                 pass
             recovery_action_val = pr.get("last_recovery_action")
             if isinstance(recovery_action_val, str):
                 PLAYBACK_RUNTIME_LAST_RECOVERY_ACTION = recovery_action_val.strip()
             try:
-                PLAYBACK_RUNTIME_LAST_RECOVERY_UNIX = float(
-                    pr.get("last_recovery_unix") or PLAYBACK_RUNTIME_LAST_RECOVERY_UNIX
-                )
+                PLAYBACK_RUNTIME_LAST_RECOVERY_UNIX = float(pr.get("last_recovery_unix") or PLAYBACK_RUNTIME_LAST_RECOVERY_UNIX)
             except Exception:
                 pass
     except Exception:
@@ -1061,14 +1028,11 @@ def persist_queue_payload(payload: dict) -> bool:
     del payload
     return _persist_queue()
 
-
 def persist_history_payload(payload: dict) -> None:
     return _persist_history_payload(payload)
 
-
 def persist_queue() -> bool:
     return _persist_queue()
-
 
 def persist_history() -> bool:
     return _persist_history()
@@ -1109,7 +1073,7 @@ def update_playback_runtime_state(next_state: str, reason: str = "") -> dict:
     reason_val = str(reason or "").strip().lower()
     now_ts = time.time()
     previous_state = PLAYBACK_RUNTIME_STATE
-    changed = state_val != PLAYBACK_RUNTIME_STATE or reason_val != PLAYBACK_RUNTIME_STATE_REASON
+    changed = (state_val != PLAYBACK_RUNTIME_STATE or reason_val != PLAYBACK_RUNTIME_STATE_REASON)
     if changed:
         PLAYBACK_RUNTIME_PREVIOUS_STATE = PLAYBACK_RUNTIME_STATE
         PLAYBACK_RUNTIME_PREVIOUS_REASON = PLAYBACK_RUNTIME_STATE_REASON
@@ -1170,7 +1134,7 @@ def update_overlay_delivery_state(
     client_reason_val = str(client_reason or reason_val).strip().lower()
     now_ts = time.time()
     previous_state = OVERLAY_DELIVERY_STATE
-    changed = state_val != OVERLAY_DELIVERY_STATE or reason_val != OVERLAY_DELIVERY_STATE_REASON
+    changed = (state_val != OVERLAY_DELIVERY_STATE or reason_val != OVERLAY_DELIVERY_STATE_REASON)
     if changed:
         OVERLAY_DELIVERY_PREVIOUS_STATE = OVERLAY_DELIVERY_STATE
         OVERLAY_DELIVERY_PREVIOUS_REASON = OVERLAY_DELIVERY_STATE_REASON
@@ -1181,14 +1145,8 @@ def update_overlay_delivery_state(
         if state_val in ("headless", "disconnected", "stale", "retrying"):
             OVERLAY_DELIVERY_LAST_FAILURE_CLASS = reason_val or state_val
             OVERLAY_DELIVERY_LAST_FAILURE_UNIX = now_ts
-        elif previous_state in ("headless", "disconnected", "stale", "retrying") and state_val in (
-            "connected",
-            "displaying",
-            "draining",
-        ):
-            OVERLAY_DELIVERY_LAST_RECOVERY_ACTION = (
-                reason_val or f"overlay_recovered_to_{state_val}"
-            )
+        elif previous_state in ("headless", "disconnected", "stale", "retrying") and state_val in ("connected", "displaying", "draining"):
+            OVERLAY_DELIVERY_LAST_RECOVERY_ACTION = reason_val or f"overlay_recovered_to_{state_val}"
             OVERLAY_DELIVERY_LAST_RECOVERY_UNIX = now_ts
     if event_val or client_reason is not None:
         OVERLAY_DELIVERY_LAST_CLIENT_EVENT = event_val
@@ -1218,9 +1176,7 @@ def get_overlay_delivery_state_info(*, now_ts: float | None = None) -> dict:
         "overlay_delivery_last_client_reason": OVERLAY_DELIVERY_LAST_CLIENT_REASON,
         "overlay_delivery_last_client_event_unix": last_client_event_unix,
         "overlay_delivery_last_client_event_age_sec": (
-            max(0.0, round(now_val - last_client_event_unix, 3))
-            if last_client_event_unix > 0.0
-            else None
+            max(0.0, round(now_val - last_client_event_unix, 3)) if last_client_event_unix > 0.0 else None
         ),
     }
 
@@ -1254,6 +1210,9 @@ def history_update(history_id: str, updates: dict) -> bool:
 
 def history_contains(history_id: str) -> bool:
     return _history_contains(history_id)
+
+
+
 
 
 # =========================
@@ -1316,9 +1275,7 @@ def _normalize_weather_settings(value: object) -> dict:
     units = str(value.get("units", out["units"]) or out["units"]).strip().lower()
     if units not in ("imperial", "metric"):
         units = out["units"]
-    location_name = str(
-        value.get("location_name", out["location_name"]) or out["location_name"]
-    ).strip()
+    location_name = str(value.get("location_name", out["location_name"]) or out["location_name"]).strip()
     if len(location_name) > 120:
         location_name = location_name[:120].strip()
     if not location_name:
@@ -1329,15 +1286,13 @@ def _normalize_weather_settings(value: object) -> dict:
         days = out["forecast_days"]
     if days not in (1, 3, 7):
         days = out["forecast_days"]
-    out.update(
-        {
-            "latitude": max(-90.0, min(90.0, lat)),
-            "longitude": max(-180.0, min(180.0, lon)),
-            "location_name": location_name,
-            "units": units,
-            "forecast_days": days,
-        }
-    )
+    out.update({
+        "latitude": max(-90.0, min(90.0, lat)),
+        "longitude": max(-180.0, min(180.0, lon)),
+        "location_name": location_name,
+        "units": units,
+        "forecast_days": days,
+    })
     return out
 
 
@@ -1364,7 +1319,6 @@ def _normalize_upload_settings(value: object) -> dict:
     out["retention_hours"] = max(1, min(24 * 90, int(retention_hours)))
     return out
 
-
 def _default_settings() -> dict:
     default_volume = _normalize_volume(os.getenv("RELAYTV_DEFAULT_VOLUME", "100"))
     device_name = (os.getenv("RELAYTV_DEVICE_NAME") or "RelayTV").strip() or "RelayTV"
@@ -1384,15 +1338,15 @@ def _default_settings() -> dict:
         "quality_cap": quality_cap,
         "ytdlp_format": _default_ytdlp_format(),
         "youtube_cookies_path": (
-            os.getenv("RELAYTV_YTDLP_COOKIES") or os.getenv("YTDLP_COOKIES") or ""
+            os.getenv("RELAYTV_YTDLP_COOKIES")
+            or os.getenv("YTDLP_COOKIES")
+            or ""
         ).strip(),
         "youtube_use_invidious": _env_bool("USE_INVIDIOUS", False),
         "youtube_invidious_base": _normalize_invidious_base(os.getenv("INVIDIOUS_BASE")),
         "ytdlp_auto_update_enabled": _env_bool("RELAYTV_YTDLP_AUTO_UPDATE", False),
         "sub_lang": (os.getenv("RELAYTV_SUB_LANG") or "").strip(),
-        "cec_enabled": (
-            os.getenv("RELAYTV_CEC") or os.getenv("RELAYTV_CEC_ENABLED") or "0"
-        ).strip(),
+        "cec_enabled": (os.getenv("RELAYTV_CEC") or os.getenv("RELAYTV_CEC_ENABLED") or "0").strip(),
         "tv_takeover_enabled": "1",
         "tv_pause_on_input_change": "1",
         "tv_auto_resume_on_return": "0",
@@ -1420,15 +1374,9 @@ def _default_settings() -> dict:
         "jellyfin_password": (os.getenv("RELAYTV_JELLYFIN_PASSWORD") or "").strip(),
         "jellyfin_user_id": (os.getenv("RELAYTV_JELLYFIN_USER_ID") or "").strip(),
         "jellyfin_audio_lang": (os.getenv("RELAYTV_JELLYFIN_AUDIO_LANG") or "").strip(),
-        "jellyfin_sub_lang": (
-            os.getenv("RELAYTV_JELLYFIN_SUB_LANG") or os.getenv("RELAYTV_SUB_LANG") or ""
-        ).strip(),
-        "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(
-            os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"
-        ),
-        "jellyfin_server_type": _normalize_jellyfin_server_type(
-            os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"
-        ),
+        "jellyfin_sub_lang": (os.getenv("RELAYTV_JELLYFIN_SUB_LANG") or os.getenv("RELAYTV_SUB_LANG") or "").strip(),
+        "jellyfin_playback_mode": _normalize_jellyfin_playback_mode(os.getenv("RELAYTV_JELLYFIN_PLAYBACK_MODE") or "auto"),
+        "jellyfin_server_type": _normalize_jellyfin_server_type(os.getenv("RELAYTV_JELLYFIN_SERVER_TYPE") or "jellyfin"),
         "iptv_enabled": _env_bool("RELAYTV_IPTV_ENABLED", False),
         "plex_enabled": False,
         "plex_server_machine_id": "",
@@ -1436,7 +1384,6 @@ def _default_settings() -> dict:
         "plex_max_bitrate": 0,
         **seerr_defaults,
     }
-
 
 def load_settings() -> None:
     global SETTINGS
@@ -1460,9 +1407,7 @@ def load_settings() -> None:
     defaults["quality_cap"] = _normalize_quality_cap(defaults.get("quality_cap"))
     defaults["youtube_cookies_path"] = str(defaults.get("youtube_cookies_path") or "").strip()
     defaults["youtube_use_invidious"] = bool(defaults.get("youtube_use_invidious"))
-    defaults["youtube_invidious_base"] = _normalize_invidious_base(
-        defaults.get("youtube_invidious_base")
-    )
+    defaults["youtube_invidious_base"] = _normalize_invidious_base(defaults.get("youtube_invidious_base"))
     defaults["ytdlp_auto_update_enabled"] = bool(defaults.get("ytdlp_auto_update_enabled"))
     defaults["volume"] = _normalize_volume(defaults.get("volume"), defaults.get("volume", 100.0))
     defaults["idle_dashboard_enabled"] = bool(defaults.get("idle_dashboard_enabled"))
@@ -1471,37 +1416,40 @@ def load_settings() -> None:
     defaults["idle_panels"] = _normalize_idle_panels(defaults.get("idle_panels"))
     defaults["weather"] = _normalize_weather_settings(defaults.get("weather"))
     defaults["uploads"] = _normalize_upload_settings(defaults.get("uploads"))
-    defaults["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(
-        defaults.get("jellyfin_playback_mode")
-    )
+    defaults["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(defaults.get("jellyfin_playback_mode"))
     defaults["jellyfin_auth_mode"] = _normalize_jellyfin_auth_mode(
         defaults.get("jellyfin_auth_mode"),
         api_key_configured=bool(str(defaults.get("jellyfin_api_key") or "").strip()),
     )
-    defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(
-        defaults.get("jellyfin_server_type")
-    )
+    defaults["jellyfin_server_type"] = _normalize_jellyfin_server_type(defaults.get("jellyfin_server_type"))
     defaults["seerr_enabled"] = bool(defaults.get("seerr_enabled"))
     defaults["plex_enabled"] = bool(defaults.get("plex_enabled"))
-    defaults["plex_server_machine_id"] = str(defaults.get("plex_server_machine_id") or "").strip()
+    defaults["plex_server_machine_id"] = str(
+        defaults.get("plex_server_machine_id") or ""
+    ).strip()
     defaults["plex_playback_mode"] = _normalize_plex_playback_mode(
         defaults.get("plex_playback_mode")
     )
-    defaults["plex_max_bitrate"] = _normalize_plex_max_bitrate(defaults.get("plex_max_bitrate"))
+    defaults["plex_max_bitrate"] = _normalize_plex_max_bitrate(
+        defaults.get("plex_max_bitrate")
+    )
     defaults["seerr_server_url"] = str(defaults.get("seerr_server_url") or "").strip()
     defaults["seerr_api_key"] = str(defaults.get("seerr_api_key") or "").strip()
-    defaults["seerr_shared_requests_enabled"] = bool(defaults.get("seerr_shared_requests_enabled"))
+    defaults["seerr_shared_requests_enabled"] = bool(
+        defaults.get("seerr_shared_requests_enabled")
+    )
     defaults["seerr_request_mode"] = _normalize_seerr_request_mode(
         defaults.get("seerr_request_mode"),
         shared_requests_enabled=defaults["seerr_shared_requests_enabled"],
     )
-    defaults["seerr_shared_requests_enabled"] = defaults["seerr_request_mode"] == "shared_admin"
+    defaults["seerr_shared_requests_enabled"] = (
+        defaults["seerr_request_mode"] == "shared_admin"
+    )
     defaults["seerr_request_user_id"] = _normalize_optional_positive_int(
         defaults.get("seerr_request_user_id")
     )
     with SETTINGS_LOCK:
         SETTINGS = defaults
-
 
 def persist_settings() -> bool:
     with SETTINGS_LOCK:
@@ -1509,11 +1457,9 @@ def persist_settings() -> bool:
         payload = dict(SETTINGS)
     return _SETTINGS_PUBLISHER.publish(version, payload)
 
-
 def get_settings() -> dict:
     with SETTINGS_LOCK:
         return dict(SETTINGS)
-
 
 def update_settings(patch: dict) -> dict:
     """Update settings with patch dict, persist, return updated."""
@@ -1585,9 +1531,7 @@ def update_settings(patch: dict) -> dict:
     if "ytdlp_auto_update_enabled" in clean:
         clean["ytdlp_auto_update_enabled"] = bool(clean.get("ytdlp_auto_update_enabled"))
     if "youtube_invidious_base" in clean:
-        clean["youtube_invidious_base"] = _normalize_invidious_base(
-            clean.get("youtube_invidious_base")
-        )
+        clean["youtube_invidious_base"] = _normalize_invidious_base(clean.get("youtube_invidious_base"))
     if "volume" in clean:
         clean["volume"] = _normalize_volume(clean.get("volume"), 100.0)
     if "idle_dashboard_enabled" in clean:
@@ -1611,13 +1555,17 @@ def update_settings(patch: dict) -> dict:
     if "plex_enabled" in clean:
         clean["plex_enabled"] = bool(clean.get("plex_enabled"))
     if "plex_server_machine_id" in clean:
-        clean["plex_server_machine_id"] = str(clean.get("plex_server_machine_id") or "").strip()[
-            :128
-        ]
+        clean["plex_server_machine_id"] = str(
+            clean.get("plex_server_machine_id") or ""
+        ).strip()[:128]
     if "plex_playback_mode" in clean:
-        clean["plex_playback_mode"] = _normalize_plex_playback_mode(clean.get("plex_playback_mode"))
+        clean["plex_playback_mode"] = _normalize_plex_playback_mode(
+            clean.get("plex_playback_mode")
+        )
     if "plex_max_bitrate" in clean:
-        clean["plex_max_bitrate"] = _normalize_plex_max_bitrate(clean.get("plex_max_bitrate"))
+        clean["plex_max_bitrate"] = _normalize_plex_max_bitrate(
+            clean.get("plex_max_bitrate")
+        )
     if "seerr_enabled" in clean:
         clean["seerr_enabled"] = bool(clean.get("seerr_enabled"))
     if "seerr_server_url" in clean:
@@ -1625,7 +1573,9 @@ def update_settings(patch: dict) -> dict:
     if "seerr_api_key" in clean:
         clean["seerr_api_key"] = str(clean.get("seerr_api_key") or "").strip()
     if "seerr_shared_requests_enabled" in clean:
-        clean["seerr_shared_requests_enabled"] = bool(clean.get("seerr_shared_requests_enabled"))
+        clean["seerr_shared_requests_enabled"] = bool(
+            clean.get("seerr_shared_requests_enabled")
+        )
         if "seerr_request_mode" not in clean:
             clean["seerr_request_mode"] = (
                 "shared_admin" if clean["seerr_shared_requests_enabled"] else "disabled"
@@ -1635,7 +1585,9 @@ def update_settings(patch: dict) -> dict:
             clean.get("seerr_request_mode"),
             shared_requests_enabled=bool(clean.get("seerr_shared_requests_enabled")),
         )
-        clean["seerr_shared_requests_enabled"] = clean["seerr_request_mode"] == "shared_admin"
+        clean["seerr_shared_requests_enabled"] = (
+            clean["seerr_request_mode"] == "shared_admin"
+        )
     if "seerr_request_user_id" in clean:
         clean["seerr_request_user_id"] = _normalize_optional_positive_int(
             clean.get("seerr_request_user_id")
@@ -1662,13 +1614,9 @@ def update_settings(patch: dict) -> dict:
     if "jellyfin_sub_lang" in clean:
         clean["jellyfin_sub_lang"] = str(clean.get("jellyfin_sub_lang") or "").strip().lower()
     if "jellyfin_playback_mode" in clean:
-        clean["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(
-            clean.get("jellyfin_playback_mode")
-        )
+        clean["jellyfin_playback_mode"] = _normalize_jellyfin_playback_mode(clean.get("jellyfin_playback_mode"))
     if "jellyfin_server_type" in clean:
-        clean["jellyfin_server_type"] = _normalize_jellyfin_server_type(
-            clean.get("jellyfin_server_type")
-        )
+        clean["jellyfin_server_type"] = _normalize_jellyfin_server_type(clean.get("jellyfin_server_type"))
     with SETTINGS_LOCK:
         SETTINGS.update(clean)
         version = _SETTINGS_PUBLISHER.reserve()
@@ -1679,7 +1627,6 @@ def update_settings(patch: dict) -> dict:
     # A newer concurrent update may have superseded this response as well as
     # its disk write. Return the state that actually owns memory and disk.
     return get_settings() if not published else payload
-
 
 def _load_runtime_state() -> None:
     """Load startup state in a deterministic order."""

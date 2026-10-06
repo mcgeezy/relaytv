@@ -12,7 +12,6 @@ deliberately not part of ``settings.json`` so that it survives a settings
 reset and is not user-editable. ``RELAYTV_DEVICE_ID`` lets an operator pin it
 (useful for cloned images and tests).
 """
-
 from __future__ import annotations
 
 import os

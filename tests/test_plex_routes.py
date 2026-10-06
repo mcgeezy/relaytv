@@ -143,12 +143,14 @@ def test_plex_catalog_routes_are_bounded_and_non_cacheable(monkeypatch) -> None:
     monkeypatch.setattr(
         plex_service.catalog_service,
         "library_items",
-        lambda library_id, **kwargs: calls.append(("items", library_id, kwargs)) or {"items": []},
+        lambda library_id, **kwargs: calls.append(("items", library_id, kwargs))
+        or {"items": []},
     )
     monkeypatch.setattr(
         plex_service.catalog_service,
         "search",
-        lambda query, *, limit: calls.append(("search", query, limit)) or {"items": []},
+        lambda query, *, limit: calls.append(("search", query, limit))
+        or {"items": []},
     )
     monkeypatch.setattr(
         plex_service.catalog_service,
@@ -158,7 +160,8 @@ def test_plex_catalog_routes_are_bounded_and_non_cacheable(monkeypatch) -> None:
     monkeypatch.setattr(
         plex_service.catalog_service,
         "children",
-        lambda item_id, **kwargs: calls.append(("children", item_id, kwargs)) or {"items": []},
+        lambda item_id, **kwargs: calls.append(("children", item_id, kwargs))
+        or {"items": []},
     )
     client = TestClient(create_app(testing=True))
 
@@ -217,17 +220,15 @@ def test_plex_stream_forwards_range_and_private_response_headers(monkeypatch) ->
     monkeypatch.setattr(
         plex_service.catalog_service,
         "media_stream",
-        lambda stream_id, *, range_header: (
-            calls.append((stream_id, range_header))
-            or PlexStreamResponse(
-                status_code=206,
-                headers={
-                    "Content-Type": "video/mp4",
-                    "Content-Length": "5",
-                    "Content-Range": "bytes 0-4/100",
-                },
-                _response=_Response(),
-            )
+        lambda stream_id, *, range_header: calls.append((stream_id, range_header))
+        or PlexStreamResponse(
+            status_code=206,
+            headers={
+                "Content-Type": "video/mp4",
+                "Content-Length": "5",
+                "Content-Range": "bytes 0-4/100",
+            },
+            _response=_Response(),
         ),
     )
 
@@ -249,10 +250,10 @@ def test_plex_action_route_dispatches_opaque_item(monkeypatch) -> None:
     monkeypatch.setattr(
         plex_service.catalog_service,
         "action",
-        lambda item_id, command, *, version_id="", audio_id="", subtitle_id="": (
-            calls.append((item_id, command, version_id, audio_id, subtitle_id))
-            or {"ok": True, "action": command}
-        ),
+        lambda item_id, command, *, version_id="", audio_id="", subtitle_id="": calls.append(
+            (item_id, command, version_id, audio_id, subtitle_id)
+        )
+        or {"ok": True, "action": command},
     )
 
     response = TestClient(create_app(testing=True)).post(

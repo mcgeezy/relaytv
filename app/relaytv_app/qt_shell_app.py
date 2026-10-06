@@ -69,11 +69,7 @@ def _overlay_software_mode_enabled() -> bool:
     if override is not None:
         return bool(override)
     qpa_platform = (os.getenv("QT_QPA_PLATFORM") or "").strip().lower()
-    host_session = (
-        (os.getenv("RELAYTV_HOST_SESSION_TYPE") or os.getenv("XDG_SESSION_TYPE") or "")
-        .strip()
-        .lower()
-    )
+    host_session = (os.getenv("RELAYTV_HOST_SESSION_TYPE") or os.getenv("XDG_SESSION_TYPE") or "").strip().lower()
     if "wayland" in qpa_platform or host_session == "wayland":
         return True
     arch = (platform.machine() or "").strip().lower()
@@ -146,11 +142,7 @@ def _cursor_autohide_enabled() -> bool:
 
 
 def _cursor_mode() -> str:
-    raw = (
-        (os.getenv("RELAYTV_QT_CURSOR_MODE") or os.getenv("RELAYTV_CURSOR_MODE") or "")
-        .strip()
-        .lower()
-    )
+    raw = (os.getenv("RELAYTV_QT_CURSOR_MODE") or os.getenv("RELAYTV_CURSOR_MODE") or "").strip().lower()
     if raw in ("hidden", "hide", "none", "blank", "off"):
         return "hidden"
     if raw in ("autohide", "auto-hide", "auto"):
@@ -221,9 +213,7 @@ def _qt_runtime_status_file() -> str:
 
 
 def _qt_runtime_control_file() -> str:
-    return (
-        os.getenv("RELAYTV_QT_RUNTIME_CONTROL_FILE") or "/tmp/relaytv-qt-runtime-control.json"
-    ).strip()
+    return (os.getenv("RELAYTV_QT_RUNTIME_CONTROL_FILE") or "/tmp/relaytv-qt-runtime-control.json").strip()
 
 
 def _native_idle_qr_size(value: object, default: int = 168) -> int:
@@ -280,9 +270,7 @@ def _derive_native_idle_public_ui_url(overlay_url: str) -> str:
     except Exception:
         pass
     try:
-        for _family, _stype, _proto, _canon, sockaddr in socket.getaddrinfo(
-            socket.gethostname(), None, socket.AF_INET
-        ):
+        for _family, _stype, _proto, _canon, sockaddr in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = str((sockaddr or [""])[0] or "").strip()
             if ip and not ip.startswith("127."):
                 return f"{scheme}://{ip}:{port}/ui"
@@ -320,15 +308,9 @@ def _native_idle_logo_path() -> str:
     explicit = (os.getenv("RELAYTV_LOGO_IMAGE") or "").strip()
     if explicit and os.path.exists(explicit):
         return explicit
-    module_banner_png = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "static", "brand", "banner.png")
-    )
-    module_banner = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "static", "brand", "banner.svg")
-    )
-    module_logo = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "static", "brand", "logo.svg")
-    )
+    module_banner_png = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "brand", "banner.png"))
+    module_banner = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "brand", "banner.svg"))
+    module_logo = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", "brand", "logo.svg"))
     for path in (
         module_banner_png,
         "/app/relaytv_app/static/brand/banner.png",
@@ -383,9 +365,7 @@ def _native_idle_weather_url(settings_payload: object) -> str:
         lon = float(weather.get("longitude"))
     except Exception:
         lon = -74.0060
-    units = (
-        "celsius" if str(weather.get("units") or "").strip().lower() == "metric" else "fahrenheit"
-    )
+    units = "celsius" if str(weather.get("units") or "").strip().lower() == "metric" else "fahrenheit"
     wind_units = "kmh" if units == "celsius" else "mph"
     forecast_days = 7
     try:
@@ -424,11 +404,7 @@ def _native_idle_weather_layout(settings_payload: object) -> str:
     settings = settings_payload if isinstance(settings_payload, dict) else {}
     idle_panels = settings.get("idle_panels") if isinstance(settings, dict) else {}
     weather_panel = idle_panels.get("weather") if isinstance(idle_panels, dict) else {}
-    layout = (
-        str(weather_panel.get("layout") or "split").strip().lower()
-        if isinstance(weather_panel, dict)
-        else "split"
-    )
+    layout = str(weather_panel.get("layout") or "split").strip().lower() if isinstance(weather_panel, dict) else "split"
     return layout if layout in ("split", "minimal") else "split"
 
 
@@ -626,11 +602,7 @@ def _build_mpv_args(
     if debug and not _has_opt(args + extra, "--msg-level"):
         args.append("--msg-level=all=debug")
     arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", False)
-    if (
-        arm_fast_default
-        and (platform.machine() or "").lower() in ("aarch64", "arm64")
-        and not _has_opt(args + extra, "--profile")
-    ):
+    if arm_fast_default and (platform.machine() or "").lower() in ("aarch64", "arm64") and not _has_opt(args + extra, "--profile"):
         args.append("--profile=fast")
     if ipc_path:
         args.append(f"--input-ipc-server={ipc_path}")
@@ -814,11 +786,7 @@ class _QtLibMpvPlayer:
         self._lib = ctypes.CDLL(lib_path)
 
         self._lib.mpv_create.restype = ctypes.c_void_p
-        self._lib.mpv_set_option_string.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_char_p,
-            ctypes.c_char_p,
-        ]
+        self._lib.mpv_set_option_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
         self._lib.mpv_set_option_string.restype = ctypes.c_int
         self._lib.mpv_initialize.argtypes = [ctypes.c_void_p]
         self._lib.mpv_initialize.restype = ctypes.c_int
@@ -828,19 +796,10 @@ class _QtLibMpvPlayer:
             self._lib.mpv_get_property_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
             self._lib.mpv_get_property_string.restype = ctypes.c_void_p
         if hasattr(self._lib, "mpv_set_property_string"):
-            self._lib.mpv_set_property_string.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_char_p,
-                ctypes.c_char_p,
-            ]
+            self._lib.mpv_set_property_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
             self._lib.mpv_set_property_string.restype = ctypes.c_int
         if hasattr(self._lib, "mpv_get_property"):
-            self._lib.mpv_get_property.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_char_p,
-                ctypes.c_int,
-                ctypes.c_void_p,
-            ]
+            self._lib.mpv_get_property.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]
             self._lib.mpv_get_property.restype = ctypes.c_int
         if hasattr(self._lib, "mpv_free"):
             self._lib.mpv_free.argtypes = [ctypes.c_void_p]
@@ -860,20 +819,13 @@ class _QtLibMpvPlayer:
         self._lib.mpv_render_context_create.restype = ctypes.c_int
         self._lib.mpv_render_context_free.argtypes = [ctypes.c_void_p]
         self._lib.mpv_render_context_free.restype = None
-        self._lib.mpv_render_context_render.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(_MpvRenderParam),
-        ]
+        self._lib.mpv_render_context_render.argtypes = [ctypes.c_void_p, ctypes.POINTER(_MpvRenderParam)]
         self._lib.mpv_render_context_render.restype = None
         if hasattr(self._lib, "mpv_render_context_update"):
             self._lib.mpv_render_context_update.argtypes = [ctypes.c_void_p]
             self._lib.mpv_render_context_update.restype = ctypes.c_uint64
         if hasattr(self._lib, "mpv_render_context_set_update_callback"):
-            self._lib.mpv_render_context_set_update_callback.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_void_p,
-                ctypes.c_void_p,
-            ]
+            self._lib.mpv_render_context_set_update_callback.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
             self._lib.mpv_render_context_set_update_callback.restype = None
 
     def _err(self, code: int) -> str:
@@ -926,9 +878,7 @@ class _QtLibMpvPlayer:
             raise RuntimeError("command list empty")
         self._command(*items)
 
-    def load_stream(
-        self, stream: str, audio: str | None = None, start_pos: float | None = None
-    ) -> None:
+    def load_stream(self, stream: str, audio: str | None = None, start_pos: float | None = None) -> None:
         s = str(stream or "").strip()
         if not s:
             raise RuntimeError("stream required")
@@ -951,9 +901,7 @@ class _QtLibMpvPlayer:
         key = str(name or "").strip()
         if not key:
             raise RuntimeError("property name required")
-        setter = (
-            getattr(self._lib, "mpv_set_property_string", None) if self._lib is not None else None
-        )
+        setter = getattr(self._lib, "mpv_set_property_string", None) if self._lib is not None else None
         arg = self._command_arg(value)
         if setter is not None and self._handle:
             rc = int(setter(self._handle, _as_c_str(key), _as_c_str(arg)))
@@ -1005,7 +953,8 @@ class _QtLibMpvPlayer:
             count = max(0, int(node_list.num or 0))
             if fmt == _MPV_FORMAT_NODE_ARRAY:
                 return [
-                    _QtLibMpvPlayer._node_to_python(node_list.values[idx]) for idx in range(count)
+                    _QtLibMpvPlayer._node_to_python(node_list.values[idx])
+                    for idx in range(count)
                 ]
             out: dict[str, object] = {}
             for idx in range(count):
@@ -1073,9 +1022,7 @@ class _QtLibMpvPlayer:
                 out.append(item)
         return out
 
-    def _runtime_track_list(
-        self, *, aid: int | None, path: str, read_node
-    ) -> list[dict[str, object]] | None:
+    def _runtime_track_list(self, *, aid: int | None, path: str, read_node) -> list[dict[str, object]] | None:
         path_norm = str(path or "").strip()
         if not path_norm:
             self._track_list_cache = None
@@ -1328,19 +1275,13 @@ class _QtLibMpvPlayer:
             ctypes.cast(ctypes.pointer(self._gl_init_params), ctypes.c_void_p),
         )
         params[2] = _MpvRenderParam(_MPV_RENDER_PARAM_INVALID, ctypes.c_void_p())
-        rc = int(
-            self._lib.mpv_render_context_create(
-                ctypes.byref(self._render_ctx), self._handle, params
-            )
-        )
+        rc = int(self._lib.mpv_render_context_create(ctypes.byref(self._render_ctx), self._handle, params))
         if rc < 0:
             raise RuntimeError(f"mpv_render_context_create failed: {self._err(rc)}")
         if hasattr(self._lib, "mpv_render_context_set_update_callback"):
             cb_type = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
             self._update_cb = cb_type(lambda _ctx: None)
-            self._lib.mpv_render_context_set_update_callback(
-                self._render_ctx, self._update_cb, ctypes.c_void_p()
-            )
+            self._lib.mpv_render_context_set_update_callback(self._render_ctx, self._update_cb, ctypes.c_void_p())
         self._have_render = True
 
     def render_context_ready(self) -> bool:
@@ -1374,9 +1315,7 @@ class _QtLibMpvPlayer:
             if self._lib is not None and self._render_ctx:
                 if hasattr(self._lib, "mpv_render_context_set_update_callback"):
                     try:
-                        self._lib.mpv_render_context_set_update_callback(
-                            self._render_ctx, ctypes.c_void_p(), ctypes.c_void_p()
-                        )
+                        self._lib.mpv_render_context_set_update_callback(self._render_ctx, ctypes.c_void_p(), ctypes.c_void_p())
                     except Exception:
                         pass
                 self._lib.mpv_render_context_free(self._render_ctx)
@@ -1410,10 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ytdl-raw-options", default="")
     ap.add_argument("--user-agent", default="")
     ap.add_argument("--referrer", default="")
-    ap.add_argument(
-        "--overlay-url",
-        default=os.getenv("RELAYTV_QT_OVERLAY_URL", "http://127.0.0.1:8787/x11/overlay"),
-    )
+    ap.add_argument("--overlay-url", default=os.getenv("RELAYTV_QT_OVERLAY_URL", "http://127.0.0.1:8787/x11/overlay"))
     ap.add_argument("--window-title", default="RelayTV Qt Shell")
     args = ap.parse_args(argv)
     debug = _env_bool("RELAYTV_DEBUG") or _env_bool("MPV_DEBUG")
@@ -1439,16 +1375,7 @@ def main(argv: list[str] | None = None) -> int:
         from PySide6.QtGui import QCursor, QGuiApplication, QOpenGLContext, QPainter, QPixmap
         from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
         from PySide6.QtOpenGLWidgets import QOpenGLWidget
-        from PySide6.QtWidgets import (
-            QApplication,
-            QFrame,
-            QHBoxLayout,
-            QLabel,
-            QMainWindow,
-            QSizePolicy,
-            QVBoxLayout,
-            QWidget,
-        )
+        from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QSizePolicy, QVBoxLayout, QWidget
     except Exception as e:
         _eprint("RelayTV Qt shell requires PySide6.")
         _eprint("Install with: pip install 'relaytv[qt]' or pip install PySide6")
@@ -1473,9 +1400,7 @@ def main(argv: list[str] | None = None) -> int:
     win.setWindowFlags(Qt.FramelessWindowHint)
 
     native_toasts_enabled = (not headless_qpa) and _native_overlay_toasts_enabled()
-    native_idle_enabled = (
-        (not headless_qpa) and _native_idle_overlay_enabled() and (not overlay_enabled)
-    )
+    native_idle_enabled = (not headless_qpa) and _native_idle_overlay_enabled() and (not overlay_enabled)
 
     class _NativeToastLayer(QWidget):
         def __init__(self, parent: QWidget, *, overlay_url: str):
@@ -1570,11 +1495,7 @@ def main(argv: list[str] | None = None) -> int:
             raw_text = str(raw_url or "").strip()
             if raw_text.startswith("/thumbs/"):
                 try:
-                    thumb_dir = (
-                        os.getenv("RELAYTV_THUMB_DIR")
-                        or os.getenv("BRAVECAST_THUMB_DIR")
-                        or "/data/thumbs"
-                    ).strip()
+                    thumb_dir = (os.getenv("RELAYTV_THUMB_DIR") or os.getenv("BRAVECAST_THUMB_DIR") or "/data/thumbs").strip()
                     thumb_name = os.path.basename(raw_text)
                     thumb_path = os.path.join(thumb_dir, thumb_name)
                     with open(thumb_path, "rb") as fh:
@@ -1595,12 +1516,8 @@ def main(argv: list[str] | None = None) -> int:
             reply = self._net.get(QNetworkRequest(QUrl(safe_url)))
             timer = QTimer(reply)
             timer.setSingleShot(True)
-            timer.timeout.connect(
-                lambda r=reply: (self._replies.discard(r), r.abort(), r.deleteLater())
-            )
-            reply.finished.connect(
-                lambda r=reply, image_label=label, t=timer: self._finish_reply(r, image_label, t)
-            )
+            timer.timeout.connect(lambda r=reply: (self._replies.discard(r), r.abort(), r.deleteLater()))
+            reply.finished.connect(lambda r=reply, image_label=label, t=timer: self._finish_reply(r, image_label, t))
             self._replies.add(reply)
             timer.start(4000)
 
@@ -1682,9 +1599,7 @@ def main(argv: list[str] | None = None) -> int:
                 img = QLabel(frame)
                 img.setFixedHeight(124)
                 img.setAlignment(Qt.AlignCenter)
-                img.setStyleSheet(
-                    "background:rgba(255,255,255,10); border:1px solid rgba(130,170,220,64); border-radius:11px;"
-                )
+                img.setStyleSheet("background:rgba(255,255,255,10); border:1px solid rgba(130,170,220,64); border-radius:11px;")
                 img.hide()
                 box.addWidget(img)
                 self._load_image(img, image_url)
@@ -1725,9 +1640,7 @@ def main(argv: list[str] | None = None) -> int:
             self._logo_label = QLabel(self)
             self._logo_label.setAlignment(Qt.AlignCenter)
             self._logo_label.setMinimumSize(180, 72)
-            self._logo_label.setStyleSheet(
-                "background:transparent;color:rgba(238,245,255,0.94);font-size:24px;font-weight:700;"
-            )
+            self._logo_label.setStyleSheet("background:transparent;color:rgba(238,245,255,0.94);font-size:24px;font-weight:700;")
             top.addWidget(self._logo_label, 0, Qt.AlignCenter)
             top.addStretch(1)
             root.addLayout(top)
@@ -1757,9 +1670,7 @@ def main(argv: list[str] | None = None) -> int:
             time_col.setSpacing(4)
             self._time_label = QLabel(rail)
             self._time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self._time_label.setStyleSheet(
-                "font-size:86px;font-weight:760;letter-spacing:-2px;color:rgba(240,247,255,0.98);"
-            )
+            self._time_label.setStyleSheet("font-size:86px;font-weight:760;letter-spacing:-2px;color:rgba(240,247,255,0.98);")
             self._time_label.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
             self._date_label = QLabel(rail)
             self._date_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -1787,9 +1698,7 @@ def main(argv: list[str] | None = None) -> int:
             self._weather_location.setWordWrap(True)
             self._weather_location.setStyleSheet("font-size:13px;color:rgba(197,214,235,0.76);")
             self._weather_temp = QLabel("--", self._weather_frame)
-            self._weather_temp.setStyleSheet(
-                "font-size:58px;font-weight:780;letter-spacing:-2px;color:rgba(240,247,255,0.98);"
-            )
+            self._weather_temp.setStyleSheet("font-size:58px;font-weight:780;letter-spacing:-2px;color:rgba(240,247,255,0.98);")
             self._weather_summary = QLabel("Weather unavailable", self._weather_frame)
             self._weather_summary.setWordWrap(True)
             self._weather_summary.setStyleSheet("font-size:18px;color:rgba(230,241,255,0.82);")
@@ -1828,9 +1737,7 @@ def main(argv: list[str] | None = None) -> int:
             footer.setSpacing(18)
             self._device_label = QLabel(self)
             self._device_label.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
-            self._device_label.setStyleSheet(
-                "font-size:28px;font-weight:700;color:rgba(237,245,255,0.98);"
-            )
+            self._device_label.setStyleSheet("font-size:28px;font-weight:700;color:rgba(237,245,255,0.98);")
             self._device_label.setText(self._device_name)
             self._device_label.setVisible(bool(self._device_name))
             footer.addWidget(self._device_label, 1, Qt.AlignLeft | Qt.AlignBottom)
@@ -1846,9 +1753,7 @@ def main(argv: list[str] | None = None) -> int:
             qr_box.setSpacing(8)
             self._qr_label = QLabel(self._qr_wrap)
             self._qr_label.setAlignment(Qt.AlignCenter)
-            self._qr_label.setStyleSheet(
-                "background:rgba(255,255,255,8); border:1px solid rgba(130,170,220,64); border-radius:14px;"
-            )
+            self._qr_label.setStyleSheet("background:rgba(255,255,255,8); border:1px solid rgba(130,170,220,64); border-radius:14px;")
             self._qr_caption = QLabel(self._qr_wrap)
             self._qr_caption.setAlignment(Qt.AlignCenter)
             self._qr_caption.setWordWrap(True)
@@ -1879,9 +1784,7 @@ def main(argv: list[str] | None = None) -> int:
         def _apply_logo(self) -> None:
             pix = QPixmap(self._logo_path)
             if not pix.isNull():
-                self._logo_label.setPixmap(
-                    pix.scaled(220, 84, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
+                self._logo_label.setPixmap(pix.scaled(220, 84, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 self._logo_label.setText("")
                 return
             self._logo_label.setPixmap(QPixmap())
@@ -1946,9 +1849,7 @@ def main(argv: list[str] | None = None) -> int:
                 self._device_label.setText(self._device_name)
                 self._device_label.setVisible(bool(self._device_name))
                 _eprint(f"qt-shell native-idle device-name={self._device_name or '-'}")
-            _eprint(
-                f"qt-shell native-idle qr settings enabled={self._qr_enabled} size={self._qr_size}"
-            )
+            _eprint(f"qt-shell native-idle qr settings enabled={self._qr_enabled} size={self._qr_size}")
             try:
                 self.layout().activate()
                 self.updateGeometry()
@@ -1970,9 +1871,7 @@ def main(argv: list[str] | None = None) -> int:
                 return
             self._qr_label.setPixmap(pix)
             self._qr_label.setFixedSize(self._qr_size, self._qr_size)
-            self._qr_caption.setText(
-                str(self._qr_target_url or "").replace("http://", "").replace("https://", "")
-            )
+            self._qr_caption.setText(str(self._qr_target_url or "").replace("http://", "").replace("https://", ""))
             self._apply_qr_visibility(True)
             try:
                 self.layout().activate()
@@ -1983,18 +1882,10 @@ def main(argv: list[str] | None = None) -> int:
             _eprint(f"qt-shell native-idle qr visible size={self._qr_size}")
 
         def _refresh_qr_image(self) -> None:
-            self._apply_host_urls(
-                {"public_urls": [self._qr_target_url]} if self._qr_target_url else {}
-            )
+            self._apply_host_urls({"public_urls": [self._qr_target_url]} if self._qr_target_url else {})
 
-        def _refresh_weather(
-            self, settings_payload: object | None = None, *, force: bool = False
-        ) -> None:
-            payload = (
-                settings_payload
-                if isinstance(settings_payload, dict)
-                else self._last_settings_payload
-            )
+        def _refresh_weather(self, settings_payload: object | None = None, *, force: bool = False) -> None:
+            payload = settings_payload if isinstance(settings_payload, dict) else self._last_settings_payload
             if not isinstance(payload, dict):
                 self._apply_weather(None, None)
                 return
@@ -2007,9 +1898,7 @@ def main(argv: list[str] | None = None) -> int:
             if (not force) and sig == self._weather_signature and self._weather_frame.isVisible():
                 return
             self._weather_signature = sig
-            self._request_json(
-                "/idle/weather", lambda data, p=dict(payload): self._apply_weather(data, p)
-            )
+            self._request_json("/idle/weather", lambda data, p=dict(payload): self._apply_weather(data, p))
 
         def _apply_weather(self, payload: object, settings_payload: object | None) -> None:
             settings = settings_payload if isinstance(settings_payload, dict) else {}
@@ -2049,9 +1938,7 @@ def main(argv: list[str] | None = None) -> int:
             location = str(weather.get("location_name") or "").strip() or "Local forecast"
             self._weather_location.setText(location)
             self._weather_location.setVisible(layout_mode != "minimal")
-            self._weather_temp.setText(
-                f"{int(round(temp))}{unit_sym}" if temp is not None else "--"
-            )
+            self._weather_temp.setText(f"{int(round(temp))}{unit_sym}" if temp is not None else "--")
             self._weather_summary.setText(_native_idle_weather_code_label(code))
             meta_parts: list[str] = []
             if feels is not None:
@@ -2072,9 +1959,7 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
 
-        def _apply_weather_forecast(
-            self, daily: dict[str, object], units: str, unit_sym: str, wind_unit: str
-        ) -> None:
+        def _apply_weather_forecast(self, daily: dict[str, object], units: str, unit_sym: str, wind_unit: str) -> None:
             while self._forecast_box.count():
                 item = self._forecast_box.takeAt(0)
                 widget = item.widget()
@@ -2123,9 +2008,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"{int(round(lo)) if lo is not None else '--'}{unit_sym}",
                     col,
                 )
-                range_label.setStyleSheet(
-                    "font-size:14px;font-weight:700;color:rgba(243,248,255,0.98);"
-                )
+                range_label.setStyleSheet("font-size:14px;font-weight:700;color:rgba(243,248,255,0.98);")
                 details = []
                 if rain is not None:
                     details.append(f"Rain {int(round(rain))}%")
@@ -2212,9 +2095,7 @@ def main(argv: list[str] | None = None) -> int:
             self.setStyleSheet("background: #000;")
             self._render_error_logged = False
             self._render_timer = QTimer(self)
-            self._render_timer.setInterval(
-                max(10, int(float(os.getenv("RELAYTV_QT_LIBMPV_FRAME_MS", "16"))))
-            )
+            self._render_timer.setInterval(max(10, int(float(os.getenv("RELAYTV_QT_LIBMPV_FRAME_MS", "16")))))
             self._render_timer.timeout.connect(self.update)
             self._render_timer.start()
 
@@ -2228,9 +2109,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif isinstance(name_ptr, str):
                     name_bytes = name_ptr.encode("utf-8", errors="ignore")
                 elif isinstance(name_ptr, int):
-                    name_bytes = (
-                        ctypes.cast(ctypes.c_void_p(name_ptr), ctypes.c_char_p).value or b""
-                    )
+                    name_bytes = ctypes.cast(ctypes.c_void_p(name_ptr), ctypes.c_char_p).value or b""
                 else:
                     name_bytes = ctypes.cast(name_ptr, ctypes.c_char_p).value or b""
                 if not name_bytes:
@@ -2315,9 +2194,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio_device=((args.audio_device or "").strip() or None),
                 sub_lang=((args.sub_lang or "").strip() or None),
                 volume=args.volume,
-                ytdl_enabled=(
-                    (args.ytdl_enabled or "1").strip().lower() in ("1", "true", "yes", "on")
-                ),
+                ytdl_enabled=((args.ytdl_enabled or "1").strip().lower() in ("1", "true", "yes", "on")),
                 ytdl_path=((args.ytdl_path or "").strip() or None),
                 ytdl_format=((args.ytdl_format or "").strip() or None),
                 ytdl_raw_options=((args.ytdl_raw_options or "").strip() or None),
@@ -2351,10 +2228,10 @@ def main(argv: list[str] | None = None) -> int:
     win.setCentralWidget(video_widget)
 
     host_session_type = (
-        (os.getenv("RELAYTV_HOST_SESSION_TYPE") or os.getenv("XDG_SESSION_TYPE") or "")
-        .strip()
-        .lower()
-    )
+        os.getenv("RELAYTV_HOST_SESSION_TYPE")
+        or os.getenv("XDG_SESSION_TYPE")
+        or ""
+    ).strip().lower()
     # Runtime layering behavior should follow the active Qt platform plugin.
     # If delegate forces xcb on a Wayland host, keep X11 overlay semantics.
     if qpa_platform in ("xcb", "x11") or qpa_platform.startswith("xcb:"):
@@ -2384,9 +2261,7 @@ def main(argv: list[str] | None = None) -> int:
         # audio-only playback and black video. Keep overlay in-window by default.
         use_toplevel_overlay = False
         if debug:
-            _eprint(
-                "qt-shell: libmpv forcing child overlay (set RELAYTV_QT_LIBMPV_TOPLEVEL_OVERLAY=1 to override)"
-            )
+            _eprint("qt-shell: libmpv forcing child overlay (set RELAYTV_QT_LIBMPV_TOPLEVEL_OVERLAY=1 to override)")
 
     overlay_win: QMainWindow | None = None
     overlay: QWebEngineView | None = None
@@ -2410,9 +2285,7 @@ def main(argv: list[str] | None = None) -> int:
         if debug:
             mode = "toplevel" if use_toplevel_overlay else "child"
             render_mode = "software" if overlay_software_mode else "default"
-            _eprint(
-                f"qt-shell overlay mode={mode} render={render_mode} session={host_session_type or 'unknown'} qpa={qpa_platform or 'default'}"
-            )
+            _eprint(f"qt-shell overlay mode={mode} render={render_mode} session={host_session_type or 'unknown'} qpa={qpa_platform or 'default'}")
 
         if use_toplevel_overlay:
             # Keep overlay in a dedicated transparent top-level window.
@@ -2537,18 +2410,8 @@ def main(argv: list[str] | None = None) -> int:
             overlay_win.setCentralWidget(overlay)
 
     if native_toasts_enabled:
-        native_toast_toplevel = overlay_win is None and _native_overlay_toasts_use_toplevel(
-            use_libmpv=use_libmpv
-        )
-        toast_parent = (
-            None
-            if native_toast_toplevel
-            else (
-                overlay_win
-                if overlay_win is not None
-                else (win if overlay_parent_is_main_window else video_widget)
-            )
-        )
+        native_toast_toplevel = overlay_win is None and _native_overlay_toasts_use_toplevel(use_libmpv=use_libmpv)
+        toast_parent = None if native_toast_toplevel else (overlay_win if overlay_win is not None else (win if overlay_parent_is_main_window else video_widget))
         native_toast_host = _NativeToastLayer(toast_parent, overlay_url=args.overlay_url)
         if native_toast_toplevel:
             toast_flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
@@ -2718,9 +2581,7 @@ def main(argv: list[str] | None = None) -> int:
                 return
             cursor_widget_ids.add(wid)
             cursor_widgets.append(widget)
-            _cursor_debug(
-                f"register-widget class={widget.__class__.__name__} name={widget.objectName() or '-'}"
-            )
+            _cursor_debug(f"register-widget class={widget.__class__.__name__} name={widget.objectName() or '-'}")
         except Exception:
             pass
 
@@ -2845,9 +2706,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if cursor_hide_timer is not None:
                 cursor_hide_timer.start(cursor_autohide_timeout_ms)
-                _cursor_debug(
-                    f"timer-start reason={reason} timeout_ms={cursor_autohide_timeout_ms}"
-                )
+                _cursor_debug(f"timer-start reason={reason} timeout_ms={cursor_autohide_timeout_ms}")
         except Exception:
             pass
 
@@ -3043,7 +2902,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if use_libmpv and libmpv_player is not None and stream:
         initial_stream = stream
-        initial_audio = args.audio or None
+        initial_audio = (args.audio or None)
         initial_start = args.start
         initial_load_attempts = {"n": 0}
 
@@ -3091,9 +2950,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(0.05)
         return os.path.exists(ipc_path)
 
-    def _subprocess_mpv_ipc_request(
-        command: list[object], *, timeout_sec: float = 2.0
-    ) -> dict[str, object]:
+    def _subprocess_mpv_ipc_request(command: list[object], *, timeout_sec: float = 2.0) -> dict[str, object]:
         if not ipc_path:
             raise RuntimeError("mpv_ipc_unavailable")
         if not _wait_for_subprocess_mpv_ipc(timeout_sec=max(timeout_sec, 0.5)):
@@ -3102,12 +2959,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             client.settimeout(max(0.2, float(timeout_sec or 0.0)))
             client.connect(ipc_path)
-            payload = (
-                json.dumps(
-                    {"command": list(command or [])}, ensure_ascii=True, separators=(",", ":")
-                ).encode("utf-8")
-                + b"\n"
-            )
+            payload = json.dumps({"command": list(command or [])}, ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
             client.sendall(payload)
             data = b""
             while b"\n" not in data:
@@ -3130,9 +2982,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _subproc_snapshot_cache: dict[str, object] = {"ts": 0.0, "data": None}
 
-    def _subprocess_mpv_get_props(
-        names: list[str], *, timeout_sec: float = 0.5
-    ) -> dict[str, object]:
+    def _subprocess_mpv_get_props(names: list[str], *, timeout_sec: float = 0.5) -> dict[str, object]:
         if not ipc_path or not os.path.exists(ipc_path):
             raise RuntimeError("mpv_ipc_unavailable")
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -3185,10 +3035,7 @@ def main(argv: list[str] | None = None) -> int:
         """
         now = time.time()
         cached = _subproc_snapshot_cache.get("data")
-        if (
-            isinstance(cached, dict)
-            and (now - float(_subproc_snapshot_cache.get("ts") or 0.0)) <= max_age_sec
-        ):
+        if isinstance(cached, dict) and (now - float(_subproc_snapshot_cache.get("ts") or 0.0)) <= max_age_sec:
             return cached
         _rotate_mpv_log_if_needed(
             lambda p: _subprocess_mpv_ipc_request(["set_property", "log-file", p])
@@ -3232,9 +3079,7 @@ def main(argv: list[str] | None = None) -> int:
         _subproc_snapshot_cache["data"] = out
         return out
 
-    def _spawn_subprocess_mpv(
-        stream_url: str, audio_url: str | None = None, start_pos: float | None = None
-    ) -> None:
+    def _spawn_subprocess_mpv(stream_url: str, audio_url: str | None = None, start_pos: float | None = None) -> None:
         nonlocal mpv_proc
         if not stream_url:
             raise RuntimeError("stream_empty")
@@ -3258,9 +3103,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio_device=((args.audio_device or "").strip() or None),
                 sub_lang=((args.sub_lang or "").strip() or None),
                 volume=args.volume,
-                ytdl_enabled=(
-                    (args.ytdl_enabled or "1").strip().lower() in ("1", "true", "yes", "on")
-                ),
+                ytdl_enabled=((args.ytdl_enabled or "1").strip().lower() in ("1", "true", "yes", "on")),
                 ytdl_path=((args.ytdl_path or "").strip() or None),
                 ytdl_format=((args.ytdl_format or "").strip() or None),
                 ytdl_raw_options=((args.ytdl_raw_options or "").strip() or None),
@@ -3349,7 +3192,7 @@ def main(argv: list[str] | None = None) -> int:
                         raise RuntimeError(str(result.get("error") or "mpv_set_property_failed"))
             elif action == "load_stream":
                 stream_url = str(payload.get("stream") or "").strip()
-                audio_url = str(payload.get("audio") or "").strip() or None
+                audio_url = (str(payload.get("audio") or "").strip() or None)
                 start_pos = _optional_float(payload.get("start_pos"))
                 if libmpv_player is not None:
                     libmpv_player.load_stream(stream_url, audio_url, start_pos)
@@ -3417,9 +3260,7 @@ def main(argv: list[str] | None = None) -> int:
             "qt_overlay_last_error_ts": float(overlay_health.get("last_error_ts") or 0.0),
             "qt_overlay_visible": bool(overlay is not None and overlay.isVisible()),
             "qt_native_idle_enabled": bool(native_idle_host is not None),
-            "qt_native_idle_visible": bool(
-                native_idle_host is not None and native_idle_host.isVisible()
-            ),
+            "qt_native_idle_visible": bool(native_idle_host is not None and native_idle_host.isVisible()),
         }
         if libmpv_player is not None:
             payload.update(libmpv_player.runtime_snapshot())

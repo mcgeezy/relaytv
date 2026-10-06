@@ -88,17 +88,13 @@ def _extract_jellyfin_subtitle_stream_index_from_url(url: str) -> str:
     return helper(url)
 
 
-def _jellyfin_runtime_selected_audio_stream(
-    audio_streams: list[dict[str, object]],
-) -> tuple[int | None, str]:
+def _jellyfin_runtime_selected_audio_stream(audio_streams: list[dict[str, object]]) -> tuple[int | None, str]:
     from . import _jellyfin_runtime_selected_audio_stream as helper
 
     return helper(audio_streams)
 
 
-def _jellyfin_runtime_selected_subtitle_stream(
-    subtitle_streams: list[dict[str, object]],
-) -> tuple[int | None, str, bool]:
+def _jellyfin_runtime_selected_subtitle_stream(subtitle_streams: list[dict[str, object]]) -> tuple[int | None, str, bool]:
     from . import _jellyfin_runtime_selected_subtitle_stream as helper
 
     return helper(subtitle_streams)
@@ -116,9 +112,7 @@ def _jellyfin_integration_command(req) -> dict[str, object]:
     return command(req)
 
 
-def _jellyfin_should_suppress_duplicate_ui_action(
-    command: str, item_id: str, resume_pos: float | None
-) -> bool:
+def _jellyfin_should_suppress_duplicate_ui_action(command: str, item_id: str, resume_pos: float | None) -> bool:
     from . import _jellyfin_should_suppress_duplicate_ui_action as helper
 
     return helper(command, item_id, resume_pos)
@@ -193,10 +187,7 @@ def jellyfin_integration_connect(req: JellyfinConnectReq):
         raise HTTPException(status_code=400, detail="server_url is required")
     settings_name = ""
     try:
-        settings_name = str(
-            (state.get_settings() if hasattr(state, "get_settings") else {}).get("device_name")
-            or ""
-        ).strip()
+        settings_name = str((state.get_settings() if hasattr(state, "get_settings") else {}).get("device_name") or "").strip()
     except Exception:
         settings_name = ""
     out = jellyfin_receiver.connect(
@@ -209,9 +200,7 @@ def jellyfin_integration_connect(req: JellyfinConnectReq):
         out = dict(out)
         out["register"] = jellyfin_receiver.register_receiver_once()
     _reset_jellyfin_command_state()
-    _ui_event_push_jellyfin(
-        "connect", refresh_active_tab=True, refresh_settings=True, refresh_status=True
-    )
+    _ui_event_push_jellyfin("connect", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
     return out
 
 
@@ -219,9 +208,7 @@ def jellyfin_integration_connect(req: JellyfinConnectReq):
 def jellyfin_integration_disconnect():
     _reset_jellyfin_command_state()
     out = jellyfin_receiver.disconnect()
-    _ui_event_push_jellyfin(
-        "disconnect", refresh_active_tab=True, refresh_settings=True, refresh_status=True
-    )
+    _ui_event_push_jellyfin("disconnect", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
     return out
 
 
@@ -232,9 +219,7 @@ def jellyfin_integration_register():
     if not bool(st.get("enabled")):
         raise HTTPException(status_code=503, detail="jellyfin integration disabled")
     out = jellyfin_receiver.register_receiver_once()
-    _ui_event_push_jellyfin(
-        "register", refresh_active_tab=True, refresh_settings=True, refresh_status=True
-    )
+    _ui_event_push_jellyfin("register", refresh_active_tab=True, refresh_settings=True, refresh_status=True)
     if not bool(out.get("ok")):
         return JSONResponse(out, status_code=202)
     return out
@@ -377,19 +362,13 @@ def jellyfin_movies(
     refreshed = jellyfin_receiver.status()
     return {
         "ok": True,
-        "sort": payload.get("sort")
-        if isinstance(payload, dict)
-        else str(sort or "added").strip().lower(),
+        "sort": payload.get("sort") if isinstance(payload, dict) else str(sort or "added").strip().lower(),
         "items": payload.get("items") if isinstance(payload, dict) else [],
         "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "start_index": int(payload.get("start_index") or start_index)
-        if isinstance(payload, dict)
-        else start_index,
+        "start_index": int(payload.get("start_index") or start_index) if isinstance(payload, dict) else start_index,
         "limit": int(payload.get("limit") or lim) if isinstance(payload, dict) else lim,
         "next_start_index": payload.get("next_start_index") if isinstance(payload, dict) else None,
-        "starts_with": str(payload.get("starts_with") or "")
-        if isinstance(payload, dict)
-        else str(starts_with or "").strip().upper(),
+        "starts_with": str(payload.get("starts_with") or "") if isinstance(payload, dict) else str(starts_with or "").strip().upper(),
         "connected": bool(refreshed.get("connected")),
         "last_error": refreshed.get("last_error"),
         "device_name": st.get("device_name"),
@@ -421,19 +400,13 @@ def jellyfin_tv_series(
     refreshed = jellyfin_receiver.status()
     return {
         "ok": True,
-        "sort": payload.get("sort")
-        if isinstance(payload, dict)
-        else str(sort or "title_asc").strip().lower(),
+        "sort": payload.get("sort") if isinstance(payload, dict) else str(sort or "title_asc").strip().lower(),
         "items": payload.get("items") if isinstance(payload, dict) else [],
         "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "start_index": int(payload.get("start_index") or start_index)
-        if isinstance(payload, dict)
-        else start_index,
+        "start_index": int(payload.get("start_index") or start_index) if isinstance(payload, dict) else start_index,
         "limit": int(payload.get("limit") or lim) if isinstance(payload, dict) else lim,
         "next_start_index": payload.get("next_start_index") if isinstance(payload, dict) else None,
-        "starts_with": str(payload.get("starts_with") or "")
-        if isinstance(payload, dict)
-        else str(starts_with or "").strip().upper(),
+        "starts_with": str(payload.get("starts_with") or "") if isinstance(payload, dict) else str(starts_with or "").strip().upper(),
         "connected": bool(refreshed.get("connected")),
         "last_error": refreshed.get("last_error"),
         "device_name": st.get("device_name"),
@@ -487,12 +460,8 @@ def jellyfin_tv_series_episodes(
     return {
         "ok": True,
         "series_id": sid,
-        "season_id": payload.get("season_id")
-        if isinstance(payload, dict)
-        else str(season_id or "").strip(),
-        "season_number": payload.get("season_number")
-        if isinstance(payload, dict)
-        else season_number,
+        "season_id": payload.get("season_id") if isinstance(payload, dict) else str(season_id or "").strip(),
+        "season_number": payload.get("season_number") if isinstance(payload, dict) else season_number,
         "episodes": payload.get("episodes") if isinstance(payload, dict) else [],
         "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
         "connected": bool(refreshed.get("connected")),
@@ -566,26 +535,11 @@ def jellyfin_tv_series_play_all(series_id: str, refresh: bool = False):
     except Exception as e:
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin series episodes")
-    episodes = (
-        payload.get("episodes")
-        if isinstance(payload, dict) and isinstance(payload.get("episodes"), list)
-        else []
-    )
-    item_ids = [
-        str(ep.get("item_id") or "").strip()
-        for ep in episodes
-        if isinstance(ep, dict) and str(ep.get("item_id") or "").strip()
-    ]
+    episodes = payload.get("episodes") if isinstance(payload, dict) and isinstance(payload.get("episodes"), list) else []
+    item_ids = [str(ep.get("item_id") or "").strip() for ep in episodes if isinstance(ep, dict) and str(ep.get("item_id") or "").strip()]
     if not item_ids:
         raise HTTPException(status_code=404, detail="no episodes available for series")
-    first = next(
-        (
-            ep
-            for ep in episodes
-            if isinstance(ep, dict) and str(ep.get("item_id") or "").strip() == item_ids[0]
-        ),
-        {},
-    )
+    first = next((ep for ep in episodes if isinstance(ep, dict) and str(ep.get("item_id") or "").strip() == item_ids[0]), {})
     out = _jellyfin_integration_command(
         _jellyfin_command_req(
             action="Play",
@@ -634,11 +588,7 @@ def jellyfin_item_action(req: JellyfinItemActionReq):
         if start_pos is None:
             try:
                 meta = jellyfin_receiver.get_item_detail(item_id)
-                rp2 = (
-                    float(meta.get("resume_pos"))
-                    if isinstance(meta, dict) and meta.get("resume_pos") is not None
-                    else None
-                )
+                rp2 = float(meta.get("resume_pos")) if isinstance(meta, dict) and meta.get("resume_pos") is not None else None
                 if rp2 is not None and rp2 > 0:
                     start_pos = rp2
             except Exception:
@@ -690,11 +640,7 @@ def jellyfin_audio_options(refresh: bool = False):
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin stream options")
 
-    audio_streams = (
-        detail.get("audio_streams")
-        if isinstance(detail, dict) and isinstance(detail.get("audio_streams"), list)
-        else []
-    )
+    audio_streams = detail.get("audio_streams") if isinstance(detail, dict) and isinstance(detail.get("audio_streams"), list) else []
     current_idx = _first_nonempty_str(
         [
             str(now.get("jellyfin_audio_stream_index") or "").strip(),
@@ -789,20 +735,14 @@ def jellyfin_subtitle_options(refresh: bool = False):
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin subtitle options")
 
-    subtitle_streams = (
-        detail.get("subtitle_streams")
-        if isinstance(detail, dict) and isinstance(detail.get("subtitle_streams"), list)
-        else []
-    )
+    subtitle_streams = detail.get("subtitle_streams") if isinstance(detail, dict) and isinstance(detail.get("subtitle_streams"), list) else []
     current_idx = _first_nonempty_str(
         [
             str(now.get("jellyfin_subtitle_stream_index") or "").strip(),
             _extract_jellyfin_subtitle_stream_index_from_url(str(now.get("url") or "")),
         ]
     )
-    runtime_idx, runtime_lang, runtime_off = _jellyfin_runtime_selected_subtitle_stream(
-        subtitle_streams
-    )
+    runtime_idx, runtime_lang, runtime_off = _jellyfin_runtime_selected_subtitle_stream(subtitle_streams)
     if runtime_off:
         current_idx = "-1"
     elif runtime_idx is not None:
@@ -815,16 +755,14 @@ def jellyfin_subtitle_options(refresh: bool = False):
     except Exception:
         selected_numeric = None
 
-    options: list[dict[str, object]] = [
-        {
-            "index": -1,
-            "language": "",
-            "display": "Off",
-            "is_default": False,
-            "is_current": current_is_off,
-            "is_off": True,
-        }
-    ]
+    options: list[dict[str, object]] = [{
+        "index": -1,
+        "language": "",
+        "display": "Off",
+        "is_default": False,
+        "is_current": current_is_off,
+        "is_off": True,
+    }]
     current_opt: dict[str, object] | None = options[0] if current_is_off else None
     fallback_default: dict[str, object] | None = None
     fallback_first: dict[str, object] | None = None
@@ -865,18 +803,14 @@ def jellyfin_subtitle_options(refresh: bool = False):
                 current_opt = opt
                 break
 
-    current_lang = (
-        "off"
-        if current_is_off
-        else _first_nonempty_str(
-            [
-                str((current_opt or {}).get("language") or "").strip(),
-                runtime_lang,
-                str(now.get("jellyfin_subtitle_language") or "").strip(),
-                str(now.get("subtitle_language") or "").strip(),
-                str(detail.get("subtitle_language") if isinstance(detail, dict) else "").strip(),
-            ]
-        )
+    current_lang = "off" if current_is_off else _first_nonempty_str(
+        [
+            str((current_opt or {}).get("language") or "").strip(),
+            runtime_lang,
+            str(now.get("jellyfin_subtitle_language") or "").strip(),
+            str(now.get("subtitle_language") or "").strip(),
+            str(detail.get("subtitle_language") if isinstance(detail, dict) else "").strip(),
+        ]
     )
     return {
         "ok": True,

@@ -5,7 +5,6 @@ These exercise integrations/jellyfin_service.py directly with fake receiver
 and player adapters — no FastAPI route context. Route-level contract tests
 for the same behavior live in tests/test_jellyfin_routes.py.
 """
-
 import pytest
 import threading
 
@@ -41,12 +40,8 @@ def test_catalog_token_uses_receiver_selected_identity(monkeypatch) -> None:
 
 @pytest.mark.parametrize("mutation", ["replace", "reorder", "retarget"])
 def test_preference_lookup_preserves_newer_queue_decisions(monkeypatch, mutation):
-    old = {
-        "url": "http://jellyfin.local/Videos/old/stream",
-        "provider": "jellyfin",
-        "jellyfin_item_id": "old",
-        "title": "Old",
-    }
+    old = {"url": "http://jellyfin.local/Videos/old/stream", "provider": "jellyfin",
+           "jellyfin_item_id": "old", "title": "Old"}
     monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([old]))
     old_id = state.queue_item_id(old)
     monkeypatch.setattr(state, "persist_queue", lambda: True)
@@ -60,10 +55,9 @@ def test_preference_lookup_preserves_newer_queue_decisions(monkeypatch, mutation
 
     monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lookup)
     results = []
-    worker = threading.Thread(
-        target=lambda: results.append(jellyfin_service.retarget_queue_stream_preferences()),
-        daemon=True,
-    )
+    worker = threading.Thread(target=lambda: results.append(
+        jellyfin_service.retarget_queue_stream_preferences()
+    ), daemon=True)
     worker.start()
     try:
         assert entered.wait(5)
@@ -158,11 +152,15 @@ def test_external_item_validation_requires_exact_type_and_tmdb_id(monkeypatch) -
         "generation": 7,
     }
     assert (
-        jellyfin_service.validate_external_item("jellyfin-item-1", media_type="tv", tmdb_id=329865)
+        jellyfin_service.validate_external_item(
+            "jellyfin-item-1", media_type="tv", tmdb_id=329865
+        )
         == {}
     )
     assert (
-        jellyfin_service.validate_external_item("jellyfin-item-1", media_type="movie", tmdb_id=11)
+        jellyfin_service.validate_external_item(
+            "jellyfin-item-1", media_type="movie", tmdb_id=11
+        )
         == {}
     )
 
@@ -244,11 +242,7 @@ def test_select_playback_url_direct_when_profile_is_healthy(monkeypatch) -> None
         "get_item_detail",
         lambda iid, refresh=False, user_id_override="": _detail(),
     )
-    monkeypatch.setattr(
-        video_profile,
-        "get_profile",
-        lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True},
-    )
+    monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True})
     monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
 
     selected = jellyfin_service.select_playback_url(
@@ -264,24 +258,14 @@ def test_select_playback_url_direct_when_profile_is_healthy(monkeypatch) -> None
 
 
 def test_select_playback_url_transcodes_av1_when_not_allowed(monkeypatch) -> None:
-    monkeypatch.setattr(
-        jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail(video_codec="av1")
-    )
-    monkeypatch.setattr(
-        video_profile,
-        "get_profile",
-        lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": False},
-    )
+    monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail(video_codec="av1"))
+    monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": False})
     monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
     resolved: dict[str, object] = {}
 
     def fake_resolve(iid, **kwargs):
         resolved.update({"item_id": iid, **kwargs})
-        return {
-            "url": "http://jf.local/Videos/item-1/master.m3u8?api_key=tok",
-            "method": "server",
-            "media_source_id": "ms-9",
-        }
+        return {"url": "http://jf.local/Videos/item-1/master.m3u8?api_key=tok", "method": "server", "media_source_id": "ms-9"}
 
     monkeypatch.setattr(jellyfin_receiver, "resolve_playback_url", fake_resolve)
 
@@ -320,20 +304,12 @@ def test_select_playback_url_builds_fallback_master_url(monkeypatch) -> None:
 
 def test_forced_transcode_mode_overrides_healthy_direct(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail())
-    monkeypatch.setattr(
-        video_profile,
-        "get_profile",
-        lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True},
-    )
+    monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True})
     monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
     monkeypatch.setattr(
         jellyfin_receiver,
         "resolve_playback_url",
-        lambda iid, **kw: {
-            "url": "http://jf.local/t.m3u8",
-            "method": "server",
-            "media_source_id": "",
-        },
+        lambda iid, **kw: {"url": "http://jf.local/t.m3u8", "method": "server", "media_source_id": ""},
     )
 
     selected = jellyfin_service.select_playback_url(
@@ -351,9 +327,7 @@ def test_forced_transcode_mode_overrides_healthy_direct(monkeypatch) -> None:
 
 
 def test_preferred_stream_indices_match_language_settings(monkeypatch) -> None:
-    monkeypatch.setattr(
-        state, "get_settings", lambda: {"jellyfin_audio_lang": "jpn", "jellyfin_sub_lang": "en"}
-    )
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_audio_lang": "jpn", "jellyfin_sub_lang": "en"})
     monkeypatch.setattr(
         jellyfin_receiver,
         "get_item_detail",
@@ -373,14 +347,8 @@ def test_preferred_stream_indices_match_language_settings(monkeypatch) -> None:
 
 
 def test_preferred_stream_indices_subtitles_off(monkeypatch) -> None:
-    monkeypatch.setattr(
-        state, "get_settings", lambda: {"jellyfin_audio_lang": "", "jellyfin_sub_lang": "off"}
-    )
-    monkeypatch.setattr(
-        jellyfin_receiver,
-        "get_item_detail",
-        lambda iid, refresh=False: {"audio_streams": [], "subtitle_streams": []},
-    )
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_audio_lang": "", "jellyfin_sub_lang": "off"})
+    monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: {"audio_streams": [], "subtitle_streams": []})
     audio_idx, sub_idx = jellyfin_service.preferred_stream_indices("item-1")
     assert audio_idx == ""
     assert sub_idx == "-1"
@@ -408,9 +376,7 @@ def test_stopped_snapshot_from_now_snaps_near_complete_to_runtime() -> None:
         "jellyfin_media_source_id": "ms-1",
         "url": "http://jf.local/Videos/item-1/stream",
     }
-    payload = jellyfin_service.stopped_snapshot_from_now(
-        now, position_sec=995.0, duration_sec=1000.0
-    )
+    payload = jellyfin_service.stopped_snapshot_from_now(now, position_sec=995.0, duration_sec=1000.0)
     assert payload["ItemId"] == "item-1"
     assert payload["MediaSourceId"] == "ms-1"
     # 99.5% > default 98% complete ratio -> snapped to full runtime.
@@ -420,22 +386,13 @@ def test_stopped_snapshot_from_now_snaps_near_complete_to_runtime() -> None:
 
 def test_progress_snapshot_reads_player_props(monkeypatch) -> None:
     monkeypatch.setattr(
-        state,
-        "NOW_PLAYING",
-        {"jellyfin_item_id": "item-1", "url": "http://jf.local/v"},
-        raising=False,
+        state, "NOW_PLAYING", {"jellyfin_item_id": "item-1", "url": "http://jf.local/v"}, raising=False
     )
     monkeypatch.setattr(player, "is_playing", lambda: True)
     monkeypatch.setattr(
         player,
         "mpv_get_many",
-        lambda props: {
-            "pause": True,
-            "time-pos": 30.0,
-            "duration": 300.0,
-            "mute": False,
-            "volume": 80.0,
-        },
+        lambda props: {"pause": True, "time-pos": 30.0, "duration": 300.0, "mute": False, "volume": 80.0},
     )
     payload = jellyfin_service.progress_snapshot()
     assert payload["ItemId"] == "item-1"
@@ -458,9 +415,7 @@ def test_handle_command_dispatches_pause_through_controls(monkeypatch) -> None:
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: hints.append(True))
     controls = {"pause": lambda: {"paused": True}}
 
-    out = jellyfin_service.handle_command(
-        FakeCommandReq(action="Pause"), controls=controls, ui=_noop_ui()
-    )
+    out = jellyfin_service.handle_command(FakeCommandReq(action="Pause"), controls=controls, ui=_noop_ui())
 
     assert out == {"ok": True, "action": "pause", "result": {"paused": True}}
     assert marks == ["pause"]
@@ -488,45 +443,33 @@ def test_handle_command_suppresses_duplicate_command_ids(monkeypatch) -> None:
 
 def test_handle_command_play_uses_playback_service(monkeypatch) -> None:
     jellyfin_service.reset_command_state()
-    monkeypatch.setattr(
-        jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jf.local"}
-    )
+    monkeypatch.setattr(jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jf.local"})
     monkeypatch.setattr(jellyfin_receiver, "mark_command", lambda action: None)
     monkeypatch.setattr(jellyfin_receiver, "mark_heartbeat", lambda: None)
     monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail())
     monkeypatch.setattr(jellyfin_receiver, "session_token", lambda: "tok")
     monkeypatch.setattr(jellyfin_receiver, "api_key", lambda: "")
-    monkeypatch.setattr(
-        video_profile,
-        "get_profile",
-        lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True},
-    )
+    monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True})
     monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
     monkeypatch.setattr(player, "is_playing", lambda: False)
     monkeypatch.setattr(player, "recent_jellyfin_stop_matches", lambda **kw: False)
     monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_playback_mode": "direct"})
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
     monkeypatch.setattr(
-        jellyfin_service,
-        "smart_item_from_url",
-        lambda url, start_pos=None: {"url": url, "title": "Movie"},
+        jellyfin_service, "smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Movie"}
     )
     monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lambda iid: ("", ""))
 
     suppressed: list[float] = []
     played: list[dict] = []
     now_updates: list[dict] = []
-    monkeypatch.setattr(
-        playback_service, "suppress_auto_next", lambda sec, **kw: suppressed.append(sec)
-    )
+    monkeypatch.setattr(playback_service, "suppress_auto_next", lambda sec, **kw: suppressed.append(sec))
     monkeypatch.setattr(
         playback_service,
         "play_now",
         lambda item, **kw: played.append({"item": item, **kw}) or dict(item),
     )
-    monkeypatch.setattr(
-        playback_service, "update_now_playing", lambda now: now_updates.append(dict(now))
-    )
+    monkeypatch.setattr(playback_service, "update_now_playing", lambda now: now_updates.append(dict(now)))
 
     events: list[str] = []
     ui = _noop_ui()
@@ -550,9 +493,7 @@ def test_handle_command_play_uses_playback_service(monkeypatch) -> None:
 
 def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
     jellyfin_service.reset_command_state()
-    monkeypatch.setattr(
-        jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jf.local"}
-    )
+    monkeypatch.setattr(jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jf.local"})
     monkeypatch.setattr(jellyfin_receiver, "mark_command", lambda action: None)
     monkeypatch.setattr(jellyfin_receiver, "mark_heartbeat", lambda: None)
     monkeypatch.setattr(jellyfin_receiver, "get_item_detail", lambda iid, refresh=False: _detail())
@@ -561,7 +502,9 @@ def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
 
     metadata_calls: list[tuple[str, str]] = []
 
-    def fake_metadata(iid, *, token_override="", server_url_override="", user_id_override=""):
+    def fake_metadata(
+        iid, *, token_override="", server_url_override="", user_id_override=""
+    ):
         metadata_calls.append((iid, user_id_override))
         return {
             "title": f"Episode {iid}",
@@ -570,11 +513,7 @@ def test_handle_command_playlist_enriches_queue_metadata(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(jellyfin_receiver, "get_item_metadata", fake_metadata)
-    monkeypatch.setattr(
-        video_profile,
-        "get_profile",
-        lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True},
-    )
+    monkeypatch.setattr(video_profile, "get_profile", lambda: {"decode_profile": "intel_amd64_qsv", "av1_allowed": True})
     monkeypatch.setattr(player, "native_qt_runtime_active", lambda: False)
     monkeypatch.setattr(player, "is_playing", lambda: False)
     monkeypatch.setattr(player, "recent_jellyfin_stop_matches", lambda **kw: False)
@@ -697,9 +636,7 @@ def test_run_detection_persists_detected_server_type(monkeypatch) -> None:
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ok", None)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ts", None)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_error", None)
-    monkeypatch.setattr(
-        state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch)
-    )
+    monkeypatch.setattr(state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
     _fake_system_info(monkeypatch, {"ProductName": "Emby Server", "Version": "4.8.0", "Id": "e1"})
 
     result = jellyfin_receiver._run_detection("http://emby.local:8096")
@@ -718,9 +655,7 @@ def test_run_detection_failure_keeps_existing_server_type(monkeypatch) -> None:
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ok", None)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_ts", None)
     monkeypatch.setitem(jellyfin_receiver._STATUS, "last_detect_error", None)
-    monkeypatch.setattr(
-        state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch)
-    )
+    monkeypatch.setattr(state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
     _fake_system_info(monkeypatch, OSError("connection refused"))
 
     result = jellyfin_receiver._run_detection("http://emby.local:8096")
@@ -879,9 +814,7 @@ def test_item_detail_requests_tmdb_provider_identity(monkeypatch) -> None:
 def test_persist_server_type_writes_only_on_change(monkeypatch) -> None:
     updates: list[dict[str, object]] = []
     monkeypatch.setitem(jellyfin_receiver._STATUS, "server_type", "emby")
-    monkeypatch.setattr(
-        state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch)
-    )
+    monkeypatch.setattr(state, "update_settings", lambda patch: updates.append(dict(patch)) or dict(patch))
 
     jellyfin_receiver._persist_server_type("emby", "Emby Server")
 
@@ -903,9 +836,7 @@ def test_set_server_type_updates_live_status_and_clears_stale_product(monkeypatc
 def test_looks_like_media_url_accepts_emby_hosts() -> None:
     assert jellyfin_service.looks_like_media_url("http://emby.home.lan:8096/web/index.html") is True
     assert jellyfin_service.looks_like_media_url("http://jellyfin.home.lan:8096/web/") is True
-    assert (
-        jellyfin_service.looks_like_media_url("http://media.local/Items/abc/PlaybackInfo") is True
-    )
+    assert jellyfin_service.looks_like_media_url("http://media.local/Items/abc/PlaybackInfo") is True
     assert jellyfin_service.looks_like_media_url("https://example.com/watch?v=abc") is False
 
 
@@ -931,49 +862,15 @@ def test_provider_display_name_reflects_server_type(monkeypatch) -> None:
 # fallback that "succeeded" instead wrote empty capabilities.
 GENERAL_COMMAND_TYPES = frozenset(
     {
-        "MoveUp",
-        "MoveDown",
-        "MoveLeft",
-        "MoveRight",
-        "PageUp",
-        "PageDown",
-        "PreviousLetter",
-        "NextLetter",
-        "ToggleOsd",
-        "ToggleContextMenu",
-        "Select",
-        "Back",
-        "TakeScreenshot",
-        "SendKey",
-        "SendString",
-        "GoHome",
-        "GoToSettings",
-        "VolumeUp",
-        "VolumeDown",
-        "Mute",
-        "Unmute",
-        "ToggleMute",
-        "SetVolume",
-        "SetAudioStreamIndex",
-        "SetSubtitleStreamIndex",
-        "ToggleFullscreen",
-        "DisplayContent",
-        "GoToSearch",
-        "DisplayMessage",
-        "SetRepeatMode",
-        "ChannelUp",
-        "ChannelDown",
-        "Guide",
-        "ToggleStats",
-        "PlayMediaSource",
-        "PlayTrailers",
-        "SetShuffleQueue",
-        "PlayState",
-        "PlayNext",
-        "ToggleOsdMenu",
-        "Play",
-        "SetMaxStreamingBitrate",
-        "SetPlaybackOrder",
+        "MoveUp", "MoveDown", "MoveLeft", "MoveRight", "PageUp", "PageDown",
+        "PreviousLetter", "NextLetter", "ToggleOsd", "ToggleContextMenu", "Select",
+        "Back", "TakeScreenshot", "SendKey", "SendString", "GoHome", "GoToSettings",
+        "VolumeUp", "VolumeDown", "Mute", "Unmute", "ToggleMute", "SetVolume",
+        "SetAudioStreamIndex", "SetSubtitleStreamIndex", "ToggleFullscreen",
+        "DisplayContent", "GoToSearch", "DisplayMessage", "SetRepeatMode",
+        "ChannelUp", "ChannelDown", "Guide", "ToggleStats", "PlayMediaSource",
+        "PlayTrailers", "SetShuffleQueue", "PlayState", "PlayNext", "ToggleOsdMenu",
+        "Play", "SetMaxStreamingBitrate", "SetPlaybackOrder",
     }
 )
 
@@ -1155,9 +1052,7 @@ def test_progress_payload_lets_the_remote_scrub(monkeypatch) -> None:
     """Without CanSeek the Jellyfin remote renders a read-only progress bar."""
     monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
     monkeypatch.setattr(player, "is_playing", lambda: True)
-    monkeypatch.setattr(
-        player, "mpv_get_many", lambda keys: {"pause": False, "time-pos": 12.0, "duration": 100.0}
-    )
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {"pause": False, "time-pos": 12.0, "duration": 100.0})
 
     payload = jellyfin_service.progress_snapshot()
 
@@ -1180,30 +1075,19 @@ ADVERTISED_TRAFFIC = [
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Unpause"}}),
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "PlayPause"}}),
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Stop"}}),
-    (
-        "PlayState",
-        {"MessageType": "Playstate", "Data": {"Command": "Seek", "SeekPositionTicks": 10_000_000}},
-    ),
+    ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Seek", "SeekPositionTicks": 10_000_000}}),
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "NextTrack"}}),
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "PreviousTrack"}}),
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "Rewind"}}),
     ("PlayState", {"MessageType": "Playstate", "Data": {"Command": "FastForward"}}),
-    (
-        "SetVolume",
-        {
-            "MessageType": "GeneralCommand",
-            "Data": {"Name": "SetVolume", "Arguments": {"Volume": "30"}},
-        },
-    ),
+    ("SetVolume", {"MessageType": "GeneralCommand", "Data": {"Name": "SetVolume", "Arguments": {"Volume": "30"}}}),
     ("Mute", {"MessageType": "GeneralCommand", "Data": {"Name": "Mute"}}),
     ("Unmute", {"MessageType": "GeneralCommand", "Data": {"Name": "Unmute"}}),
     ("ToggleMute", {"MessageType": "GeneralCommand", "Data": {"Name": "ToggleMute"}}),
 ]
 
 
-@pytest.mark.parametrize(
-    "capability,message", ADVERTISED_TRAFFIC, ids=lambda v: v if isinstance(v, str) else ""
-)
+@pytest.mark.parametrize("capability,message", ADVERTISED_TRAFFIC, ids=lambda v: v if isinstance(v, str) else "")
 def test_every_advertised_capability_reaches_a_handler(capability, message, monkeypatch) -> None:
     """Advertising a command RelayTV cannot execute puts a dead button on the remote.
 
@@ -1217,17 +1101,7 @@ def test_every_advertised_capability_reaches_a_handler(capability, message, monk
     dispatched: list[str] = []
     controls = {
         name: (lambda *a, _n=name, **kw: dispatched.append(_n))
-        for name in (
-            "stop",
-            "pause",
-            "resume",
-            "seek",
-            "seek_relative",
-            "next",
-            "previous",
-            "set_volume",
-            "mute",
-        )
+        for name in ("stop", "pause", "resume", "seek", "seek_relative", "next", "previous", "set_volume", "mute")
     }
     monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
@@ -1248,34 +1122,23 @@ def test_every_advertised_capability_reaches_a_handler(capability, message, monk
 def test_toggle_mute_flips_both_ways(monkeypatch) -> None:
     calls: list[bool] = []
     controls = {
-        "stop": lambda: None,
-        "pause": lambda: None,
-        "resume": lambda: None,
-        "seek": lambda sec: None,
-        "seek_relative": lambda delta: None,
-        "next": lambda: None,
-        "previous": lambda: None,
-        "set_volume": lambda vol: None,
+        "stop": lambda: None, "pause": lambda: None, "resume": lambda: None,
+        "seek": lambda sec: None, "seek_relative": lambda delta: None,
+        "next": lambda: None, "previous": lambda: None, "set_volume": lambda vol: None,
         "mute": lambda muted: calls.append(muted),
     }
     monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
 
     monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: False)
-    assert (
-        jellyfin_service.handle_command(
-            FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
-        )["action"]
-        == "mute"
-    )
+    assert jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
+    )["action"] == "mute"
 
     monkeypatch.setattr(jellyfin_service, "playback_is_muted", lambda: True)
-    assert (
-        jellyfin_service.handle_command(
-            FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
-        )["action"]
-        == "unmute"
-    )
+    assert jellyfin_service.handle_command(
+        FakeCommandReq(payload={"Name": "ToggleMute"}), controls=controls, ui=_noop_ui()
+    )["action"] == "unmute"
 
     assert calls == [True, False]
 
@@ -1283,25 +1146,16 @@ def test_toggle_mute_flips_both_ways(monkeypatch) -> None:
 def test_skip_commands_seek_by_jellyfin_default_amounts(monkeypatch) -> None:
     deltas: list[float] = []
     controls = {
-        "stop": lambda: None,
-        "pause": lambda: None,
-        "resume": lambda: None,
-        "seek": lambda sec: None,
-        "seek_relative": lambda delta: deltas.append(delta),
-        "next": lambda: None,
-        "previous": lambda: None,
-        "set_volume": lambda vol: None,
+        "stop": lambda: None, "pause": lambda: None, "resume": lambda: None,
+        "seek": lambda sec: None, "seek_relative": lambda delta: deltas.append(delta),
+        "next": lambda: None, "previous": lambda: None, "set_volume": lambda vol: None,
         "mute": lambda muted: None,
     }
     monkeypatch.setitem(jellyfin_receiver._STATUS, "enabled", True)
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
 
-    jellyfin_service.handle_command(
-        FakeCommandReq(payload={"Command": "Rewind"}), controls=controls, ui=_noop_ui()
-    )
-    jellyfin_service.handle_command(
-        FakeCommandReq(payload={"Command": "FastForward"}), controls=controls, ui=_noop_ui()
-    )
+    jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "Rewind"}), controls=controls, ui=_noop_ui())
+    jellyfin_service.handle_command(FakeCommandReq(payload={"Command": "FastForward"}), controls=controls, ui=_noop_ui())
 
     assert deltas == [-10.0, 30.0]
 
@@ -1326,9 +1180,7 @@ def test_progress_still_reports_a_paused_item(monkeypatch) -> None:
     needs the position to keep its scrubber honest."""
     monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "abc", "url": "http://jf/x"})
     monkeypatch.setattr(player, "is_playing", lambda: True)
-    monkeypatch.setattr(
-        player, "mpv_get_many", lambda keys: {"pause": True, "time-pos": 42.0, "duration": 100.0}
-    )
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {"pause": True, "time-pos": 42.0, "duration": 100.0})
 
     payload = jellyfin_service.progress_snapshot()
 

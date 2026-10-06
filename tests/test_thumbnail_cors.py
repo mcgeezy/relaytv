@@ -12,9 +12,7 @@ def test_thumbnail_allows_cross_origin_image_processing(monkeypatch, tmp_path) -
     (tmp_path / "sample.jpg").write_bytes(b"jpeg-test")
     client = TestClient(create_app(testing=True))
 
-    response = client.get(
-        "/thumbs/sample.jpg", headers={"Origin": "http://homeassistant.local:8123"}
-    )
+    response = client.get("/thumbs/sample.jpg", headers={"Origin": "http://homeassistant.local:8123"})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "*"

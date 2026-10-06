@@ -391,7 +391,7 @@ def discovered() -> list[dict[str, object]]:
 
 
 def _is_session_owned_locked(session: "_BrowseSession | None") -> bool:
-    """Check if the session is still active (assumes _BROWSE_LOCK is held)."""
+    """Check ownership while the caller holds _BROWSE_LOCK."""
     return session is None or (_BROWSE_SESSION is session and not session.stop.is_set())
 
 
@@ -494,7 +494,11 @@ def _handle_service_state_change(session, service_type, name, state_change) -> N
         # Check ownership and delete under the same lock used by stop/start so
         # a retired browser cannot erase a record published by its replacement.
         with _BROWSE_LOCK:
-            if session is None or _BROWSE_SESSION is not session or session.stop.is_set():
+            if (
+                session is None
+                or _BROWSE_SESSION is not session
+                or session.stop.is_set()
+            ):
                 return
             _DISCOVERED.pop(str(name or ""), None)
         return

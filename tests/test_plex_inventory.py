@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Machine-checked Plex route containment and module inventory."""
-
 from __future__ import annotations
 
 import ast
