@@ -959,35 +959,25 @@ def resolve_streams(url: str):
     provider = provider_from_url(url)
     debug_log("resolver", f"Resolving streams for provider={provider} use_invidious={use_invid}")
     if use_invid and is_youtube_url(url):
+        def _update_state(outcome: str, err: str = "", succ: bool = False):
+            _update_resolver_runtime_state(
+                provider=provider,
+                effective_format="invidious_auto",
+                transport="invidious",
+                outcome_category=outcome,
+                error=err,
+                success=succ,
+            )
+
         try:
             stream, audio = resolve_streams_invidious(url, base=invid_base)
-            _update_resolver_runtime_state(
-                provider=provider,
-                effective_format="invidious_auto",
-                transport="invidious",
-                outcome_category="success",
-                success=True,
-            )
+            _update_state("success", succ=True)
             return stream, audio
         except HTTPException as exc:
-            _update_resolver_runtime_state(
-                provider=provider,
-                effective_format="invidious_auto",
-                transport="invidious",
-                outcome_category=_categorize_resolver_error(str(exc.detail or "")),
-                error=str(exc.detail or ""),
-                success=False,
-            )
+            _update_state(_categorize_resolver_error(str(exc.detail or "")), str(exc.detail or ""))
             raise
         except Exception as exc:
-            _update_resolver_runtime_state(
-                provider=provider,
-                effective_format="invidious_auto",
-                transport="invidious",
-                outcome_category="resolve_error",
-                error=f"{type(exc).__name__}: {exc}",
-                success=False,
-            )
+            _update_state("resolve_error", f"{type(exc).__name__}: {exc}")
             raise
     return resolve_streams_ytdlp(url)
 
