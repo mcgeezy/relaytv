@@ -541,15 +541,8 @@ def build_ytdlp_base_args() -> list[str]:
     base = (os.getenv("YTDLP_ARGS") or "").strip()
     parts: list[str] = shlex.split(base) if base else []
 
-    def truthy(v: str | None) -> bool:
-        return (v or "").strip().lower() in ("1", "true", "yes", "on")
-
-    def has_opt(opt: str) -> bool:
-        # exact match or --opt=...
-        return any(p == opt or p.startswith(opt + "=") for p in parts)
-
     def add_opt(opt: str, val: str | None = None) -> None:
-        if has_opt(opt):
+        if _has_opt(parts, opt):
             return
         parts.append(opt)
         if val is not None:
