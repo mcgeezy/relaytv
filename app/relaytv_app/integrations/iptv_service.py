@@ -318,7 +318,7 @@ def parse_m3u(text: str, *, base_url: str = "") -> list[dict[str, object]]:
         if line.startswith("#EXTINF"):
             info = line.split(":", 1)[1] if ":" in line else ""
             attrs_text, title = _split_extinf(info)
-            attrs = {k.lower(): (v1 or v2 or v3) for k, v1, v2, v3 in attr_re_findall(attrs_text)}
+            attrs = {k.lower(): (v1 or v2 or v3).strip() for k, v1, v2, v3 in attr_re_findall(attrs_text)}
             pending = {
                 "name": title or attrs.get("tvg-name") or "Untitled channel",
                 "tvg_id": attrs.get("tvg-id", ""),
