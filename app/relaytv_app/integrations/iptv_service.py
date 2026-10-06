@@ -37,7 +37,8 @@ _WORKER_LOCK = threading.Lock()
 _WORKER_STOP: threading.Event | None = None
 _WORKER_THREAD: threading.Thread | None = None
 
-_ATTR_RE = re.compile(r"([A-Za-z0-9_-]+)=(\"[^\"]*\"|'[^']*'|[^\s,]*)")
+_ATTR_RE = re.compile(r"([A-Za-z0-9_-]+)=(?:\"([^\"]*)\"|'([^']*)'|([^\s,]*))")
+_SPLIT_EXTINF_RE = re.compile(r"^((?:[^,\"']|\"[^\"]*\"|'[^']*')*),(.*)$")
 _HLS_SOURCE_TAGS = ("#EXT-X-TARGETDURATION", "#EXT-X-STREAM-INF", "#EXT-X-MEDIA-SEQUENCE")
 
 
@@ -289,18 +290,9 @@ def delete_source(source_id: str) -> None:
 
 
 def _split_extinf(text: str) -> tuple[str, str]:
-    quoted = False
-    quote = ""
-    for index, char in enumerate(text):
-        if char in {'"', "'"}:
-            if quoted and char == quote:
-                quoted = False
-                quote = ""
-            elif not quoted:
-                quoted = True
-                quote = char
-        elif char == "," and not quoted:
-            return text[:index], text[index + 1 :].strip()
+    m = _SPLIT_EXTINF_RE.match(text)
+    if m:
+        return m.group(1), m.group(2).strip()
     return text, ""
 
 
@@ -316,6 +308,9 @@ def parse_m3u(text: str, *, base_url: str = "") -> list[dict[str, object]]:
     max_entries = env_int("RELAYTV_IPTV_MAX_CHANNELS", 100000, minimum=1, maximum=500000)
     entries: list[dict[str, object]] = []
     pending: dict[str, object] | None = None
+
+    attr_re_findall = _ATTR_RE.findall
+
     for raw_line in lines:
         line = raw_line.strip()
         if not line:
@@ -323,12 +318,7 @@ def parse_m3u(text: str, *, base_url: str = "") -> list[dict[str, object]]:
         if line.startswith("#EXTINF"):
             info = line.split(":", 1)[1] if ":" in line else ""
             attrs_text, title = _split_extinf(info)
-            attrs: dict[str, str] = {}
-            for match in _ATTR_RE.finditer(attrs_text):
-                value = match.group(2).strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-                    value = value[1:-1]
-                attrs[match.group(1).lower()] = value.strip()
+            attrs = {k.lower(): (v1 or v2 or v3).strip() for k, v1, v2, v3 in attr_re_findall(attrs_text)}
             pending = {
                 "name": title or attrs.get("tvg-name") or "Untitled channel",
                 "tvg_id": attrs.get("tvg-id", ""),

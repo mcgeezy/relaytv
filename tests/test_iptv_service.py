@@ -418,3 +418,21 @@ def test_disabled_source_hidden_from_discover_but_kept_in_my_channels(iptv_tmp) 
     mine = iptv_service.list_channels(added_only=True, visibility="all")
     assert mine["total"] == 1
     assert str(mine["items"][0]["channel_id"]) == cid
+
+
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_padded_m3u_attributes_preserve_group_filtering(iptv_tmp, quote):
+    playlist = (
+        "#EXTM3U\n"
+        f"#EXTINF:-1 group-title={quote} News {quote} "
+        f"tvg-id={quote} news.example {quote},News\n"
+        "https://stream.example/news.m3u8\n"
+    )
+    source = iptv_service.create_source(name="Padded", content=playlist)
+    iptv_service.refresh_source(str(source["id"]))
+
+    catalog = iptv_service.list_channels(source_id=str(source["id"]), group="News")
+
+    assert catalog["total"] == 1
+    assert catalog["groups"] == ["News"]
+    assert catalog["items"][0]["tvg_id"] == "news.example"
