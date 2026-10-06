@@ -706,6 +706,19 @@ def current_playback_intent() -> int:
         return _PLAYBACK_INTENT
 
 
+def apply_playback_intent(intent: int, effect: Callable[[], None]) -> bool:
+    """Apply local track/metadata changes only to the captured playback.
+
+    Match the load path's MPV -> intent lock order. The effect must be bounded
+    local control work: no media resolution, polling, or new playback intent.
+    """
+    with MPV_LOCK, _INTENT_LOCK:
+        if intent != _PLAYBACK_INTENT:
+            return False
+        effect()
+        return True
+
+
 def finish_playback_intent(intent: int, effect: Callable[[], None]) -> bool:
     """Retire and finish only the captured generation, as one owned effect.
 
@@ -5739,6 +5752,16 @@ def _play_item_owned(
         _emit_plex_timeline_from_now(_outgoing_now, "stopped")
     _run_owned("publish", _publish_playback)
     _emit_plex_timeline_from_now(now, "playing")
+
+    if provider == "jellyfin" and now.get("jellyfin_item_id"):
+        from .integrations import jellyfin_service
+
+        jellyfin_service.apply_startup_stream_tracks(
+            audio_stream_index=now.get("jellyfin_audio_stream_index"),
+            subtitle_stream_index=now.get("jellyfin_subtitle_stream_index"),
+            expected_item_id=str(now["jellyfin_item_id"]),
+            playback_intent=intent,
+        )
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.

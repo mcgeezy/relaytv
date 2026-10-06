@@ -807,3 +807,20 @@ def test_a_first_play_reports_no_outgoing_stop(harness, monkeypatch) -> None:
     )
 
     assert emitted == ["playing"]
+
+
+def test_jellyfin_startup_tracks_receive_the_owning_playback_intent(harness, monkeypatch):
+    from relaytv_app.integrations import jellyfin_service
+
+    calls = []
+    monkeypatch.setattr(jellyfin_service, "apply_startup_stream_tracks", lambda **kw: calls.append(kw))
+    now = player.play_item(
+        {"url": "https://media.test/movie.mkv", "provider": "jellyfin", "jellyfin_item_id": "movie",
+         "jellyfin_audio_stream_index": 2, "jellyfin_subtitle_stream_index": -1},
+        use_resolver=False, cec=False, clear_queue=False, mode="play_now",
+    )
+    assert now["jellyfin_item_id"] == "movie"
+    assert calls == [{
+        "audio_stream_index": 2, "subtitle_stream_index": -1,
+        "expected_item_id": "movie", "playback_intent": player.current_playback_intent(),
+    }]

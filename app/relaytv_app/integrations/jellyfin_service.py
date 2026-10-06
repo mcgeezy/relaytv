@@ -1329,7 +1329,12 @@ def enrich_now_stream_metadata(
     if not selected_sub:
         selected_sub = extract_subtitle_stream_index_from_url(str(out.get("url") or ""))
 
-    if isinstance(audio_streams, list) and audio_streams:
+    # Server conversions renumber demux streams. Keep the original selected
+    # stream indexes rather than mistaking output index 1 for source index 1.
+    original_stream_layout = str(out.get("jellyfin_stream_mode") or "").lower() not in {
+        "transcode", "remux",
+    }
+    if original_stream_layout and isinstance(audio_streams, list) and audio_streams:
         try:
             runtime_a_idx, _ = runtime_selected_audio_stream(audio_streams)
             if runtime_a_idx is not None:
@@ -1337,7 +1342,7 @@ def enrich_now_stream_metadata(
         except Exception:
             pass
 
-    if isinstance(subtitle_streams, list) and subtitle_streams:
+    if original_stream_layout and isinstance(subtitle_streams, list) and subtitle_streams:
         try:
             runtime_s_idx, _, s_off = runtime_selected_subtitle_stream(subtitle_streams)
             if s_off:
@@ -1639,8 +1644,11 @@ def apply_startup_stream_tracks(
     delay_sec: float = 0.1,
     run_async: bool = True,
     expected_item_id: str = "",
+    playback_intent: int | None = None,
 ) -> None:
-    """Best-effort track selection at startup once mpv demuxes the stream."""
+    """Best-effort track selection owned by one playback generation."""
+    intent = player.current_playback_intent() if playback_intent is None else playback_intent
+    expected_id = canonical_item_id(expected_item_id)
     target_audio_idx: int | None = None
     if audio_stream_index is not None and str(audio_stream_index).strip() not in ("", "auto", "none"):
         try:
@@ -1690,17 +1698,45 @@ def apply_startup_stream_tracks(
     ):
         return
 
+    def _current_item() -> dict | None:
+        cur = state.NOW_PLAYING
+        if not isinstance(cur, dict):
+            return None
+        if expected_id and canonical_item_id(cur.get("jellyfin_item_id")) != expected_id:
+            return None
+        return cur
+
+    def _apply() -> None:
+        cur = _current_item()
+        if cur is None:
+            return
+        # The server has already selected/remapped tracks for conversions.
+        if str(cur.get("jellyfin_stream_mode") or "").lower() in {"transcode", "remux"}:
+            return
+        if target_audio_idx is not None or target_audio_lang:
+            try_set_mpv_audio_track(
+                preferred_stream_index=target_audio_idx,
+                language=target_audio_lang,
+            )
+        if sub_off:
+            try_set_mpv_subtitle_track(off=True)
+        elif target_sub_idx is not None or target_sub_lang:
+            try_set_mpv_subtitle_track(
+                preferred_stream_index=target_sub_idx,
+                language=target_sub_lang,
+            )
+        updated_now = enrich_now_stream_metadata(
+            dict(cur),
+            detail=cur,
+            audio_stream_index=target_audio_idx,
+            subtitle_stream_index="-1" if sub_off else target_sub_idx,
+        )
+        playback_service.update_now_playing(updated_now)
+
     def _worker() -> None:
         for _ in range(max_retries):
-            if expected_item_id:
-                try:
-                    cur = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else {}
-                    cur_iid = canonical_item_id(cur.get("jellyfin_item_id"))
-                    exp_iid = canonical_item_id(expected_item_id)
-                    if cur_iid and exp_iid and cur_iid != exp_iid:
-                        break
-                except Exception:
-                    pass
+            if not player.playback_intent_current(intent) or _current_item() is None:
+                return
             try:
                 tl = player.mpv_get("track-list")
             except Exception:
@@ -1709,30 +1745,13 @@ def apply_startup_stream_tracks(
                 isinstance(t, dict) and str(t.get("type") or "").strip().lower() == "audio"
                 for t in tl
             ):
-                if target_audio_idx is not None or target_audio_lang:
-                    try_set_mpv_audio_track(
-                        preferred_stream_index=target_audio_idx,
-                        language=target_audio_lang,
-                    )
-                if sub_off:
-                    try_set_mpv_subtitle_track(off=True)
-                elif target_sub_idx is not None or target_sub_lang:
-                    try_set_mpv_subtitle_track(
-                        preferred_stream_index=target_sub_idx,
-                        language=target_sub_lang,
-                    )
+                # Poll outside locks, then atomically recheck ownership and
+                # apply local changes against Play/Stop/Close and publication.
                 try:
-                    cur_now = state.NOW_PLAYING
-                    if isinstance(cur_now, dict):
-                        updated_now = enrich_now_stream_metadata(
-                            dict(cur_now),
-                            audio_stream_index=target_audio_idx,
-                            subtitle_stream_index=target_sub_idx,
-                        )
-                        playback_service.update_now_playing(updated_now)
+                    player.apply_playback_intent(intent, _apply)
                 except Exception:
-                    pass
-                break
+                    logger.debug("jellyfin_startup_tracks_failed", exc_info=True)
+                return
             time.sleep(delay_sec)
 
     if run_async:
@@ -2075,11 +2094,6 @@ def _restart_with_stream_params(
         clear_queue=False,
         mode=mode,
         start_pos=start_pos,
-    )
-    apply_startup_stream_tracks(
-        audio_stream_index=audio_stream_index,
-        subtitle_stream_index=subtitle_stream_index,
-        expected_item_id=str(item_id),
     )
     now_out = switched if isinstance(switched, dict) else dict(play_payload)
     now_out["jellyfin_item_id"] = item_id
@@ -3308,12 +3322,6 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 mode="jellyfin_play",
                 start_pos=start_sec,
             )
-            if item_id:
-                apply_startup_stream_tracks(
-                    audio_stream_index=audio_stream_index,
-                    subtitle_stream_index=subtitle_stream_index,
-                    expected_item_id=str(item_id),
-                )
             # Preserve Jellyfin identifiers for progress/session reporting.
             if isinstance(now, dict):
                 now = dict(now)
