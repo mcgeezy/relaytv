@@ -7382,3 +7382,33 @@ def test_ytdlp_update_start_worker_is_idempotent(monkeypatch: pytest.MonkeyPatch
     ytdlp_update.start_worker()
 
     assert len(starts) == 1, "worker thread should only be started once"
+
+
+def test_format_mpv_lang_list() -> None:
+    assert player._format_mpv_lang_list("") == ""
+    assert player._format_mpv_lang_list("eng") == "eng,en"
+    assert player._format_mpv_lang_list("en") == "en,eng"
+    assert player._format_mpv_lang_list("jpn,eng") == "jpn,ja,eng,en"
+    assert player._format_mpv_lang_list("en-US") == "en-us,en,eng"
+    assert player._format_mpv_lang_list("spa; eng") == "spa,es,eng,en"
+
+
+def test_build_mpv_args_audio_sub_languages(monkeypatch) -> None:
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_audio_lang": "eng", "sub_lang": "off"})
+    args = player._build_mpv_args("http://example.com/stream.mkv", None, mode="x11")
+    assert "--alang=eng,en" in args
+    assert "--sid=no" in args
+
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_audio_lang": "jpn", "sub_lang": "eng"})
+    args_sub = player._build_mpv_args("http://example.com/stream.mkv", None, mode="x11")
+    assert "--alang=jpn,ja" in args_sub
+    assert "--slang=eng,en" in args_sub
+
+
+def test_apply_startup_mpv_runtime_settings(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(player, "mpv_set", lambda k, v: calls.append((k, v)))
+    settings = {"jellyfin_audio_lang": "eng", "sub_lang": "off"}
+    player._apply_startup_mpv_runtime_settings(settings)
+    assert ("alang", "eng,en") in calls
+    assert ("sid", "no") in calls

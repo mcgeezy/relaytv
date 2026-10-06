@@ -1187,3 +1187,202 @@ def test_progress_still_reports_a_paused_item(monkeypatch) -> None:
     assert payload is not None
     assert payload["IsPaused"] is True
     assert payload["PositionTicks"] == 420_000_000
+
+
+def test_apply_startup_stream_tracks_selects_language(monkeypatch) -> None:
+    set_calls: list[tuple[str, object]] = []
+    track_list = [
+        {"id": 1, "type": "audio", "lang": "jpn", "src-id": 1, "selected": True},
+        {"id": 2, "type": "audio", "lang": "eng", "src-id": 2, "selected": False},
+        {"id": 3, "type": "sub", "lang": "eng", "src-id": 3, "selected": False},
+    ]
+
+    def fake_mpv_get(key):
+        if key == "track-list":
+            return track_list
+        return None
+
+    def fake_mpv_set(key, val):
+        set_calls.append((key, val))
+        if key == "aid":
+            for t in track_list:
+                if t.get("type") == "audio":
+                    t["selected"] = t.get("id") == val
+        elif key == "sid":
+            for t in track_list:
+                if t.get("type") == "sub":
+                    t["selected"] = t.get("id") == val
+
+    monkeypatch.setattr(player, "mpv_get", fake_mpv_get)
+    monkeypatch.setattr(player, "mpv_set", fake_mpv_set)
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "item1", "url": "http://jf/stream"})
+    monkeypatch.setattr(playback_service, "update_now_playing", lambda n: None)
+
+    jellyfin_service.apply_startup_stream_tracks(
+        audio_language="eng",
+        subtitle_stream_index="-1",
+        run_async=False,
+        expected_item_id="item1",
+    )
+
+    assert ("aid", 2) in set_calls
+    assert ("sid", "no") in set_calls
+
+
+def test_enrich_now_stream_metadata_uses_runtime_mpv_track(monkeypatch) -> None:
+    track_list = [
+        {"id": 1, "type": "audio", "lang": "jpn", "ff-index": 1, "selected": False},
+        {"id": 2, "type": "audio", "lang": "eng", "ff-index": 2, "selected": True},
+    ]
+    monkeypatch.setattr(player, "mpv_get", lambda k: track_list if k == "track-list" else None)
+
+    detail = {
+        "audio_streams": [
+            {"index": 1, "language": "jpn", "display": "Japanese"},
+            {"index": 2, "language": "eng", "display": "English"},
+        ]
+    }
+    now = {"url": "http://jf/stream?audioStreamIndex=1", "jellyfin_item_id": "abc"}
+    enriched = jellyfin_service.enrich_now_stream_metadata(now, detail=detail)
+
+    # Runtime track 2 (English) overrides stale URL param 1 (Japanese)
+    assert enriched.get("audio_language") == "eng"
+    assert enriched.get("jellyfin_audio_language") == "eng"
+
+
+def test_smart_item_from_url_includes_preferred_stream_indices(monkeypatch) -> None:
+    monkeypatch.setattr(jellyfin_receiver, "status", lambda: {"server_url": "http://jf"})
+    monkeypatch.setattr(jellyfin_service, "preferred_stream_indices", lambda item_id, user_id_override=None: (2, 5))
+    monkeypatch.setattr(jellyfin_service, "select_playback_url", lambda **kwargs: {"url": "http://jf/stream", "mode": "direct"})
+    monkeypatch.setattr(jellyfin_receiver, "get_item_metadata", lambda *args, **kwargs: {})
+
+    item = jellyfin_service.smart_item_from_url("http://jf/Items/123/Download")
+    assert item["jellyfin_audio_stream_index"] == 2
+    assert item["jellyfin_subtitle_stream_index"] == 5
+
+
+@pytest.mark.parametrize("replacement", ["upload", "same_item", "stop"])
+def test_startup_tracks_discard_retired_playback_after_blocked_read(monkeypatch, replacement):
+    entered, release = threading.Event(), threading.Event()
+    tracks = [{"id": 2, "type": "audio", "lang": "eng", "selected": True}]
+    writes = []
+    publications = []
+    errors = []
+    monkeypatch.setattr(state, "NOW_PLAYING", {"jellyfin_item_id": "item1"})
+    monkeypatch.setattr(state, "SESSION_STATE", "playing")
+    monkeypatch.setattr(state, "SESSION_POSITION", 0)
+    monkeypatch.setattr(state, "_persist_session_payload", lambda *args: True)
+    monkeypatch.setattr(state, "persist_queue", lambda: True)
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    monkeypatch.setattr(player, "mpv_set", lambda key, value: writes.append((key, value)))
+    monkeypatch.setattr(playback_service, "update_now_playing", publications.append)
+
+    def read(key):
+        entered.set()
+        assert release.wait(5)
+        return tracks
+
+    monkeypatch.setattr(player, "mpv_get", read)
+    intent = player.claim_playback_intent()
+
+    def run():
+        try:
+            jellyfin_service.apply_startup_stream_tracks(
+                audio_language="eng", expected_item_id="item1",
+                playback_intent=intent, run_async=False,
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        if replacement == "stop":
+            playback_service.clear_session()
+        else:
+            player.claim_playback_intent()
+            state.NOW_PLAYING = (
+                {"jellyfin_item_id": "item1", "url": "http://replacement"}
+                if replacement == "same_item" else {"provider": "upload"}
+            )
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert writes == []
+    assert publications == []
+
+
+def test_startup_tracks_reject_missing_jellyfin_identity(monkeypatch):
+    writes = []
+    monkeypatch.setattr(state, "NOW_PLAYING", {"provider": "upload"})
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    monkeypatch.setattr(player, "mpv_get", lambda key: [
+        {"id": 2, "type": "audio", "lang": "eng", "selected": True},
+    ])
+    monkeypatch.setattr(player, "mpv_set", lambda key, value: writes.append((key, value)))
+    jellyfin_service.apply_startup_stream_tracks(
+        audio_language="eng", expected_item_id="old-item", run_async=False,
+    )
+    assert writes == []
+
+
+def test_track_effect_serializes_with_new_playback_intent(monkeypatch):
+    entered, release, competing, claimed = (threading.Event() for _ in range(4))
+    outcomes = []
+    intent = player.claim_playback_intent()
+
+    def effect():
+        entered.set()
+        assert release.wait(5)
+        outcomes.append("track written")
+
+    def replace():
+        competing.set()
+        player.claim_playback_intent()
+        outcomes.append("new playback")
+        claimed.set()
+
+    worker = threading.Thread(target=lambda: player.apply_playback_intent(intent, effect))
+    competitor = threading.Thread(target=replace)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        competitor.start()
+        assert competing.wait(5)
+        assert not claimed.wait(0.1)
+    finally:
+        release.set()
+        worker.join(5)
+        if competitor.ident is not None:
+            competitor.join(5)
+    assert not worker.is_alive()
+    assert not competitor.is_alive()
+    assert outcomes == ["track written", "new playback"]
+
+
+@pytest.mark.parametrize("mode", ["transcode", "remux"])
+def test_enrich_converted_stream_preserves_original_track_indexes(monkeypatch, mode):
+    monkeypatch.setattr(player, "mpv_get", lambda key: [
+        {"id": 1, "type": "audio", "lang": "eng", "ff-index": 1, "selected": True},
+    ])
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {
+        "track-list": [{"id": 1, "type": "sub", "lang": "eng", "ff-index": 2, "selected": True}],
+        "sid": 1, "sub-visibility": True,
+    })
+    detail = {
+        "audio_streams": [{"index": 1, "language": "jpn"}, {"index": 2, "language": "eng"}],
+        "subtitle_streams": [{"index": 2, "language": "jpn"}, {"index": 3, "language": "eng"}],
+    }
+    now = {
+        "jellyfin_stream_mode": mode,
+        "jellyfin_audio_stream_index": "2",
+        "jellyfin_subtitle_stream_index": "3",
+    }
+    enriched = jellyfin_service.enrich_now_stream_metadata(now, detail=detail)
+    assert enriched["jellyfin_audio_stream_index"] == "2"
+    assert enriched["jellyfin_subtitle_stream_index"] == "3"
+    assert enriched["audio_language"] == "eng"
+    assert enriched["subtitle_language"] == "eng"

@@ -1329,6 +1329,29 @@ def enrich_now_stream_metadata(
     if not selected_sub:
         selected_sub = extract_subtitle_stream_index_from_url(str(out.get("url") or ""))
 
+    # Server conversions renumber demux streams. Keep the original selected
+    # stream indexes rather than mistaking output index 1 for source index 1.
+    original_stream_layout = str(out.get("jellyfin_stream_mode") or "").lower() not in {
+        "transcode", "remux",
+    }
+    if original_stream_layout and isinstance(audio_streams, list) and audio_streams:
+        try:
+            runtime_a_idx, _ = runtime_selected_audio_stream(audio_streams)
+            if runtime_a_idx is not None:
+                selected_audio = str(runtime_a_idx)
+        except Exception:
+            pass
+
+    if original_stream_layout and isinstance(subtitle_streams, list) and subtitle_streams:
+        try:
+            runtime_s_idx, _, s_off = runtime_selected_subtitle_stream(subtitle_streams)
+            if s_off:
+                selected_sub = "-1"
+            elif runtime_s_idx is not None:
+                selected_sub = str(runtime_s_idx)
+        except Exception:
+            pass
+
     selected_audio_lang = ""
     if isinstance(audio_streams, list):
         target_idx = None
@@ -1609,6 +1632,135 @@ def try_set_mpv_subtitle_track(
             if target_display and target_display in title:
                 return True
     return False
+
+
+def apply_startup_stream_tracks(
+    *,
+    audio_stream_index: int | str | None = None,
+    audio_language: str = "",
+    subtitle_stream_index: int | str | None = None,
+    subtitle_language: str = "",
+    max_retries: int = 15,
+    delay_sec: float = 0.1,
+    run_async: bool = True,
+    expected_item_id: str = "",
+    playback_intent: int | None = None,
+) -> None:
+    """Best-effort track selection owned by one playback generation."""
+    intent = player.current_playback_intent() if playback_intent is None else playback_intent
+    expected_id = canonical_item_id(expected_item_id)
+    target_audio_idx: int | None = None
+    if audio_stream_index is not None and str(audio_stream_index).strip() not in ("", "auto", "none"):
+        try:
+            target_audio_idx = int(audio_stream_index)
+        except Exception:
+            target_audio_idx = None
+
+    target_sub_idx: int | None = None
+    sub_off = False
+    if subtitle_stream_index is not None:
+        sub_str = str(subtitle_stream_index).strip().lower()
+        if sub_str in ("-1", "none", "off", "no", "disabled"):
+            sub_off = True
+        else:
+            try:
+                target_sub_idx = int(subtitle_stream_index)
+            except Exception:
+                target_sub_idx = None
+
+    target_audio_lang = str(audio_language or "").strip()
+    target_sub_lang = str(subtitle_language or "").strip()
+
+    if not target_audio_lang and target_audio_idx is None:
+        try:
+            s = state.get_settings()
+        except Exception:
+            s = {}
+        target_audio_lang = str(s.get("jellyfin_audio_lang") or "").strip()
+
+    if not target_sub_lang and target_sub_idx is None and not sub_off:
+        try:
+            s = state.get_settings()
+        except Exception:
+            s = {}
+        sub_pref = str(s.get("jellyfin_sub_lang") or "").strip()
+        if sub_pref.lower() in ("off", "none", "no", "disabled"):
+            sub_off = True
+        else:
+            target_sub_lang = sub_pref
+
+    if (
+        target_audio_idx is None
+        and not target_audio_lang
+        and target_sub_idx is None
+        and not target_sub_lang
+        and not sub_off
+    ):
+        return
+
+    def _current_item() -> dict | None:
+        cur = state.NOW_PLAYING
+        if not isinstance(cur, dict):
+            return None
+        if expected_id and canonical_item_id(cur.get("jellyfin_item_id")) != expected_id:
+            return None
+        return cur
+
+    def _apply() -> None:
+        cur = _current_item()
+        if cur is None:
+            return
+        # The server has already selected/remapped tracks for conversions.
+        if str(cur.get("jellyfin_stream_mode") or "").lower() in {"transcode", "remux"}:
+            return
+        if target_audio_idx is not None or target_audio_lang:
+            try_set_mpv_audio_track(
+                preferred_stream_index=target_audio_idx,
+                language=target_audio_lang,
+            )
+        if sub_off:
+            try_set_mpv_subtitle_track(off=True)
+        elif target_sub_idx is not None or target_sub_lang:
+            try_set_mpv_subtitle_track(
+                preferred_stream_index=target_sub_idx,
+                language=target_sub_lang,
+            )
+        updated_now = enrich_now_stream_metadata(
+            dict(cur),
+            detail=cur,
+            audio_stream_index=target_audio_idx,
+            subtitle_stream_index="-1" if sub_off else target_sub_idx,
+        )
+        playback_service.update_now_playing(updated_now)
+
+    def _worker() -> None:
+        for _ in range(max_retries):
+            if not player.playback_intent_current(intent) or _current_item() is None:
+                return
+            try:
+                tl = player.mpv_get("track-list")
+            except Exception:
+                tl = None
+            if isinstance(tl, list) and any(
+                isinstance(t, dict) and str(t.get("type") or "").strip().lower() == "audio"
+                for t in tl
+            ):
+                # Poll outside locks, then atomically recheck ownership and
+                # apply local changes against Play/Stop/Close and publication.
+                try:
+                    player.apply_playback_intent(intent, _apply)
+                except Exception:
+                    logger.debug("jellyfin_startup_tracks_failed", exc_info=True)
+                return
+            time.sleep(delay_sec)
+
+    if run_async:
+        try:
+            threading.Thread(target=_worker, daemon=True, name="relaytv-jellyfin-stream-tracks").start()
+        except Exception:
+            _worker()
+    else:
+        _worker()
 
 
 def runtime_selected_audio_stream(audio_streams: list[dict[str, object]]) -> tuple[int | None, str]:
@@ -1930,6 +2082,8 @@ def _restart_with_stream_params(
         **({"thumbnail_local": now.get("thumbnail_local")} if now.get("thumbnail_local") else {}),
         "jellyfin_item_id": item_id,
         **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+        **({"jellyfin_audio_stream_index": audio_stream_index} if audio_stream_index is not None else {}),
+        **({"jellyfin_subtitle_stream_index": subtitle_stream_index} if subtitle_stream_index is not None else {}),
     }
 
     playback_service.suppress_auto_next(2.0)
@@ -2543,6 +2697,8 @@ def smart_item_from_url(
                 else {}
             ),
             **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+            **({"jellyfin_audio_stream_index": pref_audio_idx} if pref_audio_idx is not None else {}),
+            **({"jellyfin_subtitle_stream_index": pref_sub_idx} if pref_sub_idx is not None else {}),
             "jellyfin_stream_mode": str(selected.get("mode") or "direct"),
             "jellyfin_stream_reason": str(selected.get("reason") or ""),
         }
@@ -3148,6 +3304,16 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 else smart_item_from_url(source_url, start_pos=start_sec)
             )
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
+            if isinstance(play_target, dict):
+                play_target["jellyfin_item_id"] = item_id
+                if media_source_id:
+                    play_target["jellyfin_media_source_id"] = media_source_id
+                play_target["jellyfin_stream_mode"] = str(selected_stream.get("mode") or "direct")
+                play_target["jellyfin_stream_reason"] = str(selected_stream.get("reason") or "")
+                if audio_stream_index is not None:
+                    play_target["jellyfin_audio_stream_index"] = audio_stream_index
+                if subtitle_stream_index is not None:
+                    play_target["jellyfin_subtitle_stream_index"] = subtitle_stream_index
             now = playback_service.play_now(
                 play_target,
                 use_resolver=bool(req.use_ytdlp),

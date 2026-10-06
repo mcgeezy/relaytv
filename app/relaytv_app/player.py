@@ -706,6 +706,19 @@ def current_playback_intent() -> int:
         return _PLAYBACK_INTENT
 
 
+def apply_playback_intent(intent: int, effect: Callable[[], None]) -> bool:
+    """Apply local track/metadata changes only to the captured playback.
+
+    Match the load path's MPV -> intent lock order. The effect must be bounded
+    local control work: no media resolution, polling, or new playback intent.
+    """
+    with MPV_LOCK, _INTENT_LOCK:
+        if intent != _PLAYBACK_INTENT:
+            return False
+        effect()
+        return True
+
+
 def finish_playback_intent(intent: int, effect: Callable[[], None]) -> bool:
     """Retire and finish only the captured generation, as one owned effect.
 
@@ -1114,7 +1127,8 @@ def _start_qt_shell(
         pass
     ipc_path = (os.getenv("MPV_IPC_PATH") or IPC_PATH).strip() or IPC_PATH
     audio_dev = _effective_audio_device(settings)
-    sub_lang = (settings.get("sub_lang") or runtime_config.snapshot().raw("RELAYTV_SUB_LANG") or "").strip()
+    sub_lang = _effective_sub_lang(settings)
+    audio_lang = _effective_audio_lang(settings)
     startup_volume = _configured_start_volume()
     ytdl_enabled = _env_bool("RELAYTV_MPV_YTDL", True)
     provider_hint = _provider_hint_for_stream(stream_url or "", fallback_now_playing=True)
@@ -1159,7 +1173,15 @@ def _start_qt_shell(
     if audio_dev:
         args += ["--audio-device", audio_dev]
     if sub_lang:
-        args += ["--sub-lang", sub_lang]
+        sub_off = sub_lang.lower() in {"off", "none", "disabled", "no", "false", "0"}
+        if not sub_off:
+            formatted_sub = _format_mpv_lang_list(sub_lang)
+            if formatted_sub:
+                args += ["--sub-lang", formatted_sub]
+    if audio_lang:
+        formatted_audio = _format_mpv_lang_list(audio_lang)
+        if formatted_audio:
+            args += ["--audio-lang", formatted_audio]
     if audio_url:
         args += ["--audio", audio_url]
     headers = http_headers or {}
@@ -1673,6 +1695,9 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--user-agent",
         "--referrer",
         "--start",
+        "--alang",
+        "--slang",
+        "--sid",
     )
     seen: set[str] = set()
     out: list[str] = []
@@ -2670,6 +2695,94 @@ def _x11_mode_active(selected_mode: str | None = None) -> bool:
     return _has_x11_display()
 
 
+_LANG_ISO_MAP: dict[str, list[str]] = {
+    "eng": ["en"],
+    "en": ["eng"],
+    "jpn": ["ja"],
+    "ja": ["jpn"],
+    "deu": ["de", "ger"],
+    "ger": ["de", "deu"],
+    "de": ["deu", "ger"],
+    "fra": ["fr", "fre"],
+    "fre": ["fr", "fra"],
+    "fr": ["fra", "fre"],
+    "spa": ["es"],
+    "es": ["spa"],
+    "ita": ["it"],
+    "it": ["ita"],
+    "rus": ["ru"],
+    "ru": ["rus"],
+    "kor": ["ko"],
+    "ko": ["kor"],
+    "zho": ["zh", "chi"],
+    "chi": ["zh", "zho"],
+    "zh": ["zho", "chi"],
+    "por": ["pt"],
+    "pt": ["por"],
+    "nld": ["nl", "dut"],
+    "dut": ["nl", "nld"],
+    "nl": ["nld", "dut"],
+    "pol": ["pl"],
+    "pl": ["pol"],
+    "tur": ["tr"],
+    "tr": ["tur"],
+    "swe": ["sv"],
+    "sv": ["swe"],
+    "dan": ["da"],
+    "da": ["dan"],
+    "fin": ["fi"],
+    "fi": ["fin"],
+    "nob": ["nb", "nor"],
+    "nor": ["nb", "nob"],
+    "nb": ["nob", "nor"],
+}
+
+
+def _format_mpv_lang_list(raw: str) -> str:
+    """Format a comma-separated list of language tags for mpv's --alang / --slang options."""
+    if not raw:
+        return ""
+    tags: list[str] = []
+    seen: set[str] = set()
+    for token in raw.replace(";", ",").split(","):
+        tok = token.strip().lower().replace("_", "-")
+        if not tok or tok in seen:
+            continue
+        seen.add(tok)
+        tags.append(tok)
+        if "-" in tok:
+            base_stem = tok.split("-", 1)[0]
+            if base_stem and base_stem not in seen:
+                seen.add(base_stem)
+                tags.append(base_stem)
+            tok = base_stem
+        for eq in _LANG_ISO_MAP.get(tok, []):
+            if eq not in seen:
+                seen.add(eq)
+                tags.append(eq)
+    return ",".join(tags)
+
+
+def _effective_audio_lang(settings: dict[str, Any] | None = None) -> str:
+    """Resolve preferred audio language from settings."""
+    s = settings if isinstance(settings, dict) else getattr(state, "get_settings", lambda: {})()
+    return (
+        str(s.get("jellyfin_audio_lang") or "").strip()
+        or str(s.get("audio_lang") or "").strip()
+    ).strip()
+
+
+def _effective_sub_lang(settings: dict[str, Any] | None = None) -> str:
+    """Resolve preferred subtitle language from settings or env."""
+    s = settings if isinstance(settings, dict) else getattr(state, "get_settings", lambda: {})()
+    return (
+        str(s.get("sub_lang") or "").strip()
+        or str(s.get("jellyfin_sub_lang") or "").strip()
+        or runtime_config.snapshot().raw("RELAYTV_SUB_LANG")
+        or ""
+    ).strip()
+
+
 def _build_mpv_args(
     stream_url: str,
     audio_url: str | None,
@@ -2808,10 +2921,22 @@ def _build_mpv_args(
         if conn:
             mpv_args.append(f"--drm-connector={conn}")
 
-    sub_lang = (settings.get("sub_lang") or runtime_config.snapshot().raw("RELAYTV_SUB_LANG") or "").strip()
+    sub_lang = _effective_sub_lang(settings)
     if sub_lang:
-        mpv_args.append("--sub-auto=fuzzy")
-        mpv_args.append(f"--slang={sub_lang}")
+        sub_off = sub_lang.lower() in {"off", "none", "disabled", "no", "false", "0"}
+        if sub_off:
+            mpv_args.append("--sid=no")
+        else:
+            formatted_sub = _format_mpv_lang_list(sub_lang)
+            if formatted_sub:
+                mpv_args.append("--sub-auto=fuzzy")
+                mpv_args.append(f"--slang={formatted_sub}")
+
+    audio_lang = _effective_audio_lang(settings)
+    if audio_lang:
+        formatted_audio = _format_mpv_lang_list(audio_lang)
+        if formatted_audio:
+            mpv_args.append(f"--alang={formatted_audio}")
     # Append user args, then sanitize duplicate singleton options.
     mpv_args += extra
     mpv_args = _first_wins_dedupe(mpv_args)
@@ -2934,12 +3059,14 @@ def _recover_audio_output_if_needed(settings: dict[str, Any] | None = None) -> N
     If no explicit audio device is configured and AO didn't initialize, fall back
     to mpv auto sink/device selection and reselect audio track.
     """
+    # Give mpv a brief moment to settle after initial startup.
+    time.sleep(0.08)
+    if _audio_output_ready():
+        return
     try:
         mpv_set("aid", "auto")
     except Exception:
         pass
-    # Give mpv a brief moment to settle after initial startup.
-    time.sleep(0.08)
     if _audio_output_ready():
         return
     if _audio_device_explicitly_configured(settings):
@@ -2955,12 +3082,37 @@ def _recover_audio_output_if_needed(settings: dict[str, Any] | None = None) -> N
         pass
 
 
-def _apply_startup_mpv_runtime_settings() -> None:
+def _apply_startup_mpv_runtime_settings(settings: dict[str, Any] | None = None) -> None:
     """Best-effort runtime settings used by both classic and Qt backends."""
+    if settings is None:
+        settings = getattr(state, "get_settings", lambda: {})()
     try:
         mpv_set("volume", _configured_start_volume())
     except Exception:
         pass
+    audio_lang = _effective_audio_lang(settings)
+    if audio_lang:
+        formatted_audio = _format_mpv_lang_list(audio_lang)
+        if formatted_audio:
+            try:
+                mpv_set("alang", formatted_audio)
+            except Exception:
+                pass
+    sub_lang = _effective_sub_lang(settings)
+    if sub_lang:
+        sub_off = sub_lang.lower() in {"off", "none", "disabled", "no", "false", "0"}
+        if sub_off:
+            try:
+                mpv_set("sid", "no")
+            except Exception:
+                pass
+        else:
+            formatted_sub = _format_mpv_lang_list(sub_lang)
+            if formatted_sub:
+                try:
+                    mpv_set("slang", formatted_sub)
+                except Exception:
+                    pass
 
 
 def _load_stream_in_existing_mpv(
@@ -3218,6 +3370,8 @@ def start_mpv(
         if not wait_for_ipc_ready(timeout=startup_timeout):
             raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
         _set_mpv_process_start_option_active(process_start_option_active)
+        _apply_startup_mpv_runtime_settings(settings)
+        _recover_audio_output_if_needed(settings)
         return
 
     if mode == "drm":
@@ -3234,6 +3388,8 @@ def start_mpv(
                 if not wait_for_ipc_ready(timeout=startup_timeout):
                     raise HTTPException(status_code=500, detail="mpv x11 fallback started but IPC not ready")
                 _set_mpv_process_start_option_active(process_start_option_active)
+        _apply_startup_mpv_runtime_settings(settings)
+        _recover_audio_output_if_needed(settings)
         return
 
     # auto: prefer DRM when possible, but fall back to X11 if DRM fails (e.g., desktop holds DRM master)
@@ -3261,6 +3417,8 @@ def start_mpv(
             _set_mpv_process_start_option_active(process_start_option_active)
 
     _set_mpv_process_start_option_active(process_start_option_active)
+    _apply_startup_mpv_runtime_settings(settings)
+    _recover_audio_output_if_needed(settings)
 
 
 def wait_for_ipc_ready(timeout: float = 5.0) -> bool:
@@ -5555,6 +5713,8 @@ def _play_item_owned(
         **({"jellyfin_media_source_id": item.get("jellyfin_media_source_id")} if item.get("jellyfin_media_source_id") else {}),
         **({"jellyfin_stream_mode": item.get("jellyfin_stream_mode")} if item.get("jellyfin_stream_mode") else {}),
         **({"jellyfin_stream_reason": item.get("jellyfin_stream_reason")} if item.get("jellyfin_stream_reason") else {}),
+        **({"jellyfin_audio_stream_index": item.get("jellyfin_audio_stream_index")} if item.get("jellyfin_audio_stream_index") is not None else {}),
+        **({"jellyfin_subtitle_stream_index": item.get("jellyfin_subtitle_stream_index")} if item.get("jellyfin_subtitle_stream_index") is not None else {}),
         **({"iptv_source_id": item.get("iptv_source_id")} if item.get("iptv_source_id") else {}),
         **({"iptv_channel_id": item.get("iptv_channel_id")} if item.get("iptv_channel_id") else {}),
         **({"plex_item_id": item.get("plex_item_id")} if item.get("plex_item_id") else {}),
@@ -5614,6 +5774,16 @@ def _play_item_owned(
         _emit_plex_timeline_from_now(_outgoing_now, "stopped")
     _run_owned("publish", _publish_playback)
     _emit_plex_timeline_from_now(now, "playing")
+
+    if provider == "jellyfin" and now.get("jellyfin_item_id"):
+        from .integrations import jellyfin_service
+
+        jellyfin_service.apply_startup_stream_tracks(
+            audio_stream_index=now.get("jellyfin_audio_stream_index"),
+            subtitle_stream_index=now.get("jellyfin_subtitle_stream_index"),
+            expected_item_id=str(now["jellyfin_item_id"]),
+            playback_intent=intent,
+        )
 
     # Keep exactly one "up next" item primed in mpv so queue handoff avoids
     # stop/start transitions between plays.
