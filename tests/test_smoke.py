@@ -8,8 +8,8 @@ import subprocess
 import threading
 import tomllib
 
-import pytest
 
+import pytest
 from fastapi.testclient import TestClient
 
 from relaytv_app.main import create_app
@@ -35,6 +35,9 @@ from relaytv_app.qt_shell_app import (
     _native_overlay_toasts_enabled,
     _overlay_software_mode_enabled,
     _native_idle_weather_layout,
+    _overlay_watchdog_enabled,
+    _overlay_max_rss_mb,
+    _overlay_watchdog_interval_ms,
 )
 from relaytv_app.routes import _notification_capabilities, _overlay_prefers_native_qt_toast
 
@@ -1669,6 +1672,16 @@ def test_pi_ytdlp_defaults_prefer_1080p_non_av1_without_progressive_stage(monkey
     assert ytdlp_format_policy.youtube_progressive_startup_enabled(profile) is False
 
 
+
+@pytest.mark.parametrize("profile", [{}, None, {"decode_profile": "unknown"}])
+def test_youtube_progressive_startup_candidates_edge_cases(profile: dict | None) -> None:
+    candidates = ytdlp_format_policy.youtube_progressive_startup_candidates({}, profile=profile)
+    assert candidates == [
+        'best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best',
+        'best*[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best',
+        'best[height<=1080]/best'
+    ]
+
 def test_pi_ytdlp_safe_selector_remains_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in ('YTDLP_FORMAT', 'YTDLP_FORMAT_YOUTUBE', 'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST'):
         monkeypatch.delenv(key, raising=False)
@@ -2008,6 +2021,110 @@ def test_qt_overlay_fallback_hides_cursor() -> None:
     assert 'from PySide6.QtGui import QCursor' in text
     assert 'blank_cursor = QCursor(Qt.BlankCursor)' in text
     assert 'cursor_timer.timeout.connect(_hide_cursor)' in text
+
+
+def test_qt_overlay_watchdog_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_WATCHDOG', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_MAX_RSS_MB', raising=False)
+    monkeypatch.delenv('RELAYTV_QT_OVERLAY_WATCHDOG_INTERVAL_MS', raising=False)
+
+    assert _overlay_watchdog_enabled() is True
+    assert _overlay_max_rss_mb() == 600.0
+    assert _overlay_watchdog_interval_ms() == 15000
+
+
+def test_qt_overlay_watchdog_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_WATCHDOG', '0')
+    assert _overlay_watchdog_enabled() is False
+
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_WATCHDOG', '1')
+    assert _overlay_watchdog_enabled() is True
+
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_MAX_RSS_MB', '850.5')
+    assert _overlay_max_rss_mb() == 850.5
+
+    monkeypatch.setenv('RELAYTV_QT_OVERLAY_WATCHDOG_INTERVAL_MS', '5000')
+    assert _overlay_watchdog_interval_ms() == 5000
+
+
+def test_qt_overlay_watchdog_implementation_guards() -> None:
+    text = (ROOT_DIR / 'app/relaytv_app/qt_shell_app.py').read_text()
+
+    assert 'overlay.renderProcessTerminated.connect(_on_overlay_render_process_terminated)' in text
+    assert 'def _recycle_overlay(' in text
+    assert 'def _check_overlay_watchdog(' in text
+    assert 'overlay.page().runJavaScript("Date.now()", _on_heartbeat_response)' in text
+    assert '"qt_overlay_watchdog_enabled": bool(overlay_health.get("watchdog_enabled"))' in text
+    assert '"qt_overlay_heartbeat_ok": overlay_health.get("heartbeat_ok")' in text
+    assert '"qt_overlay_renderer_rss_mb": float(overlay_health.get("renderer_rss_mb") or 0.0)' in text
+
+
+def test_idle_and_overlay_html_freeze_prevention_guards() -> None:
+    routes_text = (ROOT_DIR / 'app/relaytv_app/routes/__init__.py').read_text()
+    assert 'clockEl.textContent !== timeStr' in routes_text
+    assert 'dateEl.textContent !== dateStr' in routes_text
+    assert '__cachedSettings' in routes_text
+
+    assert '_overlayLastReportTs' in routes_text
+    assert 'stream_ping' in routes_text
+    assert 'nextDelay = 2500' in routes_text
+
+
+def test_idle_dashboard_inline_script_is_valid_javascript() -> None:
+    node = shutil.which('node')
+    assert node is not None, 'node is required by the JavaScript quality gates'
+    scripts = re.findall(r'<script>(.*?)</script>', routes._idle_html(), re.S)
+    assert scripts
+
+    for script in scripts:
+        result = subprocess.run(
+            [node, '--check', '-'],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+
+def test_overlay_stream_pings_keep_server_delivery_health_current() -> None:
+    node = shutil.which('node')
+    assert node is not None, 'node is required by the JavaScript quality gates'
+    html = routes.x11_overlay_page().body.decode()
+    script = re.findall(r'<script>(.*?)</script>', html, re.S)[0]
+    reporting = script[
+        script.index('let _overlayReportTimer') : script.index('function refreshIdleFrame')
+    ]
+    harness = """
+let nowMs = 1000;
+Date.now = () => nowMs;
+let _overlayReportedState = '';
+const sent = [];
+const _overlayToastCount = () => 0;
+const fetch = (_url, options) => {
+  sent.push({at: nowMs, payload: JSON.parse(options.body)});
+  return {catch() {}};
+};
+""" + reporting + """
+reportOverlayState('connected', 'stream_connected', 'sse', 'hello', true);
+for(let index = 0; index < 12; index += 1) {
+  nowMs += 5000;
+  reportOverlayState('connected', 'stream_connected', 'sse', 'stream_ping', true);
+}
+console.log(JSON.stringify(sent));
+"""
+    result = subprocess.run(
+        [node, '-'],
+        input=harness,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    sent = json.loads(result.stdout)
+
+    assert [item['at'] for item in sent] == [1000, 21000, 41000, 61000]
+    assert sent[-1]['payload']['client_reason'] == 'stream_ping'
 
 
 def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -7245,6 +7362,26 @@ def test_rotation_follows_an_operator_log_file_override(monkeypatch, tmp_path) -
 
     assert not custom.exists(), "the operator's log was left to grow unbounded"
     assert reopened == [str(custom)]
+
+
+def test_ytdlp_update_start_worker_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app import ytdlp_update
+
+    monkeypatch.setattr(ytdlp_update, "_WORKER_STARTED", False)
+
+    starts: list[int] = []
+
+    def mock_start(self: object) -> None:
+        starts.append(1)
+
+    monkeypatch.setattr(threading.Thread, "start", mock_start)
+
+    ytdlp_update.start_worker()
+
+    ytdlp_update.start_worker()
+    ytdlp_update.start_worker()
+
+    assert len(starts) == 1, "worker thread should only be started once"
 
 
 def test_format_mpv_lang_list() -> None:

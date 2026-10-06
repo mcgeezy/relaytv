@@ -121,20 +121,12 @@ def normalize_base_url(value: object) -> str:
         raise PeerError("device address is required")
     if "://" not in raw:
         raw = f"http://{raw}"
+
     try:
         parsed = urlsplit(raw)
     except Exception:
         raise PeerError("device address is not a valid URL")
-    scheme = (parsed.scheme or "").lower()
-    if scheme not in ("http", "https"):
-        raise PeerError("device address must use http or https")
-    host = parsed.hostname or ""
-    if not host:
-        raise PeerError("device address is missing a host")
-    # Credentials embedded in the URL would be persisted and replayed on every
-    # send; peers authenticate with a bearer token instead.
-    if parsed.username or parsed.password:
-        raise PeerError("device address must not contain credentials")
+
     try:
         # urlsplit defers port parsing until the attribute is read, so an
         # operator's typo ("tv.local:8O87") or an out-of-range number raises
@@ -143,11 +135,28 @@ def normalize_base_url(value: object) -> str:
         port = parsed.port
     except ValueError:
         raise PeerError("device address has an invalid port")
+
+    # urlsplit does not raise on invalid IPv6 formats like [tv.local] until hostname is accessed
+    try:
+        host = parsed.hostname or ""
+    except ValueError:
+        raise PeerError("device address is not a valid URL")
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise PeerError("device address must use http or https")
+    if not host:
+        raise PeerError("device address is missing a host")
+
+    # Credentials embedded in the URL would be persisted and replayed on every
+    # send; peers authenticate with a bearer token instead.
+    if parsed.username or parsed.password:
+        raise PeerError("device address must not contain credentials")
+
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc = f"{netloc}:{port}"
-    path = (parsed.path or "").rstrip("/")
-    return urlunsplit((scheme, netloc, path, "", ""))
+    return urlunsplit((scheme, netloc, (parsed.path or "").rstrip("/"), "", ""))
 
 
 def _clean_name(value: object, *, fallback: str = "") -> str:
@@ -237,6 +246,31 @@ def _matches_existing(record: dict, *, device_id: str, base_url: str) -> bool:
     return bool(base_url) and str(record.get("base_url") or "") == base_url
 
 
+def _create_peer_record(
+    *,
+    remote_device_id: str,
+    normalized_url: str,
+    name: object,
+    token: object,
+    source: str,
+    identity: dict[str, str],
+    now: float,
+) -> dict:
+    return {
+        "id": f"p_{uuid.uuid4().hex[:16]}",
+        "device_id": remote_device_id,
+        "name": _clean_name(name, fallback=_clean_name(identity.get("device_name"), fallback="RelayTV")),
+        "base_url": normalized_url,
+        "source": str(source or "manual"),
+        "token": str(token or "").strip(),
+        "version": str(identity.get("version") or ""),
+        "added_at": now,
+        "last_seen_at": now if identity else 0.0,
+        "last_ok_at": now if identity else 0.0,
+        "last_error": "",
+    }
+
+
 def add_peer(
     *,
     base_url: object,
@@ -254,25 +288,21 @@ def add_peer(
     if remote_device_id and remote_device_id == device_identity.device_id():
         raise PeerError("that address is this device")
 
-    now = time.time()
+    record = _create_peer_record(
+        remote_device_id=remote_device_id,
+        normalized_url=normalized,
+        name=name,
+        token=token,
+        source=source,
+        identity=identity,
+        now=time.time(),
+    )
+
     with _LOCK:
         peers = _load_payload()["peers"]
-        for record in peers:
-            if _matches_existing(record, device_id=remote_device_id, base_url=normalized):
+        for existing in peers:
+            if _matches_existing(existing, device_id=remote_device_id, base_url=normalized):
                 raise PeerError("that device is already added", status_code=409)
-        record = {
-            "id": f"p_{uuid.uuid4().hex[:16]}",
-            "device_id": remote_device_id,
-            "name": _clean_name(name, fallback=_clean_name(identity.get("device_name"), fallback="RelayTV")),
-            "base_url": normalized,
-            "source": str(source or "manual"),
-            "token": str(token or "").strip(),
-            "version": str(identity.get("version") or ""),
-            "added_at": now,
-            "last_seen_at": now if identity else 0.0,
-            "last_ok_at": now if identity else 0.0,
-            "last_error": "",
-        }
         peers.append(record)
         _save_payload(peers)
     return public_peer(record)
@@ -352,6 +382,19 @@ def _record_contact(
 # =========================
 
 
+def _build_request(url: str, token: str, payload: dict | None) -> urllib.request.Request:
+    data = None
+    headers = {"Accept": "application/json", "User-Agent": "RelayTV peer"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if str(token or "").strip():
+        headers["Authorization"] = f"Bearer {str(token).strip()}"
+    return urllib.request.Request(
+        url, data=data, headers=headers, method="POST" if data else "GET"
+    )
+
+
 def _request(
     base_url: str,
     path: str,
@@ -361,14 +404,7 @@ def _request(
     timeout: float = PROBE_TIMEOUT_SEC,
 ) -> dict:
     url = f"{base_url}{path}"
-    data = None
-    headers = {"Accept": "application/json", "User-Agent": "RelayTV peer"}
-    if payload is not None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    if str(token or "").strip():
-        headers["Authorization"] = f"Bearer {str(token).strip()}"
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    request = _build_request(url, token, payload)
     try:
         with urllib.request.urlopen(request, timeout=float(timeout)) as response:
             body = response.read(1_000_000)
@@ -523,16 +559,32 @@ def accepted_sources(
     """
     results = response.get("results") if isinstance(response.get("results"), list) else []
     if results:
-        rejected_urls = {
-            str(entry.get("url") or "")
-            for entry in results
-            if isinstance(entry, dict) and not entry.get("accepted")
-        }
-        return [
-            source
-            for entry, source in zip(entries, sources)
-            if str(entry.get("url") or "") not in rejected_urls
-        ]
+        accepted: list[object] = []
+        for index, (entry, source) in enumerate(zip(entries, sources)):
+            if index >= len(results):
+                logger.warning(
+                    "peer_send_partial_results sent=%d results=%d keeping_unconfirmed=%d",
+                    len(entries),
+                    len(results),
+                    len(entries) - index,
+                )
+                break
+            result = results[index]
+            if not isinstance(result, dict) or result.get("accepted") is not True:
+                continue
+            # The receiver emits one result for each request entry in request
+            # order. Confirm the echoed URL as well so a reordered or malformed
+            # response can duplicate an item locally but can never delete the
+            # wrong one. Position, rather than URL membership, distinguishes
+            # two queue instances that happen to share a URL.
+            if str(result.get("url") or "") != str(entry.get("url") or ""):
+                logger.warning(
+                    "peer_send_result_mismatch index=%d keeping_local_item",
+                    index,
+                )
+                continue
+            accepted.append(source)
+        return accepted
     if int(response.get("accepted") or 0) >= len(entries):
         return list(sources)
     logger.warning(

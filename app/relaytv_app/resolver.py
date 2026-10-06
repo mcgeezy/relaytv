@@ -410,46 +410,50 @@ def _youtube_strategy_related_retry(low_err: str) -> bool:
 
 def _preferred_js_runtime_spec() -> str:
     override = (
-        os.getenv("RELAYTV_YTDLP_JS_RUNTIME")
-        or os.getenv("YTDLP_JS_RUNTIME")
-        or ""
+        os.getenv("RELAYTV_YTDLP_JS_RUNTIME") or os.getenv("YTDLP_JS_RUNTIME") or ""
     ).strip()
-    legacy_force_node = str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on")
 
     if override:
         low = override.lower()
         if low in ("0", "false", "no", "off", "none", "disable", "disabled"):
             return ""
-        if low == "auto":
-            override = ""
-        elif ":" in override:
-            runtime_name = override.split(":", 1)[0].strip().lower()
+        if low != "auto":
+            runtime_name = low.split(":", 1)[0].strip()
             if runtime_name in ("deno", "node"):
-                binary_name = "node" if runtime_name == "node" else "deno"
-                if shutil.which(binary_name):
+                if shutil.which(runtime_name):
                     return override
                 logger.warning("configured_js_runtime_unavailable runtime=%s", override)
                 return ""
             return override
-        else:
-            if low in ("deno", "node"):
-                if shutil.which(low):
-                    return low
-                logger.warning("configured_js_runtime_unavailable runtime=%s", low)
-                return ""
-            return override
 
-    if legacy_force_node:
+    if str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on"):
         if shutil.which("node"):
             return "node"
         logger.warning("ytdlp_node_requested_but_unavailable")
         return ""
 
-    if shutil.which("deno"):
-        return "deno"
-    if shutil.which("node"):
-        return "node"
-    return ""
+    return "deno" if shutil.which("deno") else "node" if shutil.which("node") else ""
+
+
+def _add_js_and_remote(args: list[str], js_runtime: str) -> list[str]:
+    res = list(args)
+    if not _has_opt(res, "--js-runtimes") and js_runtime:
+        res += ["--js-runtimes", js_runtime]
+    if not _has_opt(res, "--remote-components"):
+        res += ["--remote-components", "ejs:github"]
+    return res
+
+
+def _deduplicate_strategies(strategies: list[tuple[list[str], list[str]]]) -> list[tuple[list[str], list[str]]]:
+    out: list[tuple[list[str], list[str]]] = []
+    seen: set[tuple[str, ...]] = set()
+    for args_base, strategy_candidates in strategies:
+        key = tuple(args_base)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((args_base, strategy_candidates))
+    return out
 
 
 def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
@@ -459,57 +463,30 @@ def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -
     strategies: list[tuple[list[str], list[str]]] = []
 
     if has_cookie_auth:
-        challenge_cookie = list(base)
-        if not _has_opt(challenge_cookie, "--js-runtimes") and js_runtime:
-            challenge_cookie += ["--js-runtimes", js_runtime]
-        if not _has_opt(challenge_cookie, "--remote-components"):
-            challenge_cookie += ["--remote-components", "ejs:github"]
-        strategies.append((challenge_cookie, candidates))
+        strategies.append((_add_js_and_remote(base, js_runtime), candidates))
 
     challenge_public = _without_opts(base, "--cookies", "--cookies-from-browser")
-    if not _has_opt(challenge_public, "--js-runtimes") and js_runtime:
-        challenge_public += ["--js-runtimes", js_runtime]
-    if not _has_opt(challenge_public, "--remote-components"):
-        challenge_public += ["--remote-components", "ejs:github"]
-    strategies.append((challenge_public, candidates))
+    strategies.append((_add_js_and_remote(challenge_public, js_runtime), candidates))
     strategies.append((default_args, candidates))
-    out: list[tuple[list[str], list[str]]] = []
-    seen: set[tuple[str, ...]] = set()
-    for args_base, strategy_candidates in strategies:
-        key = tuple(args_base)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((args_base, strategy_candidates))
-    return out
+
+    return _deduplicate_strategies(strategies)
 
 
 def _build_youtube_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
     has_cookie_auth = _has_opt(base, "--cookies") or _has_opt(base, "--cookies-from-browser")
     public_base = _without_opts(base, "--cookies", "--cookies-from-browser")
     default_args = _without_opts(base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components")
-    strategies: list[tuple[list[str], list[str]]] = []
     has_extractor_args = _has_opt(public_base, "--extractor-args")
-    has_js_runtimes = _has_opt(public_base, "--js-runtimes")
-    has_remote_components = _has_opt(public_base, "--remote-components")
     js_runtime = _preferred_js_runtime_spec()
+    strategies: list[tuple[list[str], list[str]]] = []
 
     challenge_candidates = ["", "best"] if any(c in ("", "best", "b") for c in candidates) else candidates
     if has_cookie_auth:
-        challenge_cookie = list(base)
-        if not _has_opt(challenge_cookie, "--js-runtimes") and js_runtime:
-            challenge_cookie += ["--js-runtimes", js_runtime]
-        if not _has_opt(challenge_cookie, "--remote-components"):
-            challenge_cookie += ["--remote-components", "ejs:github"]
-        strategies.append((challenge_cookie, challenge_candidates))
+        strategies.append((_add_js_and_remote(base, js_runtime), challenge_candidates))
 
-    challenge_public = list(public_base)
-    if not has_js_runtimes and js_runtime:
-        challenge_public += ["--js-runtimes", js_runtime]
-    if not has_remote_components:
-        challenge_public += ["--remote-components", "ejs:github"]
-    strategies.append((challenge_public, challenge_candidates))
+    strategies.append((_add_js_and_remote(public_base, js_runtime), challenge_candidates))
     strategies.append((default_args, candidates))
+
     if tuple(public_base) != tuple(default_args):
         strategies.append((public_base, candidates))
 
@@ -517,15 +494,8 @@ def _build_youtube_strategies(base: list[str], candidates: list[str]) -> list[tu
     if not has_extractor_args and not has_cookie_auth:
         android_last = [*public_base, "--extractor-args", "youtube:player_client=android"]
         strategies.append((android_last, candidates))
-    out: list[tuple[list[str], list[str]]] = []
-    seen: set[tuple[str, ...]] = set()
-    for args_base, strategy_candidates in strategies:
-        key = tuple(args_base)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((args_base, strategy_candidates))
-    return out
+
+    return _deduplicate_strategies(strategies)
 
 
 def build_ytdlp_base_args() -> list[str]:
@@ -541,15 +511,8 @@ def build_ytdlp_base_args() -> list[str]:
     base = (os.getenv("YTDLP_ARGS") or "").strip()
     parts: list[str] = shlex.split(base) if base else []
 
-    def truthy(v: str | None) -> bool:
-        return (v or "").strip().lower() in ("1", "true", "yes", "on")
-
-    def has_opt(opt: str) -> bool:
-        # exact match or --opt=...
-        return any(p == opt or p.startswith(opt + "=") for p in parts)
-
     def add_opt(opt: str, val: str | None = None) -> None:
-        if has_opt(opt):
+        if _has_opt(parts, opt):
             return
         parts.append(opt)
         if val is not None:
@@ -959,35 +922,25 @@ def resolve_streams(url: str):
     provider = provider_from_url(url)
     debug_log("resolver", f"Resolving streams for provider={provider} use_invidious={use_invid}")
     if use_invid and is_youtube_url(url):
+        def _update_state(outcome: str, err: str = "", succ: bool = False):
+            _update_resolver_runtime_state(
+                provider=provider,
+                effective_format="invidious_auto",
+                transport="invidious",
+                outcome_category=outcome,
+                error=err,
+                success=succ,
+            )
+
         try:
             stream, audio = resolve_streams_invidious(url, base=invid_base)
-            _update_resolver_runtime_state(
-                provider=provider,
-                effective_format="invidious_auto",
-                transport="invidious",
-                outcome_category="success",
-                success=True,
-            )
+            _update_state("success", succ=True)
             return stream, audio
         except HTTPException as exc:
-            _update_resolver_runtime_state(
-                provider=provider,
-                effective_format="invidious_auto",
-                transport="invidious",
-                outcome_category=_categorize_resolver_error(str(exc.detail or "")),
-                error=str(exc.detail or ""),
-                success=False,
-            )
+            _update_state(_categorize_resolver_error(str(exc.detail or "")), str(exc.detail or ""))
             raise
         except Exception as exc:
-            _update_resolver_runtime_state(
-                provider=provider,
-                effective_format="invidious_auto",
-                transport="invidious",
-                outcome_category="resolve_error",
-                error=f"{type(exc).__name__}: {exc}",
-                success=False,
-            )
+            _update_state("resolve_error", f"{type(exc).__name__}: {exc}")
             raise
     return resolve_streams_ytdlp(url)
 

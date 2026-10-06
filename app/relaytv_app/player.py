@@ -1966,6 +1966,11 @@ def qt_shell_runtime_telemetry(*, max_age_sec: float = 3.0) -> dict[str, Any]:
         "qt_overlay_load_failures": (data or {}).get("qt_overlay_load_failures"),
         "qt_overlay_last_load_ts": (data or {}).get("qt_overlay_last_load_ts"),
         "qt_overlay_last_error_ts": (data or {}).get("qt_overlay_last_error_ts"),
+        "qt_overlay_watchdog_enabled": (data or {}).get("qt_overlay_watchdog_enabled"),
+        "qt_overlay_heartbeat_ok": (data or {}).get("qt_overlay_heartbeat_ok"),
+        "qt_overlay_recycles": (data or {}).get("qt_overlay_recycles"),
+        "qt_overlay_last_recycle_reason": (data or {}).get("qt_overlay_last_recycle_reason"),
+        "qt_overlay_renderer_rss_mb": (data or {}).get("qt_overlay_renderer_rss_mb"),
         "qt_overlay_visible": (data or {}).get("qt_overlay_visible"),
         "qt_native_idle_enabled": (data or {}).get("qt_native_idle_enabled"),
         "qt_native_idle_visible": (data or {}).get("qt_native_idle_visible"),
@@ -5297,6 +5302,23 @@ def play_item(item_or_text, use_resolver: bool, cec: bool, clear_queue: bool, mo
     # superseded itself.
     intent = claim_playback_intent()
     try:
+        if (
+            isinstance(item_or_text, dict)
+            and str(item_or_text.get("provider") or "").strip().lower() == "plex"
+            and bool(str(item_or_text.get("plex_item_id") or "").strip())
+        ):
+            from .integrations import plex_auth
+
+            with plex_auth.PLEX_LIFECYCLE_LOCK:
+                return _play_item_owned(
+                    item_or_text,
+                    intent,
+                    use_resolver=use_resolver,
+                    cec=cec,
+                    clear_queue=clear_queue,
+                    mode=mode,
+                    start_pos=start_pos,
+                )
         return _play_item_owned(
             item_or_text,
             intent,

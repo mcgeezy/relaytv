@@ -258,9 +258,12 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_QT_NATIVE_TOASTS_TOPLEVEL` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_OVERLAY_ENABLED` | `qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
 | `RELAYTV_QT_OVERLAY_HEADLESS` | `qt_shell_app.py` | - | child process input |
+| `RELAYTV_QT_OVERLAY_MAX_RSS_MB` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_OVERLAY_SOFTWARE` | `overlay_app.py`<br>`qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
 | `RELAYTV_QT_OVERLAY_TOPLEVEL` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_OVERLAY_URL` | `player.py`<br>`qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
+| `RELAYTV_QT_OVERLAY_WATCHDOG` | `qt_shell_app.py` | - | child process input |
+| `RELAYTV_QT_OVERLAY_WATCHDOG_INTERVAL_MS` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_RESOLVE_PRESTOP` | `player.py` | - | static env |
 | `RELAYTV_QT_RUNTIME_CONTROL_FILE` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_QT_RUNTIME_CONTROL_WAIT_SEC` | `player.py` | - | static env |

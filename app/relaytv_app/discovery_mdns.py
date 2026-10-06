@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+from contextlib import suppress
 import socket
 import threading
 import time
@@ -331,16 +332,16 @@ def discovered_record_from_service(name: str, info: object) -> dict[str, object]
     """
     if info is None:
         return None
-    try:
+
+    addresses = []
+    with suppress(Exception):
         addresses = list(info.parsed_addresses())
-    except Exception:
-        addresses = []
     address = _preferred_address(addresses)
+
     port = 0
-    try:
+    with suppress(Exception):
         port = int(info.port or 0)
-    except Exception:
-        port = 0
+
     if not address or port <= 0:
         return None
 
@@ -390,11 +391,14 @@ def discovered() -> list[dict[str, object]]:
     return records
 
 
+def _is_session_owned_locked(session: "_BrowseSession | None") -> bool:
+    """Check ownership while the caller holds _BROWSE_LOCK."""
+    return session is None or (_BROWSE_SESSION is session and not session.stop.is_set())
+
+
 def _browse_session_owned(session: "_BrowseSession | None") -> bool:
-    if session is None:
-        return True
     with _BROWSE_LOCK:
-        return _BROWSE_SESSION is session and not session.stop.is_set()
+        return _is_session_owned_locked(session)
 
 
 def _resolve_service(
@@ -413,9 +417,7 @@ def _resolve_service(
         return False
     record = discovered_record_from_service(name, info)
     with _BROWSE_LOCK:
-        if session is not None and (
-            _BROWSE_SESSION is not session or session.stop.is_set()
-        ):
+        if not _is_session_owned_locked(session):
             logger.info(
                 "mdns_resolution_retired generation=%s name=%s",
                 session.generation,

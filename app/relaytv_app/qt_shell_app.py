@@ -83,6 +83,36 @@ def _embedded_web_overlay_enabled() -> bool:
     return True
 
 
+def _overlay_watchdog_enabled() -> bool:
+    override = _env_choice("RELAYTV_QT_OVERLAY_WATCHDOG")
+    if override is not None:
+        return bool(override)
+    return True
+
+
+def _overlay_max_rss_mb() -> float:
+    raw = (os.getenv("RELAYTV_QT_OVERLAY_MAX_RSS_MB") or "").strip()
+    if not raw:
+        return 600.0
+    try:
+        val = float(raw)
+        return max(100.0, val)
+    except Exception:
+        return 600.0
+
+
+def _overlay_watchdog_interval_ms() -> int:
+    raw = (os.getenv("RELAYTV_QT_OVERLAY_WATCHDOG_INTERVAL_MS") or "").strip()
+    if not raw:
+        return 15000
+    try:
+        val = int(raw)
+        return max(2000, val)
+    except Exception:
+        return 15000
+
+
+
 def _libmpv_enabled() -> bool:
     override = _env_choice("RELAYTV_QT_LIBMPV")
     if override is not None:
@@ -2277,6 +2307,9 @@ def main(argv: list[str] | None = None) -> int:
     overlay: QWebEngineView | None = None
     native_toast_host: _NativeToastLayer | None = None
     native_idle_host: _NativeIdleLayer | None = None
+    overlay_watchdog_active = overlay_enabled and _overlay_watchdog_enabled()
+    overlay_max_rss = _overlay_max_rss_mb()
+    overlay_watchdog_ms = _overlay_watchdog_interval_ms()
     overlay_health: dict[str, object] = {
         "enabled": bool(overlay_enabled),
         "software_mode": bool(overlay_software_mode),
@@ -2284,6 +2317,13 @@ def main(argv: list[str] | None = None) -> int:
         "load_failures": 0,
         "last_load_ts": 0.0,
         "last_error_ts": 0.0,
+        "watchdog_enabled": bool(overlay_watchdog_active),
+        "heartbeat_ok": None,
+        "last_heartbeat_ts": 0.0,
+        "recycles": 0,
+        "last_recycle_ts": 0.0,
+        "last_recycle_reason": "",
+        "renderer_rss_mb": 0.0,
     }
     native_toast_toplevel = False
     native_idle_toplevel = False
@@ -2412,12 +2452,102 @@ def main(argv: list[str] | None = None) -> int:
                 _eprint(f"qt-shell overlay retry in {delay_ms}ms")
             QTimer.singleShot(delay_ms, _load_overlay)
 
+        def _get_renderer_rss_mb() -> float:
+            try:
+                page = overlay.page() if overlay else None
+                pid = page.renderProcessPid() if page else 0
+                if pid <= 0:
+                    return 0.0
+                with open(f"/proc/{pid}/statm", "r") as f:
+                    pages = int(f.read().split()[1])
+                    return (pages * os.sysconf("SC_PAGE_SIZE")) / (1024 * 1024)
+            except Exception:
+                return 0.0
+
+        def _recycle_overlay(reason: str) -> None:
+            overlay_health["load_ok"] = False
+            overlay_health["last_error_ts"] = time.time()
+            overlay_health["recycles"] = int(overlay_health.get("recycles") or 0) + 1
+            overlay_health["last_recycle_ts"] = time.time()
+            overlay_health["last_recycle_reason"] = reason
+            _eprint(f"qt-shell: recycling web overlay ({reason})")
+            try:
+                page = overlay.page() if overlay else None
+                pid = page.renderProcessPid() if page else 0
+                if pid > 0:
+                    os.kill(pid, signal.SIGKILL)
+            except Exception:
+                pass
+            _show_overlay_placeholder()
+            QTimer.singleShot(1000, _load_overlay)
+
+        def _on_overlay_render_process_terminated(status: object, exit_code: int) -> None:
+            _eprint(f"qt-shell: web overlay renderer terminated status={status} code={exit_code}; reloading")
+            overlay_health["load_ok"] = False
+            overlay_health["last_error_ts"] = time.time()
+            _show_overlay_placeholder()
+            QTimer.singleShot(1000, _load_overlay)
+
+        try:
+            overlay.renderProcessTerminated.connect(_on_overlay_render_process_terminated)
+        except Exception:
+            pass
+
+        _watchdog_state = {
+            "pending_ping": False,
+            "ping_sent_ts": 0.0,
+            "consecutive_timeouts": 0,
+        }
+
+        def _on_heartbeat_response(_result: object) -> None:
+            _watchdog_state["pending_ping"] = False
+            _watchdog_state["consecutive_timeouts"] = 0
+            overlay_health["heartbeat_ok"] = True
+            overlay_health["last_heartbeat_ts"] = time.time()
+
+        def _check_overlay_watchdog() -> None:
+            if not overlay or _overlay_placeholder["active"] or not overlay_health.get("load_ok"):
+                return
+
+            rss = _get_renderer_rss_mb()
+            overlay_health["renderer_rss_mb"] = round(rss, 1)
+            if overlay_max_rss > 0 and rss > overlay_max_rss:
+                _recycle_overlay(f"RSS limit exceeded: {rss:.1f}MB > {overlay_max_rss:.1f}MB")
+                return
+
+            now = time.time()
+            if _watchdog_state["pending_ping"]:
+                if (now - _watchdog_state["ping_sent_ts"]) >= 15.0:
+                    _watchdog_state["consecutive_timeouts"] += 1
+                    overlay_health["heartbeat_ok"] = False
+                    _eprint(f"qt-shell: web overlay heartbeat timeout (count={_watchdog_state['consecutive_timeouts']})")
+                    if _watchdog_state["consecutive_timeouts"] >= 2:
+                        _watchdog_state["pending_ping"] = False
+                        _watchdog_state["consecutive_timeouts"] = 0
+                        _recycle_overlay("renderer unresponsive to JavaScript heartbeat")
+                        return
+
+            if not _watchdog_state["pending_ping"]:
+                _watchdog_state["pending_ping"] = True
+                _watchdog_state["ping_sent_ts"] = now
+                try:
+                    overlay.page().runJavaScript("Date.now()", _on_heartbeat_response)
+                except Exception:
+                    _watchdog_state["pending_ping"] = False
+
+        if overlay_watchdog_active:
+            overlay_watchdog = QTimer()
+            overlay_watchdog.setInterval(overlay_watchdog_ms)
+            overlay_watchdog.timeout.connect(_check_overlay_watchdog)
+            overlay_watchdog.start()
+
         overlay.loadFinished.connect(_on_overlay_load_finished)
         if debug:
             overlay.loadStarted.connect(lambda: _eprint("qt-shell overlay loadStarted"))
         overlay_load_deferred.append(_load_overlay)
         if overlay_win is not None:
             overlay_win.setCentralWidget(overlay)
+
 
     if native_toasts_enabled:
         native_toast_toplevel = overlay_win is None and _native_overlay_toasts_use_toplevel(use_libmpv=use_libmpv)
@@ -3269,6 +3399,11 @@ def main(argv: list[str] | None = None) -> int:
             "qt_overlay_load_failures": int(overlay_health.get("load_failures") or 0),
             "qt_overlay_last_load_ts": float(overlay_health.get("last_load_ts") or 0.0),
             "qt_overlay_last_error_ts": float(overlay_health.get("last_error_ts") or 0.0),
+            "qt_overlay_watchdog_enabled": bool(overlay_health.get("watchdog_enabled")),
+            "qt_overlay_heartbeat_ok": overlay_health.get("heartbeat_ok"),
+            "qt_overlay_recycles": int(overlay_health.get("recycles") or 0),
+            "qt_overlay_last_recycle_reason": str(overlay_health.get("last_recycle_reason") or ""),
+            "qt_overlay_renderer_rss_mb": float(overlay_health.get("renderer_rss_mb") or 0.0),
             "qt_overlay_visible": bool(overlay is not None and overlay.isVisible()),
             "qt_native_idle_enabled": bool(native_idle_host is not None),
             "qt_native_idle_visible": bool(native_idle_host is not None and native_idle_host.isVisible()),
