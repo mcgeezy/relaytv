@@ -121,20 +121,12 @@ def normalize_base_url(value: object) -> str:
         raise PeerError("device address is required")
     if "://" not in raw:
         raw = f"http://{raw}"
+
     try:
         parsed = urlsplit(raw)
     except Exception:
         raise PeerError("device address is not a valid URL")
-    scheme = (parsed.scheme or "").lower()
-    if scheme not in ("http", "https"):
-        raise PeerError("device address must use http or https")
-    host = parsed.hostname or ""
-    if not host:
-        raise PeerError("device address is missing a host")
-    # Credentials embedded in the URL would be persisted and replayed on every
-    # send; peers authenticate with a bearer token instead.
-    if parsed.username or parsed.password:
-        raise PeerError("device address must not contain credentials")
+
     try:
         # urlsplit defers port parsing until the attribute is read, so an
         # operator's typo ("tv.local:8O87") or an out-of-range number raises
@@ -143,11 +135,28 @@ def normalize_base_url(value: object) -> str:
         port = parsed.port
     except ValueError:
         raise PeerError("device address has an invalid port")
+
+    # urlsplit does not raise on invalid IPv6 formats like [tv.local] until hostname is accessed
+    try:
+        host = parsed.hostname or ""
+    except ValueError:
+        raise PeerError("device address is not a valid URL")
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise PeerError("device address must use http or https")
+    if not host:
+        raise PeerError("device address is missing a host")
+
+    # Credentials embedded in the URL would be persisted and replayed on every
+    # send; peers authenticate with a bearer token instead.
+    if parsed.username or parsed.password:
+        raise PeerError("device address must not contain credentials")
+
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc = f"{netloc}:{port}"
-    path = (parsed.path or "").rstrip("/")
-    return urlunsplit((scheme, netloc, path, "", ""))
+    return urlunsplit((scheme, netloc, (parsed.path or "").rstrip("/"), "", ""))
 
 
 def _clean_name(value: object, *, fallback: str = "") -> str:
