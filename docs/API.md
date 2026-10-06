@@ -523,7 +523,9 @@ Send:
     queue ID when the response arrives, never by position or URL. Accepted
     entries are removed even if reordered; already-removed entries are ignored.
     Rejected items, items that could not travel (IPTV or Plex), and unsent entries
-    (including duplicates of a sent URL) stay local. If a peer reports no per-item
+    (including duplicates of a sent URL) stay local. Per-item results are
+    correlated in request order and must echo the submitted URL; missing,
+    reordered, or malformed results remain local. If a peer reports no per-item
     results and its `accepted` count does not cover everything sent, nothing is
     dropped locally
   - the browser always submits the displayed selection explicitly, including
@@ -789,7 +791,7 @@ personal-library browsing, direct playback, and server transcoding. See
 - `POST /integrations/plex/auth/poll`: checks a flow ID after approval
 - `POST /integrations/plex/auth/cancel`: cancels an in-flight flow
 - `POST /integrations/plex/disconnect`: removes local Plex account and server
-  credentials
+  credentials; returns `409` while Plex is actively playing
 - `GET /plex/servers`: returns sanitized directly reachable Plex servers for
   the linked account
 - `POST /integrations/plex/server`: selects and identity-checks a server by
