@@ -17,9 +17,7 @@ READY_STATUS = {
 
 
 def test_jellyfin_status_route_returns_receiver_status(monkeypatch) -> None:
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "status", lambda: {"enabled": True, "running": True}
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True, "running": True})
 
     client = TestClient(create_app(testing=True))
     response = client.get("/integrations/jellyfin/status")
@@ -42,16 +40,8 @@ def test_jellyfin_cache_clear_route_emits_ui_event(monkeypatch) -> None:
     events: list[dict[str, object]] = []
 
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
-    monkeypatch.setattr(
-        routes.jellyfin_receiver,
-        "clear_catalog_cache",
-        lambda reason: {"cleared": True, "reason": reason},
-    )
-    monkeypatch.setattr(
-        routes,
-        "_ui_event_push_jellyfin",
-        lambda event, **payload: events.append({"event": event, **payload}),
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "clear_catalog_cache", lambda reason: {"cleared": True, "reason": reason})
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/catalog/cache_clear")
@@ -76,10 +66,8 @@ def test_jellyfin_home_route_clamps_limit_and_reports_status(monkeypatch) -> Non
     monkeypatch.setattr(
         routes.jellyfin_receiver,
         "get_home_rows",
-        lambda limit, refresh=False: (
-            calls.append({"limit": limit, "refresh": refresh})
-            or {"rows": [{"title": "Continue"}], "generated_ts": 123.0}
-        ),
+        lambda limit, refresh=False: calls.append({"limit": limit, "refresh": refresh})
+        or {"rows": [{"title": "Continue"}], "generated_ts": 123.0},
     )
 
     client = TestClient(create_app(testing=True))
@@ -102,10 +90,8 @@ def test_jellyfin_search_route_requires_query_and_normalizes_limit(monkeypatch) 
     monkeypatch.setattr(
         routes.jellyfin_receiver,
         "search_catalog",
-        lambda query, limit, refresh=False: (
-            calls.append({"query": query, "limit": limit, "refresh": refresh})
-            or {"query": query, "count": 1, "items": [{"title": "Movie"}]}
-        ),
+        lambda query, limit, refresh=False: calls.append({"query": query, "limit": limit, "refresh": refresh})
+        or {"query": query, "count": 1, "items": [{"title": "Movie"}]},
     )
 
     client = TestClient(create_app(testing=True))
@@ -128,40 +114,27 @@ def test_jellyfin_movies_and_series_routes_normalize_pagination(monkeypatch) -> 
     monkeypatch.setattr(
         routes.jellyfin_receiver,
         "list_movies",
-        lambda **kwargs: (
-            movie_calls.append(dict(kwargs)) or {"sort": kwargs["sort"], "items": [], "count": 0}
-        ),
+        lambda **kwargs: movie_calls.append(dict(kwargs)) or {"sort": kwargs["sort"], "items": [], "count": 0},
     )
     monkeypatch.setattr(
         routes.jellyfin_receiver,
         "list_series",
-        lambda **kwargs: (
-            series_calls.append(dict(kwargs)) or {"sort": kwargs["sort"], "items": [], "count": 0}
-        ),
+        lambda **kwargs: series_calls.append(dict(kwargs)) or {"sort": kwargs["sort"], "items": [], "count": 0},
     )
 
     client = TestClient(create_app(testing=True))
-    movies = client.get(
-        "/jellyfin/movies",
-        params={"sort": "Title_Asc", "limit": 9999, "start": -5, "starts_with": " a "},
-    )
+    movies = client.get("/jellyfin/movies", params={"sort": "Title_Asc", "limit": 9999, "start": -5, "starts_with": " a "})
     series = client.get("/jellyfin/tv/series", params={"sort": "Added", "limit": 0, "start": -10})
 
     assert movies.status_code == 200
     assert series.status_code == 200
-    assert movie_calls == [
-        {"sort": "title_asc", "limit": 5000, "start_index": 0, "starts_with": "a", "refresh": False}
-    ]
-    assert series_calls == [
-        {"sort": "added", "limit": 1, "start_index": 0, "starts_with": "", "refresh": False}
-    ]
+    assert movie_calls == [{"sort": "title_asc", "limit": 5000, "start_index": 0, "starts_with": "a", "refresh": False}]
+    assert series_calls == [{"sort": "added", "limit": 1, "start_index": 0, "starts_with": "", "refresh": False}]
 
 
 def test_jellyfin_item_detail_route_returns_not_found_payload(monkeypatch) -> None:
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: dict(READY_STATUS))
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "get_item_detail", lambda item_id, refresh=False: None
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "get_item_detail", lambda item_id, refresh=False: None)
 
     client = TestClient(create_app(testing=True))
     response = client.get("/jellyfin/item/item-1")
@@ -201,10 +174,7 @@ def test_jellyfin_episode_routes_return_catalog_payloads(monkeypatch) -> None:
 
     client = TestClient(create_app(testing=True))
     seasons = client.get("/jellyfin/tv/series/series-1/seasons")
-    episodes = client.get(
-        "/jellyfin/tv/series/series-1/episodes",
-        params={"season_id": "season-1", "season_number": 2},
-    )
+    episodes = client.get("/jellyfin/tv/series/series-1/episodes", params={"season_id": "season-1", "season_number": 2})
     adjacent = client.get("/jellyfin/item/item-1/adjacent")
 
     assert seasons.status_code == 200
@@ -242,19 +212,11 @@ def test_jellyfin_audio_options_reports_runtime_selection(monkeypatch) -> None:
     monkeypatch.setattr(
         routes.player,
         "mpv_get",
-        lambda prop: (
-            [
-                {
-                    "type": "audio",
-                    "ff-index": 1,
-                    "lang": "jpn",
-                    "title": "Japanese",
-                    "selected": True,
-                },
-            ]
-            if prop == "track-list"
-            else None
-        ),
+        lambda prop: [
+            {"type": "audio", "ff-index": 1, "lang": "jpn", "title": "Japanese", "selected": True},
+        ]
+        if prop == "track-list"
+        else None,
     )
 
     client = TestClient(create_app(testing=True))
@@ -296,20 +258,12 @@ def test_jellyfin_audio_select_switches_runtime_track_in_place(monkeypatch) -> N
             "subtitle_streams": [],
         },
     )
-    monkeypatch.setattr(
-        routes.state, "update_settings", lambda data: settings_updates.append(dict(data))
-    )
+    monkeypatch.setattr(routes.state, "update_settings", lambda data: settings_updates.append(dict(data)))
     monkeypatch.setattr(jellyfin_service, "retarget_queue_stream_preferences", lambda: 2)
     monkeypatch.setattr(routes.player, "is_playing", lambda: True)
-    monkeypatch.setattr(
-        routes.player, "mpv_get_many", lambda props: {"time-pos": 45.5, "pause": False}
-    )
-    monkeypatch.setattr(
-        jellyfin_service, "try_set_mpv_audio_track", lambda language="", display="": True
-    )
-    monkeypatch.setattr(
-        routes.state, "set_now_playing", lambda data: now_playing.append(dict(data))
-    )
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {"time-pos": 45.5, "pause": False})
+    monkeypatch.setattr(jellyfin_service, "try_set_mpv_audio_track", lambda language="", display="": True)
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda data: now_playing.append(dict(data)))
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: emitted.append(True))
 
     client = TestClient(create_app(testing=True))
@@ -399,11 +353,7 @@ def test_jellyfin_series_play_all_builds_play_command(monkeypatch) -> None:
 
 def test_jellyfin_series_play_all_requires_episode_ids(monkeypatch) -> None:
     monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
-    monkeypatch.setattr(
-        routes.jellyfin_receiver,
-        "list_series_episodes",
-        lambda series_id, refresh=False: {"episodes": []},
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "list_series_episodes", lambda series_id, refresh=False: {"episodes": []})
 
     client = TestClient(create_app(testing=True))
     response = client.post("/jellyfin/tv/series/series-1/play_all")
@@ -416,21 +366,10 @@ def test_jellyfin_item_action_maps_play_next_command(monkeypatch) -> None:
     captured: list[dict[str, object]] = []
 
     monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
-    monkeypatch.setattr(
-        routes,
-        "_jellyfin_should_suppress_duplicate_ui_action",
-        lambda command, item_id, resume_pos: False,
-    )
+    monkeypatch.setattr(routes, "_jellyfin_should_suppress_duplicate_ui_action", lambda command, item_id, resume_pos: False)
 
     def fake_command(req):
-        captured.append(
-            {
-                "action": req.action,
-                "payload": req.payload,
-                "start_pos": req.start_pos,
-                "use_ytdlp": req.use_ytdlp,
-            }
-        )
+        captured.append({"action": req.action, "payload": req.payload, "start_pos": req.start_pos, "use_ytdlp": req.use_ytdlp})
         return {"ok": True, "queued": True}
 
     monkeypatch.setattr(routes, "jellyfin_integration_command", fake_command)
@@ -458,14 +397,8 @@ def test_jellyfin_item_action_resume_uses_item_detail_position(monkeypatch) -> N
     captured: list[dict[str, object]] = []
 
     monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
-    monkeypatch.setattr(
-        routes,
-        "_jellyfin_should_suppress_duplicate_ui_action",
-        lambda command, item_id, resume_pos: False,
-    )
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "get_item_detail", lambda item_id: {"resume_pos": 37.5}
-    )
+    monkeypatch.setattr(routes, "_jellyfin_should_suppress_duplicate_ui_action", lambda command, item_id, resume_pos: False)
+    monkeypatch.setattr(routes.jellyfin_receiver, "get_item_detail", lambda item_id: {"resume_pos": 37.5})
 
     def fake_command(req):
         captured.append({"payload": req.payload, "start_pos": req.start_pos})
@@ -479,32 +412,20 @@ def test_jellyfin_item_action_resume_uses_item_detail_position(monkeypatch) -> N
     assert response.status_code == 200
     body = response.json()
     assert body["resolved_resume_pos"] == 37.5
-    assert captured == [
-        {"payload": {"ItemId": "item-1", "PlayCommand": "Resume"}, "start_pos": 37.5}
-    ]
+    assert captured == [{"payload": {"ItemId": "item-1", "PlayCommand": "Resume"}, "start_pos": 37.5}]
 
 
 def test_jellyfin_resume_command_preserves_existing_queue(monkeypatch) -> None:
     play_calls: list[dict[str, object]] = []
     queue_item = {"url": "https://example.com/queued.mp4", "title": "Queued"}
 
-    monkeypatch.setattr(
-        routes.jellyfin_receiver,
-        "status",
-        lambda: {"enabled": True, "server_url": "http://jellyfin.local"},
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True, "server_url": "http://jellyfin.local"})
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: None)
     monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: None)
-    monkeypatch.setattr(
-        jellyfin_service,
-        "smart_item_from_url",
-        lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos},
-    )
+    monkeypatch.setattr(jellyfin_service, "smart_item_from_url", lambda url, start_pos=None: {"url": url, "title": "Resume", "resume_pos": start_pos})
     monkeypatch.setattr(routes.state, "QUEUE", [queue_item], raising=False)
     monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
-    monkeypatch.setattr(
-        routes.state, "set_now_playing", lambda value: setattr(routes.state, "NOW_PLAYING", value)
-    )
+    monkeypatch.setattr(routes.state, "set_now_playing", lambda value: setattr(routes.state, "NOW_PLAYING", value))
     monkeypatch.setattr(routes, "_jellyfin_emit_progress_hint", lambda: None)
     monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda *args, **kwargs: None)
 
@@ -534,17 +455,11 @@ def test_jellyfin_item_action_suppresses_duplicate_ui_action(monkeypatch) -> Non
     commands: list[object] = []
 
     monkeypatch.setattr(routes, "_require_jellyfin_catalog_ready", lambda: dict(READY_STATUS))
-    monkeypatch.setattr(
-        routes,
-        "_jellyfin_should_suppress_duplicate_ui_action",
-        lambda command, item_id, resume_pos: True,
-    )
+    monkeypatch.setattr(routes, "_jellyfin_should_suppress_duplicate_ui_action", lambda command, item_id, resume_pos: True)
     monkeypatch.setattr(routes, "jellyfin_integration_command", lambda req: commands.append(req))
 
     client = TestClient(create_app(testing=True))
-    response = client.post(
-        "/jellyfin/action", json={"item_id": "item-1", "command": "resume", "resume_pos": 12.0}
-    )
+    response = client.post("/jellyfin/action", json={"item_id": "item-1", "command": "resume", "resume_pos": 12.0})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -577,15 +492,9 @@ def test_jellyfin_connect_uses_settings_device_name_and_registers(monkeypatch) -
         return {"ok": True, "connected": True}
 
     monkeypatch.setattr(routes.jellyfin_receiver, "connect", fake_connect)
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "register_receiver_once", lambda: {"ok": True, "registered": True}
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "register_receiver_once", lambda: {"ok": True, "registered": True})
     monkeypatch.setattr(routes, "_reset_jellyfin_command_state", lambda: resets.append(True))
-    monkeypatch.setattr(
-        routes,
-        "_ui_event_push_jellyfin",
-        lambda event, **payload: events.append({"event": event, **payload}),
-    )
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
 
     client = TestClient(create_app(testing=True))
     response = client.post(
@@ -599,11 +508,7 @@ def test_jellyfin_connect_uses_settings_device_name_and_registers(monkeypatch) -
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "ok": True,
-        "connected": True,
-        "register": {"ok": True, "registered": True},
-    }
+    assert response.json() == {"ok": True, "connected": True, "register": {"ok": True, "registered": True}}
     assert calls == [
         {
             "server_url": "http://jellyfin.local/",
@@ -641,14 +546,8 @@ def test_jellyfin_disconnect_resets_and_emits_event(monkeypatch) -> None:
     resets: list[bool] = []
 
     monkeypatch.setattr(routes, "_reset_jellyfin_command_state", lambda: resets.append(True))
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "disconnect", lambda: {"ok": True, "enabled": False}
-    )
-    monkeypatch.setattr(
-        routes,
-        "_ui_event_push_jellyfin",
-        lambda event, **payload: events.append({"event": event, **payload}),
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "disconnect", lambda: {"ok": True, "enabled": False})
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/disconnect")
@@ -670,9 +569,7 @@ def test_jellyfin_register_requires_enabled_receiver(monkeypatch) -> None:
     calls: list[bool] = []
 
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": False})
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "register_receiver_once", lambda: calls.append(True)
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "register_receiver_once", lambda: calls.append(True))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/register")
@@ -686,14 +583,8 @@ def test_jellyfin_register_returns_accepted_for_pending_handshake(monkeypatch) -
     events: list[dict[str, object]] = []
 
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "register_receiver_once", lambda: {"ok": False, "pending": True}
-    )
-    monkeypatch.setattr(
-        routes,
-        "_ui_event_push_jellyfin",
-        lambda event, **payload: events.append({"event": event, **payload}),
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "register_receiver_once", lambda: {"ok": False, "pending": True})
+    monkeypatch.setattr(routes, "_ui_event_push_jellyfin", lambda event, **payload: events.append({"event": event, **payload}))
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/register")
@@ -724,16 +615,8 @@ def test_jellyfin_command_pause_dispatches_playback_control(monkeypatch) -> None
     pauses: list[bool] = []
 
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
-    monkeypatch.setattr(
-        routes.jellyfin_receiver,
-        "mark_command",
-        lambda action: receiver_events.append(("command", action)),
-    )
-    monkeypatch.setattr(
-        routes.jellyfin_receiver,
-        "mark_heartbeat",
-        lambda: receiver_events.append(("heartbeat", True)),
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "mark_command", lambda action: receiver_events.append(("command", action)))
+    monkeypatch.setattr(routes.jellyfin_receiver, "mark_heartbeat", lambda: receiver_events.append(("heartbeat", True)))
     monkeypatch.setattr(routes, "pause", lambda: pauses.append(True) or {"paused": True})
     monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: progress_hints.append(True))
 
@@ -759,9 +642,7 @@ def test_jellyfin_command_requires_enabled_receiver(monkeypatch) -> None:
 
 def test_jellyfin_heartbeat_returns_accepted_for_pending_push(monkeypatch) -> None:
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
-    monkeypatch.setattr(
-        routes.jellyfin_receiver, "send_progress_once", lambda: {"ok": False, "pending": True}
-    )
+    monkeypatch.setattr(routes.jellyfin_receiver, "send_progress_once", lambda: {"ok": False, "pending": True})
 
     client = TestClient(create_app(testing=True))
     response = client.post("/integrations/jellyfin/heartbeat")
@@ -772,9 +653,7 @@ def test_jellyfin_heartbeat_returns_accepted_for_pending_push(monkeypatch) -> No
 
 def test_jellyfin_progress_snapshot_returns_payload(monkeypatch) -> None:
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
-    monkeypatch.setattr(
-        routes, "_jellyfin_progress_snapshot", lambda: {"ItemId": "item-1", "PositionTicks": 120}
-    )
+    monkeypatch.setattr(routes, "_jellyfin_progress_snapshot", lambda: {"ItemId": "item-1", "PositionTicks": 120})
 
     client = TestClient(create_app(testing=True))
     response = client.get("/integrations/jellyfin/progress_snapshot")
@@ -798,9 +677,7 @@ def test_jellyfin_stopped_route_sends_snapshot(monkeypatch) -> None:
     sent: list[dict[str, object]] = []
 
     monkeypatch.setattr(routes.jellyfin_receiver, "status", lambda: {"enabled": True})
-    monkeypatch.setattr(
-        routes, "_jellyfin_stopped_snapshot", lambda: {"ItemId": "item-1", "PositionTicks": 250}
-    )
+    monkeypatch.setattr(routes, "_jellyfin_stopped_snapshot", lambda: {"ItemId": "item-1", "PositionTicks": 250})
     monkeypatch.setattr(
         routes.jellyfin_receiver,
         "send_playback_stopped_once",

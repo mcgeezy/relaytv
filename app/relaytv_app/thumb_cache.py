@@ -30,13 +30,8 @@ def _read_max_total_bytes() -> int:
 # Where to store normalized thumbnails (persisted via ./data:/data)
 THUMB_DIR = os.getenv("RELAYTV_THUMB_DIR") or os.getenv("BRAVECAST_THUMB_DIR", "/data/thumbs")
 THUMB_WIDTH = int(os.getenv("RELAYTV_THUMB_WIDTH") or os.getenv("BRAVECAST_THUMB_WIDTH", "480"))
-THUMB_JPEG_Q = int(
-    os.getenv("RELAYTV_THUMB_JPEG_Q") or os.getenv("BRAVECAST_THUMB_JPEG_Q", "5")
-)  # ffmpeg qscale (2=best, 31=worst)
-THUMB_MAX_BYTES = int(
-    os.getenv("RELAYTV_THUMB_MAX_BYTES")
-    or os.getenv("BRAVECAST_THUMB_MAX_BYTES", str(2 * 1024 * 1024))
-)  # raw download cap
+THUMB_JPEG_Q = int(os.getenv("RELAYTV_THUMB_JPEG_Q") or os.getenv("BRAVECAST_THUMB_JPEG_Q", "5"))  # ffmpeg qscale (2=best, 31=worst)
+THUMB_MAX_BYTES = int(os.getenv("RELAYTV_THUMB_MAX_BYTES") or os.getenv("BRAVECAST_THUMB_MAX_BYTES", str(2 * 1024 * 1024)))  # raw download cap
 THUMB_MAX_FILES = max(1, int(os.getenv("RELAYTV_THUMB_MAX_FILES") or "2000"))
 THUMB_MAX_TOTAL_BYTES = _read_max_total_bytes()
 THUMB_RETENTION_SEC = max(0, int(os.getenv("RELAYTV_THUMB_RETENTION_SEC") or str(14 * 24 * 3600)))
@@ -100,7 +95,6 @@ def reset_thumb_tracking_for_tests() -> None:
         _INFLIGHT.clear()
         _FAILED_AT.clear()
 
-
 def _ensure_dir() -> None:
     try:
         os.makedirs(THUMB_DIR, exist_ok=True)
@@ -152,11 +146,7 @@ def _prune_thumb_dir(*, force: bool = False) -> None:
     global _LAST_PRUNE_TS
     now = time.time()
     with _PRUNE_LOCK:
-        if (
-            not force
-            and THUMB_PRUNE_INTERVAL_SEC > 0
-            and (now - _LAST_PRUNE_TS) < THUMB_PRUNE_INTERVAL_SEC
-        ):
+        if not force and THUMB_PRUNE_INTERVAL_SEC > 0 and (now - _LAST_PRUNE_TS) < THUMB_PRUNE_INTERVAL_SEC:
             return
         _LAST_PRUNE_TS = now
 
@@ -201,19 +191,15 @@ def _prune_thumb_dir(*, force: bool = False) -> None:
                 if total <= THUMB_MAX_TOTAL_BYTES:
                     break
 
-
 def thumb_id(url: str) -> str:
     h = hashlib.sha1(url.encode("utf-8", "ignore")).hexdigest()
     return h[:20]
 
-
 def local_rel_path(tid: str) -> str:
     return f"/thumbs/{tid}.jpg"
 
-
 def local_abs_path(tid: str) -> str:
     return os.path.join(THUMB_DIR, f"{tid}.jpg")
-
 
 def _headers_for(url: str) -> dict[str, str]:
     # Some CDNs behave better with a browser-y UA and a referer.
@@ -226,14 +212,9 @@ def _headers_for(url: str) -> dict[str, str]:
         headers["Referer"] = "https://www.youtube.com/"
     elif host.endswith("bitchute.com"):
         headers["Referer"] = "https://www.bitchute.com/"
-    elif (
-        host.endswith("rumble.com")
-        or host.endswith("rumblecdn.com")
-        or host.endswith("1a-1791.com")
-    ):
+    elif host.endswith("rumble.com") or host.endswith("rumblecdn.com") or host.endswith("1a-1791.com"):
         headers["Referer"] = "https://rumble.com/"
     return headers
-
 
 def _download_to(url: str, fp: str) -> bool:
     req = urllib.request.Request(url, headers=_headers_for(url))
@@ -250,29 +231,20 @@ def _download_to(url: str, fp: str) -> bool:
                 f.write(chunk)
     return True
 
-
 def _normalize_to_jpg(src_fp: str, dst_fp: str) -> bool:
     # Use ffmpeg to normalize any input image type to a consistent jpg size.
     # -vf scale=WIDTH:-2 preserves aspect ratio and ensures even height.
     w = max(64, int(THUMB_WIDTH))
     q = max(2, min(31, int(THUMB_JPEG_Q)))
     cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        src_fp,
-        "-vf",
-        f"scale={w}:-2",
-        "-q:v",
-        str(q),
-        dst_fp,
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", src_fp,
+        "-vf", f"scale={w}:-2",
+        "-q:v", str(q),
+        dst_fp
     ]
     p = subprocess.run(cmd, capture_output=True)
     return p.returncode == 0 and os.path.exists(dst_fp) and os.path.getsize(dst_fp) > 0
-
 
 def _worker() -> None:
     _ensure_dir()
@@ -315,7 +287,6 @@ def _worker() -> None:
             except Exception:
                 pass
 
-
 def start_worker() -> None:
     global _STARTED
     with _LOCK:
@@ -325,7 +296,6 @@ def start_worker() -> None:
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
     _prune_thumb_dir(force=True)
-
 
 def attach_local_thumbnail(item: dict) -> dict:
     """Best-effort local thumbnail caching.
@@ -369,10 +339,8 @@ def get_thumb_src(thumb_id: str) -> str | None:
     """Return the original source URL for a cached thumbnail id, if known."""
     return _SRC_BY_ID.get(thumb_id)
 
-
 def thumb_path_for_id(thumb_id: str) -> str:
     return os.path.join(THUMB_DIR, f"{thumb_id}.jpg")
-
 
 def ensure_cached_sync(thumb_id: str, timeout_s: float = 3.0) -> bool:
     """Best-effort: ensure the given thumbnail exists on disk.

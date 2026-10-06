@@ -10,7 +10,6 @@ Regenerate the doc table after intentional changes with:
 
     PYTHONPATH=app python3 tests/test_env_inventory.py --write
 """
-
 from __future__ import annotations
 
 import re

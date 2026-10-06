@@ -101,7 +101,9 @@ def test_seerr_env_defaults_and_live_config_share_request_mode_parsing(
         SettingsSnapshot(
             {
                 "RELAYTV_SEERR_REQUEST_MODE": request_mode or "",
-                "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED": ("1" if shared_enabled else "0"),
+                "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED": (
+                    "1" if shared_enabled else "0"
+                ),
             }
         )
     )
@@ -109,7 +111,9 @@ def test_seerr_env_defaults_and_live_config_share_request_mode_parsing(
     assert defaults["seerr_request_mode"] == expected_mode
     assert persisted_defaults["seerr_request_mode"] == expected_mode
     assert live.request_mode == expected_mode
-    assert defaults["seerr_shared_requests_enabled"] is (expected_mode == "shared_admin")
+    assert defaults["seerr_shared_requests_enabled"] is (
+        expected_mode == "shared_admin"
+    )
 
 
 def test_caller_mode_requires_only_server_url() -> None:
@@ -132,7 +136,9 @@ def test_client_keeps_api_key_in_header_and_out_of_url() -> None:
     opener = _RecordingOpener({"version": "3.4.1"})
     client = seerr_client.SeerrClient(_config(), opener=opener)
 
-    assert client.get("/status", query={"checkUpdateAvailable": False}) == {"version": "3.4.1"}
+    assert client.get("/status", query={"checkUpdateAvailable": False}) == {
+        "version": "3.4.1"
+    }
     request = opener.requests[0]
     assert request.full_url == (
         "https://seerr.example/base/api/v1/status?checkUpdateAvailable=false"
@@ -200,7 +206,9 @@ def test_binary_request_uses_server_image_proxy_and_captures_safe_metadata() -> 
 
     response = client.get_binary("/imageproxy/tmdb/w342/poster.jpg", auth=False)
 
-    assert opener.request.full_url == ("https://seerr.example/base/imageproxy/tmdb/w342/poster.jpg")
+    assert opener.request.full_url == (
+        "https://seerr.example/base/imageproxy/tmdb/w342/poster.jpg"
+    )
     assert opener.request.get_header("X-api-key") is None
     assert response.content == b"jpeg"
     assert response.content_type == "image/jpeg"

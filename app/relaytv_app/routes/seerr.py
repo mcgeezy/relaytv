@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Public RelayTV route surface for the Seerr integration."""
-
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -86,7 +85,9 @@ def seerr_item_detail(request: Request, media_type: str, media_id: int):
 
 
 @router.get("/seerr/requests")
-def seerr_requests(request: Request, take: int = 20, skip: int = 0, filter: str = "all"):
+def seerr_requests(
+    request: Request, take: int = 20, skip: int = 0, filter: str = "all"
+):
     session_id = _session_id(request)
     try:
         return seerr_service.list_requests(

@@ -86,7 +86,9 @@ def sanitize_public_url(value: object) -> str:
         for key, val in parse_qsl(parsed.query, keep_blank_values=True)
         if not _is_sensitive_query_key(key)
     ]
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), ""))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), "")
+    )
 
 
 def public_media_item(item: object) -> object:

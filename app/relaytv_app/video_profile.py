@@ -43,6 +43,8 @@ def _parse_mode_dims(mode: str) -> tuple[int, int] | None:
         return None
 
 
+
+
 def _normalize_mode_string(mode: str) -> str:
     parsed = _parse_mode_dims(mode)
     if not parsed:
@@ -77,7 +79,6 @@ def _display_active_mode_from_sysfs() -> tuple[str, int | None]:
         except Exception:
             continue
     return "", None
-
 
 def _display_cap_from_drm(connectors: list[dict[str, Any]]) -> tuple[str, str, int | None]:
     best_connector = ""
@@ -242,3 +243,4 @@ def warm_profile() -> None:
         get_profile(force_refresh=True)
     except Exception:
         pass
+

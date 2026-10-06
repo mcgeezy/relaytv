@@ -20,10 +20,8 @@ from .debug import get_logger
 
 logger = get_logger("overlay")
 
-
 def _eprint(*a: object) -> None:
     logger.info(" ".join(str(part) for part in a))
-
 
 def _append_env_flags(name: str, flags: list[str]) -> None:
     current = (os.getenv(name) or "").strip()
@@ -39,14 +37,12 @@ def _append_env_flags(name: str, flags: list[str]) -> None:
     if changed or not current:
         os.environ[name] = " ".join(parts).strip()
 
-
 def _qt_overlay_software_mode_enabled() -> bool:
     override = _env_choice("RELAYTV_QT_OVERLAY_SOFTWARE")
     if override is not None:
         return bool(override)
     arch = (platform.machine() or "").strip().lower()
     return arch in ("aarch64", "arm64", "armv7l", "armv6l")
-
 
 def _run_qt_overlay(url: str, *, click_through: bool) -> int:
     if _qt_overlay_software_mode_enabled():
@@ -75,7 +71,10 @@ def _run_qt_overlay(url: str, *, click_through: bool) -> int:
     win = QMainWindow()
     win.setWindowTitle("RelayTV Overlay")
     win.setWindowFlags(
-        Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.X11BypassWindowManagerHint
+        Qt.FramelessWindowHint
+        | Qt.WindowStaysOnTopHint
+        | Qt.Tool
+        | Qt.X11BypassWindowManagerHint
     )
     win.setAttribute(Qt.WA_TranslucentBackground, True)
     win.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -143,11 +142,9 @@ def _run_qt_overlay(url: str, *, click_through: bool) -> int:
     view.load(QUrl(url))
     return int(app.exec())
 
-
 def _run_gtk_overlay(url: str, *, click_through: bool) -> int:
     try:
         import gi
-
         gi.require_version("Gtk", "3.0")
 
         # Prefer WebKitGTK 4.1 (Ubuntu 24.04 / newer Debian). Fall back to 4.0 if needed.
@@ -254,20 +251,12 @@ def _run_gtk_overlay(url: str, *, click_through: bool) -> int:
     Gtk.main()
     return 0
 
-
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
     ap = argparse.ArgumentParser(description="RelayTV X11 Overlay (WebKitGTK)")
-    ap.add_argument(
-        "--url", default=os.getenv("RELAYTV_OVERLAY_URL", "http://127.0.0.1:8787/x11/overlay")
-    )
-    click_through_default = os.getenv("RELAYTV_OVERLAY_CLICKTHROUGH", "1").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    ap.add_argument("--url", default=os.getenv("RELAYTV_OVERLAY_URL", "http://127.0.0.1:8787/x11/overlay"))
+    click_through_default = os.getenv("RELAYTV_OVERLAY_CLICKTHROUGH", "1").strip().lower() in ("1","true","yes","on")
     ap.add_argument("--click-through", action="store_true", default=click_through_default)
     args = ap.parse_args(argv)
 

@@ -7,7 +7,6 @@ check whether it still owned the slot, and a failed startup that closed the
 wrong object. The pattern they now follow is the one jellyfin_ws.py already
 uses — per-generation stop flags, and a publish that re-checks ownership.
 """
-
 import threading
 import time
 

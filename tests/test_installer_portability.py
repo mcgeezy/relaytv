@@ -76,13 +76,7 @@ def _resolve_host_ops_delegate_qpa(
     if process_qpa is not None:
         env["QT_QPA_PLATFORM"] = process_qpa
     return subprocess.run(
-        [
-            "bash",
-            "-c",
-            'source "$1"; resolve_delegate_qpa wayland-native',
-            "host-ops-test",
-            str(host_ops),
-        ],
+        ["bash", "-c", 'source "$1"; resolve_delegate_qpa wayland-native', "host-ops-test", str(host_ops)],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -123,7 +117,7 @@ def _mock_command_path(tmp_path: Path, *, arch: str = "x86_64") -> Path:
     uname = command_dir / "uname"
     uname.write_text(
         "#!/bin/sh\n"
-        'case "$1" in\n'
+        "case \"$1\" in\n"
         "  -s) printf 'Linux\\n' ;;\n"
         f"  -m) printf '{arch}\\n' ;;\n"
         f"  *) printf '{arch}\\n' ;;\n"
@@ -166,7 +160,7 @@ def test_host_override_uses_only_existing_long_syntax_binds(tmp_path: Path) -> N
     override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
     assert "create_host_path: false" in override
     assert "/etc/timezone" not in override
-    assert 'source: "/sys"' in override
+    assert "source: \"/sys\"" in override
     assert "/tmp/.X11-unix" not in override
     assert "/run/user/" not in override
 
@@ -282,7 +276,7 @@ def test_base_compose_files_do_not_bind_optional_system_paths() -> None:
 def test_installer_never_pins_session_scoped_xauthority() -> None:
     installer = (ROOT_DIR / "scripts" / "install.sh").read_text(encoding="utf-8")
 
-    assert 'append_bind_mount "$XAUTH_HOST_PATH"' not in installer
+    assert "append_bind_mount \"$XAUTH_HOST_PATH\"" not in installer
     assert "latest_mutter_xwayland_auth" not in installer
     assert 'append_bind_mount "/run/user" "/run/user" "false"' in installer
     # Keep the legacy name installer-owned so reruns remove it from old .env files.

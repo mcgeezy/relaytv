@@ -78,7 +78,6 @@ class _RequestContext:
     last_detect_ok: bool | None
     last_detect_ts: float | None
 
-
 _STATUS: dict[str, object] = {
     "enabled": False,
     "running": False,
@@ -184,16 +183,7 @@ def _catalog_ttl_sec(kind: str) -> float:
     if kind == "detail":
         return max(0.0, float(os.getenv("RELAYTV_JELLYFIN_DETAIL_TTL_SEC", "300") or "300"))
     if kind == "search":
-        return max(
-            0.0,
-            float(
-                os.getenv(
-                    "RELAYTV_JELLYFIN_SEARCH_TTL_SEC",
-                    os.getenv("RELAYTV_JELLYFIN_CATALOG_TTL_SEC", "120"),
-                )
-                or "120"
-            ),
-        )
+        return max(0.0, float(os.getenv("RELAYTV_JELLYFIN_SEARCH_TTL_SEC", os.getenv("RELAYTV_JELLYFIN_CATALOG_TTL_SEC", "120")) or "120"))
     return max(0.0, float(os.getenv("RELAYTV_JELLYFIN_CATALOG_TTL_SEC", "120") or "120"))
 
 
@@ -239,9 +229,7 @@ def _catalog_cache_set(key: str, payload: object, *, ttl_sec: float) -> None:
         max_entries = _catalog_cache_max_entries()
         if len(_CATALOG_CACHE) > max_entries:
             # Keep entries with latest expiry first.
-            drop_keys = sorted(_CATALOG_CACHE.items(), key=lambda kv: kv[1][0])[
-                : len(_CATALOG_CACHE) - max_entries
-            ]
+            drop_keys = sorted(_CATALOG_CACHE.items(), key=lambda kv: kv[1][0])[: len(_CATALOG_CACHE) - max_entries]
             for k, _ in drop_keys:
                 _CATALOG_CACHE.pop(k, None)
 
@@ -309,15 +297,9 @@ def _stopped_duplicate_suppressed(payload: dict[str, object], now_ts: float) -> 
     sig = _stopped_signature(payload)
     global _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
-        is_dup = (
-            bool(_LAST_STOPPED_SIGNATURE)
-            and (_LAST_STOPPED_SIGNATURE == sig)
-            and ((now_ts - _LAST_STOPPED_TS) <= window)
-        )
+        is_dup = bool(_LAST_STOPPED_SIGNATURE) and (_LAST_STOPPED_SIGNATURE == sig) and ((now_ts - _LAST_STOPPED_TS) <= window)
         if is_dup:
-            _STATUS["stopped_suppressed_count"] = (
-                int(_STATUS.get("stopped_suppressed_count") or 0) + 1
-            )
+            _STATUS["stopped_suppressed_count"] = int(_STATUS.get("stopped_suppressed_count") or 0) + 1
             return True
         _LAST_STOPPED_SIGNATURE = sig
         _LAST_STOPPED_TS = now_ts
@@ -377,10 +359,7 @@ def _read_config() -> dict[str, object]:
         configured_name = ""
         configured_server_type = ""
         configured_auth_mode = ""
-    server_type = (
-        configured_server_type
-        or (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_TYPE") or "").strip().lower()
-    )
+    server_type = configured_server_type or (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_TYPE") or "").strip().lower()
     if server_type not in ("jellyfin", "emby"):
         server_type = "jellyfin"
     if configured_auth_mode not in ("shared_api_key", "user_login"):
@@ -402,10 +381,7 @@ def _read_config() -> dict[str, object]:
         "server_url": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_URL") or "").strip(),
         "device_name": device_name,
         "device_id": derive_device_id(),
-        "client_name": (
-            runtime_config.snapshot().raw("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name
-        ).strip()
-        or device_name,
+        "client_name": (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_CLIENT_NAME") or device_name).strip() or device_name,
         "client_version": (os.getenv("RELAYTV_JELLYFIN_CLIENT_VERSION") or "1.0").strip() or "1.0",
         "heartbeat_sec": max(2, int(float(os.getenv("RELAYTV_JELLYFIN_HEARTBEAT_SEC") or "5"))),
         "server_type": server_type,
@@ -467,20 +443,9 @@ def start() -> None:
 
 def _start_locked() -> None:
     """Initialize Jellyfin receiver runtime state (network wiring added later)."""
-    global \
-        _API_KEY, \
-        _AUTH_MODE, \
-        _AUTH_USERNAME, \
-        _AUTH_PASSWORD, \
-        _ACCESS_TOKEN, \
-        _AUTH_USER_ID, \
-        _AUTH_SESSION_ID
+    global _API_KEY, _AUTH_MODE, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     cfg = _read_config()
-    global \
-        _REGISTER_RETRY_FAILURES, \
-        _NEXT_REGISTER_RETRY_TS, \
-        _LAST_STOPPED_SIGNATURE, \
-        _LAST_STOPPED_TS
+    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
         _STATUS["enabled"] = bool(cfg["enabled"])
         _STATUS["server_url"] = str(cfg["server_url"])
@@ -630,9 +595,7 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
     out["catalog_ttl_metadata_sec"] = _catalog_ttl_sec("metadata")
     out["catalog_cache_clears"] = int(out.get("catalog_cache_clears") or 0)
     out["catalog_cache_last_cleared_ts"] = out.get("catalog_cache_last_cleared_ts")
-    out["catalog_cache_last_cleared_reason"] = str(
-        out.get("catalog_cache_last_cleared_reason") or ""
-    )
+    out["catalog_cache_last_cleared_reason"] = str(out.get("catalog_cache_last_cleared_reason") or "")
     out["stopped_dedupe_window_sec"] = _stopped_dedupe_sec()
     out["stopped_dedupe_enabled"] = bool(_stopped_dedupe_sec() > 0.0)
     out["complete_ratio"] = _complete_ratio()
@@ -667,11 +630,7 @@ def _status_with_sync_health(raw: dict[str, object]) -> dict[str, object]:
         out["sync_health"] = "error"
         out["sync_health_reason"] = "register_failed"
         return out
-    if (
-        auth_mode == "user_login"
-        and bool(out.get("auth_user_configured"))
-        and bool(out.get("last_auth_ok")) is False
-    ):
+    if auth_mode == "user_login" and bool(out.get("auth_user_configured")) and bool(out.get("last_auth_ok")) is False:
         out["sync_health"] = "error"
         out["sync_health_reason"] = "auth_failed"
         return out
@@ -727,9 +686,7 @@ def _with_control_socket_status(out: dict[str, object]) -> dict[str, object]:
     out["ws_commands_dropped"] = int(ws.get("commands_dropped") or 0) if ws else 0
     # The one field that answers "can I cast to this device?": the server only
     # offers a session that advertises media control *and* holds a live socket.
-    out["cast_target_ready"] = bool(out.get("media_control_verified")) and bool(
-        out.get("ws_connected")
-    )
+    out["cast_target_ready"] = bool(out.get("media_control_verified")) and bool(out.get("ws_connected"))
     return out
 
 
@@ -743,13 +700,7 @@ def detect_server_type(server_url: str, *, timeout_sec: float = 3.0) -> dict[str
     """
     base = str(server_url or "").strip().rstrip("/")
     if not base:
-        return {
-            "ok": False,
-            "server_type": "",
-            "product_name": "",
-            "version": "",
-            "error": "no_server_url",
-        }
+        return {"ok": False, "server_type": "", "product_name": "", "version": "", "error": "no_server_url"}
     req = _urlrequest.Request(f"{base}/System/Info/Public", method="GET")
     try:
         with _urlrequest.urlopen(req, timeout=max(0.5, float(timeout_sec))) as resp:
@@ -768,26 +719,12 @@ def detect_server_type(server_url: str, *, timeout_sec: float = 3.0) -> dict[str
             server_type = "emby"
         else:
             raise RuntimeError("system info response has no recognizable product")
-        return {
-            "ok": True,
-            "server_type": server_type,
-            "product_name": product,
-            "version": version,
-            "error": None,
-        }
+        return {"ok": True, "server_type": server_type, "product_name": product, "version": version, "error": None}
     except Exception as e:
-        return {
-            "ok": False,
-            "server_type": "",
-            "product_name": "",
-            "version": "",
-            "error": _format_http_error(e),
-        }
+        return {"ok": False, "server_type": "", "product_name": "", "version": "", "error": _format_http_error(e)}
 
 
-def _persist_server_type(
-    server_type: str, product_name: str = "", *, generation: int | None = None
-) -> None:
+def _persist_server_type(server_type: str, product_name: str = "", *, generation: int | None = None) -> None:
     st = str(server_type or "").strip().lower()
     if st not in ("jellyfin", "emby"):
         return
@@ -873,14 +810,10 @@ def _request_context() -> _RequestContext:
             catalog_user_id=catalog_user_id,
             authenticated=bool(_STATUS.get("authenticated")),
             connected=bool(_STATUS.get("connected")),
-            last_register_ok=_STATUS.get("last_register_ok")
-            if isinstance(_STATUS.get("last_register_ok"), bool)
-            else None,
+            last_register_ok=_STATUS.get("last_register_ok") if isinstance(_STATUS.get("last_register_ok"), bool) else None,
             register_retry_failures=int(_REGISTER_RETRY_FAILURES or 0),
             next_register_retry_ts=float(_NEXT_REGISTER_RETRY_TS or 0.0),
-            last_detect_ok=_STATUS.get("last_detect_ok")
-            if isinstance(_STATUS.get("last_detect_ok"), bool)
-            else None,
+            last_detect_ok=_STATUS.get("last_detect_ok") if isinstance(_STATUS.get("last_detect_ok"), bool) else None,
             last_detect_ts=float(detect_ts) if isinstance(detect_ts, (int, float)) else None,
         )
 
@@ -950,21 +883,10 @@ def _maybe_retry_detection() -> None:
     _run_detection(context.server_url, generation=context.generation)
 
 
-def connect(
-    *,
-    server_url: str,
-    api_key: str | None = None,
-    auth_mode: str | None = None,
-    device_name: str | None = None,
-    heartbeat_sec: int | None = None,
-) -> dict[str, object]:
+def connect(*, server_url: str, api_key: str | None = None, auth_mode: str | None = None, device_name: str | None = None, heartbeat_sec: int | None = None) -> dict[str, object]:
     """Configure and enable Jellyfin receiver runtime."""
     global _API_KEY, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
-    global \
-        _REGISTER_RETRY_FAILURES, \
-        _NEXT_REGISTER_RETRY_TS, \
-        _LAST_STOPPED_SIGNATURE, \
-        _LAST_STOPPED_TS
+    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     # The whole swap runs with the socket suspended: it belongs to the outgoing
     # server, a command arriving on it after the config change would execute
     # against the new server's state, and server-type detection alone can take
@@ -972,35 +894,14 @@ def connect(
     # heartbeat from reopening it to the old server mid-transaction.
     with _control_socket_suspended():
         return _connect_locked(
-            server_url=server_url,
-            api_key=api_key,
-            auth_mode=auth_mode,
-            device_name=device_name,
-            heartbeat_sec=heartbeat_sec,
+            server_url=server_url, api_key=api_key, auth_mode=auth_mode,
+            device_name=device_name, heartbeat_sec=heartbeat_sec
         )
 
 
-def _connect_locked(
-    *,
-    server_url: str,
-    api_key: str | None,
-    auth_mode: str | None,
-    device_name: str | None,
-    heartbeat_sec: int | None,
-) -> dict[str, object]:
-    global \
-        _API_KEY, \
-        _AUTH_MODE, \
-        _AUTH_USERNAME, \
-        _AUTH_PASSWORD, \
-        _ACCESS_TOKEN, \
-        _AUTH_USER_ID, \
-        _AUTH_SESSION_ID
-    global \
-        _REGISTER_RETRY_FAILURES, \
-        _NEXT_REGISTER_RETRY_TS, \
-        _LAST_STOPPED_SIGNATURE, \
-        _LAST_STOPPED_TS
+def _connect_locked(*, server_url: str, api_key: str | None, auth_mode: str | None, device_name: str | None, heartbeat_sec: int | None) -> dict[str, object]:
+    global _API_KEY, _AUTH_MODE, _AUTH_USERNAME, _AUTH_PASSWORD, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
+    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     with _LOCK:
         _STATUS["enabled"] = True
         _STATUS["running"] = True
@@ -1095,12 +996,7 @@ def disconnect() -> dict[str, object]:
 
 
 def _disconnect_locked() -> dict[str, object]:
-    global \
-        _REGISTER_RETRY_FAILURES, \
-        _NEXT_REGISTER_RETRY_TS, \
-        _ACCESS_TOKEN, \
-        _AUTH_USER_ID, \
-        _AUTH_SESSION_ID
+    global _REGISTER_RETRY_FAILURES, _NEXT_REGISTER_RETRY_TS, _ACCESS_TOKEN, _AUTH_USER_ID, _AUTH_SESSION_ID
     global _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     _stop_worker()
     with _LOCK:
@@ -1186,9 +1082,7 @@ def control_token() -> str:
         return str(_API_KEY if _AUTH_MODE == "shared_api_key" else _ACCESS_TOKEN)
 
 
-def control_socket_identity_headers(
-    status_snapshot: dict[str, object] | None = None,
-) -> dict[str, str]:
+def control_socket_identity_headers(status_snapshot: dict[str, object] | None = None) -> dict[str, str]:
     """Identify the cast device during the websocket HTTP handshake.
 
     The socket URL carries the credential as ``?api_key=``, while this header
@@ -1372,9 +1266,7 @@ def get_item_metadata(
         for k, v in _headers().items():
             req.add_header(k, v)
         try:
-            with _urlrequest.urlopen(
-                req, timeout=float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5"))
-            ) as resp:
+            with _urlrequest.urlopen(req, timeout=float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5"))) as resp:
                 raw = (resp.read() or b"{}").decode("utf-8", "ignore")
             data = json.loads(raw) if raw.strip() else {}
             if not isinstance(data, dict):
@@ -1384,17 +1276,11 @@ def get_item_metadata(
             series_name = str(data.get("SeriesName") or "").strip()
             season_name = str(data.get("SeasonName") or "").strip()
             try:
-                season_num = (
-                    int(data.get("ParentIndexNumber"))
-                    if data.get("ParentIndexNumber") is not None
-                    else None
-                )
+                season_num = int(data.get("ParentIndexNumber")) if data.get("ParentIndexNumber") is not None else None
             except Exception:
                 season_num = None
             try:
-                episode_num = (
-                    int(data.get("IndexNumber")) if data.get("IndexNumber") is not None else None
-                )
+                episode_num = int(data.get("IndexNumber")) if data.get("IndexNumber") is not None else None
             except Exception:
                 episode_num = None
             year = ""
@@ -1451,9 +1337,7 @@ def get_item_metadata(
                 duration = float(run_ticks) / 10_000_000.0 if run_ticks is not None else None
             except Exception:
                 duration = None
-            _audio_streams, _subtitle_streams, audio_language, subtitle_language = (
-                _extract_stream_languages(data)
-            )
+            _audio_streams, _subtitle_streams, audio_language, subtitle_language = _extract_stream_languages(data)
             out = {
                 "item_id": iid,
                 "title": display_title,
@@ -1514,9 +1398,7 @@ def _stream_language(value: object) -> str:
     return str(value or "").strip().lower().replace("_", "-")
 
 
-def _extract_stream_languages(
-    data: dict[str, object],
-) -> tuple[list[dict[str, object]], list[dict[str, object]], str, str]:
+def _extract_stream_languages(data: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], str, str]:
     raw = data.get("MediaStreams")
     streams = raw if isinstance(raw, list) else []
     default_audio_idx = _safe_int(data.get("DefaultAudioStreamIndex"))
@@ -1559,12 +1441,7 @@ def _extract_stream_languages(
                 return str(row.get("language") or "").strip()
         return ""
 
-    return (
-        audio_streams,
-        subtitle_streams,
-        _selected_lang(audio_streams),
-        _selected_lang(subtitle_streams),
-    )
+    return audio_streams, subtitle_streams, _selected_lang(audio_streams), _selected_lang(subtitle_streams)
 
 
 def _item_year(data: dict[str, object]) -> str:
@@ -1598,13 +1475,7 @@ def _extract_media_source_id(data: dict[str, object]) -> str:
         for ms in media_sources:
             if not isinstance(ms, dict):
                 continue
-            mid = str(
-                ms.get("Id")
-                or ms.get("id")
-                or ms.get("MediaSourceId")
-                or ms.get("mediaSourceId")
-                or ""
-            ).strip()
+            mid = str(ms.get("Id") or ms.get("id") or ms.get("MediaSourceId") or ms.get("mediaSourceId") or "").strip()
             if mid:
                 return mid
     return ""
@@ -1615,7 +1486,11 @@ def _tmdb_provider_id(data: dict[str, object]) -> int | None:
     if not isinstance(provider_ids, dict):
         return None
     raw = next(
-        (value for key, value in provider_ids.items() if str(key or "").strip().lower() == "tmdb"),
+        (
+            value
+            for key, value in provider_ids.items()
+            if str(key or "").strip().lower() == "tmdb"
+        ),
         None,
     )
     try:
@@ -1659,11 +1534,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
     name = str(data.get("Name") or "").strip()
     series_name = str(data.get("SeriesName") or "").strip()
     try:
-        season_num = (
-            int(data.get("ParentIndexNumber"))
-            if data.get("ParentIndexNumber") is not None
-            else None
-        )
+        season_num = int(data.get("ParentIndexNumber")) if data.get("ParentIndexNumber") is not None else None
     except Exception:
         season_num = None
     try:
@@ -1695,9 +1566,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
 
     tags = data.get("ImageTags") if isinstance(data.get("ImageTags"), dict) else {}
     primary_tag = str(tags.get("Primary") or data.get("PrimaryImageTag") or "").strip()
-    backdrop_tags = (
-        data.get("BackdropImageTags") if isinstance(data.get("BackdropImageTags"), list) else []
-    )
+    backdrop_tags = data.get("BackdropImageTags") if isinstance(data.get("BackdropImageTags"), list) else []
     backdrop_tag = str(backdrop_tags[0] if backdrop_tags else "").strip()
     thumb = ""
     backdrop = ""
@@ -1729,9 +1598,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
             progress_percent = max(0.0, min(100.0, (resume_pos / runtime_sec) * 100.0))
     except Exception:
         progress_percent = 0.0
-    audio_streams, subtitle_streams, audio_language, subtitle_language = _extract_stream_languages(
-        data
-    )
+    audio_streams, subtitle_streams, audio_language, subtitle_language = _extract_stream_languages(data)
     video_codec = ""
     video_profile = ""
     video_width: int | None = None
@@ -1793,9 +1660,7 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "video_fps": video_fps,
         "video_bitrate": video_bitrate,
         "tmdb_id": _tmdb_provider_id(data),
-        "library_name": _library_label_from_path(
-            data.get("Path"), title=title, series_name=series_name
-        ),
+        "library_name": _library_label_from_path(data.get("Path"), title=title, series_name=series_name),
     }
     _attach_thumb(out)
     if out.get("thumbnail_local"):
@@ -1854,9 +1719,7 @@ def get_item_detail(
     # Some Jellyfin deployments require UserId context for /Items/{id};
     # include it explicitly to avoid server-side Guid-empty errors.
     if user_id:
-        candidates.append(
-            f"{base}/Items/{quoted}?UserId={_urlparse.quote(user_id)}&Fields={fields}"
-        )
+        candidates.append(f"{base}/Items/{quoted}?UserId={_urlparse.quote(user_id)}&Fields={fields}")
     else:
         candidates.append(f"{base}/Items/{quoted}?Fields={fields}")
     timeout = float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5"))
@@ -1940,9 +1803,7 @@ def resolve_playback_url(
             sep = "&" if "?" in req_url else "?"
             req_url = f"{req_url}{sep}UserId={_urlparse.quote(user_id)}"
         if method == "POST":
-            req = _urlrequest.Request(
-                req_url, data=json.dumps(payload).encode("utf-8"), method="POST"
-            )
+            req = _urlrequest.Request(req_url, data=json.dumps(payload).encode("utf-8"), method="POST")
             req.add_header("Content-Type", "application/json")
         else:
             req = _urlrequest.Request(req_url, method="GET")
@@ -1971,11 +1832,7 @@ def resolve_playback_url(
             _mark_catalog_error(last_err)
             continue
 
-    media_sources = (
-        data.get("MediaSources")
-        if isinstance(data, dict) and isinstance(data.get("MediaSources"), list)
-        else []
-    )
+    media_sources = data.get("MediaSources") if isinstance(data, dict) and isinstance(data.get("MediaSources"), list) else []
     selected = media_sources[0] if media_sources and isinstance(media_sources[0], dict) else {}
 
     if prefer_transcode:
@@ -2047,9 +1904,7 @@ def _adjacent_from_episodes(
         return prev, nxt
 
     for ep in episodes:
-        rank = _episode_rank(
-            _safe_int(ep.get("season_number")), _safe_int(ep.get("episode_number"))
-        )
+        rank = _episode_rank(_safe_int(ep.get("season_number")), _safe_int(ep.get("episode_number")))
         if rank < 0:
             continue
         if rank < cur_rank:
@@ -2141,9 +1996,7 @@ def _fetch_series_episodes_for_season(
     fields_q = _urlparse.quote(fields)
     candidates: list[str] = []
     if uid:
-        candidates.append(
-            f"{base}/Shows/{sid}/Episodes?SeasonId={seas}&UserId={uid}&Limit=5000&Fields={fields_q}"
-        )
+        candidates.append(f"{base}/Shows/{sid}/Episodes?SeasonId={seas}&UserId={uid}&Limit=5000&Fields={fields_q}")
     candidates.append(f"{base}/Shows/{sid}/Episodes?SeasonId={seas}&Limit=5000&Fields={fields_q}")
     q = _urlparse.urlencode(
         {
@@ -2321,23 +2174,16 @@ def get_adjacent_episodes(item_id: str, *, refresh: bool = False) -> dict[str, o
     rows = list(rows_by_id.values())
     raw_episodes = [_normalize_catalog_item(row, base=base, token=token) for row in rows]
     wanted_series_name = series_name.lower().strip()
-
     def _episode_matches(ep: dict[str, object]) -> bool:
         if not str(ep.get("item_id") or "").strip():
             return False
         if str(ep.get("type") or "").strip().lower() != "episode":
             return False
-        if (
-            _safe_int(ep.get("season_number")) is None
-            or _safe_int(ep.get("episode_number")) is None
-        ):
+        if _safe_int(ep.get("season_number")) is None or _safe_int(ep.get("episode_number")) is None:
             return False
         if series_id and str(ep.get("series_id") or "").strip() == series_id:
             return True
-        if (
-            wanted_series_name
-            and str(ep.get("series_name") or "").strip().lower() == wanted_series_name
-        ):
+        if wanted_series_name and str(ep.get("series_name") or "").strip().lower() == wanted_series_name:
             return True
         return False
 
@@ -2367,9 +2213,7 @@ def get_adjacent_episodes(item_id: str, *, refresh: bool = False) -> dict[str, o
         return payload
 
     cur_id = str(detail.get("item_id") or "").strip()
-    prev, nxt = _adjacent_from_episodes(
-        episodes, cur_id=cur_id, cur_season=int(cur_season), cur_episode=int(cur_episode)
-    )
+    prev, nxt = _adjacent_from_episodes(episodes, cur_id=cur_id, cur_season=int(cur_season), cur_episode=int(cur_episode))
 
     # Some Jellyfin libraries return only the current season on generic episode listings.
     # If we're at a season boundary and a side is missing, probe adjacent seasons explicitly.
@@ -2382,20 +2226,10 @@ def get_adjacent_episodes(item_id: str, *, refresh: bool = False) -> dict[str, o
             token=token,
         )
         if not seasons:
-            probe = max(
-                2,
-                min(
-                    24,
-                    int(float(os.getenv("RELAYTV_JELLYFIN_ADJACENT_SEASON_PROBE_MAX", "8") or "8")),
-                ),
-            )
+            probe = max(2, min(24, int(float(os.getenv("RELAYTV_JELLYFIN_ADJACENT_SEASON_PROBE_MAX", "8") or "8"))))
             lo = max(1, int(cur_season) - probe)
             hi = int(cur_season) + probe
-            seasons = [
-                {"season_number": sn, "season_id": ""}
-                for sn in range(lo, hi + 1)
-                if sn != int(cur_season)
-            ]
+            seasons = [{"season_number": sn, "season_id": ""} for sn in range(lo, hi + 1) if sn != int(cur_season)]
 
         fetched_seasons: set[str] = set()
         for need_prev in (True, False):
@@ -2446,10 +2280,7 @@ def get_adjacent_episodes(item_id: str, *, refresh: bool = False) -> dict[str, o
                 if changed:
                     episodes = _episodes_sorted(list(rows_by_id.values()))
                     prev, nxt = _adjacent_from_episodes(
-                        episodes,
-                        cur_id=cur_id,
-                        cur_season=int(cur_season),
-                        cur_episode=int(cur_episode),
+                        episodes, cur_id=cur_id, cur_season=int(cur_season), cur_episode=int(cur_episode)
                     )
                 if need_prev and prev is not None:
                     break
@@ -2875,19 +2706,15 @@ def list_series_seasons(series_id: str, *, refresh: bool = False) -> dict[str, o
                 q["api_key"] = token
             if q:
                 thumb = f"{thumb}?{_urlparse.urlencode(q)}"
-        seasons.append(
-            _attach_thumb(
-                {
-                    "series_id": sid,
-                    "season_id": season_id_out,
-                    "season_number": num,
-                    "title": title,
-                    "subtitle": f"{title}",
-                    "thumbnail": thumb,
-                }
-            )
-        )
-    seasons.sort(key=lambda x: _safe_int(x.get("season_number")) or 0)
+        seasons.append(_attach_thumb({
+            "series_id": sid,
+            "season_id": season_id_out,
+            "season_number": num,
+            "title": title,
+            "subtitle": f"{title}",
+            "thumbnail": thumb,
+        }))
+    seasons.sort(key=lambda x: (_safe_int(x.get("season_number")) or 0))
     out = {"series_id": sid, "seasons": seasons, "count": len(seasons)}
     _catalog_cache_set(cache_key, out, ttl_sec=_catalog_ttl_sec("detail"))
     _mark_catalog_ok()
@@ -2906,20 +2733,12 @@ def list_series_episodes(
     base, token, user_id = _catalog_base_token_user()
     user_id = str(user_id_override or user_id or "").strip()
     if not sid or not base:
-        return {
-            "series_id": sid,
-            "season_id": str(season_id or "").strip(),
-            "season_number": season_number,
-            "episodes": [],
-            "count": 0,
-        }
+        return {"series_id": sid, "season_id": str(season_id or "").strip(), "season_number": season_number, "episodes": [], "count": 0}
 
     seas_id = str(season_id or "").strip()
     seas_num = _safe_int(season_number)
     explicit_season_filter = bool(seas_id) or (seas_num is not None)
-    cache_key = (
-        f"series_eps:{base}:{user_id}:{sid}:{seas_id}:{seas_num if seas_num is not None else ''}"
-    )
+    cache_key = f"series_eps:{base}:{user_id}:{sid}:{seas_id}:{seas_num if seas_num is not None else ''}"
     if not refresh:
         cached = _catalog_cache_get(cache_key)
         if isinstance(cached, dict):
@@ -2962,12 +2781,8 @@ def list_series_episodes(
         fields_q = _urlparse.quote(fields)
         candidates: list[str] = []
         if uid:
-            candidates.append(
-                f"{base}/Shows/{_urlparse.quote(sid)}/Episodes?UserId={uid}&Limit=5000&Fields={fields_q}"
-            )
-        candidates.append(
-            f"{base}/Shows/{_urlparse.quote(sid)}/Episodes?Limit=5000&Fields={fields_q}"
-        )
+            candidates.append(f"{base}/Shows/{_urlparse.quote(sid)}/Episodes?UserId={uid}&Limit=5000&Fields={fields_q}")
+        candidates.append(f"{base}/Shows/{_urlparse.quote(sid)}/Episodes?Limit=5000&Fields={fields_q}")
         for u in candidates:
             try:
                 rows = _extract_items(_get_json(u, timeout=timeout, token=token))
@@ -2982,17 +2797,12 @@ def list_series_episodes(
     episodes = [
         ep
         for ep in episodes
-        if (not str(ep.get("series_id") or "").strip())
-        or str(ep.get("series_id") or "").strip() == sid
+        if (not str(ep.get("series_id") or "").strip()) or str(ep.get("series_id") or "").strip() == sid
     ]
     episodes.sort(
         key=lambda x: (
-            _safe_int(x.get("season_number"))
-            if _safe_int(x.get("season_number")) is not None
-            else 10_000,
-            _safe_int(x.get("episode_number"))
-            if _safe_int(x.get("episode_number")) is not None
-            else 10_000,
+            _safe_int(x.get("season_number")) if _safe_int(x.get("season_number")) is not None else 10_000,
+            _safe_int(x.get("episode_number")) if _safe_int(x.get("episode_number")) is not None else 10_000,
             str(x.get("title") or "").lower(),
         )
     )
@@ -3177,16 +2987,8 @@ def _sanitize_error_text(msg: object) -> str:
     # Header-like/token literals.
     text = re.sub(r'(?i)(token\s*=\s*")[^"]+(")', r"\1<redacted>\2", text)
     text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1<redacted>", text)
-    text = re.sub(
-        r'(?i)("?(?:accesstoken|authtoken|refreshtoken)"?\s*[:=]\s*")([^"]+)(")',
-        r"\1<redacted>\3",
-        text,
-    )
-    text = re.sub(
-        r'(?i)("?(?:accesstoken|authtoken|refreshtoken)"?\s*[:=]\s*)([A-Za-z0-9._~+/=-]{6,})',
-        r"\1<redacted>",
-        text,
-    )
+    text = re.sub(r'(?i)("?(?:accesstoken|authtoken|refreshtoken)"?\s*[:=]\s*")([^"]+)(")', r"\1<redacted>\3", text)
+    text = re.sub(r'(?i)("?(?:accesstoken|authtoken|refreshtoken)"?\s*[:=]\s*)([A-Za-z0-9._~+/=-]{6,})', r"\1<redacted>", text)
     return text
 
 
@@ -3448,7 +3250,6 @@ def register_receiver_once(*, _context: _RequestContext | None = None) -> dict[s
                 logger.info("jellyfin_register_discarded reason=config_changed")
                 return {"ok": False, "reason": "config_changed"}
             return {"ok": True, "url": url, "method": name, "verified": verified}
-
         def _apply_failure() -> None:
             _STATUS["connected"] = False
             _STATUS["last_register_ts"] = int(time.time())
@@ -3459,12 +3260,7 @@ def register_receiver_once(*, _context: _RequestContext | None = None) -> dict[s
 
         if not _publish(generation, _apply_failure):
             return {"ok": False, "reason": "config_changed"}
-        return {
-            "ok": False,
-            "reason": "register_failed",
-            "error": f"{last_name}: {last_err}",
-            "url": last_url,
-        }
+        return {"ok": False, "reason": "register_failed", "error": f"{last_name}: {last_err}", "url": last_url}
     except Exception as e:
         msg = _format_http_error(e)
 
@@ -3546,7 +3342,6 @@ def _schedule_register_retry(
         _STATUS["register_retry_failures"] = _REGISTER_RETRY_FAILURES
         _STATUS["next_register_retry_ts"] = int(_NEXT_REGISTER_RETRY_TS)
         _STATUS["last_register_backoff_sec"] = float(delay_sec)
-
     if generation is not None:
         return _publish(generation, _apply)
     with _LOCK:
@@ -3562,7 +3357,6 @@ def _clear_register_retry_state(*, generation: int | None = None) -> bool:
         _STATUS["register_retry_failures"] = 0
         _STATUS["next_register_retry_ts"] = None
         _STATUS["last_register_backoff_sec"] = 0.0
-
     if generation is not None:
         return _publish(generation, _apply)
     with _LOCK:

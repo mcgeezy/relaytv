@@ -31,7 +31,6 @@ and removed on shutdown. Disk, not pipe backpressure, buffers the
 download; a full disk fails the mux, which degrades to EOF + queue
 advance.
 """
-
 from __future__ import annotations
 
 import collections
@@ -449,7 +448,9 @@ def _prune_completed_spools(*, keep: int, max_age_sec: float | None = None) -> N
         doomed = list(entries[keep:])
         if max_age_sec is not None:
             doomed += [
-                (token, meta) for token, meta in entries[:keep] if now - meta[1] > max_age_sec
+                (token, meta)
+                for token, meta in entries[:keep]
+                if now - meta[1] > max_age_sec
             ]
         for token, _meta in doomed:
             _COMPLETED_SPOOLS.pop(token, None)
@@ -481,7 +482,9 @@ def close_session(token: str, *, reason: str) -> None:
     else:
         _remove_file(session.spool_path)
     tails = {
-        name: " | ".join(list(tail)[-3:]) for name, tail in session.stderr_tails.items() if tail
+        name: " | ".join(list(tail)[-3:])
+        for name, tail in session.stderr_tails.items()
+        if tail
     }
     logger.info(
         "postlive_relay_session_closed token=%s reason=%s spool_kept=%s stderr_tails=%s",
@@ -560,4 +563,6 @@ def _ensure_reaper() -> None:
         if _REAPER_STARTED:
             return
         _REAPER_STARTED = True
-    threading.Thread(target=_reaper_loop, name="relaytv-postlive-reaper", daemon=True).start()
+    threading.Thread(
+        target=_reaper_loop, name="relaytv-postlive-reaper", daemon=True
+    ).start()

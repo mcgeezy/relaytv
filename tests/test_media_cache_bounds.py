@@ -7,7 +7,6 @@ items whose provider was down grew the queue without limit and re-requested
 the same failing URLs forever. The yt-dlp metadata cache was an unlocked dict
 with a TTL check but no eviction, so it grew for the life of the process.
 """
-
 import queue
 import threading
 import time

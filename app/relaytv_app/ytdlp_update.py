@@ -7,7 +7,6 @@ containers current without a restart. The pip-upgrade mechanics and the
 interval gate (shared state file) live in container_entrypoint so both
 callers follow one schedule.
 """
-
 import os
 import threading
 import time
