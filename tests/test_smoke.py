@@ -1672,6 +1672,16 @@ def test_pi_ytdlp_defaults_prefer_1080p_non_av1_without_progressive_stage(monkey
     assert ytdlp_format_policy.youtube_progressive_startup_enabled(profile) is False
 
 
+
+@pytest.mark.parametrize("profile", [{}, None, {"decode_profile": "unknown"}])
+def test_youtube_progressive_startup_candidates_edge_cases(profile: dict | None) -> None:
+    candidates = ytdlp_format_policy.youtube_progressive_startup_candidates({}, profile=profile)
+    assert candidates == [
+        'best*[height<=1080][fps<=30][vcodec!=none][acodec!=none][vcodec^=avc1]/best*[height<=1080][fps<=30][vcodec!=none][acodec!=none]/best[height<=1080]/best',
+        'best*[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best',
+        'best[height<=1080]/best'
+    ]
+
 def test_pi_ytdlp_safe_selector_remains_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in ('YTDLP_FORMAT', 'YTDLP_FORMAT_YOUTUBE', 'RELAYTV_YOUTUBE_PROGRESSIVE_FIRST'):
         monkeypatch.delenv(key, raising=False)
