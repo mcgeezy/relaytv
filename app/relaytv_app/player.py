@@ -4528,6 +4528,17 @@ def _notify_bot_check_skip(item: object) -> None:
     _notify_bot_check_toast(text)
 
 
+def _notify_unplayable_skip(item: object) -> None:
+    """Toast that a queue item was skipped because it is unplayable."""
+    label = ""
+    if isinstance(item, dict):
+        label = str(item.get("title") or item.get("url") or "").strip()
+    else:
+        label = str(item or "").strip()
+    text = f"Skipped (unplayable): {label}" if label else "Video skipped: unplayable"
+    _notify_warn_toast(text)
+
+
 def _notify_post_live_processing(item: object) -> None:
     title = ""
     if isinstance(item, dict):
@@ -4788,7 +4799,7 @@ def advance_queue_playback(
 
     handoff_guard = queue_handoff_suppress_sec()
     playback_service.suppress_auto_next(handoff_guard)
-    allow_skip_unplayable = mode in {"next", "play_next"}
+    allow_skip_unplayable = mode in {"next", "play_next", "auto_next"}
     skipped_unplayable = 0
 
     with state.ADVANCE_LOCK:
@@ -4878,7 +4889,7 @@ def advance_queue_playback(
                 skip_unplayable = bot_check or post_live_processing or iptv_stale or plex_stale or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
-                    and int(getattr(exc, "status_code", 0) or 0) == 400
+                    and int(getattr(exc, "status_code", 0) or 0) in (400, 404)
                 )
                 if skip_unplayable:
                     skipped_unplayable += 1
@@ -4893,6 +4904,8 @@ def advance_queue_playback(
                     )
                     if bot_check:
                         _notify_bot_check_skip(next_item)
+                    elif not post_live_processing:
+                        _notify_unplayable_skip(next_item)
                     continue
                 with state.QUEUE_LOCK:
                     state.QUEUE.insert(0, next_item)
