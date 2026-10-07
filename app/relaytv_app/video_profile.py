@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
+from pathlib import Path
 import platform
 import re
 from .config import env_bool as _env_bool
@@ -164,12 +165,56 @@ def _decode_profile(arch: str, has_dri: bool, hwaccels: list[str]) -> str:
     return "software"
 
 
-def _av1_allowed(arch: str, av1_paths: list[str]) -> bool:
+def _host_model() -> str:
+    for candidate in (Path("/proc/device-tree/model"), Path("/sys/firmware/devicetree/base/model")):
+        try:
+            if candidate.is_file():
+                txt = candidate.read_text(encoding="utf-8", errors="ignore").replace("\x00", "").strip()
+                if txt:
+                    return txt
+        except Exception:
+            continue
+    try:
+        cpuinfo = Path("/proc/cpuinfo")
+        if cpuinfo.is_file():
+            for line in cpuinfo.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.lower().startswith("model") and ":" in line:
+                    val = line.split(":", 1)[1].strip()
+                    if val:
+                        return val
+    except Exception:
+        pass
+    return ""
+
+
+def _pi_generation(model: str | None = None) -> int | None:
+    raw = (os.getenv("RELAYTV_PI_GENERATION") or "").strip()
+    if raw in ("3", "4", "5"):
+        try:
+            return int(raw)
+        except Exception:
+            pass
+    text = (model if model is not None else _host_model()).lower()
+    if "raspberry pi 5" in text:
+        return 5
+    if any(k in text for k in ("raspberry pi 4", "compute module 4", "pi 400")):
+        return 4
+    if any(k in text for k in ("raspberry pi 3", "zero 2")):
+        return 3
+    if "raspberry pi" in text:
+        return 4
+    return None
+
+
+def _av1_allowed(arch: str, av1_paths: list[str], *, model: str | None = None) -> bool:
     env = os.getenv("RELAYTV_VIDEO_PROFILE_ALLOW_AV1")
     if env is not None and str(env).strip() != "":
         return _env_bool("RELAYTV_VIDEO_PROFILE_ALLOW_AV1", False)
     machine = (arch or "").lower()
     if machine in ("aarch64", "arm64"):
+        gen = _pi_generation(model)
+        if gen == 5:
+            return bool(av1_paths)
         return False
     return bool(av1_paths)
 
@@ -199,6 +244,8 @@ def _build_profile() -> dict[str, Any]:
         display_cap_source = "unknown"
     hwaccels = _ffmpeg_hwaccels()
     av1_paths = _mpv_av1_decode_paths()
+    model = _host_model()
+    pi_gen = _pi_generation(model)
     profile = {
         "generated_ts": int(time.time()),
         "arch": arch,
@@ -213,7 +260,8 @@ def _build_profile() -> dict[str, Any]:
         "display_cap_source": display_cap_source,
         "decode_profile": _decode_profile(arch, has_dri, hwaccels),
         "av1_decode_paths": av1_paths,
-        "av1_allowed": _av1_allowed(arch, av1_paths),
+        "av1_allowed": _av1_allowed(arch, av1_paths, model=model),
+        "pi_generation": pi_gen,
     }
     return profile
 

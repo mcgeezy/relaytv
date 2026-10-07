@@ -7412,3 +7412,42 @@ def test_apply_startup_mpv_runtime_settings(monkeypatch) -> None:
     player._apply_startup_mpv_runtime_settings(settings)
     assert ("alang", "eng,en") in calls
     assert ("sid", "no") in calls
+
+
+def test_video_profile_pi_generation_detection() -> None:
+    from relaytv_app import video_profile
+    assert video_profile._pi_generation("Raspberry Pi 5 Model B Rev 1.0") == 5
+    assert video_profile._pi_generation("Raspberry Pi 4 Model B Rev 1.4") == 4
+    assert video_profile._pi_generation("Raspberry Pi Compute Module 4 Rev 1.0") == 4
+    assert video_profile._pi_generation("Raspberry Pi 400 Rev 1.0") == 4
+    assert video_profile._pi_generation("Raspberry Pi 3 Model B Plus Rev 1.3") == 3
+    assert video_profile._pi_generation("Raspberry Pi Zero 2 W Rev 1.0") == 3
+    assert video_profile._pi_generation("Generic Rockchip RK3588") is None
+
+
+def test_video_profile_av1_allowed_pi4_vs_pi5() -> None:
+    from relaytv_app import video_profile
+    # Pi 5 has Cortex-A76 cores capable of software AV1 decode via dav1d
+    assert video_profile._av1_allowed("aarch64", ["libdav1d"], model="Raspberry Pi 5 Model B Rev 1.0") is True
+    # Pi 4 and earlier cannot decode AV1 in software without CPU lockup
+    assert video_profile._av1_allowed("aarch64", ["libdav1d"], model="Raspberry Pi 4 Model B Rev 1.4") is False
+    assert video_profile._av1_allowed("aarch64", ["libdav1d"], model="Raspberry Pi 3 Model B Plus Rev 1.3") is False
+    # x86_64 allows AV1 if dav1d is available
+    assert video_profile._av1_allowed("x86_64", ["libdav1d"]) is True
+    assert video_profile._av1_allowed("x86_64", []) is False
+
+
+def test_installer_pi_video_nodes_include_hevc_and_dma() -> None:
+    install_text = (ROOT_DIR / "scripts/install.sh").read_text()
+    assert "/dev/video19" in install_text
+    assert "/dev/media0" in install_text
+    assert "/dev/dma_heap" in install_text
+    assert "detect_pi_generation" in install_text
+
+def test_video_profile_pi_generation_env_override(monkeypatch) -> None:
+    from relaytv_app import video_profile
+    monkeypatch.setenv('RELAYTV_PI_GENERATION', '5')
+    assert video_profile._pi_generation('Raspberry Pi 4 Model B Rev 1.4') == 5
+    monkeypatch.setenv('RELAYTV_PI_GENERATION', '4')
+    assert video_profile._pi_generation('Raspberry Pi 5 Model B Rev 1.0') == 4
+    monkeypatch.delenv('RELAYTV_PI_GENERATION', raising=False)

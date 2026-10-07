@@ -298,7 +298,7 @@ If you explicitly want to inherit the current shell environment:
 
 ## Raspberry Pi Notes
 
-On Raspberry Pi hosts, the installer also generates `docker-compose.override.yml` for the standard V4L2 devices (`/dev/video10-13`) so the normal startup command stays the same:
+On Raspberry Pi hosts, the installer also generates `docker-compose.override.yml` for available V4L2/HEVC devices (`/dev/video10-13`, `/dev/video19`, `/dev/media0`) and `/dev/dma_heap` so the normal startup command stays the same:
 
 ```bash
 docker compose pull && docker compose up -d
@@ -308,6 +308,23 @@ Overrides:
 
 - `RELAYTV_PI_VIDEO_DEVICES_ENABLED=1` force on
 - `RELAYTV_PI_VIDEO_DEVICES_ENABLED=0` force off
+
+The installer distinguishes Pi generations from the model name, ignoring the
+board revision suffix. Pi 3/4-class and unidentified Pi hosts default to the
+fast mpv profile, a 1080p quality/display cap, and the conservative YouTube
+format policy. Pi 5 defaults to the fast profile and 1080p quality cap while
+leaving the display cap unset and disabling the conservative format policy.
+The runtime permits AV1 on 64-bit Pi 5 when mpv reports an AV1 decoder;
+`RELAYTV_VIDEO_PROFILE_ALLOW_AV1` remains an explicit override.
+
+Set `RELAYTV_PI_GENERATION=3|4|5` to override model detection. For this setting
+and `RELAYTV_ARM_FAST_PROFILE`, `RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT`,
+`RELAYTV_ARM_DEFAULT_QUALITY`, and `RELAYTV_DISPLAY_CAP_HEIGHT`, precedence is:
+explicit installer shell environment, existing `.env` value, detected default.
+Existing values are preserved on subsequent installer runs, including on
+non-Pi hosts. Remove a saved setting to adopt its detected default again.
+An empty generation setting means autodetect; other invalid generation values
+stop installation before rewriting `.env`.
 
 Raspberry Pi Wayland installs use an Xwayland/xcb Qt bridge by default because
 native Wayland Qt can produce black video on Pi graphics stacks. When the

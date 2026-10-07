@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import pwd
 import shutil
+import shlex
 import stat
 import subprocess
 
@@ -24,13 +25,25 @@ def _run_host_installer(
     tmp_path: Path,
     args: list[str] | None = None,
     env_overrides: dict[str, str] | None = None,
+    host_model: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     installer = _copy_host_installer(tmp_path)
+    if host_model is not None:
+        # Substitute only the hardware probe result; run the real installer and
+        # its generation detection/default/persistence paths unchanged.
+        text = installer.read_text()
+        text = text.replace("\ndetect_host_profile() {", f"\nHOST_MODEL={shlex.quote(host_model)}\ndetect_host_profile() {{", 1)
+        installer.write_text(text)
     env = os.environ.copy()
     for key in (
         "DISPLAY",
         "QT_QPA_PLATFORM",
         "RELAYTV_HOST_PROFILE",
+        "RELAYTV_PI_GENERATION",
+        "RELAYTV_ARM_FAST_PROFILE",
+        "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT",
+        "RELAYTV_ARM_DEFAULT_QUALITY",
+        "RELAYTV_DISPLAY_CAP_HEIGHT",
         "RELAYTV_INSTALL_MODE",
         "RELAYTV_MODE",
         "RELAYTV_TARGET_HOME",
@@ -334,3 +347,96 @@ def test_bootstrap_no_install_docker_fails_with_actionable_guidance(tmp_path: Pa
     assert result.returncode != 0
     assert "Docker is not installed" in result.stderr
     assert "Docker Engine with the Compose plugin" in result.stderr
+
+
+@pytest.mark.parametrize(("model", "generation"), [
+    ("Raspberry Pi 4 Model B Rev 1.5", "4"),
+    ("Raspberry Pi 3 Model B Rev 1.4", "3"),
+    ("Raspberry Pi 5 Model B Rev 1.0", "5"),
+    ("Raspberry Pi Compute Module 4 Rev 1.5", "4"),
+    ("Raspberry Pi 400 Rev 1.5", "4"),
+    ("Raspberry Pi Zero 2 W Rev 1.5", "3"),
+])
+def test_installer_pi_generation_ignores_revision(tmp_path: Path, model: str, generation: str) -> None:
+    result = _run_host_installer(tmp_path, host_model=model)
+    assert result.returncode == 0, result.stderr
+    env = (tmp_path / ".env").read_text()
+    assert f"RELAYTV_PI_GENERATION={generation}\n" in env
+    assert "RELAYTV_ARM_FAST_PROFILE=1\n" in env
+    assert "RELAYTV_ARM_DEFAULT_QUALITY=1080\n" in env
+    if generation == "5":
+        assert "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT=0\n" in env
+        assert "RELAYTV_DISPLAY_CAP_HEIGHT=" not in env
+    else:
+        assert "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT=1\n" in env
+        assert "RELAYTV_DISPLAY_CAP_HEIGHT=1080\n" in env
+
+
+@pytest.mark.parametrize("profile", ["raspi", "amd64", "arm"])
+@pytest.mark.parametrize("shell_override", [False, True])
+def test_installer_preserves_playback_overrides(tmp_path: Path, profile: str, shell_override: bool) -> None:
+    saved = {
+        "RELAYTV_ARM_FAST_PROFILE": "0",
+        "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT": "1",
+        "RELAYTV_ARM_DEFAULT_QUALITY": "720",
+        "RELAYTV_DISPLAY_CAP_HEIGHT": "720",
+    }
+    # Preserve raw dotenv quoting and comments; never evaluate shell text.
+    saved_lines = [f'export {key}="{value}" # operator override' for key, value in saved.items()]
+    (tmp_path / ".env").write_text("\n".join(saved_lines) + "\n")
+    overrides = {"RELAYTV_HOST_PROFILE": profile}
+    if shell_override:
+        overrides.update({key: "0" if "PROFILE" in key or "FORMAT" in key else "480" for key in saved})
+    result = _run_host_installer(tmp_path, env_overrides=overrides, host_model="Raspberry Pi 5 Model B Rev 1.0")
+    assert result.returncode == 0, result.stderr
+    env = (tmp_path / ".env").read_text()
+    for key, original_line in zip(saved, saved_lines):
+        assert env.count(f"{key}=") == 1
+        assert (f"{key}={overrides[key]}\n" if shell_override else original_line + "\n") in env
+    # A second installation must retain the same choices.
+    shutil.rmtree(tmp_path / "scripts")
+    result = _run_host_installer(tmp_path, env_overrides={"RELAYTV_HOST_PROFILE": profile})
+    assert result.returncode == 0, result.stderr
+    for key in saved:
+        before = next(line for line in env.splitlines() if f"{key}=" in line)
+        assert before in (tmp_path / ".env").read_text().splitlines()
+
+
+@pytest.mark.parametrize(("saved", "shell", "expected"), [
+    (None, "5", "5"),
+    ('"5" # force generation', None, "5"),
+    ("'5'", "3", "3"),
+    (None, "4", "4"),
+    ('""', None, "4"),
+    (None, "", "4"),
+])
+def test_installer_pi_generation_override_precedes_detection(tmp_path: Path, saved: str | None, shell: str | None, expected: str) -> None:
+    if saved is not None:
+        (tmp_path / ".env").write_text(f"RELAYTV_PI_GENERATION={saved}\n")
+    overrides = {"RELAYTV_HOST_PROFILE": "raspi"}
+    if shell is not None:
+        overrides["RELAYTV_PI_GENERATION"] = shell
+    result = _run_host_installer(tmp_path, env_overrides=overrides, host_model="Raspberry Pi 4 Model B Rev 1.4")
+    assert result.returncode == 0, result.stderr
+    env = (tmp_path / ".env").read_text()
+    assert env.count("RELAYTV_PI_GENERATION=") == 1
+    assert f"RELAYTV_PI_GENERATION={shell if shell is not None else saved}\n" in env
+    assert f"RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT={'0' if expected == '5' else '1'}\n" in env
+    assert ("RELAYTV_DISPLAY_CAP_HEIGHT=1080\n" in env) == (expected != "5")
+
+
+@pytest.mark.parametrize("source", ["shell", "file"])
+def test_installer_rejects_invalid_pi_generation_without_evaluating_it(tmp_path: Path, source: str) -> None:
+    malicious = f"$(touch {tmp_path / 'should-not-exist'})"
+    overrides = {"RELAYTV_HOST_PROFILE": "raspi"}
+    original = "RELAYTV_DISPLAY_CAP_HEIGHT=720\n"
+    if source == "shell":
+        overrides["RELAYTV_PI_GENERATION"] = malicious
+    else:
+        original += f"RELAYTV_PI_GENERATION={malicious}\n"
+    (tmp_path / ".env").write_text(original)
+    result = _run_host_installer(tmp_path, env_overrides=overrides)
+    assert result.returncode == 2
+    assert "RELAYTV_PI_GENERATION" in result.stderr
+    assert not (tmp_path / "should-not-exist").exists()
+    assert (tmp_path / ".env").read_text() == original
