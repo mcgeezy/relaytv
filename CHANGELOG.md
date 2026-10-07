@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.11.1](https://github.com/mcgeezy/relaytv/compare/v0.11.0...v0.11.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* default to configured audio language in mpv and jellyfin playback ([#139](https://github.com/mcgeezy/relaytv/issues/139)) ([f3d66ea](https://github.com/mcgeezy/relaytv/commit/f3d66ea38eea01d5979b6bd94e20155caa68ff62))
+* implement model-aware Raspberry Pi 4 vs Pi 5 hardware defaults ([1bdd653](https://github.com/mcgeezy/relaytv/commit/1bdd653803b4ddd8d7e64c8f12d867ac78d41eb7))
+* prevent idle dashboard freeze and supervise overlay renderer ([#100](https://github.com/mcgeezy/relaytv/issues/100)) ([94ae36d](https://github.com/mcgeezy/relaytv/commit/94ae36d7d4a3beb5a0caaa03e6c1dbca7aea86b6))
+* protect queue moves and Plex lifecycle ([#98](https://github.com/mcgeezy/relaytv/issues/98)) ([8212de5](https://github.com/mcgeezy/relaytv/commit/8212de53edd6368fe703dbf5ae6d7e5f4ea09ddf))
+
+
+### Performance Improvements
+
+* optimize iptv channel catalog replacement using executemany ([#113](https://github.com/mcgeezy/relaytv/issues/113)) ([23d28e7](https://github.com/mcgeezy/relaytv/commit/23d28e7ad46c3f23fcc97c19b7de5338d12b77d0))
+* optimize iptv m3u parsing using precompiled regex ([#133](https://github.com/mcgeezy/relaytv/issues/133)) ([7229e8b](https://github.com/mcgeezy/relaytv/commit/7229e8b2078149c960807ffb60d61eb3355e8f4b))
+* optimize reorder_channel batch update using executemany ([#102](https://github.com/mcgeezy/relaytv/issues/102)) ([e0b0364](https://github.com/mcgeezy/relaytv/commit/e0b0364eb29afbf79939f2603cd846c8eb6d4ed1))
+
 ## [0.11.0](https://github.com/mcgeezy/relaytv/compare/v0.10.3...v0.11.0) (2026-09-10)
 
 
