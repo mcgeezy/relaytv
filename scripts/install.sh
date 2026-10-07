@@ -137,6 +137,8 @@ HOST_ARCH="$(uname -m 2>/dev/null || printf '%s' unknown)"
 HOST_MODEL=""
 if [ -r /proc/device-tree/model ]; then
   HOST_MODEL="$(tr -d '\0' < /proc/device-tree/model | xargs || true)"
+elif [ -r /sys/firmware/devicetree/base/model ]; then
+  HOST_MODEL="$(tr -d '\0' < /sys/firmware/devicetree/base/model | xargs || true)"
 elif [ -r /proc/cpuinfo ]; then
   HOST_MODEL="$(awk -F: '/^Model[[:space:]]*:/{sub(/^[[:space:]]+/, "", $2); print $2; exit}' /proc/cpuinfo || true)"
 fi
@@ -167,11 +169,11 @@ detect_pi_generation() {
   local model="$1"
   local model_lc
   model_lc="$(printf "%s" "$model" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$model_lc" == *raspberry*pi*5* ]]; then
+  if [[ "$model_lc" =~ raspberry[[:space:]]pi[[:space:]]5([[:space:]]|$) ]]; then
     printf "5"
-  elif [[ "$model_lc" == *raspberry*pi*4* || "$model_lc" == *compute*module*4* || "$model_lc" == *pi*400* ]]; then
+  elif [[ "$model_lc" =~ raspberry[[:space:]]pi[[:space:]]4([[:space:]]|$) || "$model_lc" =~ compute[[:space:]]module[[:space:]]4([[:space:]]|$) || "$model_lc" == *"pi 400"* ]]; then
     printf "4"
-  elif [[ "$model_lc" == *raspberry*pi*3* || "$model_lc" == *zero*2* ]]; then
+  elif [[ "$model_lc" =~ raspberry[[:space:]]pi[[:space:]]3([[:space:]]|$) || "$model_lc" == *"zero 2"* ]]; then
     printf "3"
   elif [[ "$model_lc" == *raspberry*pi* ]]; then
     printf "4"
@@ -240,25 +242,61 @@ CEC_MONITOR_VAL="${RELAYTV_CEC_MONITOR:-}"
 # bcm2835-codec V4L2 decode/encode nodes (Pi 4 and earlier) and rpivid HEVC / DMA nodes (Pi 4 & Pi 5)
 PI_VIDEO_DECODE_NODES="/dev/video10 /dev/video11 /dev/video12 /dev/video13 /dev/video19 /dev/media0 /dev/dma_heap"
 
-ARM_FAST_PROFILE_VAL="${RELAYTV_ARM_FAST_PROFILE:-}"
-ARM_FAST_PROFILE_FROM_ENV="0"
-if [ "${RELAYTV_ARM_FAST_PROFILE+x}" = "x" ]; then
-  ARM_FAST_PROFILE_FROM_ENV="1"
+# These playback knobs are operator settings. Preserve their original dotenv
+# lines (including quoting) unless explicitly overridden in the shell. Never
+# source .env: it is data, and may contain secrets or shell metacharacters.
+existing_playback_env_line() {
+  local wanted="$1" line found=""
+  [ -f "$ROOT/.env" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)= ]] && [ "${BASH_REMATCH[2]}" = "$wanted" ]; then
+      found="$line"
+    fi
+  done < "$ROOT/.env"
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
+}
+
+emit_playback_env() {
+  local key="$1" default="$2" existing
+  if [[ -v "$key" ]]; then
+    emit_env_line "$key" "${!key}"
+  elif existing="$(existing_playback_env_line "$key")"; then
+    printf '%s\n' "$existing"
+  elif [ -n "$default" ]; then
+    emit_env_line "$key" "$default"
+  fi
+}
+
+pi_gen="$(detect_pi_generation "$HOST_MODEL")"
+pi_generation_override="${RELAYTV_PI_GENERATION:-}"
+if [ "${RELAYTV_PI_GENERATION+x}" != "x" ]; then
+  if pi_generation_line="$(existing_playback_env_line RELAYTV_PI_GENERATION)"; then
+    # Only a literal generation number is meaningful here. Accept dotenv quotes
+    # and comments without interpreting substitutions or executing shell text.
+    pi_generation_value="${pi_generation_line#*=}"
+    pi_generation_pattern="^[[:space:]]*([345]|\"[345]\"|'[345]')[[:space:]]*(#.*)?$"
+    pi_generation_empty_pattern="^[[:space:]]*(\"\"|'')?[[:space:]]*(#.*)?$"
+    if [[ "$pi_generation_value" =~ $pi_generation_pattern ]]; then
+      pi_generation_override="${BASH_REMATCH[1]}"
+      pi_generation_override="${pi_generation_override//\"/}"
+      pi_generation_override="${pi_generation_override//\'/}"
+    elif [[ "$pi_generation_value" =~ $pi_generation_empty_pattern ]]; then
+      pi_generation_override=""
+    else
+      say "ERROR: RELAYTV_PI_GENERATION in .env must be 3, 4, or 5." >&2
+      exit 2
+    fi
+  fi
 fi
-ARM_ENFORCE_SAFE_YTDL_FORMAT_VAL="${RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT:-}"
-ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV="0"
-if [ "${RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT+x}" = "x" ]; then
-  ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV="1"
-fi
-ARM_DEFAULT_QUALITY_VAL="${RELAYTV_ARM_DEFAULT_QUALITY:-}"
-ARM_DEFAULT_QUALITY_FROM_ENV="0"
-if [ "${RELAYTV_ARM_DEFAULT_QUALITY+x}" = "x" ]; then
-  ARM_DEFAULT_QUALITY_FROM_ENV="1"
-fi
-DISPLAY_CAP_HEIGHT_VAL="${RELAYTV_DISPLAY_CAP_HEIGHT:-}"
-DISPLAY_CAP_HEIGHT_FROM_ENV="0"
-if [ "${RELAYTV_DISPLAY_CAP_HEIGHT+x}" = "x" ]; then
-  DISPLAY_CAP_HEIGHT_FROM_ENV="1"
+if [ -n "$pi_generation_override" ]; then
+  case "$pi_generation_override" in
+    3|4|5) pi_gen="$pi_generation_override" ;;
+    *)
+      say "ERROR: RELAYTV_PI_GENERATION must be 3, 4, or 5." >&2
+      exit 2
+      ;;
+  esac
 fi
 
 detect_pi_video_default() {
@@ -1160,61 +1198,37 @@ if [ -n "${HOST_PROFILE}" ] && [ "${HOST_PROFILE}" != "generic" ]; then
   HOST_ENV_BLOCK+=$'\n'
 fi
 
+# Defaults are Pi-specific, but explicit playback overrides apply on every host.
+pi_generation_default=""
+arm_fast_default=""
+arm_quality_default=""
+arm_safe_default=""
+display_cap_default=""
 if [ "${HOST_PROFILE}" = "raspi" ]; then
-  pi_gen="$(detect_pi_generation "$HOST_MODEL")"
-  if [ -n "$pi_gen" ] && [ "$pi_gen" != "0" ]; then
-    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_PI_GENERATION" "${pi_gen}")
-    HOST_ENV_BLOCK+=$'\n'
+  if [ "$pi_gen" != "0" ]; then
+    pi_generation_default="$pi_gen"
   fi
-
-  if [ "${ARM_FAST_PROFILE_FROM_ENV}" = "1" ]; then
-    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_FAST_PROFILE" "${ARM_FAST_PROFILE_VAL}")
-    HOST_ENV_BLOCK+=$'\n'
+  arm_fast_default="1"
+  arm_quality_default="1080"
+  if [ "$pi_gen" = "5" ]; then
+    arm_safe_default="0"
   else
-    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_FAST_PROFILE" "1")
-    HOST_ENV_BLOCK+=$'\n'
+    # An unidentified Pi keeps the conservative defaults too.
+    arm_safe_default="1"
+    display_cap_default="1080"
   fi
-
-  if [ "${ARM_DEFAULT_QUALITY_FROM_ENV}" = "1" ]; then
-    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_DEFAULT_QUALITY" "${ARM_DEFAULT_QUALITY_VAL}")
-    HOST_ENV_BLOCK+=$'\n'
-  else
-    HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_DEFAULT_QUALITY" "1080")
-    HOST_ENV_BLOCK+=$'\n'
-  fi
-
-  if [ "$pi_gen" = "4" ] || [ "$pi_gen" = "3" ]; then
-    if [ "${ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV}" = "1" ]; then
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "${ARM_ENFORCE_SAFE_YTDL_FORMAT_VAL}")
-      HOST_ENV_BLOCK+=$'\n'
-    else
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "1")
-      HOST_ENV_BLOCK+=$'\n'
-    fi
-    if [ "${DISPLAY_CAP_HEIGHT_FROM_ENV}" = "1" ]; then
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_DISPLAY_CAP_HEIGHT" "${DISPLAY_CAP_HEIGHT_VAL}")
-      HOST_ENV_BLOCK+=$'\n'
-    else
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_DISPLAY_CAP_HEIGHT" "1080")
-      HOST_ENV_BLOCK+=$'\n'
-    fi
-  elif [ "$pi_gen" = "5" ]; then
-    if [ "${ARM_ENFORCE_SAFE_YTDL_FORMAT_FROM_ENV}" = "1" ]; then
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "${ARM_ENFORCE_SAFE_YTDL_FORMAT_VAL}")
-      HOST_ENV_BLOCK+=$'\n'
-    else
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT" "0")
-      HOST_ENV_BLOCK+=$'\n'
-    fi
-    if [ "${DISPLAY_CAP_HEIGHT_FROM_ENV}" = "1" ]; then
-      HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_DISPLAY_CAP_HEIGHT" "${DISPLAY_CAP_HEIGHT_VAL}")
-      HOST_ENV_BLOCK+=$'\n'
-    fi
-  fi
-elif [ "${ARM_FAST_PROFILE_FROM_ENV}" = "1" ]; then
-  HOST_ENV_BLOCK+=$(emit_env_line "RELAYTV_ARM_FAST_PROFILE" "${ARM_FAST_PROFILE_VAL}")
-  HOST_ENV_BLOCK+=$'\n'
 fi
+for playback_setting in \
+  "RELAYTV_PI_GENERATION:$pi_generation_default" \
+  "RELAYTV_ARM_FAST_PROFILE:$arm_fast_default" \
+  "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT:$arm_safe_default" \
+  "RELAYTV_ARM_DEFAULT_QUALITY:$arm_quality_default" \
+  "RELAYTV_DISPLAY_CAP_HEIGHT:$display_cap_default"; do
+  playback_line="$(emit_playback_env "${playback_setting%%:*}" "${playback_setting#*:}")"
+  if [ -n "$playback_line" ]; then
+    HOST_ENV_BLOCK+="$playback_line"$'\n'
+  fi
+done
 
 if [ "${HEADLESS_REMOTE_ENABLED_VAL}" = "1" ] || [ "${MODE}" = "headless" ]; then
   if [ "${HEADLESS_REMOTE_ENABLED_VAL}" != "0" ]; then

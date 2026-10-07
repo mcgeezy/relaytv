@@ -225,6 +225,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_OVERLAY_TOAST_IMAGES` | `routes/__init__.py` | - | static env |
 | `RELAYTV_OVERLAY_URL` | `overlay_app.py` | - | child process input |
 | `RELAYTV_PEERS_FILE` | `peers.py` | - | static env |
+| `RELAYTV_PI_GENERATION` | `video_profile.py` | - | static env |
 | `RELAYTV_PLAYBACK_END_MARGIN_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_IDLE_CONFIRM_SEC` | `player.py` | - | static env |
 | `RELAYTV_PLAYBACK_NOTIFY_DISPLAY_SEC` | `routes/__init__.py` | - | static env |
