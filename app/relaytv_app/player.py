@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
+import math
 import importlib.util
 from .config import env_bool as _env_bool
 from .config import runtime_config
@@ -1687,6 +1688,9 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--cache",
         "--cache-secs",
         "--demuxer-readahead-secs",
+        "--demuxer-seekable-cache",
+        "--demuxer-max-back-bytes",
+        "--force-seekable",
         "--msg-level",
         "--osd-level",
         "--osd-playing-msg",
@@ -2012,6 +2016,7 @@ def _qt_shell_runtime_mpv_property(prop: str):
         "playlist-pos": "mpv_runtime_playlist_pos",
         "playlist-count": "mpv_runtime_playlist_count",
         "track-list": "mpv_runtime_track_list",
+        "demuxer-cache-state": "mpv_runtime_demuxer_cache_state",
     }
     field = mapping.get(key)
     if not field:
@@ -2033,6 +2038,7 @@ def _qt_shell_runtime_supports_mpv_property(prop: str) -> bool:
         "playlist-pos",
         "playlist-count",
         "track-list",
+        "demuxer-cache-state",
     }
 
 
@@ -2783,6 +2789,28 @@ def _effective_sub_lang(settings: dict[str, Any] | None = None) -> str:
     ).strip()
 
 
+def _demuxer_max_back_bytes(settings: dict[str, Any] | None = None) -> str:
+    """Resolve back-buffer size for demuxer seekable DVR cache."""
+    s = settings if isinstance(settings, dict) else getattr(state, "get_settings", lambda: {})()
+    explicit = (
+        (os.getenv("RELAYTV_DEMUXER_MAX_BACK_BYTES") or "").strip()
+        or str(s.get("demuxer_max_back_bytes") or "").strip()
+        or runtime_config.snapshot().raw("RELAYTV_DEMUXER_MAX_BACK_BYTES")
+    )
+    if explicit:
+        return explicit
+    arm_machine = (platform.machine() or "").lower() in ("aarch64", "arm64")
+    tune_enabled = _env_bool("RELAYTV_MPV_AUTO_TUNE", False)
+    try:
+        profile = dict(video_profile.get_profile() or {}) if tune_enabled else {}
+    except Exception:
+        profile = {}
+    decode_profile = str(profile.get("decode_profile") or "").strip().lower()
+    if arm_machine or decode_profile == "arm_safe":
+        return "128MiB"
+    return "256MiB"
+
+
 def _build_mpv_args(
     stream_url: str,
     audio_url: str | None,
@@ -2827,6 +2855,15 @@ def _build_mpv_args(
 
     if debug and not _has_opt(mpv_args + extra, "--msg-level"):
         mpv_args.append("--msg-level=all=debug")
+
+    # Enable seekable demuxer cache and back-buffer for live stream DVR rewind.
+    if not _has_opt(mpv_args + extra, "--force-seekable"):
+        mpv_args.append("--force-seekable=yes")
+    if not _has_opt(mpv_args + extra, "--demuxer-seekable-cache"):
+        mpv_args.append("--demuxer-seekable-cache=yes")
+    back_bytes = _demuxer_max_back_bytes(settings)
+    if not _has_opt(mpv_args + extra, "--demuxer-max-back-bytes"):
+        mpv_args.append(f"--demuxer-max-back-bytes={back_bytes}")
 
     # Conservative decode defaults by runtime profile.
     # MPV_ARGS retains override priority by short-circuiting when explicit opts
@@ -3998,6 +4035,93 @@ def _provider_item_is_live_stream(item: object, url: str, provider: str) -> bool
         if live_status:
             item["live_status"] = live_status
     return is_live
+
+
+def extract_dvr_status(
+    cache_state: dict[str, Any] | None,
+    *,
+    pos: float | None = None,
+    dur: float | None = None,
+    is_live: bool = False,
+) -> dict[str, Any] | None:
+    """Calculate live DVR buffer boundaries, current delay, and seekability."""
+    if not is_live:
+        return None
+    cache = cache_state if isinstance(cache_state, dict) else {}
+    seekable_ranges = cache.get("seekable-ranges")
+    ranges: list[dict[str, float]] = []
+    if isinstance(seekable_ranges, list):
+        for r in seekable_ranges:
+            if isinstance(r, dict) and "start" in r and "end" in r:
+                try:
+                    s = float(r["start"])
+                    e = float(r["end"])
+                    if math.isfinite(s) and math.isfinite(e) and e >= s:
+                        ranges.append({"start": round(s, 2), "end": round(e, 2)})
+                except Exception:
+                    pass
+    starts = [r["start"] for r in ranges]
+    ends = [r["end"] for r in ranges]
+
+    raw_cache_end = cache.get("cache-end")
+    cache_end = None
+    try:
+        if raw_cache_end is not None:
+            c = float(raw_cache_end)
+            if math.isfinite(c):
+                cache_end = c
+    except Exception:
+        cache_end = None
+
+    pos_val = None
+    try:
+        if pos is not None:
+            pv = float(pos)
+            if math.isfinite(pv):
+                pos_val = pv
+    except Exception:
+        pos_val = None
+
+    dur_val = None
+    try:
+        if dur is not None:
+            dv = float(dur)
+            if math.isfinite(dv):
+                dur_val = dv
+    except Exception:
+        dur_val = None
+
+    buffer_start = min(starts) if starts else pos_val
+    buffer_end = max(ends) if ends else (dur_val if dur_val is not None else pos_val)
+    live_edge = buffer_end
+    if cache_end is not None:
+        live_edge = max(live_edge, cache_end) if live_edge is not None else cache_end
+    if dur_val is not None:
+        live_edge = max(live_edge, dur_val) if live_edge is not None else dur_val
+
+    if buffer_start is not None and live_edge is not None:
+        window_sec = max(0.0, live_edge - buffer_start)
+    else:
+        window_sec = 0.0
+
+    if live_edge is not None and pos_val is not None:
+        delay_sec = max(0.0, live_edge - pos_val)
+    else:
+        delay_sec = 0.0
+
+    is_at_live = delay_sec < 5.0
+    seekable = window_sec >= 2.0
+
+    return {
+        "supported": True,
+        "seekable": seekable,
+        "buffer_start": round(buffer_start, 2) if buffer_start is not None else None,
+        "buffer_end": round(buffer_end, 2) if buffer_end is not None else None,
+        "live_edge": round(live_edge, 2) if live_edge is not None else None,
+        "window_sec": round(window_sec, 2),
+        "delay_sec": round(delay_sec, 2),
+        "is_at_live": is_at_live,
+    }
 
 
 def _item_should_prefetch_stream(item: object) -> bool:

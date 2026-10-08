@@ -839,3 +839,180 @@ def test_postlive_route_rejects_unknown_or_consumed_tokens(monkeypatch) -> None:
     response = client.get("/postlive/nope.mkv")
 
     assert response.status_code == 404
+
+
+def test_extract_dvr_status_non_live_and_live_boundaries() -> None:
+    # Non-live returns None
+    assert routes.player.extract_dvr_status({}, is_live=False) is None
+
+    # Live without cache state or pos falls back gracefully
+    status = routes.player.extract_dvr_status(None, is_live=True)
+    assert status is not None
+    assert status["supported"] is True
+    assert status["seekable"] is False
+    assert status["window_sec"] == 0.0
+    assert status["delay_sec"] == 0.0
+    assert status["is_at_live"] is True
+
+    # Live with seekable ranges and rewound position
+    cache = {
+        "seekable-ranges": [
+            {"start": 100.0, "end": 250.0},
+        ],
+        "cache-end": 250.0,
+    }
+    status_rewound = routes.player.extract_dvr_status(cache, pos=200.0, is_live=True)
+    assert status_rewound is not None
+    assert status_rewound["seekable"] is True
+    assert status_rewound["buffer_start"] == 100.0
+    assert status_rewound["buffer_end"] == 250.0
+    assert status_rewound["live_edge"] == 250.0
+    assert status_rewound["window_sec"] == 150.0
+    assert status_rewound["delay_sec"] == 50.0
+    assert status_rewound["is_at_live"] is False
+
+    # Live with position near live edge (< 5s delay)
+    status_edge = routes.player.extract_dvr_status(cache, pos=248.0, is_live=True)
+    assert status_edge is not None
+    assert status_edge["delay_sec"] == 2.0
+    assert status_edge["is_at_live"] is True
+
+
+def test_playback_live_route(monkeypatch) -> None:
+    commands: list[list[object]] = []
+    transitions: list[float | None] = []
+
+    monkeypatch.setattr(routes.player, "_mark_playback_transition", lambda sec=None: transitions.append(sec))
+    monkeypatch.setattr(routes.player, "mpv_command", lambda cmd: commands.append(list(cmd)) or {"error": "success", "request_id": "live-ok"})
+
+    client = TestClient(create_app(testing=True))
+
+    # When not playing, returns 409
+    monkeypatch.setattr(routes.player, "is_playing", lambda: False)
+    res_not_playing = client.post("/playback/live")
+    assert res_not_playing.status_code == 409
+
+    # When playing, seeks to 100% (live edge)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    res_playing = client.post("/playback/live")
+    assert res_playing.status_code == 200
+    assert res_playing.json() == {"ok": True, "action": "live", "request_id": "live-ok"}
+    assert commands == [["seek", 100, "absolute-percent"]]
+    assert len(transitions) == 1
+
+
+def test_seek_abs_with_live_flag(monkeypatch) -> None:
+    commands: list[list[object]] = []
+
+    monkeypatch.setattr(routes.player, "_mark_playback_transition", lambda sec=None: None)
+    monkeypatch.setattr(routes.player, "mpv_command", lambda cmd: commands.append(list(cmd)) or {"error": "success", "request_id": "seek-ok"})
+
+    client = TestClient(create_app(testing=True))
+
+    # Explicit live=True seeks to live edge
+    res_live = client.post("/seek_abs", json={"live": True})
+    assert res_live.status_code == 200
+    assert res_live.json() == {"ok": True, "action": "live", "request_id": "seek-ok"}
+    assert commands[-1] == ["seek", 100, "absolute-percent"]
+
+    # sec=None without live flag also defaults to live edge
+    res_none = client.post("/seek_abs", json={})
+    assert res_none.status_code == 200
+    assert res_none.json() == {"ok": True, "action": "live", "request_id": "seek-ok"}
+    assert commands[-1] == ["seek", 100, "absolute-percent"]
+
+
+def test_seek_relative_live_stream_snaps_to_live_edge(monkeypatch) -> None:
+    commands: list[list[object]] = []
+
+    monkeypatch.setattr(routes.player, "_mark_playback_transition", lambda sec=None: None)
+    monkeypatch.setattr(routes.player, "_qt_shell_runtime_accepts_mpv_commands", lambda: False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"title": "Live News", "is_live": True}, raising=False)
+    monkeypatch.setattr(routes.player, "mpv_command", lambda cmd: commands.append(list(cmd)) or {"error": "success", "request_id": "seek-ok"})
+
+    client = TestClient(create_app(testing=True))
+
+    # Case 1: Delay is 10s, seeking forward 15s (10 <= 15 + 2) -> snaps to live edge
+    monkeypatch.setattr(
+        routes.player,
+        "mpv_get_many",
+        lambda props: {
+            "time-pos": 100.0,
+            "duration": None,
+            "demuxer-cache-state": {"seekable-ranges": [{"start": 0.0, "end": 110.0}]},
+        },
+    )
+    res_snap = client.post("/seek", json={"sec": 15})
+    assert res_snap.status_code == 200
+    assert res_snap.json() == {"ok": True, "seeked": 15, "action": "live", "request_id": "seek-ok"}
+    assert commands[-1] == ["seek", 100, "absolute-percent"]
+
+    # Case 2: Delay is 50s, seeking forward 15s (50 > 15 + 2) -> relative seek
+    monkeypatch.setattr(
+        routes.player,
+        "mpv_get_many",
+        lambda props: {
+            "time-pos": 60.0,
+            "duration": None,
+            "demuxer-cache-state": {"seekable-ranges": [{"start": 0.0, "end": 110.0}]},
+        },
+    )
+    res_rel = client.post("/seek", json={"sec": 15})
+    assert res_rel.status_code == 200
+    assert res_rel.json() == {"ok": True, "seeked": 15, "request_id": "seek-ok"}
+    assert commands[-1] == ["seek", 15.0, "relative"]
+
+    # Case 3: Seeking backward on live stream -> relative seek
+    res_back = client.post("/seek", json={"sec": -30})
+    assert res_back.status_code == 200
+    assert res_back.json() == {"ok": True, "seeked": -30, "request_id": "seek-ok"}
+    assert commands[-1] == ["seek", -30.0, "relative"]
+
+
+def test_status_and_playback_state_expose_dvr_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(routes.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"title": "Live Stream", "is_live": True}, raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [], raising=False)
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
+    monkeypatch.setattr(routes.player, "startup_session_restore_pending", lambda: False)
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "natural_idle_reset_holding", lambda: False)
+    monkeypatch.setattr(
+        routes.player,
+        "mpv_get_many",
+        lambda props: {
+            "time-pos": 200.0,
+            "duration": None,
+            "demuxer-cache-state": {"seekable-ranges": [{"start": 50.0, "end": 250.0}]},
+            "volume": 50.0,
+            "mute": False,
+        },
+    )
+    monkeypatch.setattr(
+        routes.player,
+        "qt_shell_runtime_telemetry",
+        lambda **kwargs: {"selected": False, "available": False},
+    )
+
+    client = TestClient(create_app(testing=True))
+
+    status_res = client.get("/status")
+    assert status_res.status_code == 200
+    status_body = status_res.json()
+    assert "dvr" in status_body
+    dvr = status_body["dvr"]
+    assert dvr is not None
+    assert dvr["seekable"] is True
+    assert dvr["buffer_start"] == 50.0
+    assert dvr["live_edge"] == 250.0
+    assert dvr["window_sec"] == 200.0
+    assert dvr["delay_sec"] == 50.0
+    assert dvr["is_at_live"] is False
+
+    state_res = client.get("/playback/state")
+    assert state_res.status_code == 200
+    state_body = state_res.json()
+    assert "dvr" in state_body
+    assert state_body["dvr"] == dvr

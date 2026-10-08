@@ -108,6 +108,7 @@ EXPECTED_ROUTES = {
     ("POST", "/play_now", "play_now"),
     ("POST", "/play_temporary", "play_temporary"),
     ("POST", "/play_temporary/cancel", "play_temporary_cancel"),
+    ("POST", "/playback/live", "playback_live"),
     ("POST", "/playback/play", "playback_play"),
     ("GET", "/playback/state", "playback_state"),
     ("POST", "/playback/toggle", "playback_toggle"),

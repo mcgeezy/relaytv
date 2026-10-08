@@ -119,6 +119,7 @@ from .playback import (
     play_now as play_now,
     play_temporary as play_temporary,
     play_temporary_cancel as play_temporary_cancel,
+    playback_live as playback_live,
     previous as previous,
     resume as resume,
     resume_session as resume_session,
@@ -3066,6 +3067,15 @@ def _qt_runtime_seek_via_time_pos(target_sec: float) -> dict[str, object] | None
     return _control_result_or_raise(player.mpv_set_result("time-pos", target), action="seek")
 
 
+def _seek_to_live_result() -> dict[str, object]:
+    plex_result = playback_service.seek_plex_conversion(delta_sec=0.0)
+    if isinstance(plex_result, dict):
+        return plex_result
+    res = _control_result_or_raise(player.mpv_command(["seek", 100, "absolute-percent"]), action="live")
+    res["action"] = "live"
+    return res
+
+
 def _seek_relative_result(delta_sec: float) -> dict[str, object]:
     plex_result = playback_service.seek_plex_conversion(delta_sec=delta_sec)
     if isinstance(plex_result, dict):
@@ -3076,7 +3086,7 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
         delta = 0.0
     if math.isfinite(delta):
         try:
-            props = player.mpv_get_many(["time-pos", "duration"])
+            props = player.mpv_get_many(["time-pos", "duration", "demuxer-cache-state"])
         except Exception:
             props = {}
         try:
@@ -3084,6 +3094,14 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
         except Exception:
             current = None
         if current is not None and math.isfinite(current):
+            now = getattr(state, "NOW_PLAYING", None)
+            is_live = player._item_looks_like_live_stream(now) or (
+                isinstance(now, dict) and bool(now.get("is_live"))
+            )
+            if is_live and delta > 0:
+                dvr = player.extract_dvr_status(props.get("demuxer-cache-state"), pos=current, dur=props.get("duration"), is_live=True)
+                if dvr and float(dvr.get("delay_sec") or 0.0) <= (delta + 2.0):
+                    return _seek_to_live_result()
             result = _qt_runtime_seek_via_time_pos(current + delta)
             if isinstance(result, dict):
                 return result
@@ -3215,6 +3233,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         "native_qt_mpv_runtime_playback_started": None,
         "transitioning_between_items": transition_active,
         "transition_in_progress": transition_active,
+        "dvr": None,
         "ts": int(time.time() * 1000),
     }
     try:
@@ -3229,11 +3248,14 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         ("mute", "mpv_runtime_mute"),
     )
 
+    ipc_demuxer_cache: dict[str, object] | None = None
+
     def fill_from_mpv_ipc(*, force: bool = False) -> bool:
+        nonlocal ipc_demuxer_cache
         if not force and not (bool(payload.get("playing")) or bool(payload.get("paused"))):
             return False
         try:
-            props = player.mpv_get_many(["pause", "volume", "mute", "time-pos", "duration"])
+            props = player.mpv_get_many(["pause", "volume", "mute", "time-pos", "duration", "demuxer-cache-state"])
         except Exception:
             props = {}
         if not isinstance(props, dict):
@@ -3250,6 +3272,8 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
             if value is not None:
                 payload[field] = value
                 filled = True
+        if props.get("demuxer-cache-state") is not None:
+            ipc_demuxer_cache = props.get("demuxer-cache-state")
         fallback_paused = props.get("pause")
         if isinstance(fallback_paused, bool):
             payload["paused"] = fallback_paused
@@ -3260,8 +3284,25 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
             payload["backend_ready"] = True
         return filled
 
+    def _populate_dvr() -> None:
+        if has_now_playing and (bool(payload.get("playing")) or bool(payload.get("paused"))):
+            now_item = getattr(state, "NOW_PLAYING", None)
+            is_live = player._item_looks_like_live_stream(now_item) or (
+                isinstance(now_item, dict)
+                and (bool(now_item.get("is_live")) or str(now_item.get("provider") or "").lower() == "iptv")
+            )
+            if is_live:
+                cache_state = qt_runtime.get("mpv_runtime_demuxer_cache_state") or ipc_demuxer_cache
+                payload["dvr"] = player.extract_dvr_status(
+                    cache_state,
+                    pos=payload.get("position"),
+                    dur=payload.get("duration"),
+                    is_live=True,
+                )
+
     if not bool(qt_runtime.get("selected")):
         fill_from_mpv_ipc()
+        _populate_dvr()
         runtime_state, runtime_reason = _derive_playback_runtime_state(
             sess=sess,
             playing=bool(payload.get("playing")),
@@ -3326,6 +3367,7 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     transition_active = bool(transition_active)
     payload["transitioning_between_items"] = transition_active
     payload["transition_in_progress"] = transition_active
+    _populate_dvr()
     runtime_state, runtime_reason = _derive_playback_runtime_state(
         sess=str(payload.get("state") or sess),
         playing=bool(payload.get("playing")),
@@ -3393,9 +3435,26 @@ def _status_payload() -> dict[str, object]:
         effective_ytdlp_format = str(getattr(player, "_effective_ytdl_format", lambda s=None: "")(settings_snapshot) or "")
     except Exception:
         effective_ytdlp_format = ""
+    now_playing_item = getattr(state, "NOW_PLAYING", None)
+    is_live_playing = bool(
+        playing
+        and (
+            player._item_looks_like_live_stream(now_playing_item)
+            or (
+                isinstance(now_playing_item, dict)
+                and (
+                    bool(now_playing_item.get("is_live"))
+                    or str(now_playing_item.get("provider") or "").lower() == "iptv"
+                )
+            )
+        )
+    )
     props: dict[str, object] = {}
     if playing:
-        props = player.mpv_get_many(["pause", "volume", "mute", "time-pos", "duration"])
+        prop_names = ["pause", "volume", "mute", "time-pos", "duration"]
+        if is_live_playing:
+            prop_names.append("demuxer-cache-state")
+        props = player.mpv_get_many(prop_names)
     paused = bool(props.get("pause")) if playing else False
     if playing and "pause" not in props:
         native_qt_paused = runtime.get("native_qt_mpv_runtime_paused")
@@ -3473,6 +3532,12 @@ def _status_payload() -> dict[str, object]:
         native_qt_dur = runtime.get("native_qt_mpv_runtime_duration")
         if isinstance(native_qt_dur, (int, float)):
             dur = float(native_qt_dur)
+    dvr = None
+    if is_live_playing:
+        cache_state = props.get("demuxer-cache-state")
+        if cache_state is None and runtime.get("native_qt_mpv_runtime_demuxer_cache_state"):
+            cache_state = runtime.get("native_qt_mpv_runtime_demuxer_cache_state")
+        dvr = player.extract_dvr_status(cache_state, pos=pos, dur=dur, is_live=True)
     mdns = discovery_mdns.status()
     jf_status: dict[str, object] = {}
     try:
@@ -3608,6 +3673,7 @@ def _status_payload() -> dict[str, object]:
         "mute": mute,
         "position": pos,
         "duration": dur,
+        "dvr": dvr,
         "now_playing": annotated_now_playing,
         "queue": annotated_queue,
         "queue_length": len(q),
