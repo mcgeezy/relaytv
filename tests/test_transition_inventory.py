@@ -11,6 +11,7 @@ Regenerate the doc table after intentional changes with:
 
     PYTHONPATH=app python3 tests/test_transition_inventory.py --write
 """
+
 from __future__ import annotations
 
 import re
@@ -49,9 +50,7 @@ _WRITE_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(_STATE + r"set_session_position\("),
         re.compile(_STATE + r"update_session\("),
     ),
-    "AUTO_NEXT_SUPPRESS_UNTIL": (
-        re.compile(_STATE + r"AUTO_NEXT_SUPPRESS_UNTIL\s*=(?!=)"),
-    ),
+    "AUTO_NEXT_SUPPRESS_UNTIL": (re.compile(_STATE + r"AUTO_NEXT_SUPPRESS_UNTIL\s*=(?!=)"),),
     "QUEUE": (
         re.compile(_STATE + r"QUEUE\.(?:clear|append|insert|pop|remove|extend|sort|reverse)\("),
         re.compile(_STATE + r"QUEUE\s*\[[^\]]*\]\s*=(?!=)"),

@@ -5,6 +5,7 @@ This store owns versioned catalog state. It intentionally stays separate from
 ``state.py`` because playlist refreshes can touch tens of thousands of rows and
 must not rewrite or lock playback queue/session JSON.
 """
+
 from __future__ import annotations
 
 import os
@@ -110,9 +111,13 @@ class IptvStore:
                 )
                 # Backward-compatible column add: "added" (My Channels membership)
                 # arrived after the initial schema; ALTER any pre-existing table.
-                channel_cols = {r["name"] for r in conn.execute("PRAGMA table_info(iptv_channels)").fetchall()}
+                channel_cols = {
+                    r["name"] for r in conn.execute("PRAGMA table_info(iptv_channels)").fetchall()
+                }
                 if "added" not in channel_cols:
-                    conn.execute("ALTER TABLE iptv_channels ADD COLUMN added INTEGER NOT NULL DEFAULT 0")
+                    conn.execute(
+                        "ALTER TABLE iptv_channels ADD COLUMN added INTEGER NOT NULL DEFAULT 0"
+                    )
                 row = conn.execute("SELECT version FROM iptv_schema LIMIT 1").fetchone()
                 if row is None:
                     conn.execute("INSERT INTO iptv_schema(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -300,7 +305,7 @@ class IptvStore:
                 row["channel_id"]: row["manual_rank"]
                 for row in conn.execute(
                     "SELECT channel_id, manual_rank FROM iptv_channels WHERE source_id = ?",
-                    (source_id,)
+                    (source_id,),
                 ).fetchall()
             }
 
@@ -317,23 +322,25 @@ class IptvStore:
                 else:
                     rank = int(existing_ranks[channel_id])
 
-                params.append((
-                    source_id,
-                    entry["channel_id"],
-                    entry["identity_key"],
-                    entry.get("tvg_id", ""),
-                    entry.get("tvg_name", ""),
-                    entry["name"],
-                    entry.get("group_title", ""),
-                    entry.get("logo_url", ""),
-                    entry["stream_url"],
-                    entry.get("user_agent", ""),
-                    entry.get("referrer", ""),
-                    int(entry.get("upstream_index", 0)),
-                    rank,
-                    now,
-                    now,
-                ))
+                params.append(
+                    (
+                        source_id,
+                        entry["channel_id"],
+                        entry["identity_key"],
+                        entry.get("tvg_id", ""),
+                        entry.get("tvg_name", ""),
+                        entry["name"],
+                        entry.get("group_title", ""),
+                        entry.get("logo_url", ""),
+                        entry["stream_url"],
+                        entry.get("user_agent", ""),
+                        entry.get("referrer", ""),
+                        int(entry.get("upstream_index", 0)),
+                        rank,
+                        now,
+                        now,
+                    )
+                )
 
             if params:
                 conn.executemany(
@@ -357,7 +364,9 @@ class IptvStore:
                         upstream_index = excluded.upstream_index,
                         active = 1,
                         last_seen_at = excluded.last_seen_at
-                    """, params)
+                    """,
+                    params,
+                )
 
             count = len(channels)
             _require_publishable()
@@ -606,8 +615,7 @@ class IptvStore:
             ordered.insert(index, channel_id)
             conn.execute("BEGIN IMMEDIATE")
             update_data = [
-                (idx * RANK_STEP, source_id, item_id)
-                for idx, item_id in enumerate(ordered, 1)
+                (idx * RANK_STEP, source_id, item_id) for idx, item_id in enumerate(ordered, 1)
             ]
             conn.executemany(
                 """

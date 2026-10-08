@@ -42,7 +42,9 @@ def get_uploaded_media(upload_id: str, filename: str):
     meta = upload_store.load_metadata(upload_id)
     if not isinstance(meta, dict):
         raise HTTPException(status_code=410, detail="Uploaded media expired or removed")
-    expected_name = os.path.basename(str(meta.get("public_name") or meta.get("filename") or "").strip())
+    expected_name = os.path.basename(
+        str(meta.get("public_name") or meta.get("filename") or "").strip()
+    )
     if os.path.basename(filename) != expected_name:
         raise HTTPException(status_code=404, detail="Uploaded media not found")
     path = upload_store.stored_file_path(meta)
@@ -97,7 +99,15 @@ def _uploaded_media_title(title: str | None, filename: str, public_name: str) ->
     return str(title or "").strip() or os.path.basename(filename or public_name) or public_name
 
 
-def _uploaded_media_meta(upload_id: str, *, filename: str, public_name: str, title: str, content_type: str, size_bytes: int = 0) -> dict:
+def _uploaded_media_meta(
+    upload_id: str,
+    *,
+    filename: str,
+    public_name: str,
+    title: str,
+    content_type: str,
+    size_bytes: int = 0,
+) -> dict:
     return {
         "id": upload_id,
         "filename": os.path.basename(filename or public_name),
@@ -148,7 +158,9 @@ def _enqueue_uploaded_media_url(url: str) -> dict:
         _push_queue_added_toast_async(item, url or "item")
     except Exception:
         pass
-    _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="ingest_media_enqueue")
+    _ui_event_push_queue(
+        "add", queue=queue_snapshot, queue_length=qlen, source="ingest_media_enqueue"
+    )
     return {
         "status": "queued",
         "item": public_media.public_media_item(upload_store.annotate_item(item)),
@@ -160,7 +172,9 @@ def _enqueue_uploaded_media_url(url: str) -> dict:
 
 
 @router.post("/ingest/media")
-async def ingest_media(request: Request, file: UploadFile = File(...), title: str | None = Form(None)):
+async def ingest_media(
+    request: Request, file: UploadFile = File(...), title: str | None = Form(None)
+):
     settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
     # Scans and stats the whole upload tree; not something to do on the loop.
     await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
@@ -177,9 +191,7 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
     public_name = upload_store.sanitize_upload_filename(filename, content_type=content_type)
     target_dir = upload_store.upload_dir(upload_id)
     await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
-    fd, tmp_path = await run_in_threadpool(
-        tempfile.mkstemp, "relaytv-upload-", ".part", target_dir
-    )
+    fd, tmp_path = await run_in_threadpool(tempfile.mkstemp, "relaytv-upload-", ".part", target_dir)
     os.close(fd)
     final_path = os.path.join(target_dir, public_name)
     size_bytes = 0
@@ -191,7 +203,10 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
                     break
                 size_bytes += len(chunk)
                 if size_bytes > max_bytes:
-                    raise HTTPException(status_code=413, detail="Uploaded media exceeds configured storage size limit")
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Uploaded media exceeds configured storage size limit",
+                    )
                 await run_in_threadpool(_write_chunk, out, chunk, sync=False)
             # One sync at the end: the file is not readable by anything until
             # the os.replace below publishes it.
@@ -199,7 +214,9 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
         if size_bytes <= 0:
             raise HTTPException(status_code=400, detail="Uploaded media is empty")
         await run_in_threadpool(os.replace, tmp_path, final_path)
-        media_title = str(title or "").strip() or os.path.basename(filename or public_name) or public_name
+        media_title = (
+            str(title or "").strip() or os.path.basename(filename or public_name) or public_name
+        )
         meta = {
             "id": upload_id,
             "filename": os.path.basename(filename or public_name),
@@ -211,7 +228,9 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
             "created_unix": float(time.time()),
         }
         await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
-        media_url = str(request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name))
+        media_url = str(
+            request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name)
+        )
         item = upload_store.build_item(meta, absolute_url=media_url)
         cleanup_result = await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
         return {
@@ -240,7 +259,9 @@ async def ingest_media(request: Request, file: UploadFile = File(...), title: st
 
 
 @router.post("/ingest/media/enqueue")
-async def ingest_media_enqueue(request: Request, file: UploadFile = File(...), title: str | None = Form(None)):
+async def ingest_media_enqueue(
+    request: Request, file: UploadFile = File(...), title: str | None = Form(None)
+):
     created = await ingest_media(request, file=file, title=title)
     media_url = str(created.get("url") or "").strip() if isinstance(created, dict) else ""
     if not media_url:
@@ -252,7 +273,9 @@ async def ingest_media_enqueue(request: Request, file: UploadFile = File(...), t
 
 
 @router.post("/ingest/media/play")
-async def ingest_media_play(request: Request, file: UploadFile = File(...), title: str | None = Form(None)):
+async def ingest_media_play(
+    request: Request, file: UploadFile = File(...), title: str | None = Form(None)
+):
     settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
     # Scans and stats the whole upload tree; not something to do on the loop.
     await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
@@ -279,7 +302,9 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
     upload_store.register_active_upload(upload_id)
     try:
         await run_in_threadpool(upload_store.write_metadata, upload_id, meta)
-        media_url = str(request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name))
+        media_url = str(
+            request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name)
+        )
         target_dir = upload_store.upload_dir(upload_id)
         await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
         final_path = os.path.join(target_dir, public_name)
@@ -313,7 +338,10 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                     break
                 size_bytes += len(chunk)
                 if size_bytes > max_bytes:
-                    raise HTTPException(status_code=413, detail="Uploaded media exceeds configured storage size limit")
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Uploaded media exceeds configured storage size limit",
+                    )
                 # Progressive playback reads this file while it is being
                 # written, so the bytes must reach the filesystem every chunk.
                 # Forcing them all the way to the platter every chunk is what
@@ -358,7 +386,9 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
                         session = upload_store.mark_session_progressive_started(session)
                         await run_in_threadpool(upload_store.write_session, upload_id, session)
                     except Exception as exc:
-                        logger.warning("progressive_upload_start_failed id=%s error=%s", upload_id, exc)
+                        logger.warning(
+                            "progressive_upload_start_failed id=%s error=%s", upload_id, exc
+                        )
                         fallback_reason = "start_failed"
                         session = upload_store.mark_session_fallback(session, fallback_reason)
                         await run_in_threadpool(upload_store.write_session, upload_id, session)
@@ -409,7 +439,9 @@ async def ingest_media_play(request: Request, file: UploadFile = File(...), titl
         raise
     except Exception as exc:
         logger.exception("media_ingest_play_failed filename=%s error=%s", filename, exc)
-        raise HTTPException(status_code=500, detail="Failed storing uploaded media for playback") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed storing uploaded media for playback"
+        ) from exc
     finally:
         try:
             await file.close()

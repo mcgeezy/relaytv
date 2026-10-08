@@ -6,6 +6,7 @@ write endpoint open. With a token configured, write requests require
 ``Authorization: Bearer <token>`` while reads, /health, /ui, and static
 assets stay open.
 """
+
 from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
@@ -276,9 +277,7 @@ def test_share_target_redirects_without_playing(monkeypatch) -> None:
     runtime_config.refresh_from_env()
 
     played: list[object] = []
-    monkeypatch.setattr(
-        playback_service, "play_now", lambda *a, **k: played.append((a, k)) or {}
-    )
+    monkeypatch.setattr(playback_service, "play_now", lambda *a, **k: played.append((a, k)) or {})
 
     client = _client()
     response = client.get(

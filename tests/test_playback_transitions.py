@@ -6,6 +6,7 @@ phase start. The other four scenarios are guarded in
 tests/test_playback_routes.py and tests/test_smoke.py; see the coverage
 baseline in docs/TRANSITION_INVENTORY.md.
 """
+
 import json
 
 import pytest

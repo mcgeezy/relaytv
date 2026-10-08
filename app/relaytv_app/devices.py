@@ -15,6 +15,7 @@ def _connector_index(connector: str) -> int | None:
     except Exception:
         return None
 
+
 def _read_first_line(path: str) -> str | None:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -22,12 +23,14 @@ def _read_first_line(path: str) -> str | None:
     except Exception:
         return None
 
+
 def _read_modes(path: str) -> list[str]:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return [ln.strip() for ln in f.read().splitlines() if ln.strip()][:50]
     except Exception:
         return []
+
 
 def list_drm_connectors() -> list[dict[str, Any]]:
     """Return HDMI/DP connectors with connection status (best-effort)."""
@@ -49,13 +52,16 @@ def list_drm_connectors() -> list[dict[str, Any]]:
 
         # connector_id is the part after 'cardX-'
         connector_id = name.split("-", 1)[1] if "-" in name else name
-        out.append({
-            "sys_name": name,
-            "connector": connector_id,
-            "status": status,
-            "modes": modes,
-        })
+        out.append(
+            {
+                "sys_name": name,
+                "connector": connector_id,
+                "status": status,
+                "modes": modes,
+            }
+        )
     return out
+
 
 def list_cec_devices() -> list[str]:
     devs = []
@@ -63,7 +69,6 @@ def list_cec_devices() -> list[str]:
         if os.path.exists(p):
             devs.append(p)
     return devs
-
 
 
 def cec_client_probe() -> dict[str, Any]:
@@ -132,9 +137,13 @@ def _normalize_for_mpv(dev_id: str) -> str:
         return f"alsa/{d}"
     return d
 
+
 def _get_active_drm_connector() -> str:
-    connected = [c for c in list_drm_connectors() if str(c.get("status", "")).lower() == "connected"]
+    connected = [
+        c for c in list_drm_connectors() if str(c.get("status", "")).lower() == "connected"
+    ]
     return str(connected[0].get("connector") or "").strip() if connected else ""
+
 
 def detect_audio_device(drm_connector: str = "") -> str:
     """Best-effort HDMI-aware ALSA device detection.
@@ -174,6 +183,7 @@ def detect_audio_device(drm_connector: str = "") -> str:
 
     # Fall back to first HDMI-like entry.
     return _normalize_for_mpv(hdmi_ids[0])
+
 
 def discover() -> dict:
     cec_probe = cec_client_probe()
