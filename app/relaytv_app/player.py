@@ -1995,6 +1995,7 @@ def qt_shell_runtime_telemetry(*, max_age_sec: float = 3.0) -> dict[str, Any]:
         "mpv_runtime_playlist_pos": (data or {}).get("mpv_runtime_playlist_pos"),
         "mpv_runtime_playlist_count": (data or {}).get("mpv_runtime_playlist_count"),
         "mpv_runtime_track_list": (data or {}).get("mpv_runtime_track_list"),
+        "mpv_runtime_demuxer_cache_state": (data or {}).get("mpv_runtime_demuxer_cache_state"),
         "mpv_runtime_sample_detail": str((data or {}).get("mpv_runtime_sample_detail") or ""),
         **fd_diag,
     }

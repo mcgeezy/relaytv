@@ -1093,3 +1093,49 @@ def test_status_and_playback_state_expose_dvr_metadata(monkeypatch) -> None:
     state_body = state_res.json()
     assert "dvr" in state_body
     assert state_body["dvr"] == dvr
+
+
+@pytest.mark.parametrize(("position", "paused"), [(295.0, False), (299.0, False), (250.0, True)])
+def test_native_qt_playback_state_preserves_dvr_cache_ranges(monkeypatch, position, paused):
+    cache = {"seekable-ranges": [{"start": 100.0, "end": 300.0}], "cache-end": 300.0}
+    raw = {
+        "alive": True,
+        "mpv_runtime_time_pos": position,
+        "mpv_runtime_duration": 300.0,
+        "mpv_runtime_volume": 50.0,
+        "mpv_runtime_mute": False,
+        "mpv_runtime_paused": paused,
+        "mpv_runtime_playback_active": True,
+        "mpv_runtime_demuxer_cache_state": cache,
+    }
+    monkeypatch.setattr(routes.player, "_qt_shell_runtime_read", lambda: (raw, 0.01, "ok"))
+    monkeypatch.setattr(routes.player, "_qt_shell_runtime_preferred", lambda: True)
+    monkeypatch.setattr(routes.player, "_qt_shell_fd_diagnostics", lambda *a: {})
+    monkeypatch.setattr(routes, "_session_playing_fast", lambda: ("playing", True, paused))
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"title": "Live", "is_live": True})
+    monkeypatch.setattr(routes.state, "QUEUE", [])
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0)
+    monkeypatch.setattr(routes.player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(routes.player, "natural_idle_reset_holding", lambda: False)
+    ipc_calls = []
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: ipc_calls.append(props) or {})
+
+    client = TestClient(create_app(testing=True))
+    response = client.get("/playback/state")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["playback_telemetry_source"] == "qt_runtime"
+    assert body["paused"] is paused
+    assert ipc_calls == []
+    assert body["dvr"] == {
+        "supported": True,
+        "seekable": True,
+        "buffer_start": 100.0,
+        "buffer_end": 300.0,
+        "live_edge": 300.0,
+        "window_sec": 200.0,
+        "delay_sec": 300.0 - position,
+        "is_at_live": (300.0 - position) < 5.0,
+    }

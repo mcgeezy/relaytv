@@ -377,6 +377,7 @@ function _mergePlaybackStateIntoStatus(base, fast){
     'queue_length',
     'playback_telemetry_source',
     'playback_telemetry_freshness',
+    'dvr',
   ].forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(src, key)) out[key] = src[key];
   });
