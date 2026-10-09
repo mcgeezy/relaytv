@@ -104,9 +104,45 @@ class YouTubePostLiveProcessingError(HTTPException):
         super().__init__(status_code=409, detail="YouTube replay is still processing")
 
 
+class YouTubeUpcomingError(HTTPException):
+    """YouTube video has not premiered or gone live yet.
+
+    Subclasses HTTPException (status 400) so route error handling remains
+    backward compatible while carrying structured timing/reason details for
+    on-screen toasts and client feedback.
+    """
+
+    def __init__(self, reason: str, url: str = "") -> None:
+        self.reason = str(reason or "").strip()
+        self.url = str(url or "").strip()
+        detail = (
+            f"yt-dlp failed: YouTube video has not premiered yet ({self.reason})"
+            if self.reason
+            else "yt-dlp failed: YouTube video has not premiered or gone live yet"
+        )
+        super().__init__(status_code=400, detail=detail)
+
+
 def _youtube_error_is_postlive_processing(low_err: str) -> bool:
     """Match YouTube's playability reason for an ended stream awaiting replay."""
     return "live stream recording is not available" in low_err
+
+
+def _youtube_error_upcoming_reason(error_text: str) -> str | None:
+    """Extract upcoming / premiere timing reason from YouTube extractor error."""
+    if not error_text:
+        return None
+    for pattern in (
+        r"\b(premieres [^.\n]+)",
+        r"\b(this live event will begin [^.\n]+)",
+        r"\b(live event will begin [^.\n]+)",
+    ):
+        m = re.search(pattern, error_text, re.IGNORECASE)
+        if m:
+            clean = m.group(1).strip().rstrip(".,;!?:\"'")
+            if clean:
+                return clean[0].upper() + clean[1:]
+    return None
 
 
 # Compact resolver runtime telemetry for /status and /runtime/capabilities.
@@ -156,6 +192,8 @@ def _categorize_resolver_error(error_text: str) -> str:
         return "resolve_error"
     if _youtube_error_is_botcheck(low):
         return "botcheck"
+    if _youtube_error_upcoming_reason(low):
+        return "upcoming_stream"
     if "requested format is not available" in low or "only images are available" in low:
         return "format_unavailable"
     if "timed out" in low or "timeout" in low:
@@ -749,10 +787,13 @@ def resolve_streams_ytdlp(url: str):
             error=err,
             success=False,
         )
-        logger.warning("ytdlp_failed provider=%s format=%s error=%s", provider or "unknown", selected_format, err[:1200])
-        if is_youtube_url(u) and _youtube_error_is_postlive_processing(err.lower()):
+        is_yt = is_youtube_url(u) or provider == "youtube" or "[youtube]" in err.lower()
+        if is_yt and _youtube_error_is_postlive_processing(err.lower()):
             raise YouTubePostLiveProcessingError(u)
-        if is_youtube_url(u) and _youtube_error_is_botcheck(err.lower()):
+        upcoming_reason = _youtube_error_upcoming_reason(err) if is_yt else None
+        if upcoming_reason:
+            raise YouTubeUpcomingError(reason=upcoming_reason, url=u)
+        if is_yt and _youtube_error_is_botcheck(err.lower()):
             raise YouTubeBotCheckError(
                 status_code=400,
                 detail=(
