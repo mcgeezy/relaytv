@@ -5,7 +5,7 @@ ARG RELAYTV_INSTALL_X11_OVERLAY=0
 ARG RELAYTV_INSTALL_HEADLESS=0
 ARG RELAYTV_INSTALL_NODE=1
 ARG RELAYTV_INSTALL_DENO=1
-ARG RELAYTV_DENO_VERSION=2.9.1
+ARG RELAYTV_DENO_VERSION=2.9.7
 ARG RELAYTV_INSTALL_IDLE_BROWSER=0
 ARG RELAYTV_INSTALL_OPS_TOOLS=0
 ARG RELAYTV_IMAGE_SOURCE="https://github.com/mcgeezy/relaytv"
@@ -112,8 +112,8 @@ RUN set -eux; \
     if [ "${RELAYTV_INSTALL_DENO}" = "1" ]; then \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
-        amd64) deno_target="x86_64-unknown-linux-gnu"; deno_sha256="710c54d63477d1100844ef4818f19507ce0dbf40510903b1d883f19e394446a2" ;; \
-        arm64) deno_target="aarch64-unknown-linux-gnu"; deno_sha256="0a60d079fa79635a59803074dbbfe86ccc35746dc2c4f8d73f2e50338b3283a9" ;; \
+        amd64) deno_target="x86_64-unknown-linux-gnu"; deno_sha256="c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490" ;; \
+        arm64) deno_target="aarch64-unknown-linux-gnu"; deno_sha256="c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf" ;; \
         *) deno_target="" ;; \
       esac; \
       if [ -n "$deno_target" ]; then \
