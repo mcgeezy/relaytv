@@ -7657,11 +7657,6 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                     reason = getattr(resolve_exc, "reason", "") or "upcoming"
                     _notify_warn_toast(f"Settings not applied ({reason}): {label}")
                     return None
-                if isinstance(resolve_exc, YouTubeUpcomingError):
-                    label = str(item.get("title") or inp)
-                    reason = getattr(resolve_exc, "reason", "") or "upcoming"
-                    _notify_warn_toast(f"Settings not applied ({reason}): {label}")
-                    return None
                 if isinstance(resolve_exc, YouTubeBotCheckError):
                     label = str(item.get("title") or inp)
                     _notify_bot_check_toast(f"Settings not applied (YouTube bot check): {label}")
