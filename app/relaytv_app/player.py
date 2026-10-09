@@ -29,6 +29,7 @@ from .resolver import (
     YouTubeBotCheckError,
     YouTubePostLiveProcessingError,
     YouTubeUpcomingError,
+    YouTubeUnavailableError,
     enrich_item_metadata,
     is_youtube_url,
     make_item,
@@ -4812,7 +4813,9 @@ def advance_queue_playback(
 
     handoff_guard = queue_handoff_suppress_sec()
     playback_service.suppress_auto_next(handoff_guard)
-    allow_skip_unplayable = mode in {"next", "play_next", "auto_next"}
+    # Keep explicit Next behavior, but automatic advancement must preserve
+    # unclassified resolver failures: yt-dlp timeouts also surface as HTTP 400.
+    allow_skip_unplayable = mode in {"next", "play_next"}
     skipped_unplayable = 0
 
     with state.ADVANCE_LOCK:
@@ -4878,6 +4881,7 @@ def advance_queue_playback(
                 bot_check = isinstance(exc, YouTubeBotCheckError)
                 post_live_processing = isinstance(exc, YouTubePostLiveProcessingError)
                 upcoming = isinstance(exc, YouTubeUpcomingError)
+                unavailable = isinstance(exc, YouTubeUnavailableError)
                 # A queued IPTV channel whose source was deleted or refreshed to
                 # inactive resolves to a 404 that will never recover; skip it in
                 # every mode so it cannot permanently block queue advancement.
@@ -4900,7 +4904,7 @@ def advance_queue_playback(
                         ) == 404
                     except Exception:
                         plex_stale = False
-                skip_unplayable = bot_check or post_live_processing or upcoming or iptv_stale or plex_stale or (
+                skip_unplayable = bot_check or post_live_processing or upcoming or unavailable or iptv_stale or plex_stale or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
                     and int(getattr(exc, "status_code", 0) or 0) in (400, 404)

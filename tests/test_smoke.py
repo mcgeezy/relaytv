@@ -4119,7 +4119,7 @@ def test_auto_next_drops_bot_checked_last_item_without_requeue(monkeypatch: pyte
 
 
 def test_auto_next_drops_unplayable_last_item_without_requeue(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fastapi import HTTPException
+    from relaytv_app.resolver import YouTubeUnavailableError
 
     unplayable_item = {'url': 'https://youtu.be/93eaZrCX2qA', 'title': 'Members Only'}
     toasted: list[object] = []
@@ -4134,7 +4134,7 @@ def test_auto_next_drops_unplayable_last_item_without_requeue(monkeypatch: pytes
     monkeypatch.setattr(player, '_notify_unplayable_skip', lambda item: toasted.append(item))
 
     def fake_play(item, **kwargs):
-        raise HTTPException(status_code=400, detail='yt-dlp failed: Join this channel')
+        raise YouTubeUnavailableError(status_code=400, detail='yt-dlp failed: Join this channel')
 
     monkeypatch.setattr(player, 'play_item', fake_play)
 
@@ -4145,8 +4145,8 @@ def test_auto_next_drops_unplayable_last_item_without_requeue(monkeypatch: pytes
     assert toasted == [unplayable_item]
 
 
-def test_auto_next_skips_unplayable_http_400_item_instead_of_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fastapi import HTTPException
+def test_auto_next_skips_typed_unavailable_item_instead_of_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app.resolver import YouTubeUnavailableError
 
     persisted: list[dict] = []
     play_calls: list[dict] = []
@@ -4168,7 +4168,7 @@ def test_auto_next_skips_unplayable_http_400_item_instead_of_retrying(monkeypatc
 
     def fake_play(item, **kwargs):
         if item is unplayable_item:
-            raise HTTPException(
+            raise YouTubeUnavailableError(
                 status_code=400,
                 detail='yt-dlp failed: ERROR: [youtube] 93eaZrCX2qA: Join this channel to get access to members-only content',
             )
