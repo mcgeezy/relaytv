@@ -4559,6 +4559,26 @@ def test_resolver_botcheck_error_is_typed_http_400() -> None:
     assert resolver._categorize_resolver_error("Sign in to confirm you're not a bot") == "botcheck"
 
 
+def test_resolver_upcoming_error_is_typed_http_400() -> None:
+    from fastapi import HTTPException
+
+    assert issubclass(resolver.YouTubeUpcomingError, HTTPException)
+    err = "ERROR: [youtube] LOpmhBbWXLQ: Premieres in 22 hours"
+    reason = resolver._youtube_error_upcoming_reason(err)
+    assert reason == "Premieres in 22 hours"
+    assert resolver._categorize_resolver_error(err) == "upcoming_stream"
+    live_err = "ERROR: [youtube] 1234: This live event will begin in 3 hours."
+    assert (
+        resolver._youtube_error_upcoming_reason(live_err) == "This live event will begin in 3 hours"
+    )
+    assert resolver._categorize_resolver_error(live_err) == "upcoming_stream"
+    exc = resolver.YouTubeUpcomingError(
+        reason="Premieres in 22 hours", url="https://youtube.com/watch?v=123"
+    )
+    assert exc.status_code == 400
+    assert "Premieres in 22 hours" in exc.detail
+
+
 def test_auto_next_skips_bot_checked_video_instead_of_retrying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4629,6 +4649,57 @@ def test_auto_next_skips_post_live_processing_video(monkeypatch: pytest.MonkeyPa
     assert player.state.QUEUE == []
 
 
+def test_auto_next_skips_upcoming_premiere_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    premiere_item = {
+        "url": "https://www.youtube.com/watch?v=LOpmhBbWXLQ",
+        "title": "Bible Study Premiere",
+    }
+    good_item = {"url": "https://example.com/good.mp4", "title": "Good"}
+    toasted: list[tuple[object, str]] = []
+    played: list[dict] = []
+
+    monkeypatch.setattr(player.state, "NOW_PLAYING", None, raising=False)
+    monkeypatch.setattr(player.state, "QUEUE", [premiere_item, good_item], raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
+    monkeypatch.setattr(player.state, "persist_queue_payload", lambda payload: None)
+    monkeypatch.setattr(player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
+    monkeypatch.setattr(
+        player, "_notify_upcoming_skip", lambda item, reason: toasted.append((item, reason))
+    )
+
+    def fake_play(item, **kwargs):
+        if item is premiere_item:
+            raise player.YouTubeUpcomingError(reason="Premieres in 22 hours", url=item["url"])
+        played.append(dict(item))
+        return {"url": item["url"]}
+
+    monkeypatch.setattr(player, "play_item", fake_play)
+
+    result = player.advance_queue_playback(mode="auto_next", prefer_playlist_next=False)
+
+    assert result["status"] == "playing_next"
+    assert result["skipped_unplayable"] == 1
+    assert played == [good_item]
+    assert player.state.QUEUE == []
+    assert toasted == [(premiere_item, "Premieres in 22 hours")]
+
+
+def test_notify_upcoming_skip_formatting(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasted: list[str] = []
+    monkeypatch.setattr(player, "_notify_warn_toast", lambda text: toasted.append(text))
+    player._notify_upcoming_skip({"title": "Bible Study Premiere"}, "Premieres in 22 hours")
+    assert toasted == ["Skipped (Premieres in 22 hours): Bible Study Premiere"]
+    toasted.clear()
+    player._notify_upcoming_skip(
+        "https://example.com/stream", "This live event will begin in 3 hours"
+    )
+    assert toasted == [
+        "Skipped (This live event will begin in 3 hours): https://example.com/stream"
+    ]
+
+
 def test_auto_next_drops_bot_checked_last_item_without_requeue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4654,83 +4725,7 @@ def test_auto_next_drops_bot_checked_last_item_without_requeue(
     assert player.state.QUEUE == []
 
 
-def test_auto_next_drops_unplayable_last_item_without_requeue(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastapi import HTTPException
-
-    unplayable_item = {"url": "https://youtu.be/93eaZrCX2qA", "title": "Members Only"}
-    toasted: list[object] = []
-
-    monkeypatch.setattr(player.state, "NOW_PLAYING", None, raising=False)
-    monkeypatch.setattr(player.state, "QUEUE", [unplayable_item], raising=False)
-    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
-    monkeypatch.setattr(player.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
-    monkeypatch.setattr(player.state, "persist_queue_payload", lambda payload: None)
-    monkeypatch.setattr(player, "update_history_progress", lambda *args, **kwargs: None)
-    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
-    monkeypatch.setattr(player, "_notify_unplayable_skip", lambda item: toasted.append(item))
-
-    def fake_play(item, **kwargs):
-        raise HTTPException(status_code=400, detail="yt-dlp failed: Join this channel")
-
-    monkeypatch.setattr(player, "play_item", fake_play)
-
-    with pytest.raises(player.QueueAdvanceEmptyError):
-        player.advance_queue_playback(mode="auto_next", prefer_playlist_next=False)
-
-    assert player.state.QUEUE == []
-    assert toasted == [unplayable_item]
-
-
-def test_auto_next_skips_unplayable_http_400_item_instead_of_retrying(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastapi import HTTPException
-
-    persisted: list[dict] = []
-    play_calls: list[dict] = []
-    toasted: list[object] = []
-    unplayable_item = {
-        "url": "https://youtu.be/93eaZrCX2qA",
-        "title": "Members Only Video",
-    }
-    good_item = {"url": "https://example.com/good.mp4", "title": "Good Video"}
-
-    monkeypatch.setattr(player.state, "NOW_PLAYING", None, raising=False)
-    monkeypatch.setattr(player.state, "QUEUE", [unplayable_item, good_item], raising=False)
-    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
-    monkeypatch.setattr(player.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
-    monkeypatch.setattr(
-        player.state, "persist_queue_payload", lambda payload: persisted.append(dict(payload))
-    )
-    monkeypatch.setattr(player, "update_history_progress", lambda *args, **kwargs: None)
-    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
-    monkeypatch.setattr(
-        player, "_notify_unplayable_skip", lambda item: toasted.append(item), raising=False
-    )
-
-    def fake_play(item, **kwargs):
-        if item is unplayable_item:
-            raise HTTPException(
-                status_code=400,
-                detail="yt-dlp failed: ERROR: [youtube] 93eaZrCX2qA: Join this channel to get access to members-only content",
-            )
-        play_calls.append(dict(item))
-        return {"url": item["url"]}
-
-    monkeypatch.setattr(player, "play_item", fake_play)
-
-    result = player.advance_queue_playback(mode="auto_next", prefer_playlist_next=False)
-
-    assert result["status"] == "playing_next"
-    assert result["skipped_unplayable"] == 1
-    assert play_calls == [good_item]
-    assert player.state.QUEUE == []
-    assert toasted == [unplayable_item]
-
-
-def test_auto_next_still_requeues_runtime_server_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_next_still_requeues_non_botcheck_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import HTTPException
 
     flaky_item = {"url": "https://example.com/flaky.mp4", "title": "Flaky"}
@@ -4744,7 +4739,7 @@ def test_auto_next_still_requeues_runtime_server_failures(monkeypatch: pytest.Mo
     monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
 
     def fake_play(item, **kwargs):
-        raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
+        raise HTTPException(status_code=400, detail="yt-dlp failed: timed out")
 
     monkeypatch.setattr(player, "play_item", fake_play)
 
@@ -4771,29 +4766,6 @@ def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyP
 
     assert len(toasts) == 1
     assert "bot check" in toasts[0]["text"].lower()
-    assert "My Video" in toasts[0]["text"]
-    assert toasts[0]["level"] == "warn"
-
-
-def test_unplayable_skip_toast_names_video(monkeypatch: pytest.MonkeyPatch) -> None:
-    toasts: list[dict] = []
-    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))
-
-    class _SyncThread:
-        def __init__(self, target=None, daemon=None, **kwargs):
-            self._target = target
-
-        def start(self) -> None:
-            self._target()
-
-    monkeypatch.setattr(player.threading, "Thread", _SyncThread)
-
-    player._notify_unplayable_skip(
-        {"url": "https://www.youtube.com/watch?v=x", "title": "My Video"}
-    )
-
-    assert len(toasts) == 1
-    assert "unplayable" in toasts[0]["text"].lower()
     assert "My Video" in toasts[0]["text"]
     assert toasts[0]["level"] == "warn"
 

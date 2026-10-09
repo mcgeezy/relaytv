@@ -481,6 +481,86 @@ def test_play_now_non_botcheck_failure_does_not_toast(monkeypatch) -> None:
     assert toasts == []
 
 
+def test_play_now_upcoming_premiere_pushes_warn_toast(monkeypatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))
+
+    def fake_play_item(*args, **kwargs):
+        raise routes.player.YouTubeUpcomingError(
+            reason="Premieres in 22 hours",
+            url="https://www.youtube.com/watch?v=LOpmhBbWXLQ",
+        )
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post(
+        "/play_now",
+        json={
+            "url": "https://www.youtube.com/watch?v=LOpmhBbWXLQ",
+            "title": "Bible Study Premiere",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "not premiered yet (Premieres in 22 hours)" in response.json()["detail"]
+    assert len(toasts) == 1
+    assert "Premieres in 22 hours" in toasts[0]["text"]
+    assert "Bible Study Premiere" in toasts[0]["text"]
+    assert toasts[0]["level"] == "warn"
+
+
+def test_play_now_post_live_processing_pushes_warn_toast(monkeypatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))
+
+    def unavailable(*args, **kwargs):
+        raise routes.player.YouTubePostLiveProcessingError("Processing Live")
+
+    def advance(*, mode, prefer_playlist_next):
+        return {"status": "playing_next", "now_playing": None}
+
+    monkeypatch.setattr(routes.playback_service, "play_now", unavailable)
+    monkeypatch.setattr(routes.playback_service, "advance_queue", advance)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *args, **kwargs: None)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post(
+        "/play_now",
+        json={"url": "https://youtube.com/watch?v=processing", "title": "Processing Live"},
+    )
+
+    assert response.status_code == 200
+    assert len(toasts) == 1
+    assert "processing replay" in toasts[0]["text"].lower()
+    assert "Processing Live" in toasts[0]["text"]
+    assert toasts[0]["level"] == "warn"
+
+
+def test_play_route_upcoming_premiere_pushes_warn_toast(monkeypatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: toasts.append(dict(kwargs)))
+
+    def fake_play_item(*args, **kwargs):
+        raise routes.player.YouTubeUpcomingError(
+            reason="Premieres in 5 minutes",
+            url="https://www.youtube.com/watch?v=LOpmhBbWXLQ",
+        )
+
+    monkeypatch.setattr(routes.player, "play_item", fake_play_item)
+
+    client = TestClient(create_app(testing=True))
+    response = client.post(
+        "/play",
+        json={"url": "https://www.youtube.com/watch?v=LOpmhBbWXLQ"},
+    )
+
+    assert response.status_code == 400
+    assert len(toasts) == 1
+    assert "Premieres in 5 minutes" in toasts[0]["text"]
+    assert toasts[0]["level"] == "warn"
+
+
 def test_close_route_preserves_queue_and_returns_closed_session(monkeypatch) -> None:
     session_updates: list[dict[str, object]] = []
     stop_shell_calls: list[bool] = []

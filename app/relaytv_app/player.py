@@ -28,6 +28,7 @@ from .debug import debug_log, get_logger
 from .resolver import (
     YouTubeBotCheckError,
     YouTubePostLiveProcessingError,
+    YouTubeUpcomingError,
     enrich_item_metadata,
     is_youtube_url,
     make_item,
@@ -4778,14 +4779,15 @@ def _notify_bot_check_skip(item: object) -> None:
     _notify_bot_check_toast(text)
 
 
-def _notify_unplayable_skip(item: object) -> None:
-    """Toast that a queue item was skipped because it is unplayable."""
+def _notify_upcoming_skip(item: object, reason: str = "") -> None:
+    """Toast that a queue item was skipped because it has not premiered or gone live yet."""
     label = ""
     if isinstance(item, dict):
         label = str(item.get("title") or item.get("url") or "").strip()
     else:
         label = str(item or "").strip()
-    text = f"Skipped (unplayable): {label}" if label else "Video skipped: unplayable"
+    prefix = f"Skipped ({reason})" if reason else "Skipped (upcoming)"
+    text = f"{prefix}: {label}" if label else prefix
     _notify_warn_toast(text)
 
 
@@ -5046,7 +5048,7 @@ def advance_queue_playback(
 
     handoff_guard = queue_handoff_suppress_sec()
     playback_service.suppress_auto_next(handoff_guard)
-    allow_skip_unplayable = mode in {"next", "play_next", "auto_next"}
+    allow_skip_unplayable = mode in {"next", "play_next"}
     skipped_unplayable = 0
 
     with state.ADVANCE_LOCK:
@@ -5115,6 +5117,7 @@ def advance_queue_playback(
                 # every mode; re-queueing it makes auto-next retry it forever.
                 bot_check = isinstance(exc, YouTubeBotCheckError)
                 post_live_processing = isinstance(exc, YouTubePostLiveProcessingError)
+                upcoming = isinstance(exc, YouTubeUpcomingError)
                 # A queued IPTV channel whose source was deleted or refreshed to
                 # inactive resolves to a 404 that will never recover; skip it in
                 # every mode so it cannot permanently block queue advancement.
@@ -5141,22 +5144,24 @@ def advance_queue_playback(
                 skip_unplayable = (
                     bot_check
                     or post_live_processing
+                    or upcoming
                     or iptv_stale
                     or plex_stale
                     or (
                         allow_skip_unplayable
                         and isinstance(exc, HTTPException)
-                        and int(getattr(exc, "status_code", 0) or 0) in (400, 404)
+                        and int(getattr(exc, "status_code", 0) or 0) == 400
                     )
                 )
                 if skip_unplayable:
                     skipped_unplayable += 1
                     logger.warning(
-                        "queue_skip_unplayable mode=%s skipped=%s bot_check=%s post_live_processing=%s title=%s error=%s",
+                        "queue_skip_unplayable mode=%s skipped=%s bot_check=%s post_live_processing=%s upcoming=%s title=%s error=%s",
                         mode,
                         skipped_unplayable,
                         bot_check,
                         post_live_processing,
+                        upcoming,
                         str(next_item.get("title") or next_item.get("url") or "")
                         if isinstance(next_item, dict)
                         else str(next_item or ""),
@@ -5164,8 +5169,8 @@ def advance_queue_playback(
                     )
                     if bot_check:
                         _notify_bot_check_skip(next_item)
-                    elif not post_live_processing:
-                        _notify_unplayable_skip(next_item)
+                    elif upcoming:
+                        _notify_upcoming_skip(next_item, getattr(exc, "reason", ""))
                     continue
                 with state.QUEUE_LOCK:
                     state.QUEUE.insert(0, next_item)
@@ -7646,6 +7651,11 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                         "restart_current_skipped_post_live_processing title=%s",
                         str(item.get("title") or inp)[:120],
                     )
+                    return None
+                if isinstance(resolve_exc, YouTubeUpcomingError):
+                    label = str(item.get("title") or inp)
+                    reason = getattr(resolve_exc, "reason", "") or "upcoming"
+                    _notify_warn_toast(f"Settings not applied ({reason}): {label}")
                     return None
                 if isinstance(resolve_exc, YouTubeBotCheckError):
                     label = str(item.get("title") or inp)

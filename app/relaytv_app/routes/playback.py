@@ -276,20 +276,55 @@ def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
     push_queue_added_toast_async(item, fallback_label)
 
 
+def _toast_playback_failure(exc: Exception, label: str) -> None:
+    """Deliver a warn toast to the TV overlay when a direct play request fails."""
+    text = None
+    if isinstance(exc, player.YouTubeUpcomingError):
+        reason = getattr(exc, "reason", "") or "upcoming"
+        text = f"Can't play ({reason}): {label}" if label else f"Can't play ({reason})"
+    elif isinstance(exc, player.YouTubeBotCheckError):
+        text = (
+            f"Can't play (YouTube bot check): {label}"
+            if label
+            else "Can't play (YouTube bot check)"
+        )
+    elif isinstance(exc, player.YouTubePostLiveProcessingError):
+        text = (
+            f"Can't play (processing replay): {label}"
+            if label
+            else "Can't play (processing replay)"
+        )
+    if text:
+        try:
+            _push_overlay_toast(
+                text=text,
+                duration=6.0,
+                level="warn",
+                icon="play",
+            )
+        except Exception:
+            pass
+
+
 @router.post("/play")
 def play(req: PlayReq):
     """Immediate play; clears queue."""
     playback_service.suppress_auto_next(2.0)
     item = _smart_item_from_url(req.url or "")
     start_pos = item.get("resume_pos") if isinstance(item, dict) else None
-    now = playback_service.play_now(
-        item,
-        use_resolver=req.use_ytdlp,
-        cec=req.cec,
-        clear_queue=True,
-        mode="play",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
+    label = item.get("title") if isinstance(item, dict) else None
+    try:
+        now = playback_service.play_now(
+            item,
+            use_resolver=req.use_ytdlp,
+            cec=req.cec,
+            clear_queue=True,
+            mode="play",
+            start_pos=(float(start_pos) if start_pos is not None else None),
+        )
+    except Exception as exc:
+        _toast_playback_failure(exc, str(label or req.url or ""))
+        raise
     return {"status": "playing", "now_playing": _annotate_upload_item(now)}
 
 
@@ -348,6 +383,7 @@ def _play_now_item(
         )
     except Exception as exc:
         if isinstance(exc, player.YouTubePostLiveProcessingError):
+            _toast_playback_failure(exc, title_hint or request_url)
             try:
                 handoff = playback_service.advance_queue(
                     mode="play_next",
@@ -374,18 +410,7 @@ def _play_now_item(
                 "queue_length": qlen,
             }
         _rollback_play_now_preserve(preserved)
-        if isinstance(exc, player.YouTubeBotCheckError):
-            # The 400 detail only reaches the requesting client; the TV
-            # otherwise drops back to idle with no explanation.
-            try:
-                _push_overlay_toast(
-                    text=f"Can't play (YouTube bot check): {title_hint or request_url}",
-                    duration=6.0,
-                    level="warn",
-                    icon="play",
-                )
-            except Exception:
-                pass
+        _toast_playback_failure(exc, title_hint or request_url)
         raise
     try:
         title = now.get("title") if isinstance(now, dict) else None
@@ -474,9 +499,16 @@ def play_temporary(req: PlayTemporaryReq):
     with _temporary_playback_lock():
         stack.append(frame)
 
-    now = playback_service.play_now(
-        req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_temporary"
-    )
+    try:
+        now = playback_service.play_now(
+            req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_temporary"
+        )
+    except Exception as exc:
+        with _temporary_playback_lock():
+            if stack and stack[-1].get("id") == frame_id:
+                stack.pop()
+        _toast_playback_failure(exc, req.url)
+        raise
     try:
         title = now.get("title") if isinstance(now, dict) else None
         _push_overlay_toast(
@@ -587,14 +619,19 @@ def share(req: ShareReq):
         raise HTTPException(status_code=400, detail="Missing url or link")
     item = _smart_item_from_url(shared)
     start_pos = item.get("resume_pos") if isinstance(item, dict) else None
-    now = playback_service.play_now(
-        item,
-        use_resolver=True,
-        cec=req.cec,
-        clear_queue=True,
-        mode="share",
-        start_pos=(float(start_pos) if start_pos is not None else None),
-    )
+    try:
+        now = playback_service.play_now(
+            item,
+            use_resolver=True,
+            cec=req.cec,
+            clear_queue=True,
+            mode="share",
+            start_pos=(float(start_pos) if start_pos is not None else None),
+        )
+    except Exception as exc:
+        label = item.get("title") if isinstance(item, dict) else None
+        _toast_playback_failure(exc, str(label or shared))
+        raise
     return {
         "status": "playing",
         "now_playing": _annotate_upload_item(now),
