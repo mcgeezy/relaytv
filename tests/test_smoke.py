@@ -4118,7 +4118,75 @@ def test_auto_next_drops_bot_checked_last_item_without_requeue(monkeypatch: pyte
     assert player.state.QUEUE == []
 
 
-def test_auto_next_still_requeues_non_botcheck_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_next_drops_unplayable_last_item_without_requeue(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app.resolver import YouTubeUnavailableError
+
+    unplayable_item = {'url': 'https://youtu.be/93eaZrCX2qA', 'title': 'Members Only'}
+    toasted: list[object] = []
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [unplayable_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: None)
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_notify_unplayable_skip', lambda item: toasted.append(item))
+
+    def fake_play(item, **kwargs):
+        raise YouTubeUnavailableError(status_code=400, detail='yt-dlp failed: Join this channel')
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    with pytest.raises(player.QueueAdvanceEmptyError):
+        player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert player.state.QUEUE == []
+    assert toasted == [unplayable_item]
+
+
+def test_auto_next_skips_typed_unavailable_item_instead_of_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
+    from relaytv_app.resolver import YouTubeUnavailableError
+
+    persisted: list[dict] = []
+    play_calls: list[dict] = []
+    toasted: list[object] = []
+    unplayable_item = {
+        'url': 'https://youtu.be/93eaZrCX2qA',
+        'title': 'Members Only Video',
+    }
+    good_item = {'url': 'https://example.com/good.mp4', 'title': 'Good Video'}
+
+    monkeypatch.setattr(player.state, 'NOW_PLAYING', None, raising=False)
+    monkeypatch.setattr(player.state, 'QUEUE', [unplayable_item, good_item], raising=False)
+    monkeypatch.setattr(player.state, 'SESSION_STATE', 'playing', raising=False)
+    monkeypatch.setattr(player.state, 'AUTO_NEXT_SUPPRESS_UNTIL', 0.0, raising=False)
+    monkeypatch.setattr(player.state, 'persist_queue_payload', lambda payload: persisted.append(dict(payload)))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
+    monkeypatch.setattr(player, '_notify_unplayable_skip', lambda item: toasted.append(item), raising=False)
+
+    def fake_play(item, **kwargs):
+        if item is unplayable_item:
+            raise YouTubeUnavailableError(
+                status_code=400,
+                detail='yt-dlp failed: ERROR: [youtube] 93eaZrCX2qA: Join this channel to get access to members-only content',
+            )
+        play_calls.append(dict(item))
+        return {'url': item['url']}
+
+    monkeypatch.setattr(player, 'play_item', fake_play)
+
+    result = player.advance_queue_playback(mode='auto_next', prefer_playlist_next=False)
+
+    assert result['status'] == 'playing_next'
+    assert result['skipped_unplayable'] == 1
+    assert play_calls == [good_item]
+    assert player.state.QUEUE == []
+    assert toasted == [unplayable_item]
+
+
+def test_auto_next_still_requeues_runtime_server_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import HTTPException
 
     flaky_item = {'url': 'https://example.com/flaky.mp4', 'title': 'Flaky'}
@@ -4132,7 +4200,7 @@ def test_auto_next_still_requeues_non_botcheck_failures(monkeypatch: pytest.Monk
     monkeypatch.setattr(player, '_emit_jellyfin_stopped_from_now', lambda now: None)
 
     def fake_play(item, **kwargs):
-        raise HTTPException(status_code=400, detail='yt-dlp failed: timed out')
+        raise HTTPException(status_code=500, detail='mpv started but IPC not ready')
 
     monkeypatch.setattr(player, 'play_item', fake_play)
 
@@ -4161,6 +4229,28 @@ def test_bot_check_skip_toast_names_video_and_reason(monkeypatch: pytest.MonkeyP
     assert 'bot check' in toasts[0]['text'].lower()
     assert 'My Video' in toasts[0]['text']
     assert toasts[0]['level'] == 'warn'
+
+
+def test_unplayable_skip_toast_names_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    toasts: list[dict] = []
+    monkeypatch.setattr(routes, '_push_overlay_toast', lambda **kwargs: toasts.append(dict(kwargs)))
+
+    class _SyncThread:
+        def __init__(self, target=None, daemon=None, **kwargs):
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(player.threading, 'Thread', _SyncThread)
+
+    player._notify_unplayable_skip({'url': 'https://www.youtube.com/watch?v=x', 'title': 'My Video'})
+
+    assert len(toasts) == 1
+    assert 'unplayable' in toasts[0]['text'].lower()
+    assert 'My Video' in toasts[0]['text']
+    assert toasts[0]['level'] == 'warn'
+
 
 
 def test_post_live_processing_toast_has_blank_line_and_title(monkeypatch: pytest.MonkeyPatch) -> None:

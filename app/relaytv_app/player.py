@@ -29,6 +29,7 @@ from .resolver import (
     YouTubeBotCheckError,
     YouTubePostLiveProcessingError,
     YouTubeUpcomingError,
+    YouTubeUnavailableError,
     enrich_item_metadata,
     is_youtube_url,
     make_item,
@@ -4529,6 +4530,17 @@ def _notify_bot_check_skip(item: object) -> None:
     _notify_bot_check_toast(text)
 
 
+def _notify_unplayable_skip(item: object) -> None:
+    """Toast that a queue item was skipped because it is unplayable."""
+    label = ""
+    if isinstance(item, dict):
+        label = str(item.get("title") or item.get("url") or "").strip()
+    else:
+        label = str(item or "").strip()
+    text = f"Skipped (unplayable): {label}" if label else "Video skipped: unplayable"
+    _notify_warn_toast(text)
+
+
 def _notify_upcoming_skip(item: object, reason: str = "") -> None:
     """Toast that a queue item was skipped because it has not premiered or gone live yet."""
     label = ""
@@ -4801,6 +4813,8 @@ def advance_queue_playback(
 
     handoff_guard = queue_handoff_suppress_sec()
     playback_service.suppress_auto_next(handoff_guard)
+    # Keep explicit Next behavior, but automatic advancement must preserve
+    # unclassified resolver failures: yt-dlp timeouts also surface as HTTP 400.
     allow_skip_unplayable = mode in {"next", "play_next"}
     skipped_unplayable = 0
 
@@ -4867,6 +4881,7 @@ def advance_queue_playback(
                 bot_check = isinstance(exc, YouTubeBotCheckError)
                 post_live_processing = isinstance(exc, YouTubePostLiveProcessingError)
                 upcoming = isinstance(exc, YouTubeUpcomingError)
+                unavailable = isinstance(exc, YouTubeUnavailableError)
                 # A queued IPTV channel whose source was deleted or refreshed to
                 # inactive resolves to a 404 that will never recover; skip it in
                 # every mode so it cannot permanently block queue advancement.
@@ -4889,10 +4904,10 @@ def advance_queue_playback(
                         ) == 404
                     except Exception:
                         plex_stale = False
-                skip_unplayable = bot_check or post_live_processing or upcoming or iptv_stale or plex_stale or (
+                skip_unplayable = bot_check or post_live_processing or upcoming or unavailable or iptv_stale or plex_stale or (
                     allow_skip_unplayable
                     and isinstance(exc, HTTPException)
-                    and int(getattr(exc, "status_code", 0) or 0) == 400
+                    and int(getattr(exc, "status_code", 0) or 0) in (400, 404)
                 )
                 if skip_unplayable:
                     skipped_unplayable += 1
@@ -4910,6 +4925,8 @@ def advance_queue_playback(
                         _notify_bot_check_skip(next_item)
                     elif upcoming:
                         _notify_upcoming_skip(next_item, getattr(exc, "reason", ""))
+                    elif not post_live_processing:
+                        _notify_unplayable_skip(next_item)
                     continue
                 with state.QUEUE_LOCK:
                     state.QUEUE.insert(0, next_item)
