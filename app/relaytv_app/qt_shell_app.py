@@ -124,6 +124,25 @@ def _libmpv_enabled() -> bool:
     return arch not in ("aarch64", "arm64", "armv7l", "armv6l")
 
 
+def _sync_libmpv_video_surface(player, video_widget, overlay) -> None:
+    """Keep an idle native GL surface from covering the sibling web overlay.
+
+    Renderer recovery can leave the Wayland GL child above the web child even
+    after raise_(). Unmap it at idle instead of relying on child stacking.
+    Keep it mapped until initializeGL has created the mpv render context, and
+    while a path is loaded (including paused/buffering playback).
+    """
+    snap = player.runtime_snapshot()
+    path = str(snap.get("mpv_runtime_path") or "").strip()
+    active = snap.get("mpv_runtime_playback_active") is True or (
+        bool(path) and snap.get("mpv_runtime_eof_reached") is not True
+    )
+    visible = active or not player.render_context_ready()
+    if video_widget.isVisible() != visible:
+        video_widget.setVisible(visible)
+        overlay.raise_()
+
+
 def _native_overlay_toasts_enabled() -> bool:
     override = _env_choice("RELAYTV_QT_NATIVE_TOASTS")
     if override is not None:
@@ -1436,6 +1455,8 @@ def main(argv: list[str] | None = None) -> int:
 
     win = QMainWindow()
     win.setWindowTitle(args.window_title)
+    # Keep an opaque background when the idle GL child is unmapped.
+    win.setStyleSheet("QMainWindow { background: #000; }")
     win.setWindowFlags(Qt.FramelessWindowHint)
 
     native_toasts_enabled = (not headless_qpa) and _native_overlay_toasts_enabled()
@@ -2653,6 +2674,8 @@ def main(argv: list[str] | None = None) -> int:
         return bool(path) and snap.get("mpv_runtime_eof_reached") is not True
 
     def _sync_idle_visibility() -> None:
+        if libmpv_player is not None and overlay is not None and overlay_parent_is_main_window:
+            _sync_libmpv_video_surface(libmpv_player, video_widget, overlay)
         if native_idle_host is None:
             return
         idle_active = not _playback_surface_active()
