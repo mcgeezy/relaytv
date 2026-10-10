@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlsplit, url
 from typing import Any, Callable
 from fastapi import HTTPException
 
-from . import state, devices, postlive_relay, ytdlp_format_policy, video_profile
+from . import state, devices, postlive_relay, ytdlp_format_policy, video_profile, youtube_stream
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
 from .resolver import (
@@ -3223,6 +3223,8 @@ def _load_stream_in_existing_mpv(
                 return False
         _ACTIVE_HTTP_HEADERS = dict(headers)
 
+    stream_url = youtube_stream.proxy_url(stream_url)
+    audio_url = youtube_stream.proxy_url(audio_url)
     if _qt_shell_runtime_accepts_mpv_commands():
         try:
             if _normalize_start_pos(start_pos) is not None:
@@ -3271,6 +3273,8 @@ def start_mpv(
     """
     global MPV_PROC, _ACTIVE_HTTP_HEADERS
     _ACTIVE_HTTP_HEADERS = dict(http_headers or {})
+    stream_url = youtube_stream.proxy_url(stream_url)
+    audio_url = youtube_stream.proxy_url(audio_url)
     process_start_option_active = _normalize_start_pos(start_pos) is not None
     # Resolve can take longer than the initial transition window. Refresh it
     # here so watchdogs do not relaunch the idle shell while playback startup
@@ -4263,15 +4267,18 @@ def _mpv_up_next_load_target(item: object) -> tuple[list[object], str] | None:
     if not head_url:
         return None
     if _mpv_up_next_eligible_item(item):
-        return (["loadfile", head_url, "append-play"], head_url)
+        target = youtube_stream.proxy_url(head_url)
+        return (["loadfile", target, "append-play"], target)
     prefetched = _fresh_prefetched_stream(item)
     if prefetched is None:
         return None
     stream_url, audio_url = prefetched
     if not stream_url:
         return None
+    stream_url = youtube_stream.proxy_url(stream_url)
     cmd: list[object] = ["loadfile", stream_url, "append-play"]
     if audio_url:
+        audio_url = youtube_stream.proxy_url(audio_url)
         cmd.extend(["-1", f"audio-files-append={str(audio_url)}"])
     return cmd, stream_url
 
