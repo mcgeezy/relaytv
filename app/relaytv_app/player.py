@@ -22,13 +22,14 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlsplit, url
 from typing import Any, Callable
 from fastapi import HTTPException
 
-from . import state, devices, postlive_relay, ytdlp_format_policy, video_profile
+from . import state, devices, postlive_relay, ytdlp_format_policy, video_profile, youtube_stream
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
 from .resolver import (
     YouTubeBotCheckError,
     YouTubePostLiveProcessingError,
     YouTubeUpcomingError,
+    YouTubeUnavailableError,
     enrich_item_metadata,
     is_youtube_url,
     make_item,
@@ -3412,6 +3413,8 @@ def _load_stream_in_existing_mpv(
                 return False
         _ACTIVE_HTTP_HEADERS = dict(headers)
 
+    stream_url = youtube_stream.proxy_url(stream_url)
+    audio_url = youtube_stream.proxy_url(audio_url)
     if _qt_shell_runtime_accepts_mpv_commands():
         try:
             if _normalize_start_pos(start_pos) is not None:
@@ -3460,6 +3463,8 @@ def start_mpv(
     """
     global MPV_PROC, _ACTIVE_HTTP_HEADERS
     _ACTIVE_HTTP_HEADERS = dict(http_headers or {})
+    stream_url = youtube_stream.proxy_url(stream_url)
+    audio_url = youtube_stream.proxy_url(audio_url)
     process_start_option_active = _normalize_start_pos(start_pos) is not None
     # Resolve can take longer than the initial transition window. Refresh it
     # here so watchdogs do not relaunch the idle shell while playback startup
@@ -4504,15 +4509,18 @@ def _mpv_up_next_load_target(item: object) -> tuple[list[object], str] | None:
     if not head_url:
         return None
     if _mpv_up_next_eligible_item(item):
-        return (["loadfile", head_url, "append-play"], head_url)
+        target = youtube_stream.proxy_url(head_url)
+        return (["loadfile", target, "append-play"], target)
     prefetched = _fresh_prefetched_stream(item)
     if prefetched is None:
         return None
     stream_url, audio_url = prefetched
     if not stream_url:
         return None
+    stream_url = youtube_stream.proxy_url(stream_url)
     cmd: list[object] = ["loadfile", stream_url, "append-play"]
     if audio_url:
+        audio_url = youtube_stream.proxy_url(audio_url)
         cmd.extend(["-1", f"audio-files-append={str(audio_url)}"])
     return cmd, stream_url
 
@@ -4777,6 +4785,17 @@ def _notify_bot_check_skip(item: object) -> None:
         label = str(item.get("title") or item.get("url") or "").strip()
     text = f"Skipped (YouTube bot check): {label}" if label else "Video skipped: YouTube bot check"
     _notify_bot_check_toast(text)
+
+
+def _notify_unplayable_skip(item: object) -> None:
+    """Toast that a queue item was skipped because it is unplayable."""
+    label = ""
+    if isinstance(item, dict):
+        label = str(item.get("title") or item.get("url") or "").strip()
+    else:
+        label = str(item or "").strip()
+    text = f"Skipped (unplayable): {label}" if label else "Video skipped: unplayable"
+    _notify_warn_toast(text)
 
 
 def _notify_upcoming_skip(item: object, reason: str = "") -> None:
@@ -5048,6 +5067,8 @@ def advance_queue_playback(
 
     handoff_guard = queue_handoff_suppress_sec()
     playback_service.suppress_auto_next(handoff_guard)
+    # Keep explicit Next behavior, but automatic advancement must preserve
+    # unclassified resolver failures: yt-dlp timeouts also surface as HTTP 400.
     allow_skip_unplayable = mode in {"next", "play_next"}
     skipped_unplayable = 0
 
@@ -5118,6 +5139,7 @@ def advance_queue_playback(
                 bot_check = isinstance(exc, YouTubeBotCheckError)
                 post_live_processing = isinstance(exc, YouTubePostLiveProcessingError)
                 upcoming = isinstance(exc, YouTubeUpcomingError)
+                unavailable = isinstance(exc, YouTubeUnavailableError)
                 # A queued IPTV channel whose source was deleted or refreshed to
                 # inactive resolves to a 404 that will never recover; skip it in
                 # every mode so it cannot permanently block queue advancement.
@@ -5145,12 +5167,13 @@ def advance_queue_playback(
                     bot_check
                     or post_live_processing
                     or upcoming
+                    or unavailable
                     or iptv_stale
                     or plex_stale
                     or (
                         allow_skip_unplayable
                         and isinstance(exc, HTTPException)
-                        and int(getattr(exc, "status_code", 0) or 0) == 400
+                        and int(getattr(exc, "status_code", 0) or 0) in (400, 404)
                     )
                 )
                 if skip_unplayable:
@@ -5171,6 +5194,8 @@ def advance_queue_playback(
                         _notify_bot_check_skip(next_item)
                     elif upcoming:
                         _notify_upcoming_skip(next_item, getattr(exc, "reason", ""))
+                    elif not post_live_processing:
+                        _notify_unplayable_skip(next_item)
                     continue
                 with state.QUEUE_LOCK:
                     state.QUEUE.insert(0, next_item)

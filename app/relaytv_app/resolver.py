@@ -91,6 +91,33 @@ class YouTubeBotCheckError(HTTPException):
     """
 
 
+class YouTubeUnavailableError(HTTPException):
+    """YouTube explicitly rejected access to private, removed or members-only media."""
+
+
+def _youtube_error_is_unavailable(error_text: str) -> bool:
+    # Only classify an explicit extractor error reason. A generic "unavailable",
+    # HTTP error or a title in a warning is not proof that retrying cannot help.
+    for line in str(error_text or "").splitlines():
+        match = re.match(r"ERROR:\s+(?:\[youtube\]\s+\S+:\s+)?(.+)", line.strip(), re.I)
+        if not match:
+            continue
+        reason = match.group(1).lower()
+        if reason.startswith(
+            (
+                "private video",
+                "this video is private",
+                "this video has been removed",
+                "video has been removed",
+                "this video is no longer available",
+                "join this channel to get access to members-only content",
+                "this video is available to this channel's members",
+            )
+        ):
+            return True
+    return False
+
+
 class YouTubePostLiveProcessingError(HTTPException):
     """YouTube has ended the live stream but has not processed its replay.
 
@@ -834,6 +861,8 @@ def resolve_streams_ytdlp(url: str):
                     f"Details: {err[:900]}"
                 ),
             )
+        if is_yt and _youtube_error_is_unavailable(err):
+            raise YouTubeUnavailableError(status_code=400, detail=f"yt-dlp failed: {err[:1200]}")
         if provider == "rumble" and rumble_challenge_seen:
             if _rumble_impersonation_unavailable(err):
                 reason = (

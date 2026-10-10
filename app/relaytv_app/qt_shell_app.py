@@ -2498,9 +2498,11 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
             try:
-                # Native child surface improves stacking reliability when mpv is
-                # rendering into a native video widget.
-                overlay.setAttribute(Qt.WA_NativeWindow, True)
+                # Only subprocess mpv embeds a native child. With libmpv, keep
+                # video and overlay in Qt's shared widget composition; native
+                # siblings can cover the overlay after renderer recovery.
+                if not use_libmpv:
+                    overlay.setAttribute(Qt.WA_NativeWindow, True)
             except Exception:
                 pass
 
@@ -3180,7 +3182,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
 
-    wid = int(video_widget.winId())
+    # winId() creates a native child as a side effect. libmpv renders into a
+    # QOpenGLWidget FBO and must stay in Qt's composition, not a native window.
+    wid = 0 if use_libmpv else int(video_widget.winId())
     mpv_proc: subprocess.Popen | None = None
 
     if use_libmpv and libmpv_player is not None and stream:

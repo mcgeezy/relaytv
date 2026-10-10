@@ -161,6 +161,7 @@ from .seerr import router as seerr_router
 from .snapshots import router as snapshots_router
 from .status import router as status_router
 from .ui import router as ui_router
+from .youtube_stream import router as youtube_stream_router
 from .uploads import (
     ingest_media as ingest_media,
     ingest_media_enqueue as ingest_media_enqueue,
@@ -187,6 +188,7 @@ router.include_router(seerr_router)
 router.include_router(snapshots_router)
 router.include_router(status_router)
 router.include_router(ui_router)
+router.include_router(youtube_stream_router)
 router.include_router(uploads_router)
 logger = get_logger("routes")
 
