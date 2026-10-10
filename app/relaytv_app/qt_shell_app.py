@@ -637,6 +637,15 @@ def _build_mpv_args(
     arm_fast_default = _env_bool("RELAYTV_ARM_FAST_PROFILE", False)
     if arm_fast_default and (platform.machine() or "").lower() in ("aarch64", "arm64") and not _has_opt(args + extra, "--profile"):
         args.append("--profile=fast")
+    back_bytes = (os.getenv("RELAYTV_DEMUXER_MAX_BACK_BYTES") or "").strip() or (
+        "128MiB" if (platform.machine() or "").lower() in ("aarch64", "arm64") else "256MiB"
+    )
+    if not _has_opt(args + extra, "--force-seekable"):
+        args.append("--force-seekable=yes")
+    if not _has_opt(args + extra, "--demuxer-seekable-cache"):
+        args.append("--demuxer-seekable-cache=yes")
+    if not _has_opt(args + extra, "--demuxer-max-back-bytes"):
+        args.append(f"--demuxer-max-back-bytes={back_bytes}")
     if ipc_path:
         args.append(f"--input-ipc-server={ipc_path}")
     # File-scoped options are collected here and wrapped in a --{ ... --}
@@ -1126,6 +1135,11 @@ class _QtLibMpvPlayer:
         playlist_pos = _optional_int(_read("playlist-pos"))
         playlist_count = _optional_int(_read("playlist-count"))
         track_list = self._runtime_track_list(aid=aid, path=path, read_node=_read_node)
+        demuxer_cache_state = None
+        try:
+            demuxer_cache_state = self._get_property_node("demuxer-cache-state")
+        except Exception:
+            pass
 
         playback_active = bool(path) and (core_idle is not True) and (eof_reached is not True)
         playback_started = playback_active and (
@@ -1149,6 +1163,7 @@ class _QtLibMpvPlayer:
                 "mpv_runtime_playlist_pos": playlist_pos,
                 "mpv_runtime_playlist_count": playlist_count,
                 "mpv_runtime_track_list": track_list,
+                "mpv_runtime_demuxer_cache_state": demuxer_cache_state,
                 "mpv_runtime_playback_active": playback_active,
                 "mpv_runtime_stream_loaded": bool(path),
                 "mpv_runtime_playback_started": playback_started,
@@ -1194,6 +1209,12 @@ class _QtLibMpvPlayer:
         self._set_opt_best_effort("term-playing-msg", "")
         self._set_opt_best_effort("terminal", "no")
         self._set_opt_best_effort("force-window", "yes")
+        self._set_opt_best_effort("force-seekable", "yes")
+        self._set_opt_best_effort("demuxer-seekable-cache", "yes")
+        back_bytes = (os.getenv("RELAYTV_DEMUXER_MAX_BACK_BYTES") or "").strip() or (
+            "128MiB" if (platform.machine() or "").lower() in ("aarch64", "arm64") else "256MiB"
+        )
+        self._set_opt_best_effort("demuxer-max-back-bytes", back_bytes)
 
         log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
         self._set_opt_best_effort("log-file", log_file)
@@ -3186,7 +3207,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             props = _subprocess_mpv_get_props(
-                ["pause", "time-pos", "duration", "core-idle", "eof-reached", "path"]
+                ["pause", "time-pos", "duration", "core-idle", "eof-reached", "path", "demuxer-cache-state"]
             )
         except Exception:
             return None
@@ -3203,6 +3224,7 @@ def main(argv: list[str] | None = None) -> int:
         core_idle = _b(props.get("core-idle"))
         eof_reached = _b(props.get("eof-reached"))
         path = str(props.get("path") or "").strip()
+        demuxer_cache_state = props.get("demuxer-cache-state") if isinstance(props.get("demuxer-cache-state"), dict) else None
         playback_active = bool(path) and (core_idle is not True) and (eof_reached is not True)
         playback_started = playback_active and ((time_pos or 0.0) > 0.0 or (duration or 0.0) > 0.0)
         out: dict[str, object] = {
@@ -3214,6 +3236,7 @@ def main(argv: list[str] | None = None) -> int:
             "mpv_runtime_core_idle": core_idle,
             "mpv_runtime_eof_reached": eof_reached,
             "mpv_runtime_path": path,
+            "mpv_runtime_demuxer_cache_state": demuxer_cache_state,
             "mpv_runtime_playback_active": playback_active,
             "mpv_runtime_stream_loaded": bool(path),
             "mpv_runtime_playback_started": playback_started,

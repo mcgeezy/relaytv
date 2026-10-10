@@ -28,7 +28,8 @@ class SeekReq(BaseModel):
 
 
 class SeekAbsReq(BaseModel):
-    sec: float
+    sec: float | None = None
+    live: bool = False
 
 
 class PlayReq(BaseModel):
@@ -110,6 +111,12 @@ def _seek_absolute_result(target_sec: float) -> dict[str, object]:
     from . import _seek_absolute_result as seek_absolute_result
 
     return seek_absolute_result(target_sec)
+
+
+def _seek_to_live_result() -> dict[str, object]:
+    from . import _seek_to_live_result as seek_to_live_result
+
+    return seek_to_live_result()
 
 
 def _playback_state_fast_snapshot() -> dict[str, object]:
@@ -873,7 +880,8 @@ def seek(req: SeekReq):
     except Exception:
         pass
     result = _seek_relative_result(float(req.sec))
-    return {"ok": True, "seeked": req.sec, **_control_ack_payload(result)}
+    extra = {"action": "live"} if (isinstance(result, dict) and result.get("action") == "live") else {}
+    return {"ok": True, "seeked": req.sec, **extra, **_control_ack_payload(result)}
 
 
 @router.post("/seek_abs")
@@ -884,8 +892,25 @@ def seek_abs(req: SeekAbsReq):
         player._mark_playback_transition(hold_sec)
     except Exception:
         pass
+    if req.live or req.sec is None:
+        result = _seek_to_live_result()
+        return {"ok": True, "action": "live", **_control_ack_payload(result)}
     result = _seek_absolute_result(float(req.sec))
     return {"ok": True, "seeked_to": req.sec, **_control_ack_payload(result)}
+
+
+@router.post("/playback/live")
+def playback_live():
+    if not player.is_playing():
+        raise HTTPException(status_code=409, detail="Not playing")
+    hold_sec = _seek_transition_hold_sec()
+    playback_service.suppress_auto_next(hold_sec, extend_only=True)
+    try:
+        player._mark_playback_transition(hold_sec)
+    except Exception:
+        pass
+    result = _seek_to_live_result()
+    return {"ok": True, "action": "live", **_control_ack_payload(result)}
 
 
 @router.post("/volume")
