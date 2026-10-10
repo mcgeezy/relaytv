@@ -55,7 +55,9 @@ def test_parse_m3u_rejects_hls_manifest_as_catalog(iptv_tmp) -> None:
         iptv_service.parse_m3u(manifest, base_url="https://stream.example/live.m3u8")
 
 
-def test_refresh_preserves_favorite_hidden_and_rank_across_url_rotation(iptv_tmp, monkeypatch) -> None:
+def test_refresh_preserves_favorite_hidden_and_rank_across_url_rotation(
+    iptv_tmp, monkeypatch
+) -> None:
     source = iptv_service.create_source(
         name="Test",
         content=PLAYLIST,
@@ -112,7 +114,9 @@ def test_availability_requires_three_failures_and_recovers(iptv_tmp) -> None:
     one = iptv_service.store().mark_channel_check(str(source["id"]), channel_id, available=False)
     two = iptv_service.store().mark_channel_check(str(source["id"]), channel_id, available=False)
     three = iptv_service.store().mark_channel_check(str(source["id"]), channel_id, available=False)
-    recovered = iptv_service.store().mark_channel_check(str(source["id"]), channel_id, available=True)
+    recovered = iptv_service.store().mark_channel_check(
+        str(source["id"]), channel_id, available=True
+    )
 
     assert one and one["availability"] == "suspect"
     assert two and two["availability"] == "suspect"
@@ -136,12 +140,12 @@ def test_channel_action_uses_playback_service_and_marks_success(iptv_tmp, monkey
     monkeypatch.setattr(
         iptv_service.playback_service,
         "play_now",
-        lambda media, **kwargs: calls.append({"media": media, **kwargs}) or {"title": media["title"]},
+        lambda media, **kwargs: (
+            calls.append({"media": media, **kwargs}) or {"title": media["title"]}
+        ),
     )
 
-    result = iptv_service.channel_action(
-        str(source["id"]), str(item["channel_id"]), "play_now"
-    )
+    result = iptv_service.channel_action(str(source["id"]), str(item["channel_id"]), "play_now")
 
     assert result["ok"] is True
     assert calls[0]["use_resolver"] is False
@@ -197,9 +201,7 @@ def test_scheduled_checks_are_limited_to_favorites(iptv_tmp, monkeypatch) -> Non
     iptv_service.refresh_source(str(source["id"]))
     channels = iptv_service.list_channels(source_id=str(source["id"]))["items"]
     favorite = channels[0]
-    iptv_service.update_channel(
-        str(source["id"]), str(favorite["channel_id"]), {"favorite": True}
-    )
+    iptv_service.update_channel(str(source["id"]), str(favorite["channel_id"]), {"favorite": True})
     checked: list[tuple[str, str]] = []
     monkeypatch.setattr(
         iptv_service,
@@ -257,7 +259,9 @@ def test_refresh_keeps_identity_when_duplicate_tvg_appears(iptv_tmp, monkeypatch
     sid = str(source["id"])
     iptv_service.refresh_source(sid)
     news = next(
-        c for c in iptv_service.list_channels(source_id=sid)["items"] if c["tvg_id"] == "news.example"
+        c
+        for c in iptv_service.list_channels(source_id=sid)["items"]
+        if c["tvg_id"] == "news.example"
     )
     original_id = str(news["channel_id"])
     iptv_service.update_channel(sid, original_id, {"favorite": True})
@@ -267,7 +271,9 @@ def test_refresh_keeps_identity_when_duplicate_tvg_appears(iptv_tmp, monkeypatch
         'group-title="News",Example News Duplicate\n'
         "https://catalog.example/list/streams/news-dup.m3u8\n"
     )
-    monkeypatch.setattr(iptv_service, "_fetch_source", lambda _s: (dup_playlist, "e", "", False, ""))
+    monkeypatch.setattr(
+        iptv_service, "_fetch_source", lambda _s: (dup_playlist, "e", "", False, "")
+    )
     iptv_service.refresh_source(sid)
 
     # A duplicate tvg-id appearing must not detach the incumbent's user state.

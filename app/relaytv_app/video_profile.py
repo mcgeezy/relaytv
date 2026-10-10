@@ -44,8 +44,6 @@ def _parse_mode_dims(mode: str) -> tuple[int, int] | None:
         return None
 
 
-
-
 def _normalize_mode_string(mode: str) -> str:
     parsed = _parse_mode_dims(mode)
     if not parsed:
@@ -80,6 +78,7 @@ def _display_active_mode_from_sysfs() -> tuple[str, int | None]:
         except Exception:
             continue
     return "", None
+
 
 def _display_cap_from_drm(connectors: list[dict[str, Any]]) -> tuple[str, str, int | None]:
     best_connector = ""
@@ -169,7 +168,11 @@ def _host_model() -> str:
     for candidate in (Path("/proc/device-tree/model"), Path("/sys/firmware/devicetree/base/model")):
         try:
             if candidate.is_file():
-                txt = candidate.read_text(encoding="utf-8", errors="ignore").replace("\x00", "").strip()
+                txt = (
+                    candidate.read_text(encoding="utf-8", errors="ignore")
+                    .replace("\x00", "")
+                    .strip()
+                )
                 if txt:
                     return txt
         except Exception:
@@ -291,4 +294,3 @@ def warm_profile() -> None:
         get_profile(force_refresh=True)
     except Exception:
         pass
-

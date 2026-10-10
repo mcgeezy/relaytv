@@ -103,15 +103,17 @@ def _youtube_error_is_unavailable(error_text: str) -> bool:
         if not match:
             continue
         reason = match.group(1).lower()
-        if reason.startswith((
-            "private video",
-            "this video is private",
-            "this video has been removed",
-            "video has been removed",
-            "this video is no longer available",
-            "join this channel to get access to members-only content",
-            "this video is available to this channel's members",
-        )):
+        if reason.startswith(
+            (
+                "private video",
+                "this video is private",
+                "this video has been removed",
+                "video has been removed",
+                "this video is no longer available",
+                "join this channel to get access to members-only content",
+                "this video is available to this channel's members",
+            )
+        ):
             return True
     return False
 
@@ -231,20 +233,18 @@ def _categorize_resolver_error(error_text: str) -> str:
 def _rumble_error_is_http_challenge(error_text: str) -> bool:
     """Return whether Rumble's metadata request was rejected with HTTP 403."""
     low = str(error_text or "").strip().lower()
-    return bool(
-        "http error 403" in low
-        or "403 forbidden" in low
-        or re.search(r"\b403\b", low)
-    )
+    return bool("http error 403" in low or "403 forbidden" in low or re.search(r"\b403\b", low))
 
 
 def _rumble_impersonation_unavailable(error_text: str) -> bool:
     low = str(error_text or "").strip().lower()
     return "impersonate target" in low and "not available" in low
 
+
 # =========================
 # URL helpers
 # =========================
+
 
 def extract_first_url(text: str) -> str:
     """Extract the first http(s) URL from a blob of shared text."""
@@ -294,6 +294,7 @@ def validate_user_url(raw: str) -> str:
     if not parsed.hostname:
         raise HTTPException(status_code=400, detail="Invalid url host")
     return u
+
 
 # Provider domains, matched at a dot boundary. Order is significant: the first
 # entry that matches wins, mirroring the if/elif chain this replaced.
@@ -374,12 +375,14 @@ def provider_from_url(u: str) -> str:
     return "other"
 
 
-
 # =========================
 # Stream + metadata resolution
 # =========================
 
-def run(argv: list[str], check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess:
+
+def run(
+    argv: list[str], check: bool = True, timeout: int | None = None
+) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(argv, text=True, capture_output=True, check=check, timeout=timeout)
     except FileNotFoundError as e:
@@ -393,6 +396,7 @@ def run(argv: list[str], check: bool = True, timeout: int | None = None) -> subp
         stderr = e.stderr if isinstance(e.stderr, str) else ""
         detail = stderr or f"Command timed out after {timeout}s"
         return subprocess.CompletedProcess(argv, 124, stdout, detail)
+
 
 def _truthy(v: object) -> bool:
     return str(v or "").strip().lower() in ("1", "true", "yes", "on")
@@ -471,6 +475,7 @@ def _youtube_strategy_related_retry(low_err: str) -> bool:
         or "remote components are disabled" in low_err
     )
 
+
 def _preferred_js_runtime_spec() -> str:
     override = (
         os.getenv("RELAYTV_YTDLP_JS_RUNTIME") or os.getenv("YTDLP_JS_RUNTIME") or ""
@@ -507,7 +512,9 @@ def _add_js_and_remote(args: list[str], js_runtime: str) -> list[str]:
     return res
 
 
-def _deduplicate_strategies(strategies: list[tuple[list[str], list[str]]]) -> list[tuple[list[str], list[str]]]:
+def _deduplicate_strategies(
+    strategies: list[tuple[list[str], list[str]]],
+) -> list[tuple[list[str], list[str]]]:
     out: list[tuple[list[str], list[str]]] = []
     seen: set[tuple[str, ...]] = set()
     for args_base, strategy_candidates in strategies:
@@ -519,9 +526,13 @@ def _deduplicate_strategies(strategies: list[tuple[list[str], list[str]]]) -> li
     return out
 
 
-def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
+def _build_youtube_arm_safe_strategies(
+    base: list[str], candidates: list[str]
+) -> list[tuple[list[str], list[str]]]:
     has_cookie_auth = _has_opt(base, "--cookies") or _has_opt(base, "--cookies-from-browser")
-    default_args = _without_opts(base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components")
+    default_args = _without_opts(
+        base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components"
+    )
     js_runtime = _preferred_js_runtime_spec()
     strategies: list[tuple[list[str], list[str]]] = []
 
@@ -535,15 +546,21 @@ def _build_youtube_arm_safe_strategies(base: list[str], candidates: list[str]) -
     return _deduplicate_strategies(strategies)
 
 
-def _build_youtube_strategies(base: list[str], candidates: list[str]) -> list[tuple[list[str], list[str]]]:
+def _build_youtube_strategies(
+    base: list[str], candidates: list[str]
+) -> list[tuple[list[str], list[str]]]:
     has_cookie_auth = _has_opt(base, "--cookies") or _has_opt(base, "--cookies-from-browser")
     public_base = _without_opts(base, "--cookies", "--cookies-from-browser")
-    default_args = _without_opts(base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components")
+    default_args = _without_opts(
+        base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components"
+    )
     has_extractor_args = _has_opt(public_base, "--extractor-args")
     js_runtime = _preferred_js_runtime_spec()
     strategies: list[tuple[list[str], list[str]]] = []
 
-    challenge_candidates = ["", "best"] if any(c in ("", "best", "b") for c in candidates) else candidates
+    challenge_candidates = (
+        ["", "best"] if any(c in ("", "best", "b") for c in candidates) else candidates
+    )
     if has_cookie_auth:
         strategies.append((_add_js_and_remote(base, js_runtime), challenge_candidates))
 
@@ -585,7 +602,11 @@ def build_ytdlp_base_args() -> list[str]:
     if js_runtime:
         add_opt("--js-runtimes", js_runtime)
 
-    cookies_from = (os.getenv("RELAYTV_YTDLP_COOKIES_FROM_BROWSER") or os.getenv("YTDLP_COOKIES_FROM_BROWSER") or "").strip()
+    cookies_from = (
+        os.getenv("RELAYTV_YTDLP_COOKIES_FROM_BROWSER")
+        or os.getenv("YTDLP_COOKIES_FROM_BROWSER")
+        or ""
+    ).strip()
     if cookies_from:
         add_opt("--cookies-from-browser", cookies_from)
 
@@ -633,9 +654,7 @@ def _run_ytdlp_provider_command(
         return result, selected_args, challenged
 
     selected_args = [*selected_args, "--impersonate", "chrome"]
-    logger.info(
-        "ytdlp_strategy_retry provider=rumble reason=http_403 strategy=impersonate_chrome"
-    )
+    logger.info("ytdlp_strategy_retry provider=rumble reason=http_403 strategy=impersonate_chrome")
     return _invoke(selected_args), selected_args, True
 
 
@@ -644,12 +663,15 @@ def resolve_streams_ytdlp(url: str):
     Resolve direct stream URLs using yt-dlp.
     Returns: (video_url, audio_url_or_None)
     """
+
     def _log_resolve(msg: str) -> None:
         logger.debug("%s", msg)
+
     u = normalize_shared_url(url)
     provider = provider_from_url(u)
     try:
         from . import state, video_profile
+
         settings = state.get_settings() if hasattr(state, "get_settings") else {}
         profile = video_profile.get_profile() if hasattr(video_profile, "get_profile") else {}
     except Exception:
@@ -659,11 +681,17 @@ def resolve_streams_ytdlp(url: str):
     fmt = ytdlp_format_policy.effective_ytdlp_format(settings, provider=provider, profile=profile)
     base = build_ytdlp_base_args()
     candidates = [fmt, "best", "b", ""]
-    av1_allowed = bool(profile.get("av1_allowed")) if isinstance(profile, dict) and profile.get("av1_allowed") is not None else False
+    av1_allowed = (
+        bool(profile.get("av1_allowed"))
+        if isinstance(profile, dict) and profile.get("av1_allowed") is not None
+        else False
+    )
     if is_youtube_url(u) and not av1_allowed and fmt:
         candidates = [fmt]
     if is_youtube_url(u) and ytdlp_format_policy.youtube_progressive_startup_enabled(profile):
-        candidates = ytdlp_format_policy.youtube_progressive_startup_candidates(settings, profile=profile)
+        candidates = ytdlp_format_policy.youtube_progressive_startup_candidates(
+            settings, profile=profile
+        )
     candidates = list(dict.fromkeys(candidates))
 
     # For YouTube and Rumble, print live_status alongside the stream URLs: live and
@@ -691,8 +719,7 @@ def resolve_streams_ytdlp(url: str):
 
     def _format_related_retry(low_err: str) -> bool:
         return (
-            "requested format is not available" in low_err
-            or "only images are available" in low_err
+            "requested format is not available" in low_err or "only images are available" in low_err
         )
 
     def _run_strategies(
@@ -705,8 +732,13 @@ def resolve_streams_ytdlp(url: str):
         selected_args: list[str] = list(base)
         rumble_challenge_seen = False
         for args_base, strategy_candidates in strategy_list:
-            debug_log("youtube", f"Trying yt-dlp strategy: {' '.join(args_base)} (host_arch={host_arch or 'unknown'})")
-            _log_resolve(f"yt-dlp strategy start host_arch={host_arch or 'unknown'} args={' '.join(args_base)}")
+            debug_log(
+                "youtube",
+                f"Trying yt-dlp strategy: {' '.join(args_base)} (host_arch={host_arch or 'unknown'})",
+            )
+            _log_resolve(
+                f"yt-dlp strategy start host_arch={host_arch or 'unknown'} args={' '.join(args_base)}"
+            )
             for cand in strategy_candidates:
                 t_attempt = time.monotonic()
                 command_args = list(output_args) if not cand else ["-f", cand, *output_args]
@@ -724,7 +756,9 @@ def resolve_streams_ytdlp(url: str):
                     "youtube",
                     f"yt-dlp attempt completed in {elapsed_ms}ms (format={cand or 'auto'}) rc={p_local.returncode}",
                 )
-                _log_resolve(f"yt-dlp attempt format={cand or 'auto'} rc={p_local.returncode} elapsed_ms={elapsed_ms}")
+                _log_resolve(
+                    f"yt-dlp attempt format={cand or 'auto'} rc={p_local.returncode} elapsed_ms={elapsed_ms}"
+                )
                 if p_local.returncode == 0 and (p_local.stdout or "").strip():
                     return (
                         p_local,
@@ -868,7 +902,9 @@ def resolve_streams_ytdlp(url: str):
             live_status = lines[-1].strip().lower()
             lines = lines[:-1]
     total_ms = int((time.monotonic() - t0) * 1000)
-    debug_log("youtube", f"yt-dlp resolve succeeded in {total_ms}ms with {len(lines)} stream line(s)")
+    debug_log(
+        "youtube", f"yt-dlp resolve succeeded in {total_ms}ms with {len(lines)} stream line(s)"
+    )
     _log_resolve(f"yt-dlp resolve succeeded total_ms={total_ms} stream_lines={len(lines)}")
     _update_resolver_runtime_state(
         provider=provider,
@@ -949,13 +985,15 @@ def resolve_streams_invidious(youtube_url: str, base: str | None = None):
 
     # Adaptive: choose best video + best audio
     vids = [
-        x for x in adaptive
+        x
+        for x in adaptive
         if isinstance(x, dict)
         and x.get("url")
         and str(x.get("mimeType", "")).lower().startswith("video/")
     ]
     auds = [
-        x for x in adaptive
+        x
+        for x in adaptive
         if isinstance(x, dict)
         and x.get("url")
         and str(x.get("mimeType", "")).lower().startswith("audio/")
@@ -990,6 +1028,7 @@ def resolve_streams(url: str):
     provider = provider_from_url(url)
     debug_log("resolver", f"Resolving streams for provider={provider} use_invidious={use_invid}")
     if use_invid and is_youtube_url(url):
+
         def _update_state(outcome: str, err: str = "", succ: bool = False):
             _update_resolver_runtime_state(
                 provider=provider,
@@ -1108,7 +1147,9 @@ def _ytdlp_info_store(url: str, now: float, data: dict) -> None:
         _YTDLP_INFO_CACHE[url] = (now, data)
         _YTDLP_INFO_CACHE.move_to_end(url)
         # Drop anything past its TTL first, then the least recently used.
-        for stale in [k for k, (ts, _v) in _YTDLP_INFO_CACHE.items() if (now - ts) >= _YTDLP_INFO_TTL_SEC]:
+        for stale in [
+            k for k, (ts, _v) in _YTDLP_INFO_CACHE.items() if (now - ts) >= _YTDLP_INFO_TTL_SEC
+        ]:
             _YTDLP_INFO_CACHE.pop(stale, None)
         while len(_YTDLP_INFO_CACHE) > _YTDLP_INFO_CACHE_MAX:
             _YTDLP_INFO_CACHE.popitem(last=False)
@@ -1209,7 +1250,10 @@ def _provider_display_name(provider: str) -> str:
         try:
             from . import state as _state
 
-            if str(_state.get_settings().get("jellyfin_server_type") or "").strip().lower() == "emby":
+            if (
+                str(_state.get_settings().get("jellyfin_server_type") or "").strip().lower()
+                == "emby"
+            ):
                 return "Emby"
         except Exception:
             pass
@@ -1250,7 +1294,6 @@ def _apply_live_metadata(item: dict[str, object], info: object) -> bool:
     return changed
 
 
-
 def _fallback_item_title(url: str, provider: str) -> str:
     prov = str(provider or "").strip().lower()
     try:
@@ -1281,7 +1324,6 @@ def _fallback_item_title(url: str, provider: str) -> str:
     except Exception:
         pass
     return _provider_display_name(prov) if prov else url
-
 
 
 def enrich_item_metadata(item: dict[str, object]) -> bool:
@@ -1350,7 +1392,6 @@ def enrich_item_metadata(item: dict[str, object]) -> bool:
         item.pop("_metadata_lightweight", None)
         changed = True
     return changed
-
 
 
 def make_item(input_text: str, *, lightweight: bool = False) -> dict:

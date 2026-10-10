@@ -16,6 +16,7 @@ The rows use an explicit RELAYTV_PLAYER_BACKEND so the matrix stays
 hermetic: the backend default path probes display sockets on the host and
 is covered separately by the explicit-override tests below.
 """
+
 import re
 import sys
 from pathlib import Path
@@ -236,7 +237,9 @@ def test_runtime_profile_matrix(monkeypatch, row) -> None:
         video_profile._decode_profile(host["machine"], bool(host["has_dri"]), decode["hwaccels"])
         == expected["decode_profile"]
     )
-    assert video_profile._av1_allowed(host["machine"], decode["av1_paths"]) is expected["av1_allowed"]
+    assert (
+        video_profile._av1_allowed(host["machine"], decode["av1_paths"]) is expected["av1_allowed"]
+    )
 
 
 # --- decision edge cases not in the operator-facing table --------------------

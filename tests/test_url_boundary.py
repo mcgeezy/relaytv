@@ -6,6 +6,7 @@ classification used substrings. Two defects lived in the gap: a malformed port
 was accepted at ingestion and raised at serialization, and lookalike domains
 classified as real providers.
 """
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -26,10 +27,10 @@ from relaytv_app.resolver import (
 @pytest.mark.parametrize(
     "url",
     [
-        "http://host:99999/a",   # port out of range
-        "http://host:abc/a",     # port not an integer
+        "http://host:99999/a",  # port out of range
+        "http://host:abc/a",  # port not an integer
         "http://host:-1/a",
-        "http://[::1/a",         # unterminated IPv6 literal
+        "http://[::1/a",  # unterminated IPv6 literal
     ],
 )
 def test_malformed_urls_do_not_parse(url: str) -> None:
@@ -80,7 +81,13 @@ def test_host_matches_requires_a_dot_boundary(host, domain, expected) -> None:
 
 @pytest.mark.parametrize(
     "url",
-    ["http://host:99999/a", "http://host:abc/a", "http://[::1/a", "http://:80/a", "http://user@:9/a"],
+    [
+        "http://host:99999/a",
+        "http://host:abc/a",
+        "http://[::1/a",
+        "http://:80/a",
+        "http://user@:9/a",
+    ],
 )
 def test_malformed_urls_are_rejected_at_ingestion(url: str) -> None:
     with pytest.raises(HTTPException) as excinfo:
@@ -114,9 +121,13 @@ def test_serialization_behavior_is_otherwise_unchanged() -> None:
         == "https://host.test/a?x=1"
     )
     # Ports, IPv6, and non-network URLs preserved exactly as before.
-    assert public_media.sanitize_public_url("https://host.test:8443/a") == "https://host.test:8443/a"
+    assert (
+        public_media.sanitize_public_url("https://host.test:8443/a") == "https://host.test:8443/a"
+    )
     assert public_media.sanitize_public_url("http://[::1]:8080/a") == "http://[::1]:8080/a"
-    assert public_media.sanitize_public_url("/media/uploads/u_1/a.mp4") == "/media/uploads/u_1/a.mp4"
+    assert (
+        public_media.sanitize_public_url("/media/uploads/u_1/a.mp4") == "/media/uploads/u_1/a.mp4"
+    )
     assert public_media.sanitize_public_url("//cdn.test/p.jpg") == "//cdn.test/p.jpg"
     assert public_media.sanitize_public_url("file:///data/x.mp4") == "file:///data/x.mp4"
     # An authority with no hostname is omitted, not echoed: the raw form can

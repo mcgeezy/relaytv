@@ -19,6 +19,7 @@ token; reads are unguarded on a stock device, so it is rarely needed.
 
 Exit status is 1 when any device could not be reached, so it can gate a script.
 """
+
 from __future__ import annotations
 
 import json
@@ -63,11 +64,13 @@ def option(argv: list[str], name: str, fallback: str = "") -> str:
     prefix = f"--{name}="
     for arg in argv:
         if arg.startswith(prefix):
-            return arg[len(prefix):]
+            return arg[len(prefix) :]
     return fallback
 
 
-def get(base: str, path: str, *, token: str = "", timeout: float = DEFAULT_TIMEOUT) -> tuple[int, dict]:
+def get(
+    base: str, path: str, *, token: str = "", timeout: float = DEFAULT_TIMEOUT
+) -> tuple[int, dict]:
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -115,16 +118,22 @@ def report_device(name: str, base: str, *, token: str = "") -> bool:
     print(f"       queue({len(items)}) {_titles(items)}")
 
     if "peers" in peers:
-        saved = [f"{p['name']}{' *token' if p.get('has_token') else ''}"
-                 f"{' !' + p['last_error'] if p.get('last_error') else ''}"
-                 for p in peers.get("peers", [])]
+        saved = [
+            f"{p['name']}{' *token' if p.get('has_token') else ''}"
+            f"{' !' + p['last_error'] if p.get('last_error') else ''}"
+            for p in peers.get("peers", [])
+        ]
         nearby = [c.get("device_name") or "?" for c in peers.get("discovered", [])]
         discovery = peers.get("discovery") or {}
         active = discovery.get("active")
-        state_word = "running" if active else ("off" if discovery.get("enabled") is False else "not running")
+        state_word = (
+            "running" if active else ("off" if discovery.get("enabled") is False else "not running")
+        )
         print(f"       peers({len(saved)}) {saved}  nearby({len(nearby)}) {nearby}")
-        print(f"       discovery={state_word} found={discovery.get('found')}"
-              f"{' error=' + str(discovery['last_error']) if discovery.get('last_error') else ''}")
+        print(
+            f"       discovery={state_word} found={discovery.get('found')}"
+            f"{' error=' + str(discovery['last_error']) if discovery.get('last_error') else ''}"
+        )
     else:
         # A device without the peer endpoints is running a build from before
         # multi-device support; everything above still applies.

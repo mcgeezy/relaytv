@@ -7,6 +7,7 @@ file existed. Clients got ``ok: true`` followed by a 404, or a URL that stayed
 empty forever when mpv had rejected the command outright. Both endpoints now
 wait, briefly and with a bound, for a frame that is actually on disk.
 """
+
 import os
 import time
 

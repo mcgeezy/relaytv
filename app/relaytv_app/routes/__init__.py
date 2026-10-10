@@ -20,7 +20,18 @@ import socket
 import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from .. import config, discovery_mdns, playback_service, player, public_media, resolver, state, upload_store, video_profile, x11_overlay
+from .. import (
+    config,
+    discovery_mdns,
+    playback_service,
+    player,
+    public_media,
+    resolver,
+    state,
+    upload_store,
+    video_profile,
+    x11_overlay,
+)
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
 from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
@@ -198,7 +209,9 @@ def _idle_weather_proxy_url(settings_payload: dict | None) -> str:
         lon = float(weather.get("longitude"))
     except Exception:
         lon = -74.0060
-    units = "celsius" if str(weather.get("units") or "").strip().lower() == "metric" else "fahrenheit"
+    units = (
+        "celsius" if str(weather.get("units") or "").strip().lower() == "metric" else "fahrenheit"
+    )
     wind_units = "kmh" if units == "celsius" else "mph"
     forecast_days = 7
     try:
@@ -223,6 +236,7 @@ def _idle_weather_proxy_url(settings_payload: dict | None) -> str:
 # API Models
 # =========================
 
+
 class OverlayReq(BaseModel):
     text: str | None = None
     duration: float = 5.0
@@ -244,7 +258,11 @@ class OverlayClientStateReq(BaseModel):
 
 
 def _overlay_osd_debug_enabled() -> bool:
-    v = (os.getenv("RELAYTV_OVERLAY_OSD_DEBUG") or os.getenv("OVERLAY_OSD_DEBUG") or "").strip().lower()
+    v = (
+        (os.getenv("RELAYTV_OVERLAY_OSD_DEBUG") or os.getenv("OVERLAY_OSD_DEBUG") or "")
+        .strip()
+        .lower()
+    )
     return v in ("1", "true", "yes", "on")
 
 
@@ -343,18 +361,18 @@ def _x11_mode_notifications() -> bool:
         return True
 
     env_mode = (
-        runtime_config.snapshot().raw("RELAYTV_VIDEO_MODE", "")
-        or os.getenv("RELAYTV_MODE", "")
-        or ""
-    ).strip().lower()
-    settings_mode = (
-        (getattr(state, "get_settings", lambda: {})().get("video_mode"))
-        or ""
-    ).strip().lower()
-    mode = (
-        env_mode
-        or settings_mode
+        (
+            runtime_config.snapshot().raw("RELAYTV_VIDEO_MODE", "")
+            or os.getenv("RELAYTV_MODE", "")
+            or ""
+        )
+        .strip()
+        .lower()
     )
+    settings_mode = (
+        ((getattr(state, "get_settings", lambda: {})().get("video_mode")) or "").strip().lower()
+    )
+    mode = env_mode or settings_mode
     if mode == "x11":
         return True
     if mode == "drm":
@@ -365,7 +383,11 @@ def _x11_mode_notifications() -> bool:
     if xdg == "wayland":
         return False
     try:
-        return bool(getattr(player, "_has_x11_display", lambda: bool((os.getenv("DISPLAY") or "").strip()))())
+        return bool(
+            getattr(
+                player, "_has_x11_display", lambda: bool((os.getenv("DISPLAY") or "").strip())
+            )()
+        )
     except Exception:
         return bool((os.getenv("DISPLAY") or "").strip())
 
@@ -379,19 +401,29 @@ def _qt_shell_runtime_running() -> bool:
 
 def _host_session_type() -> str:
     return (
-        os.getenv("RELAYTV_HOST_SESSION_TYPE")
-        or os.getenv("XDG_SESSION_TYPE")
-        or ""
-    ).strip().lower()
+        (os.getenv("RELAYTV_HOST_SESSION_TYPE") or os.getenv("XDG_SESSION_TYPE") or "")
+        .strip()
+        .lower()
+    )
 
 
 def _display_session_available() -> bool:
     try:
-        has_x11 = bool(getattr(player, "_has_x11_display", lambda: bool((os.getenv("DISPLAY") or "").strip()))())
+        has_x11 = bool(
+            getattr(
+                player, "_has_x11_display", lambda: bool((os.getenv("DISPLAY") or "").strip())
+            )()
+        )
     except Exception:
         has_x11 = bool((os.getenv("DISPLAY") or "").strip())
     try:
-        has_wayland = bool(getattr(player, "_has_wayland_display", lambda: bool((os.getenv("WAYLAND_DISPLAY") or "").strip()))())
+        has_wayland = bool(
+            getattr(
+                player,
+                "_has_wayland_display",
+                lambda: bool((os.getenv("WAYLAND_DISPLAY") or "").strip()),
+            )()
+        )
     except Exception:
         has_wayland = bool((os.getenv("WAYLAND_DISPLAY") or "").strip())
     if has_x11 or has_wayland:
@@ -418,11 +450,21 @@ def _visual_runtime_mode() -> str:
     if _qt_shell_runtime_running():
         return "qt_shell"
     try:
-        has_x11 = bool(getattr(player, "_has_x11_display", lambda: bool((os.getenv("DISPLAY") or "").strip()))())
+        has_x11 = bool(
+            getattr(
+                player, "_has_x11_display", lambda: bool((os.getenv("DISPLAY") or "").strip())
+            )()
+        )
     except Exception:
         has_x11 = bool((os.getenv("DISPLAY") or "").strip())
     try:
-        has_wayland = bool(getattr(player, "_has_wayland_display", lambda: bool((os.getenv("WAYLAND_DISPLAY") or "").strip()))())
+        has_wayland = bool(
+            getattr(
+                player,
+                "_has_wayland_display",
+                lambda: bool((os.getenv("WAYLAND_DISPLAY") or "").strip()),
+            )()
+        )
     except Exception:
         has_wayland = bool((os.getenv("WAYLAND_DISPLAY") or "").strip())
     if has_wayland and not has_x11:
@@ -479,20 +521,50 @@ def _notification_capabilities() -> dict:
     available, reason = _notifications_available()
     visual_runtime_mode = _visual_runtime_mode()
     subscribers = realtime_hub.subscriber_count(OVERLAY_CHANNEL)
-    overlay_info = state.get_overlay_delivery_state_info() if hasattr(state, "get_overlay_delivery_state_info") else {}
+    overlay_info = (
+        state.get_overlay_delivery_state_info()
+        if hasattr(state, "get_overlay_delivery_state_info")
+        else {}
+    )
     if hasattr(state, "update_overlay_delivery_state"):
         overlay_state = str(overlay_info.get("overlay_delivery_state") or "")
         overlay_age = overlay_info.get("overlay_delivery_last_client_event_age_sec")
         if not available:
-            overlay_info = state.update_overlay_delivery_state("headless", reason, client_event="server", client_reason=reason)
+            overlay_info = state.update_overlay_delivery_state(
+                "headless", reason, client_event="server", client_reason=reason
+            )
         elif strategy == "native_qt":
-            overlay_info = state.update_overlay_delivery_state("connected", "native_qt_ready", client_event="server", client_reason="native_qt_ready")
+            overlay_info = state.update_overlay_delivery_state(
+                "connected",
+                "native_qt_ready",
+                client_event="server",
+                client_reason="native_qt_ready",
+            )
         elif subscribers <= 0:
-            overlay_info = state.update_overlay_delivery_state("disconnected", "no_subscribers", client_event="server", client_reason="no_subscribers")
-        elif isinstance(overlay_age, (int, float)) and overlay_age > 35.0 and overlay_state in ("connected", "displaying", "draining"):
-            overlay_info = state.update_overlay_delivery_state("stale", "client_heartbeat_missing", client_event="server", client_reason="client_heartbeat_missing")
+            overlay_info = state.update_overlay_delivery_state(
+                "disconnected",
+                "no_subscribers",
+                client_event="server",
+                client_reason="no_subscribers",
+            )
+        elif (
+            isinstance(overlay_age, (int, float))
+            and overlay_age > 35.0
+            and overlay_state in ("connected", "displaying", "draining")
+        ):
+            overlay_info = state.update_overlay_delivery_state(
+                "stale",
+                "client_heartbeat_missing",
+                client_event="server",
+                client_reason="client_heartbeat_missing",
+            )
         elif overlay_state in ("", "disconnected", "headless"):
-            overlay_info = state.update_overlay_delivery_state("connected", "subscriber_connected", client_event="server", client_reason="subscriber_connected")
+            overlay_info = state.update_overlay_delivery_state(
+                "connected",
+                "subscriber_connected",
+                client_event="server",
+                client_reason="subscriber_connected",
+            )
     return {
         "visual_runtime_mode": visual_runtime_mode,
         "notification_strategy": strategy,
@@ -500,7 +572,9 @@ def _notification_capabilities() -> dict:
         "notifications_available": available,
         "notifications_reason": reason,
         "overlay_subscribers": max(0, int(subscribers)),
-        "notifications_deliverable": bool(available and (strategy == "native_qt" or subscribers > 0)),
+        "notifications_deliverable": bool(
+            available and (strategy == "native_qt" or subscribers > 0)
+        ),
         "headless_runtime": _headless_runtime(),
         "overlay_only_notifications": _overlay_only_notifications_mode(),
         **_native_qt_overlay_compat_metadata(),
@@ -518,8 +592,12 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         qt_backend = False
         qt_running = False
 
-    qt_mode_configured = str(getattr(player, "qt_runtime_mode_configured", lambda: "auto")() or "auto")
-    qt_mode_effective = str(getattr(player, "qt_runtime_mode_effective", lambda: "embed")() or "embed")
+    qt_mode_configured = str(
+        getattr(player, "qt_runtime_mode_configured", lambda: "auto")() or "auto"
+    )
+    qt_mode_effective = str(
+        getattr(player, "qt_runtime_mode_effective", lambda: "embed")() or "embed"
+    )
 
     qt_shell_pid = None
     mpv_pid = None
@@ -539,9 +617,13 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
     if playing is None:
         playing = bool(player.is_playing())
     display_session_available = _display_session_available()
-    mpv_ipc_path = str(getattr(player, "IPC_PATH", os.getenv("MPV_IPC_PATH", "/tmp/mpv.sock")) or "/tmp/mpv.sock")
+    mpv_ipc_path = str(
+        getattr(player, "IPC_PATH", os.getenv("MPV_IPC_PATH", "/tmp/mpv.sock")) or "/tmp/mpv.sock"
+    )
     ipc_socket_exists = os.path.exists(mpv_ipc_path)
-    qt_overlay_url = (os.getenv("RELAYTV_QT_OVERLAY_URL") or "http://127.0.0.1:8787/x11/overlay").strip()
+    qt_overlay_url = (
+        os.getenv("RELAYTV_QT_OVERLAY_URL") or "http://127.0.0.1:8787/x11/overlay"
+    ).strip()
     qt_shell_module = (os.getenv("RELAYTV_QT_SHELL_MODULE") or "relaytv_app.qt_shell_app").strip()
     native_qt_ready = False
     if qt_backend and qt_mode_effective != "external_mpv":
@@ -554,7 +636,7 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         except Exception:
             native_qt_ready = False
     if qt_backend and qt_mode_effective == "external_mpv":
-        backend_ready = (mpv_pid is not None and ipc_socket_exists)
+        backend_ready = mpv_pid is not None and ipc_socket_exists
     else:
         backend_ready = (
             (qt_running and (ipc_socket_exists or native_qt_ready))
@@ -569,14 +651,18 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         player_runtime_engine = "mpv_process"
     else:
         player_runtime_engine = "none"
-    configured_player_backend = ("qt" if qt_backend else "mpv")
+    configured_player_backend = "qt" if qt_backend else "mpv"
     if qt_backend:
         if qt_mode_effective == "external_mpv":
-            backend_runtime_mismatch = (player_runtime_engine not in ("qt_external_mpv", "qt_shell", "none"))
+            backend_runtime_mismatch = player_runtime_engine not in (
+                "qt_external_mpv",
+                "qt_shell",
+                "none",
+            )
         else:
-            backend_runtime_mismatch = (player_runtime_engine in ("mpv_process", "qt_external_mpv"))
+            backend_runtime_mismatch = player_runtime_engine in ("mpv_process", "qt_external_mpv")
     else:
-        backend_runtime_mismatch = (player_runtime_engine in ("qt_shell", "qt_external_mpv"))
+        backend_runtime_mismatch = player_runtime_engine in ("qt_shell", "qt_external_mpv")
 
     caps = _notification_capabilities()
     profile: dict[str, object] = {}
@@ -591,7 +677,9 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         qt_external_runtime = {}
     qt_runtime_telemetry = {}
     try:
-        qt_runtime_telemetry = dict(getattr(player, "qt_shell_runtime_telemetry", lambda **_: {})() or {})
+        qt_runtime_telemetry = dict(
+            getattr(player, "qt_shell_runtime_telemetry", lambda **_: {})() or {}
+        )
     except Exception:
         qt_runtime_telemetry = {}
     try:
@@ -610,14 +698,20 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         )
     )
     if qt_backend and qt_mode_effective != "external_mpv":
-        backend_ready = (qt_running and (native_qt_ready or native_qt_available or native_qt_playback_ready))
+        backend_ready = qt_running and (
+            native_qt_ready or native_qt_available or native_qt_playback_ready
+        )
     native_qt_telemetry_source = "none"
     if qt_backend and qt_mode_effective != "external_mpv":
         if native_qt_selected and native_qt_available:
             native_qt_telemetry_source = "qt_runtime"
         elif native_qt_selected and native_qt_freshness == "stale":
             native_qt_telemetry_source = "qt_runtime_stale"
-    playback_runtime_info = state.get_playback_runtime_state_info() if hasattr(state, "get_playback_runtime_state_info") else {}
+    playback_runtime_info = (
+        state.get_playback_runtime_state_info()
+        if hasattr(state, "get_playback_runtime_state_info")
+        else {}
+    )
     resolver_runtime_info: dict[str, object] = {}
     try:
         resolver_runtime_info = dict(
@@ -667,22 +761,34 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "qt_external_fallback_reason": str(qt_external_runtime.get("fallback_reason") or ""),
         "qt_external_last_mode_args": list(qt_external_runtime.get("mode_args") or []),
         "qt_external_video_health_last_ok": qt_external_runtime.get("video_health_last_ok"),
-        "qt_external_video_health_last_ts": float(qt_external_runtime.get("video_health_last_ts") or 0.0),
-        "qt_external_video_health_fail_count": int(qt_external_runtime.get("video_health_fail_count") or 0),
+        "qt_external_video_health_last_ts": float(
+            qt_external_runtime.get("video_health_last_ts") or 0.0
+        ),
+        "qt_external_video_health_fail_count": int(
+            qt_external_runtime.get("video_health_fail_count") or 0
+        ),
         "qt_shell_supervisor_enabled": bool(qt_shell_supervisor.get("enabled", True)),
         "qt_shell_supervisor_running": bool(qt_shell_supervisor.get("running")),
-        "qt_shell_display_socket_available": bool(qt_shell_supervisor.get("display_socket_available")),
+        "qt_shell_display_socket_available": bool(
+            qt_shell_supervisor.get("display_socket_available")
+        ),
         "qt_shell_display_ready": bool(qt_shell_supervisor.get("display_ready")),
-        "qt_shell_display_ready_since": float(qt_shell_supervisor.get("display_ready_since") or 0.0),
+        "qt_shell_display_ready_since": float(
+            qt_shell_supervisor.get("display_ready_since") or 0.0
+        ),
         "qt_shell_display_boot_grace_remaining_sec": float(
             qt_shell_supervisor.get("display_boot_grace_remaining_sec") or 0.0
         ),
         "qt_shell_supervisor_last_check_ts": float(qt_shell_supervisor.get("last_check_ts") or 0.0),
         "qt_shell_supervisor_last_action": str(qt_shell_supervisor.get("last_action") or ""),
         "qt_shell_supervisor_last_reason": str(qt_shell_supervisor.get("last_reason") or ""),
-        "qt_shell_supervisor_last_restart_ts": float(qt_shell_supervisor.get("last_restart_ts") or 0.0),
+        "qt_shell_supervisor_last_restart_ts": float(
+            qt_shell_supervisor.get("last_restart_ts") or 0.0
+        ),
         "qt_shell_supervisor_restart_count": int(qt_shell_supervisor.get("restart_count") or 0),
-        "native_qt_telemetry_contract_version": str(qt_runtime_telemetry.get("contract_version") or "v1"),
+        "native_qt_telemetry_contract_version": str(
+            qt_runtime_telemetry.get("contract_version") or "v1"
+        ),
         "native_qt_telemetry_source": native_qt_telemetry_source,
         "native_qt_telemetry_selected": bool(qt_runtime_telemetry.get("selected")),
         "native_qt_telemetry_available": bool(qt_runtime_telemetry.get("available")),
@@ -692,27 +798,45 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "native_qt_telemetry_runtime": str(qt_runtime_telemetry.get("runtime") or ""),
         "native_qt_telemetry_alive": bool(qt_runtime_telemetry.get("alive")),
         "native_qt_telemetry_control_file": str(qt_runtime_telemetry.get("control_file") or ""),
-        "native_qt_telemetry_last_control_action": str(qt_runtime_telemetry.get("last_control_action") or ""),
-        "native_qt_telemetry_last_control_request_id": str(qt_runtime_telemetry.get("last_control_request_id") or ""),
-        "native_qt_telemetry_last_control_handled": qt_runtime_telemetry.get("last_control_handled"),
+        "native_qt_telemetry_last_control_action": str(
+            qt_runtime_telemetry.get("last_control_action") or ""
+        ),
+        "native_qt_telemetry_last_control_request_id": str(
+            qt_runtime_telemetry.get("last_control_request_id") or ""
+        ),
+        "native_qt_telemetry_last_control_handled": qt_runtime_telemetry.get(
+            "last_control_handled"
+        ),
         "native_qt_telemetry_last_control_ok": qt_runtime_telemetry.get("last_control_ok"),
-        "native_qt_telemetry_last_control_error": str(qt_runtime_telemetry.get("last_control_error") or ""),
+        "native_qt_telemetry_last_control_error": str(
+            qt_runtime_telemetry.get("last_control_error") or ""
+        ),
         "native_qt_overlay_enabled": qt_runtime_telemetry.get("qt_overlay_enabled"),
         "native_qt_overlay_software_mode": qt_runtime_telemetry.get("qt_overlay_software_mode"),
         "native_qt_overlay_load_ok": qt_runtime_telemetry.get("qt_overlay_load_ok"),
         "native_qt_overlay_load_failures": qt_runtime_telemetry.get("qt_overlay_load_failures"),
-        "native_qt_overlay_watchdog_enabled": qt_runtime_telemetry.get("qt_overlay_watchdog_enabled"),
+        "native_qt_overlay_watchdog_enabled": qt_runtime_telemetry.get(
+            "qt_overlay_watchdog_enabled"
+        ),
         "native_qt_overlay_heartbeat_ok": qt_runtime_telemetry.get("qt_overlay_heartbeat_ok"),
         "native_qt_overlay_recycles": qt_runtime_telemetry.get("qt_overlay_recycles"),
-        "native_qt_overlay_last_recycle_reason": qt_runtime_telemetry.get("qt_overlay_last_recycle_reason"),
+        "native_qt_overlay_last_recycle_reason": qt_runtime_telemetry.get(
+            "qt_overlay_last_recycle_reason"
+        ),
         "native_qt_overlay_renderer_rss_mb": qt_runtime_telemetry.get("qt_overlay_renderer_rss_mb"),
         "native_qt_overlay_visible": qt_runtime_telemetry.get("qt_overlay_visible"),
         "native_qt_native_idle_enabled": qt_runtime_telemetry.get("qt_native_idle_enabled"),
         "native_qt_native_idle_visible": qt_runtime_telemetry.get("qt_native_idle_visible"),
         "native_qt_mpv_runtime_initialized": qt_runtime_telemetry.get("mpv_runtime_initialized"),
-        "native_qt_mpv_runtime_playback_active": qt_runtime_telemetry.get("mpv_runtime_playback_active"),
-        "native_qt_mpv_runtime_stream_loaded": qt_runtime_telemetry.get("mpv_runtime_stream_loaded"),
-        "native_qt_mpv_runtime_playback_started": qt_runtime_telemetry.get("mpv_runtime_playback_started"),
+        "native_qt_mpv_runtime_playback_active": qt_runtime_telemetry.get(
+            "mpv_runtime_playback_active"
+        ),
+        "native_qt_mpv_runtime_stream_loaded": qt_runtime_telemetry.get(
+            "mpv_runtime_stream_loaded"
+        ),
+        "native_qt_mpv_runtime_playback_started": qt_runtime_telemetry.get(
+            "mpv_runtime_playback_started"
+        ),
         "native_qt_mpv_runtime_paused": qt_runtime_telemetry.get("mpv_runtime_paused"),
         "native_qt_mpv_runtime_time_pos": qt_runtime_telemetry.get("mpv_runtime_time_pos"),
         "native_qt_mpv_runtime_duration": qt_runtime_telemetry.get("mpv_runtime_duration"),
@@ -721,18 +845,28 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
         "native_qt_mpv_runtime_path": public_media.sanitize_public_url(
             qt_runtime_telemetry.get("mpv_runtime_path")
         ),
-        "native_qt_mpv_runtime_current_vo": str(qt_runtime_telemetry.get("mpv_runtime_current_vo") or ""),
-        "native_qt_mpv_runtime_current_ao": str(qt_runtime_telemetry.get("mpv_runtime_current_ao") or ""),
+        "native_qt_mpv_runtime_current_vo": str(
+            qt_runtime_telemetry.get("mpv_runtime_current_vo") or ""
+        ),
+        "native_qt_mpv_runtime_current_ao": str(
+            qt_runtime_telemetry.get("mpv_runtime_current_ao") or ""
+        ),
         "native_qt_mpv_runtime_aid": qt_runtime_telemetry.get("mpv_runtime_aid"),
-        "native_qt_mpv_runtime_sample_detail": str(qt_runtime_telemetry.get("mpv_runtime_sample_detail") or ""),
+        "native_qt_mpv_runtime_sample_detail": str(
+            qt_runtime_telemetry.get("mpv_runtime_sample_detail") or ""
+        ),
         "native_qt_fd_count": qt_runtime_telemetry.get("qt_shell_fd_count"),
         "native_qt_fd_limit": qt_runtime_telemetry.get("qt_shell_fd_limit"),
         "native_qt_fd_warn_threshold": qt_runtime_telemetry.get("qt_shell_fd_warn_threshold"),
-        "native_qt_fd_critical_threshold": qt_runtime_telemetry.get("qt_shell_fd_critical_threshold"),
+        "native_qt_fd_critical_threshold": qt_runtime_telemetry.get(
+            "qt_shell_fd_critical_threshold"
+        ),
         "native_qt_fd_headroom": qt_runtime_telemetry.get("qt_shell_fd_headroom"),
         "native_qt_fd_pressure_pct": qt_runtime_telemetry.get("qt_shell_fd_pressure_pct"),
         "native_qt_fd_warning": bool(qt_runtime_telemetry.get("qt_shell_fd_warning")),
-        "native_qt_fd_warning_level": str(qt_runtime_telemetry.get("qt_shell_fd_warning_level") or "unknown"),
+        "native_qt_fd_warning_level": str(
+            qt_runtime_telemetry.get("qt_shell_fd_warning_level") or "unknown"
+        ),
         "resolver_provider": str(resolver_runtime_info.get("provider") or ""),
         "resolver_effective_format": str(resolver_runtime_info.get("effective_format") or ""),
         "resolver_last_transport": str(resolver_runtime_info.get("transport") or ""),
@@ -830,7 +964,6 @@ def _queue_toast_metadata_wait_sec(item: object = None) -> float:
         return 20.0 if isinstance(item, dict) and bool(item.get("_metadata_lightweight")) else 1.2
 
 
-
 def _queue_toast_payload(item: object, fallback_label: str) -> tuple[str, str | None]:
     queue_label = str(fallback_label or "item")
     thumb = None
@@ -838,7 +971,6 @@ def _queue_toast_payload(item: object, fallback_label: str) -> tuple[str, str | 
         queue_label = str(item.get("title") or item.get("url") or queue_label)
         thumb = item.get("thumbnail_local") or item.get("thumbnail")
     return queue_label, (str(thumb).strip() if thumb else None)
-
 
 
 def _queue_toast_allows_lightweight_payload(item: object) -> bool:
@@ -850,7 +982,6 @@ def _queue_toast_allows_lightweight_payload(item: object) -> bool:
     return provider in {"youtube"}
 
 
-
 def _queue_toast_metadata_ready(item: object, fallback_label: str) -> bool:
     if not isinstance(item, dict):
         return True
@@ -859,7 +990,6 @@ def _queue_toast_metadata_ready(item: object, fallback_label: str) -> bool:
     label, thumb = _queue_toast_payload(item, fallback_label)
     url = str(item.get("url") or "").strip()
     return bool(label and label != url and (thumb or not bool(item.get("_metadata_lightweight"))))
-
 
 
 def _push_queue_added_toast(item: object, fallback_label: str) -> None:
@@ -880,7 +1010,6 @@ def _push_queue_added_toast(item: object, fallback_label: str) -> None:
     )
 
 
-
 def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
     def _run() -> None:
         try:
@@ -894,10 +1023,10 @@ def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
         _run()
 
 
-
 # =========================
 # Realtime event publication and SSE compatibility adapters
 # =========================
+
 
 def _x11_overlay_push(event: dict) -> None:
     """Push a toast/overlay event to any connected X11 overlay clients."""
@@ -925,6 +1054,7 @@ def _x11_overlay_push(event: dict) -> None:
         pass
     realtime_hub.publish(OVERLAY_CHANNEL, str(event.get("type") or "toast"), event)
 
+
 async def _x11_overlay_sse() -> object:
     """Server-Sent Events stream for X11 overlay."""
     subscription = realtime_hub.subscribe(OVERLAY_CHANNEL, transport="sse", maxsize=50)
@@ -938,6 +1068,7 @@ async def _x11_overlay_sse() -> object:
             )
     except Exception:
         pass
+
     async def gen():
         try:
             hello = _json.dumps({"type": "hello", "ts": time.time()})
@@ -1074,7 +1205,12 @@ def _ui_event_push(event_name: str, event: dict) -> None:
     realtime_hub.publish(UI_CHANNEL, event_name, event)
 
 
-def _ui_event_push_queue(action: str, queue: list[object] | None = None, queue_length: int | None = None, source: str = "api") -> None:
+def _ui_event_push_queue(
+    action: str,
+    queue: list[object] | None = None,
+    queue_length: int | None = None,
+    source: str = "api",
+) -> None:
     if queue is None:
         with state.QUEUE_LOCK:
             state.ensure_queue_item_ids(state.QUEUE)
@@ -1205,7 +1341,11 @@ def _render_connect_qr_svg(url: str, include_logo: bool = True) -> str:
     def _inline_logo_svg(x: int, y: int, w: int, h: int) -> str:
         try:
             explicit = (os.getenv("RELAYTV_LOGO_PATH") or "").strip()
-            logo_path = explicit if explicit and os.path.exists(explicit) else _resolve_static_asset("brand", "logo.svg")
+            logo_path = (
+                explicit
+                if explicit and os.path.exists(explicit)
+                else _resolve_static_asset("brand", "logo.svg")
+            )
             if not logo_path or not os.path.exists(logo_path):
                 return ""
             with open(logo_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1219,7 +1359,9 @@ def _render_connect_qr_svg(url: str, include_logo: bool = True) -> str:
                 return ""
             inner = raw[open_end + 1 : close]
             # Remove editor-only metadata for better embedded renderer compatibility.
-            inner = re.sub(r"<sodipodi:namedview[\s\S]*?</sodipodi:namedview>", "", inner, flags=re.IGNORECASE)
+            inner = re.sub(
+                r"<sodipodi:namedview[\s\S]*?</sodipodi:namedview>", "", inner, flags=re.IGNORECASE
+            )
             inner = re.sub(r"<sodipodi:namedview[\s\S]*?/>", "", inner, flags=re.IGNORECASE)
             return (
                 f"<svg x='{x}' y='{y}' width='{w}' height='{h}' viewBox='0 0 120 120' "
@@ -1300,7 +1442,7 @@ def _render_connect_qr_svg(url: str, include_logo: bool = True) -> str:
             out.append(logo_markup)
         else:
             out.append(
-                f"<text x='{size//2}' y='{(size//2)+5}' text-anchor='middle' font-size='{max(10, int(logo*0.28))}' font-family='ui-sans-serif,system-ui,Segoe UI,Arial' fill='#0f172a' font-weight='700'>RelayTV</text>"
+                f"<text x='{size // 2}' y='{(size // 2) + 5}' text-anchor='middle' font-size='{max(10, int(logo * 0.28))}' font-family='ui-sans-serif,system-ui,Segoe UI,Arial' fill='#0f172a' font-weight='700'>RelayTV</text>"
             )
 
     out.append("</svg>")
@@ -1309,7 +1451,11 @@ def _render_connect_qr_svg(url: str, include_logo: bool = True) -> str:
 
 def _idle_panel_catalog() -> dict[str, dict[str, object]]:
     return {
-        "weather": {"title": "Weather", "desc": "Current + short outlook", "layouts": ["split", "minimal"]},
+        "weather": {
+            "title": "Weather",
+            "desc": "Current + short outlook",
+            "layouts": ["split", "minimal"],
+        },
     }
 
 
@@ -1980,6 +2126,7 @@ def _idle_html() -> str:
 </body>
 </html>"""
 
+
 _X11_OVERLAY_HTML = r"""<!doctype html>
 <html>
 <head>
@@ -2531,6 +2678,7 @@ _temporary_watchdog = playback_service.temporary_watchdog
 # API Endpoints
 # =========================
 
+
 @router.post("/overlay")
 def overlay(req: OverlayReq):
     text = (req.text or "").strip()
@@ -2650,6 +2798,7 @@ def overlay(req: OverlayReq):
         "delivery_mode": delivery_mode,
     }
 
+
 @router.post("/toast")
 def toast(req: OverlayReq):
     """Alias for /overlay (mpv OSD + optional X11 overlay)."""
@@ -2699,7 +2848,9 @@ _apply_jellyfin_stream_params = jellyfin_service.apply_stream_params
 _apply_jellyfin_media_source_param = jellyfin_service.apply_media_source_param
 _extract_jellyfin_media_source_id_from_url = jellyfin_service.extract_media_source_id_from_url
 _extract_jellyfin_audio_stream_index_from_url = jellyfin_service.extract_audio_stream_index_from_url
-_extract_jellyfin_subtitle_stream_index_from_url = jellyfin_service.extract_subtitle_stream_index_from_url
+_extract_jellyfin_subtitle_stream_index_from_url = (
+    jellyfin_service.extract_subtitle_stream_index_from_url
+)
 _extract_jellyfin_item_id_from_url_raw = jellyfin_service.extract_item_id_from_url_raw
 _jellyfin_url_origin = jellyfin_service.url_origin
 _looks_like_jellyfin_media_url = jellyfin_service.looks_like_media_url
@@ -2833,7 +2984,9 @@ def _ensure_notification_surface(*, wait_for_subscriber: bool = False) -> None:
     except Exception:
         overlay_running = False
     try:
-        if not overlay_running and bool(getattr(player, "_qt_shell_backend_enabled", lambda: False)()):
+        if not overlay_running and bool(
+            getattr(player, "_qt_shell_backend_enabled", lambda: False)()
+        ):
             player.ensure_qt_shell_idle(force=True, allow_notification_fallback=True)
     except Exception:
         pass
@@ -2891,14 +3044,14 @@ def _sync_idle_visual_surfaces_after_settings() -> None:
             pass
 
 
-
-
 @router.get("/x11/overlay")
 def x11_overlay_page():
     """Transparent X11 overlay page (hidden while playing; toast-capable)."""
     html = _X11_OVERLAY_HTML
     html = html.replace("__PLAYBACK_NOTIFY_FADE_MS__", str(_playback_notification_fade_ms()))
-    html = html.replace("__PLAYBACK_NOTIFY_DISPLAY_SEC__", str(_playback_notification_display_sec()))
+    html = html.replace(
+        "__PLAYBACK_NOTIFY_DISPLAY_SEC__", str(_playback_notification_display_sec())
+    )
     html = html.replace("__OVERLAY_DEBUG_BG__", _overlay_debug_bg_css())
     html = html.replace("__OVERLAY_ALLOW_IMAGES__", "true" if _overlay_allow_images() else "false")
     html = html.replace("__IDLE_CACHE_BUSTER__", str(int(time.time() * 1000)))
@@ -2915,7 +3068,10 @@ def x11_overlay_page():
 
 @router.get("/idle")
 def idle_page():
-    html = _idle_html().replace("__IDLE_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
+    html = _idle_html().replace(
+        "__IDLE_CATALOG__",
+        _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False),
+    )
     now = datetime.datetime.now().astimezone()
     offset_minutes = int((now.utcoffset() or datetime.timedelta(0)).total_seconds() // 60)
     html = html.replace("__CLOCK_OFFSET_MINUTES__", str(offset_minutes))
@@ -2929,6 +3085,7 @@ def idle_page():
         },
     )
 
+
 @router.get("/x11/overlay/events")
 async def x11_overlay_events():
     return await _x11_overlay_sse()
@@ -2940,7 +3097,15 @@ def x11_overlay_client_state(req: OverlayClientStateReq):
     reason = str(req.reason or "client_report").strip().lower() or "client_report"
     client_event = str(req.client_event or "client").strip().lower() or "client"
     client_reason = str(req.client_reason or reason).strip().lower()
-    allowed = {"headless", "disconnected", "connected", "displaying", "stale", "retrying", "draining"}
+    allowed = {
+        "headless",
+        "disconnected",
+        "connected",
+        "displaying",
+        "stale",
+        "retrying",
+        "draining",
+    }
     if next_state not in allowed:
         next_state = "connected"
         reason = "client_report_normalized"
@@ -2993,6 +3158,7 @@ def qr_connect_svg(request: Request, u: str | None = None, logo: int = 1):
 
 
 # ---- IPC controls (used by web UI and optional HTTP Shortcuts later)
+
 
 def _control_ack_payload(result: dict | None) -> dict[str, object]:
     if not isinstance(result, dict):
@@ -3089,7 +3255,9 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
             result = _qt_runtime_seek_via_time_pos(current + delta)
             if isinstance(result, dict):
                 return result
-    return _control_result_or_raise(player.mpv_command(["seek", float(delta_sec), "relative"]), action="seek")
+    return _control_result_or_raise(
+        player.mpv_command(["seek", float(delta_sec), "relative"]), action="seek"
+    )
 
 
 def _seek_absolute_result(target_sec: float) -> dict[str, object]:
@@ -3099,7 +3267,9 @@ def _seek_absolute_result(target_sec: float) -> dict[str, object]:
     result = _qt_runtime_seek_via_time_pos(target_sec)
     if isinstance(result, dict):
         return result
-    return _control_result_or_raise(player.mpv_command(["seek", float(target_sec), "absolute"]), action="seek_abs")
+    return _control_result_or_raise(
+        player.mpv_command(["seek", float(target_sec), "absolute"]), action="seek_abs"
+    )
 
 
 def _session_playing_fast() -> tuple[str, bool, bool]:
@@ -3110,7 +3280,9 @@ def _session_playing_fast() -> tuple[str, bool, bool]:
         return sess, False, paused
     playing = sess in ("playing", "paused")
     try:
-        explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (time.time() + 60.0)
+        explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (
+            time.time() + 60.0
+        )
     except Exception:
         explicit_stop_hold = False
     has_now_playing = isinstance(getattr(state, "NOW_PLAYING", None), dict)
@@ -3118,9 +3290,19 @@ def _session_playing_fast() -> tuple[str, bool, bool]:
     natural_idle_hold = bool(getattr(player, "natural_idle_reset_holding", lambda: False)())
     if explicit_stop_hold and sess == "closed":
         return sess, False, False
-    if explicit_stop_hold and (not has_now_playing) and queue_length <= 0 and sess in ("idle", "closed"):
+    if (
+        explicit_stop_hold
+        and (not has_now_playing)
+        and queue_length <= 0
+        and sess in ("idle", "closed")
+    ):
         return sess, False, False
-    if natural_idle_hold and (not has_now_playing) and queue_length <= 0 and sess in ("idle", "closed"):
+    if (
+        natural_idle_hold
+        and (not has_now_playing)
+        and queue_length <= 0
+        and sess in ("idle", "closed")
+    ):
         return sess, False, False
     if not playing:
         try:
@@ -3153,7 +3335,12 @@ def _derive_playback_runtime_state(
 
     if sess_val == "closed":
         return "closed", "session_closed"
-    if backend_ready is False and has_now_playing and sess_val not in ("idle", "closed") and not transition_active:
+    if (
+        backend_ready is False
+        and has_now_playing
+        and sess_val not in ("idle", "closed")
+        and not transition_active
+    ):
         return "degraded", "backend_not_ready"
     if playing:
         if paused:
@@ -3182,24 +3369,38 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     transition_active = False
     try:
         manual_transition = bool(getattr(player, "playback_transitioning", lambda: False)())
-        queue_handoff_transition = (
-            ((sess in ("playing", "paused")) or has_now_playing)
-            and bool(getattr(player, "auto_next_transitioning", lambda: False)())
+        queue_handoff_transition = ((sess in ("playing", "paused")) or has_now_playing) and bool(
+            getattr(player, "auto_next_transitioning", lambda: False)()
         )
         transition_active = bool(manual_transition or queue_handoff_transition)
     except Exception:
         transition_active = False
     try:
-        explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (time.time() + 60.0)
+        explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (
+            time.time() + 60.0
+        )
     except Exception:
         explicit_stop_hold = False
     natural_idle_hold = bool(getattr(player, "natural_idle_reset_holding", lambda: False)())
     closed_stop_hold = explicit_stop_hold and sess == "closed"
-    natural_idle_clear_hold = natural_idle_hold and queue_length <= 0 and (not has_now_playing) and sess in ("idle", "closed")
+    natural_idle_clear_hold = (
+        natural_idle_hold
+        and queue_length <= 0
+        and (not has_now_playing)
+        and sess in ("idle", "closed")
+    )
     payload: dict[str, object] = {
         "state": sess,
-        "idle_dashboard_enabled": bool((state.get_settings() if hasattr(state, "get_settings") else {}).get("idle_dashboard_enabled", True)),
-        "idle_notifications_enabled": bool((state.get_settings() if hasattr(state, "get_settings") else {}).get("idle_notifications_enabled", True)),
+        "idle_dashboard_enabled": bool(
+            (state.get_settings() if hasattr(state, "get_settings") else {}).get(
+                "idle_dashboard_enabled", True
+            )
+        ),
+        "idle_notifications_enabled": bool(
+            (state.get_settings() if hasattr(state, "get_settings") else {}).get(
+                "idle_notifications_enabled", True
+            )
+        ),
         "playing": bool(playing),
         "paused": bool(paused),
         "has_now_playing": has_now_playing,
@@ -3273,7 +3474,9 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
             transition_active=transition_active,
             telemetry_source=str(payload.get("playback_telemetry_source") or "none"),
             telemetry_freshness=str(payload.get("playback_telemetry_freshness") or "unknown"),
-            backend_ready=payload.get("backend_ready") if payload.get("backend_ready") is not None else None,
+            backend_ready=payload.get("backend_ready")
+            if payload.get("backend_ready") is not None
+            else None,
         )
         payload.update(state.update_playback_runtime_state(runtime_state, runtime_reason))
         return payload
@@ -3290,8 +3493,12 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
     payload["native_qt_telemetry_selected"] = bool(qt_runtime.get("selected"))
     payload["native_qt_mpv_runtime_playback_active"] = qt_runtime.get("mpv_runtime_playback_active")
     payload["native_qt_mpv_runtime_stream_loaded"] = qt_runtime.get("mpv_runtime_stream_loaded")
-    payload["native_qt_mpv_runtime_playback_started"] = qt_runtime.get("mpv_runtime_playback_started")
-    payload["backend_ready"] = bool(qt_runtime.get("available")) if qt_runtime.get("selected") is not None else None
+    payload["native_qt_mpv_runtime_playback_started"] = qt_runtime.get(
+        "mpv_runtime_playback_started"
+    )
+    payload["backend_ready"] = (
+        bool(qt_runtime.get("available")) if qt_runtime.get("selected") is not None else None
+    )
 
     for field, key in field_map:
         value = qt_runtime.get(key)
@@ -3304,11 +3511,17 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
 
     runtime_playing = any(
         qt_runtime.get(key) is True
-        for key in ("mpv_runtime_playback_active", "mpv_runtime_stream_loaded", "mpv_runtime_playback_started")
+        for key in (
+            "mpv_runtime_playback_active",
+            "mpv_runtime_stream_loaded",
+            "mpv_runtime_playback_started",
+        )
     )
     sample_detail = str(qt_runtime.get("mpv_runtime_sample_detail") or "").strip().lower()
     missing_runtime_fields = [field for field, _key in field_map if payload.get(field) is None]
-    if (bool(payload.get("playing")) or runtime_playing) and (missing_runtime_fields or sample_detail.startswith("subprocess_runtime")):
+    if (bool(payload.get("playing")) or runtime_playing) and (
+        missing_runtime_fields or sample_detail.startswith("subprocess_runtime")
+    ):
         fill_from_mpv_ipc(force=runtime_playing)
     if runtime_playing and not closed_stop_hold and not natural_idle_clear_hold:
         payload["playing"] = True
@@ -3337,7 +3550,9 @@ def _playback_state_fast_snapshot() -> dict[str, object]:
         transition_active=transition_active,
         telemetry_source=str(payload.get("playback_telemetry_source") or "none"),
         telemetry_freshness=str(payload.get("playback_telemetry_freshness") or "unknown"),
-        backend_ready=payload.get("backend_ready") if payload.get("backend_ready") is not None else None,
+        backend_ready=payload.get("backend_ready")
+        if payload.get("backend_ready") is not None
+        else None,
     )
     payload.update(state.update_playback_runtime_state(runtime_state, runtime_reason))
     return payload
@@ -3351,7 +3566,9 @@ def _status_payload() -> dict[str, object]:
     sess = getattr(state, "SESSION_STATE", "idle")
     has_now_playing = isinstance(getattr(state, "NOW_PLAYING", None), dict)
     try:
-        explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (time.time() + 60.0)
+        explicit_stop_hold = float(getattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0) or 0.0) > (
+            time.time() + 60.0
+        )
     except Exception:
         explicit_stop_hold = False
     natural_idle_hold = bool(getattr(player, "natural_idle_reset_holding", lambda: False)())
@@ -3359,9 +3576,8 @@ def _status_payload() -> dict[str, object]:
     transitioning_between_items = False
     try:
         manual_transition = bool(getattr(player, "playback_transitioning", lambda: False)())
-        queue_handoff_transition = (
-            ((sess in ("playing", "paused")) or has_now_playing)
-            and bool(getattr(player, "auto_next_transitioning", lambda: False)())
+        queue_handoff_transition = ((sess in ("playing", "paused")) or has_now_playing) and bool(
+            getattr(player, "auto_next_transitioning", lambda: False)()
         )
         if (
             (not playing)
@@ -3377,10 +3593,20 @@ def _status_payload() -> dict[str, object]:
     if explicit_stop_hold and str(sess or "idle").strip().lower() == "closed":
         playing = False
         transitioning_between_items = False
-    elif explicit_stop_hold and (not has_now_playing) and (not q) and str(sess or "idle").strip().lower() in ("idle", "closed"):
+    elif (
+        explicit_stop_hold
+        and (not has_now_playing)
+        and (not q)
+        and str(sess or "idle").strip().lower() in ("idle", "closed")
+    ):
         playing = False
         transitioning_between_items = False
-    elif natural_idle_hold and (not has_now_playing) and (not q) and str(sess or "idle").strip().lower() in ("idle", "closed"):
+    elif (
+        natural_idle_hold
+        and (not has_now_playing)
+        and (not q)
+        and str(sess or "idle").strip().lower() in ("idle", "closed")
+    ):
         playing = False
         transitioning_between_items = False
     runtime = _runtime_capabilities(playing=playing)
@@ -3392,7 +3618,9 @@ def _status_payload() -> dict[str, object]:
     )
     effective_ytdlp_format = None
     try:
-        effective_ytdlp_format = str(getattr(player, "_effective_ytdl_format", lambda s=None: "")(settings_snapshot) or "")
+        effective_ytdlp_format = str(
+            getattr(player, "_effective_ytdl_format", lambda s=None: "")(settings_snapshot) or ""
+        )
     except Exception:
         effective_ytdlp_format = ""
     props: dict[str, object] = {}
@@ -3506,11 +3734,20 @@ def _status_payload() -> dict[str, object]:
     jf_catalog_cache_clears = int(jf_status.get("catalog_cache_clears") or 0)
     jf_catalog_cache_last_cleared_ts = jf_status.get("catalog_cache_last_cleared_ts")
     jf_last_error = str(jf_status.get("last_error") or "")
-    jf_server_type = str(jf_status.get("server_type") or settings_snapshot.get("jellyfin_server_type") or "jellyfin").strip().lower()
+    jf_server_type = (
+        str(
+            jf_status.get("server_type")
+            or settings_snapshot.get("jellyfin_server_type")
+            or "jellyfin"
+        )
+        .strip()
+        .lower()
+    )
     if jf_server_type not in ("jellyfin", "emby"):
         jf_server_type = "jellyfin"
     jf_server_url_configured = bool(
-        str(jf_status.get("server_url") or "").strip() or str(settings_snapshot.get("jellyfin_server_url") or "").strip()
+        str(jf_status.get("server_url") or "").strip()
+        or str(settings_snapshot.get("jellyfin_server_url") or "").strip()
     )
     playback_telemetry_source = "none"
     playback_telemetry_freshness = "unknown"
@@ -3522,11 +3759,15 @@ def _status_payload() -> dict[str, object]:
         native_qt_source = str(runtime.get("native_qt_telemetry_source") or "")
         if native_qt_source and native_qt_source != "none":
             playback_telemetry_source = native_qt_source
-            playback_telemetry_freshness = str(runtime.get("native_qt_telemetry_freshness") or "unknown")
+            playback_telemetry_freshness = str(
+                runtime.get("native_qt_telemetry_freshness") or "unknown"
+            )
         elif (not native_qt_runtime_mode) and bool(runtime.get("ipc_socket_exists")):
             playback_telemetry_source = "mpv_ipc"
             playback_telemetry_freshness = "unknown"
-    include_mpv_log_tail = str(os.getenv("RELAYTV_STATUS_INCLUDE_MPV_LOG", "0") or "").strip().lower() in (
+    include_mpv_log_tail = str(
+        os.getenv("RELAYTV_STATUS_INCLUDE_MPV_LOG", "0") or ""
+    ).strip().lower() in (
         "1",
         "true",
         "yes",
@@ -3557,13 +3798,17 @@ def _status_payload() -> dict[str, object]:
     # to look completely healthy while quietly discarding every setting and
     # queue change; the key is absent while writes are landing, so the payload
     # only grows when something is actually wrong.
-    persistence = state.persistence_health() if hasattr(state, "persistence_health") else {"ok": True}
+    persistence = (
+        state.persistence_health() if hasattr(state, "persistence_health") else {"ok": True}
+    )
 
     payload: dict[str, object] = {
         "state": sess,
         "device_name": str(settings_snapshot.get("device_name") or "RelayTV"),
         "idle_dashboard_enabled": bool(settings_snapshot.get("idle_dashboard_enabled", True)),
-        "idle_notifications_enabled": bool(settings_snapshot.get("idle_notifications_enabled", True)),
+        "idle_notifications_enabled": bool(
+            settings_snapshot.get("idle_notifications_enabled", True)
+        ),
         "mdns_advertising": bool(mdns.get("active")),
         "mdns_service_type": str(mdns.get("service_type") or ""),
         "iptv_enabled": bool(iptv_status.get("enabled")),
@@ -3615,7 +3860,9 @@ def _status_payload() -> dict[str, object]:
         "queue_length": len(q),
         "transitioning_between_items": transitioning_between_items,
         "transition_in_progress": bool(transitioning_between_items),
-        "last_transition_reason": str(runtime_state_info.get("playback_runtime_state_reason") or ""),
+        "last_transition_reason": str(
+            runtime_state_info.get("playback_runtime_state_reason") or ""
+        ),
         "mpv_log_tail": player.get_mpv_log_tail(40) if include_mpv_log_tail else [],
         **runtime_state_info,
         **runtime,
@@ -3643,7 +3890,9 @@ async def _ui_events_sse(request: Request) -> object:
         last_emit_ts = 0.0
 
         try:
-            hello = _json.dumps({"type": "hello", "ts": time.time()}, separators=(",", ":"), ensure_ascii=False)
+            hello = _json.dumps(
+                {"type": "hello", "ts": time.time()}, separators=(",", ":"), ensure_ascii=False
+            )
             yield f"event: hello\ndata: {hello}\n\n"
             last_emit_ts = time.time()
 
@@ -3661,7 +3910,9 @@ async def _ui_events_sse(request: Request) -> object:
                             message = subscription.get_nowait()
                         except asyncio.QueueEmpty:
                             break
-                        payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
+                        payload = _json.dumps(
+                            message.data, separators=(",", ":"), ensure_ascii=False
+                        )
                         yield f"event: {message.event}\ndata: {payload}\n\n"
                         last_emit_ts = time.time()
                 except asyncio.TimeoutError:
@@ -3670,7 +3921,11 @@ async def _ui_events_sse(request: Request) -> object:
                 # Idle ping cadence must stay well inside the client's health
                 # window (app.js _uiEventHealthy) or a quiet stream reads as dead.
                 if (time.time() - last_emit_ts) >= 5.0:
-                    ping = _json.dumps({"type": "ping", "ts": time.time()}, separators=(",", ":"), ensure_ascii=False)
+                    ping = _json.dumps(
+                        {"type": "ping", "ts": time.time()},
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    )
                     yield f"event: ping\ndata: {ping}\n\n"
                     last_emit_ts = time.time()
         finally:
@@ -3871,7 +4126,9 @@ def get_idle_weather():
     weather_panel = idle_panels.get("weather") if isinstance(idle_panels, dict) else {}
     if not (isinstance(weather_panel, dict) and weather_panel.get("enabled")):
         raise HTTPException(status_code=404, detail="weather panel disabled")
-    req = urllib.request.Request(_idle_weather_proxy_url(settings), headers={"User-Agent": "RelayTV/1.0"})
+    req = urllib.request.Request(
+        _idle_weather_proxy_url(settings), headers={"User-Agent": "RelayTV/1.0"}
+    )
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             payload = _json.loads(response.read().decode("utf-8", errors="replace"))
@@ -4939,7 +5196,10 @@ def ui():
 
 
 """
-    html = html.replace("__IDLE_PANEL_CATALOG__", _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False))
+    html = html.replace(
+        "__IDLE_PANEL_CATALOG__",
+        _json.dumps(_idle_panel_catalog(), separators=(",", ":"), ensure_ascii=False),
+    )
     html = html.replace("__UI_ASSET_V__", _ui_asset_version())
     # The shell must never be cached: it carries the asset version stamp that
     # busts the hour-long static UI asset cache after a deploy.

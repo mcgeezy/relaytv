@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """IPTV product service: source discovery, M3U refresh, catalog, and actions."""
+
 from __future__ import annotations
 
 import hashlib
@@ -231,7 +232,9 @@ def create_source(
         location = ""
         max_bytes = env_int("RELAYTV_IPTV_MAX_PLAYLIST_BYTES", 20 * 1024 * 1024, minimum=1024)
         if len(clean_content.encode("utf-8")) > max_bytes:
-            raise HTTPException(status_code=413, detail="IPTV playlist exceeds configured size limit")
+            raise HTTPException(
+                status_code=413, detail="IPTV playlist exceeds configured size limit"
+            )
     else:
         kind = "url"
         location = _validate_http_url(location, field="playlist URL")
@@ -318,7 +321,9 @@ def parse_m3u(text: str, *, base_url: str = "") -> list[dict[str, object]]:
         if line.startswith("#EXTINF"):
             info = line.split(":", 1)[1] if ":" in line else ""
             attrs_text, title = _split_extinf(info)
-            attrs = {k.lower(): (v1 or v2 or v3).strip() for k, v1, v2, v3 in attr_re_findall(attrs_text)}
+            attrs = {
+                k.lower(): (v1 or v2 or v3).strip() for k, v1, v2, v3 in attr_re_findall(attrs_text)
+            }
             pending = {
                 "name": title or attrs.get("tvg-name") or "Untitled channel",
                 "tvg_id": attrs.get("tvg-id", ""),
@@ -394,9 +399,9 @@ def _assign_channel_ids(
                 f"{_normalize_identity(row.get('tvg_name') or row.get('name'))}|"
                 f"{_normalize_identity(row.get('group_title'))}"
             )
-            incumbent_tvg.setdefault(ik[len("tvg:"):], nk)
+            incumbent_tvg.setdefault(ik[len("tvg:") :], nk)
         elif ik.startswith("name:"):
-            incumbent_name.add(ik[len("name:"):])
+            incumbent_name.add(ik[len("name:") :])
     out: list[dict[str, object]] = []
     for entry, name_key in zip(entries, name_keys):
         tvg = _normalize_identity(entry.get("tvg_id"))
@@ -503,7 +508,13 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
     try:
         with _FETCH_OPENER.open(request, timeout=timeout) as response:
             if int(getattr(response, "status", 200) or 200) == 304:
-                return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True, location
+                return (
+                    "",
+                    str(source.get("etag") or ""),
+                    str(source.get("last_modified") or ""),
+                    True,
+                    location,
+                )
             payload = response.read(max_bytes + 1)
             if len(payload) > max_bytes:
                 raise ValueError("playlist exceeds configured size limit")
@@ -521,7 +532,13 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
             )
     except urllib.error.HTTPError as exc:
         if int(exc.code) == 304:
-            return "", str(source.get("etag") or ""), str(source.get("last_modified") or ""), True, location
+            return (
+                "",
+                str(source.get("etag") or ""),
+                str(source.get("last_modified") or ""),
+                True,
+                location,
+            )
         raise ValueError(f"playlist fetch failed with HTTP {int(exc.code)}") from exc
     except ValueError:
         raise
@@ -580,7 +597,9 @@ def refresh_source(
         else:
             message = f"playlist refresh failed ({type(exc).__name__})"
         store().mark_refresh_error(source_id, message)
-        logger.warning("iptv_refresh_failed source_id=%s error_type=%s", source_id, type(exc).__name__)
+        logger.warning(
+            "iptv_refresh_failed source_id=%s error_type=%s", source_id, type(exc).__name__
+        )
         raise HTTPException(status_code=502, detail=message) from exc
     finally:
         source_lock.release()
@@ -765,7 +784,9 @@ def _refresh_due_sources(stop: threading.Event | None = None) -> None:
         interval = max(300, int(source.get("refresh_interval_sec") or 21600))
         # Deterministic per-source jitter avoids synchronized fetch bursts;
         # a failed source backs off for twice its normal interval.
-        jitter = 0.9 + (int(hashlib.sha256(str(source["id"]).encode()).hexdigest()[:2], 16) / 2550.0)
+        jitter = 0.9 + (
+            int(hashlib.sha256(str(source["id"]).encode()).hexdigest()[:2], 16) / 2550.0
+        )
         interval = int(interval * jitter * (2 if source.get("last_error") else 1))
         if last and (now - last) < interval:
             continue

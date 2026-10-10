@@ -6,6 +6,7 @@ cleanup scans directly on the loop. A 4 GiB upload issued roughly 4000 fsyncs
 and 4000 session rewrites there, so HTTP controls and realtime subscribers
 stopped making progress for the duration.
 """
+
 import asyncio
 import inspect
 import os
