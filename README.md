@@ -40,7 +40,8 @@ Paste a media URL into the Web UI, share a link or local audio/video file from
 [Android](https://github.com/mcgeezy/relaytv-android), or upload media through
 [Home Assistant](https://github.com/mcgeezy/relaytv-ha). RelayTV owns playback,
 durable queue advancement, history, temporary interruption/resume, and on-TV
-notifications beside the screen.
+notifications beside the screen. Web streams and YouTube videos resolve with
+sandboxed challenge solving, premiere timing, and bounded range streaming.
 
 ### 🎬 Browse
 
@@ -117,9 +118,10 @@ model and real [cross-device workflows](https://relaytv.app/demo/).
 
 ## Install in minutes
 
-RelayTV is built for 64-bit Raspberry Pi-class devices, Intel mini PCs, NUCs,
-HTPCs, and other `amd64` or `arm64` Linux hosts connected directly to a
-television. The installer can set up Docker with your approval when needed.
+RelayTV is built for 64-bit Raspberry Pi-class devices (with dedicated Pi 4 and
+Pi 5 hardware profiles), Intel mini PCs, NUCs, HTPCs, and other `amd64` or
+`arm64` Linux hosts connected directly to a television. The installer can set up
+Docker with your approval when needed.
 
 ```bash
 mkdir -p ~/relaytv
@@ -139,6 +141,8 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
   services, automations, and dashboard workflows.
 - **[RelayTV for Android](https://github.com/mcgeezy/relaytv-android)** — share
   links directly to the TV and control playback from your phone.
+- **YouTube and Web Video** — sandboxed challenge solving, bounded streaming,
+  live streams, processing replay relays, and upcoming premiere detection.
 - **Plex** — secure account linking and server selection, responsive Home,
   Movies, TV, search, season and episode browsing, media and track choices,
   resume, queue, direct-play, and transcoding workflows.
@@ -153,7 +157,8 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
 
 The core server does not require a RelayTV cloud account. It is designed for a
 trusted LAN; use a VPN or authenticated reverse proxy rather than exposing the
-API directly to the public internet.
+API directly to the public internet. An optional `RELAYTV_API_TOKEN` can protect
+control and mutating requests with bearer authentication on shared networks.
 
 ## For operators and developers
 
