@@ -367,9 +367,17 @@ def _play_now_item(
     playback_service.suppress_auto_next(2.0)
 
     preserved = None
-    if preserve_current and preserve_to == "queue_front" and resume_current:
+    if (
+        preserve_current
+        and preserve_to == "queue_front"
+        and resume_current
+        and not playback_service.same_playback_item(
+            state.NOW_PLAYING, item_or_text, right_url=request_url
+        )
+    ):
         preserved = _preserve_current_to_queue_front()
 
+    player.clear_last_play_superseded()
     try:
         strict_options = {"raise_on_superseded": True} if raise_on_superseded else {}
         now = playback_service.play_now(
@@ -383,6 +391,7 @@ def _play_now_item(
         )
     except Exception as exc:
         if isinstance(exc, player.YouTubePostLiveProcessingError):
+            playback_service.settle_play_now_preserve(preserved)
             _toast_playback_failure(exc, title_hint or request_url)
             try:
                 handoff = playback_service.advance_queue(
@@ -412,6 +421,20 @@ def _play_now_item(
         _rollback_play_now_preserve(preserved)
         _toast_playback_failure(exc, title_hint or request_url)
         raise
+    if player.last_play_superseded():
+        _rollback_play_now_preserve(preserved)
+        with state.QUEUE_LOCK:
+            qlen = len(state.QUEUE)
+        return {
+            "ok": True,
+            "action": "superseded",
+            "now_playing": _annotate_upload_item(now),
+            "preserved": None,
+            "queue_length": qlen,
+        }
+    removed_redundant = playback_service.settle_play_now_preserve(preserved, now)
+    if removed_redundant:
+        preserved = None
     try:
         title = now.get("title") if isinstance(now, dict) else None
         _push_overlay_toast(
@@ -428,7 +451,7 @@ def _play_now_item(
     with state.QUEUE_LOCK:
         qlen = len(state.QUEUE)
         queue_snapshot = list(state.QUEUE)
-    if preserved is not None or qlen:
+    if preserved is not None or removed_redundant or qlen:
         _ui_event_push_queue("play_now", queue=queue_snapshot, queue_length=qlen, source="play_now")
     return {
         "ok": True,
