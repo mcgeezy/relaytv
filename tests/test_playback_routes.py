@@ -1155,6 +1155,9 @@ def test_playback_live_route(monkeypatch) -> None:
     monkeypatch.setattr(routes.player, "_mark_playback_transition", lambda sec=None: transitions.append(sec))
     monkeypatch.setattr(routes.player, "mpv_command", lambda cmd: commands.append(list(cmd)) or {"error": "success", "request_id": "live-ok"})
 
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {
+        "demuxer-cache-state": {"seekable-ranges": [{"start": 0, "end": 110}]},
+    })
     client = TestClient(create_app(testing=True))
 
     # When not playing, returns 409
@@ -1162,12 +1165,12 @@ def test_playback_live_route(monkeypatch) -> None:
     res_not_playing = client.post("/playback/live")
     assert res_not_playing.status_code == 409
 
-    # When playing, seeks to 100% (live edge)
+    # When playing, seeks inside the latest decodable cache range
     monkeypatch.setattr(routes.player, "is_playing", lambda: True)
     res_playing = client.post("/playback/live")
     assert res_playing.status_code == 200
     assert res_playing.json() == {"ok": True, "action": "live", "request_id": "live-ok"}
-    assert commands == [["seek", 100, "absolute-percent"]]
+    assert commands == [["seek", 109.5, "absolute+exact"]]
     assert len(transitions) == 1
 
 
@@ -1177,19 +1180,22 @@ def test_seek_abs_with_live_flag(monkeypatch) -> None:
     monkeypatch.setattr(routes.player, "_mark_playback_transition", lambda sec=None: None)
     monkeypatch.setattr(routes.player, "mpv_command", lambda cmd: commands.append(list(cmd)) or {"error": "success", "request_id": "seek-ok"})
 
+    monkeypatch.setattr(routes.player, "mpv_get_many", lambda props: {
+        "demuxer-cache-state": {"seekable-ranges": [{"start": 0, "end": 110}]},
+    })
     client = TestClient(create_app(testing=True))
 
     # Explicit live=True seeks to live edge
     res_live = client.post("/seek_abs", json={"live": True})
     assert res_live.status_code == 200
     assert res_live.json() == {"ok": True, "action": "live", "request_id": "seek-ok"}
-    assert commands[-1] == ["seek", 100, "absolute-percent"]
+    assert commands[-1] == ["seek", 109.5, "absolute+exact"]
 
     # sec=None without live flag also defaults to live edge
     res_none = client.post("/seek_abs", json={})
     assert res_none.status_code == 200
     assert res_none.json() == {"ok": True, "action": "live", "request_id": "seek-ok"}
-    assert commands[-1] == ["seek", 100, "absolute-percent"]
+    assert commands[-1] == ["seek", 109.5, "absolute+exact"]
 
 
 def test_seek_relative_live_stream_snaps_to_live_edge(monkeypatch) -> None:
@@ -1215,7 +1221,7 @@ def test_seek_relative_live_stream_snaps_to_live_edge(monkeypatch) -> None:
     res_snap = client.post("/seek", json={"sec": 15})
     assert res_snap.status_code == 200
     assert res_snap.json() == {"ok": True, "seeked": 15, "action": "live", "request_id": "seek-ok"}
-    assert commands[-1] == ["seek", 100, "absolute-percent"]
+    assert commands[-1] == ["seek", 109.5, "absolute+exact"]
 
     # Case 2: Delay is 50s, seeking forward 15s (50 > 15 + 2) -> relative seek
     monkeypatch.setattr(
@@ -1230,13 +1236,13 @@ def test_seek_relative_live_stream_snaps_to_live_edge(monkeypatch) -> None:
     res_rel = client.post("/seek", json={"sec": 15})
     assert res_rel.status_code == 200
     assert res_rel.json() == {"ok": True, "seeked": 15, "request_id": "seek-ok"}
-    assert commands[-1] == ["seek", 15.0, "relative"]
+    assert commands[-1] == ["seek", 75.0, "absolute+exact"]
 
     # Case 3: Seeking backward on live stream -> relative seek
     res_back = client.post("/seek", json={"sec": -30})
     assert res_back.status_code == 200
     assert res_back.json() == {"ok": True, "seeked": -30, "request_id": "seek-ok"}
-    assert commands[-1] == ["seek", -30.0, "relative"]
+    assert commands[-1] == ["seek", 30.0, "absolute+exact"]
 
 
 def test_status_and_playback_state_expose_dvr_metadata(monkeypatch) -> None:

@@ -3235,11 +3235,25 @@ def _qt_runtime_seek_via_time_pos(target_sec: float) -> dict[str, object] | None
     return _control_result_or_raise(player.mpv_set_result("time-pos", target), action="seek")
 
 
+def _seek_live_cache_result(target_sec: float | None = None) -> dict[str, object]:
+    props = player.mpv_get_many(["demuxer-cache-state"])
+    dvr = player.extract_dvr_status(props.get("demuxer-cache-state"), is_live=True)
+    if not dvr or not dvr["seekable"]:
+        raise HTTPException(status_code=409, detail="Live DVR cache is not seekable yet")
+    start, end = float(dvr["buffer_start"]), float(dvr["buffer_end"])
+    # Stay inside the last decodable range, rather than seeking to EOF or asking
+    # the demuxer for a byte/percentage seek on an unbounded stream.
+    target = end - 0.5 if target_sec is None else float(target_sec)
+    if not math.isfinite(target):
+        raise HTTPException(status_code=422, detail="Seek position must be finite")
+    target = min(max(start, target), end - 0.5)
+    return _control_result_or_raise(
+        player.mpv_command(["seek", target, "absolute+exact"]), action="seek"
+    )
+
+
 def _seek_to_live_result() -> dict[str, object]:
-    plex_result = playback_service.seek_plex_conversion(delta_sec=0.0)
-    if isinstance(plex_result, dict):
-        return plex_result
-    res = _control_result_or_raise(player.mpv_command(["seek", 100, "absolute-percent"]), action="live")
+    res = _seek_live_cache_result()
     res["action"] = "live"
     return res
 
@@ -3268,8 +3282,10 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
             )
             if is_live and delta > 0:
                 dvr = player.extract_dvr_status(props.get("demuxer-cache-state"), pos=current, dur=props.get("duration"), is_live=True)
-                if dvr and float(dvr.get("delay_sec") or 0.0) <= (delta + 2.0):
+                if dvr and dvr["seekable"] and float(dvr["delay_sec"]) <= (delta + 2.0):
                     return _seek_to_live_result()
+            if is_live:
+                return _seek_live_cache_result(current + delta)
             result = _qt_runtime_seek_via_time_pos(current + delta)
             if isinstance(result, dict):
                 return result
@@ -3279,6 +3295,8 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
 
 
 def _seek_absolute_result(target_sec: float) -> dict[str, object]:
+    if player._item_looks_like_live_stream(getattr(state, "NOW_PLAYING", None)):
+        return _seek_live_cache_result(target_sec)
     plex_result = playback_service.seek_plex_conversion(target_sec=target_sec)
     if isinstance(plex_result, dict):
         return plex_result

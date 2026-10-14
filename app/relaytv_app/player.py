@@ -4286,83 +4286,52 @@ def extract_dvr_status(
     dur: float | None = None,
     is_live: bool = False,
 ) -> dict[str, Any] | None:
-    """Calculate live DVR buffer boundaries, current delay, and seekability."""
+    """Expose only the newest contiguous range usable for cached seeking.
+
+    Duration and cache-end can extend beyond decodable cached packets. Neither
+    is a safe seek boundary, even when mpv reports no seekable ranges at all.
+    """
     if not is_live:
         return None
     cache = cache_state if isinstance(cache_state, dict) else {}
-    seekable_ranges = cache.get("seekable-ranges")
-    ranges: list[dict[str, float]] = []
-    if isinstance(seekable_ranges, list):
-        for r in seekable_ranges:
-            if isinstance(r, dict) and "start" in r and "end" in r:
-                try:
-                    s = float(r["start"])
-                    e = float(r["end"])
-                    if math.isfinite(s) and math.isfinite(e) and e >= s:
-                        ranges.append({"start": round(s, 2), "end": round(e, 2)})
-                except Exception:
-                    pass
-    starts = [r["start"] for r in ranges]
-    ends = [r["end"] for r in ranges]
+    ranges: list[tuple[float, float]] = []
+    raw_ranges = cache.get("seekable-ranges")
+    for entry in raw_ranges if isinstance(raw_ranges, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            start, end = float(entry["start"]), float(entry["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and end > max(0.0, start):
+            ranges.append((max(0.0, start), end))
 
-    raw_cache_end = cache.get("cache-end")
-    cache_end = None
+    # mpv returns ranges in arbitrary order, sometimes with overlapping ranges.
+    # Join overlaps, but never bridge a gap the demuxer cannot seek within.
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    buffer_start, live_edge = merged[-1] if merged else (None, None)
+    window_sec = live_edge - buffer_start if merged else 0.0
     try:
-        if raw_cache_end is not None:
-            c = float(raw_cache_end)
-            if math.isfinite(c):
-                cache_end = c
-    except Exception:
-        cache_end = None
-
-    pos_val = None
-    try:
-        if pos is not None:
-            pv = float(pos)
-            if math.isfinite(pv):
-                pos_val = pv
-    except Exception:
-        pos_val = None
-
-    dur_val = None
-    try:
-        if dur is not None:
-            dv = float(dur)
-            if math.isfinite(dv):
-                dur_val = dv
-    except Exception:
-        dur_val = None
-
-    buffer_start = min(starts) if starts else pos_val
-    buffer_end = max(ends) if ends else (dur_val if dur_val is not None else pos_val)
-    live_edge = buffer_end
-    if cache_end is not None:
-        live_edge = max(live_edge, cache_end) if live_edge is not None else cache_end
-    if dur_val is not None:
-        live_edge = max(live_edge, dur_val) if live_edge is not None else dur_val
-
-    if buffer_start is not None and live_edge is not None:
-        window_sec = max(0.0, live_edge - buffer_start)
-    else:
-        window_sec = 0.0
-
-    if live_edge is not None and pos_val is not None:
-        delay_sec = max(0.0, live_edge - pos_val)
-    else:
-        delay_sec = 0.0
-
-    is_at_live = delay_sec < 5.0
-    seekable = window_sec >= 2.0
+        position = float(pos)
+    except (TypeError, ValueError):
+        position = math.nan
+    delay_sec = max(0.0, live_edge - position) if merged and math.isfinite(position) else 0.0
 
     return {
         "supported": True,
-        "seekable": seekable,
-        "buffer_start": round(buffer_start, 2) if buffer_start is not None else None,
-        "buffer_end": round(buffer_end, 2) if buffer_end is not None else None,
-        "live_edge": round(live_edge, 2) if live_edge is not None else None,
+        "seekable": window_sec >= 2.0,
+        # Keep the actual boundaries: rounding outward can advertise uncached data.
+        "buffer_start": buffer_start,
+        "buffer_end": live_edge,
+        "live_edge": live_edge,
         "window_sec": round(window_sec, 2),
         "delay_sec": round(delay_sec, 2),
-        "is_at_live": is_at_live,
+        "is_at_live": delay_sec < 5.0,
     }
 
 
