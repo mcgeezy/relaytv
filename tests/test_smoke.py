@@ -215,7 +215,7 @@ def test_ui_smoke() -> None:
     assert 'id="nowUpNext"' in response.text
     assert 'id="upNextPlayBtn"' in response.text
     assert ".nowCard.isIdle .nIdleMsg{ display: block; }" in css
-    assert ".nowCard.isLive .progress{ display: none; }" in css
+    assert ".nowCard.isLive:not(.hasDvr) .progress{ display: none; }" in css
     assert 'id="langBackdrop"' in response.text
     assert 'id="subLangBackdrop"' in response.text
     assert 'role="tablist"' in response.text

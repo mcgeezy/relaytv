@@ -1216,8 +1216,8 @@
       background: linear-gradient(180deg, rgba(94,207,255,.92), rgba(59,130,246,.85));
       box-shadow: 0 4px 16px rgba(37,99,235,.42);
     }
-    .nowCard.isLive .progress{ display: none; }
-    .nowCard.isLive .nTimeRow{ margin-top: 14px; }
+    .nowCard.isLive:not(.hasDvr) .progress{ display: none; }
+    .nowCard.isLive:not(.hasDvr) .nTimeRow{ margin-top: 14px; }
     .nowCard.isLive .nTimeRow #pos{
       display: inline-flex;
       align-items: center;
@@ -1231,6 +1231,13 @@
       border-radius: 999px;
       background: #ff5f6d;
       box-shadow: 0 0 8px rgba(255,95,109,.75);
+    }
+    .nowCard.isLive.isDvrRewound .nTimeRow #pos{
+      color: #ffe082;
+    }
+    .nowCard.isLive.isDvrRewound .nTimeRow #pos::before{
+      background: #ffb300;
+      box-shadow: 0 0 8px rgba(255,179,0,.85);
     }
     .nowCard .progress{
       margin-top: 14px;

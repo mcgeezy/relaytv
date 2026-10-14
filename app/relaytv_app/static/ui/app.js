@@ -1437,6 +1437,17 @@ let __nowLastShownNp = null;
 const __UI_EVENT_RECONNECT_MS = 5000;
 const __UI_TRANSPORT_UPGRADE_MS = 300000;
 
+function _updateNowCardClasses(card, opts){
+  if (!card || !opts) return;
+  const {hasNow, paused, liveNow, dvr, dvrAtLive, ended} = opts;
+  card.classList.toggle('isIdle', !hasNow);
+  card.classList.toggle('isPaused', !!paused);
+  card.classList.toggle('isLive', !!liveNow);
+  card.classList.toggle('hasDvr', !!(liveNow && dvr && dvr.seekable));
+  card.classList.toggle('isDvrRewound', !!(liveNow && dvr && !dvrAtLive));
+  card.classList.toggle('isEnded', !!ended);
+}
+
 function renderStatus(st) {
   if (!st) return;
   if (_uiRefreshInteractionLockActive()) return;
@@ -1522,10 +1533,7 @@ function renderStatus(st) {
   const npDuration = (np && typeof np.duration_sec === 'number' && Number.isFinite(np.duration_sec) && np.duration_sec > 0) ? np.duration_sec : null;
   const effDuration = st.duration != null ? st.duration : (ended ? npDuration : null);
   if (nowCardEl){
-    nowCardEl.classList.toggle('isIdle', !hasNow);
-    nowCardEl.classList.toggle('isPaused', paused);
-    nowCardEl.classList.toggle('isLive', liveNow);
-    nowCardEl.classList.toggle('isEnded', ended);
+    _updateNowCardClasses(nowCardEl, {hasNow, paused, liveNow, dvr, dvrAtLive, ended});
   }
   const stateTag = document.getElementById('nowStateTag');
   if (stateTag) {
