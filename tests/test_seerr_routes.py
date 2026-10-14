@@ -167,24 +167,23 @@ def test_seerr_read_routes_delegate_bounded_semantic_inputs(monkeypatch) -> None
     monkeypatch.setattr(
         seerr_service,
         "discover",
-        lambda section, page, **kwargs: calls.append(
-            ("discover", section, page, kwargs)
-        )
-        or {"results": []},
+        lambda section, page, **kwargs: (
+            calls.append(("discover", section, page, kwargs)) or {"results": []}
+        ),
     )
     monkeypatch.setattr(
         seerr_service,
         "search",
-        lambda query, page, **kwargs: calls.append(("search", query, page, kwargs))
-        or {"results": []},
+        lambda query, page, **kwargs: (
+            calls.append(("search", query, page, kwargs)) or {"results": []}
+        ),
     )
     monkeypatch.setattr(
         seerr_service,
         "item_detail",
-        lambda media_type, media_id, **kwargs: calls.append(
-            ("item", media_type, media_id, kwargs)
-        )
-        or {"media_id": media_id},
+        lambda media_type, media_id, **kwargs: (
+            calls.append(("item", media_type, media_id, kwargs)) or {"media_id": media_id}
+        ),
     )
     monkeypatch.setattr(
         seerr_service,
@@ -262,9 +261,7 @@ def test_seerr_image_route_normalizes_safe_jpg_alias(monkeypatch) -> None:
     monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: _Config())
     monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
 
-    response = TestClient(create_app(testing=True)).get(
-        "/seerr/image/w342/poster.jpg"
-    )
+    response = TestClient(create_app(testing=True)).get("/seerr/image/w342/poster.jpg")
 
     assert response.status_code == 200
     assert response.content == b"jpeg"
@@ -303,9 +300,7 @@ def test_seerr_users_route_returns_sanitized_selector_records(monkeypatch) -> No
     response = TestClient(create_app(testing=True)).get("/integrations/seerr/users")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "users": [{"id": 3, "display_name": "Alex", "username": "alex"}]
-    }
+    assert response.json() == {"users": [{"id": 3, "display_name": "Alex", "username": "alex"}]}
 
 
 def test_seerr_request_route_rejects_administrator_fields(monkeypatch) -> None:
@@ -423,8 +418,9 @@ def test_caller_session_status_and_logout_use_browser_cookie(monkeypatch) -> Non
     monkeypatch.setattr(
         seerr_sessions,
         "status",
-        lambda session_id: observed.append(("status", session_id))
-        or {"connected": bool(session_id)},
+        lambda session_id: (
+            observed.append(("status", session_id)) or {"connected": bool(session_id)}
+        ),
     )
     monkeypatch.setattr(
         seerr_sessions,

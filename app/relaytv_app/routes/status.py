@@ -15,7 +15,9 @@ def discovery_status():
 @router.get("/tv/status")
 def tv_status():
     tv = state.get_tv_state() if hasattr(state, "get_tv_state") else {}
-    cec_controller = player.cec_controller_status() if hasattr(player, "cec_controller_status") else {}
+    cec_controller = (
+        player.cec_controller_status() if hasattr(player, "cec_controller_status") else {}
+    )
     return {
         "tv_power_state": tv.get("tv_power_status"),
         "active_source_phys_addr": tv.get("active_source_phys_addr"),

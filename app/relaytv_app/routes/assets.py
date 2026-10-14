@@ -17,7 +17,9 @@ _THUMBNAIL_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Cross-Origin-Resource-Policy": "cross-origin",
 }
-_STATIC_ROOT = os.getenv("RELAYTV_STATIC_DIR") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+_STATIC_ROOT = os.getenv("RELAYTV_STATIC_DIR") or os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "static")
+)
 _PWA_STATIC_ROOT = os.path.join(_STATIC_ROOT, "pwa")
 
 
@@ -117,18 +119,37 @@ _WEATHER_ICON_ALIASES: dict[str, list[str]] = {
     "clear_night.svg": ["clear_night.svg"],
     "mostly_clear_day.svg": ["mostly_clear_day.svg", "mostly_sunny.svg", "sunny_with_cloudy.svg"],
     "mostly_clear_night.svg": ["mostly_clear_night.svg", "clear_night.svg"],
-    "partly_cloudy_day.svg": ["partly_cloudy_day.svg", "cloudy_with_sunny.svg", "partly_cloudy.svg", "sunny_with_cloudy.svg"],
+    "partly_cloudy_day.svg": [
+        "partly_cloudy_day.svg",
+        "cloudy_with_sunny.svg",
+        "partly_cloudy.svg",
+        "sunny_with_cloudy.svg",
+    ],
     "partly_cloudy_night.svg": ["partly_cloudy_night.svg", "partly_cloudy.svg", "clear_night.svg"],
     "cloudy.svg": ["cloudy.svg"],
     "haze_fog_dust_smoke.svg": ["haze_fog_dust_smoke.svg", "cloudy.svg", "windy.svg"],
     "drizzle.svg": ["drizzle.svg"],
-    "showers_rain.svg": ["showers_rain.svg", "cloudy_with_rain.svg", "rain_with_cloudy.svg", "rain_with_sunny.svg"],
+    "showers_rain.svg": [
+        "showers_rain.svg",
+        "cloudy_with_rain.svg",
+        "rain_with_cloudy.svg",
+        "rain_with_sunny.svg",
+    ],
     "heavy_rain.svg": ["heavy_rain.svg", "cloudy_with_rain.svg", "rain_with_cloudy.svg"],
     "mixed_rain_hail_sleet.svg": ["mixed_rain_hail_sleet.svg", "sleet_hail.svg", "icy.svg"],
-    "flurries.svg": ["flurries.svg", "showers_snow.svg", "snow_with_cloudy.svg", "snow_with_sunny.svg"],
+    "flurries.svg": [
+        "flurries.svg",
+        "showers_snow.svg",
+        "snow_with_cloudy.svg",
+        "snow_with_sunny.svg",
+    ],
     "heavy_snow.svg": ["heavy_snow.svg", "cloudy_with_snow.svg", "snow_with_cloudy.svg"],
     "icy.svg": ["icy.svg", "sleet_hail.svg"],
-    "thunderstorms.svg": ["thunderstorms.svg", "isolated_thunderstorms.svg", "strong_thunderstorms.svg"],
+    "thunderstorms.svg": [
+        "thunderstorms.svg",
+        "isolated_thunderstorms.svg",
+        "strong_thunderstorms.svg",
+    ],
     "strong_thunderstorms.svg": [
         "strong_thunderstorms.svg",
         "isolated_scattered_thunderstorms_day.svg",
@@ -261,16 +282,28 @@ async def thumbs(filename: str):
 def relaytv_logo_svg_asset():
     path = _resolve_brand_svg_path("logo.svg", explicit_env="RELAYTV_LOGO_PATH")
     if path and os.path.exists(path):
-        return FileResponse(path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+        return FileResponse(
+            path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"}
+        )
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/assets/banner.svg")
 def relaytv_banner_svg_asset():
     path = _resolve_brand_svg_path("banner.svg", explicit_env="RELAYTV_BANNER_PATH")
     if path and os.path.exists(path):
-        return FileResponse(path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+        return FileResponse(
+            path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"}
+        )
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/assets/banner.png")
@@ -282,23 +315,39 @@ def relaytv_banner_png_asset():
     )
     if path and os.path.exists(path):
         return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/pwa/brand/logo.svg")
 def pwa_brand_logo_svg_asset():
     path = _resolve_brand_svg_path("logo.svg", explicit_env="RELAYTV_LOGO_PATH")
     if path and os.path.exists(path):
-        return FileResponse(path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+        return FileResponse(
+            path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"}
+        )
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/pwa/brand/banner.svg")
 def pwa_brand_banner_svg_asset():
     path = _resolve_brand_svg_path("banner.svg", explicit_env="RELAYTV_BANNER_PATH")
     if path and os.path.exists(path):
-        return FileResponse(path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+        return FileResponse(
+            path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"}
+        )
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/pwa/brand/banner.png")
@@ -310,7 +359,11 @@ def pwa_brand_banner_png_asset():
     )
     if path and os.path.exists(path):
         return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/pwa/weather/{asset_name}")
@@ -322,8 +375,14 @@ def pwa_weather_asset(asset_name: str, theme: str | None = None):
     for parts in _weather_icon_candidates(safe_name, icon_theme):
         path = _resolve_static_asset(*parts)
         if path and os.path.exists(path):
-            return FileResponse(path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
-    return Response(_fallback_svg(safe_name.removesuffix(".svg")), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=300"})
+            return FileResponse(
+                path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"}
+            )
+    return Response(
+        _fallback_svg(safe_name.removesuffix(".svg")),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @router.get("/static/ui/{asset_name}")
@@ -348,7 +407,9 @@ def ui_static_asset(asset_name: str):
     path = _resolve_static_asset("ui", safe_name)
     if path and os.path.exists(path) and os.path.isfile(path):
         media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=3600"})
+        return FileResponse(
+            path, media_type=media_type, headers={"Cache-Control": "public, max-age=3600"}
+        )
     return Response(status_code=404)
 
 
@@ -377,14 +438,26 @@ def pwa_manifest():
 def pwa_icon_svg():
     brand = _safe_static_join(_PWA_STATIC_ROOT, "brand/logo.svg")
     if brand and os.path.exists(brand):
-        return FileResponse(brand, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(
+            brand, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"}
+        )
     legacy_brand = _resolve_static_asset("brand", "logo.svg")
     if legacy_brand and os.path.exists(legacy_brand):
-        return FileResponse(legacy_brand, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(
+            legacy_brand,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
     asset = _safe_static_join(_PWA_STATIC_ROOT, "icon.svg")
     if asset and os.path.exists(asset):
-        return FileResponse(asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(
+            asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"}
+        )
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/favicon.ico")
@@ -396,24 +469,42 @@ def favicon_ico():
 def pwa_splash_svg():
     asset = _safe_static_join(_PWA_STATIC_ROOT, "splash.svg")
     if asset and os.path.exists(asset):
-        return FileResponse(asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
-    return Response(_relaytv_svg(512), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(
+            asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"}
+        )
+    return Response(
+        _relaytv_svg(512),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/pwa/jellyfin.svg")
 def pwa_jellyfin_svg():
     asset = _safe_static_join(_PWA_STATIC_ROOT, "jellyfin.svg")
     if asset and os.path.exists(asset):
-        return FileResponse(asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
-    return Response(_jellyfin_svg(128), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(
+            asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"}
+        )
+    return Response(
+        _jellyfin_svg(128),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/pwa/emby.svg")
 def pwa_emby_svg():
     asset = _safe_static_join(_PWA_STATIC_ROOT, "emby.svg")
     if asset and os.path.exists(asset):
-        return FileResponse(asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
-    return Response(_emby_svg(128), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(
+            asset, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"}
+        )
+    return Response(
+        _emby_svg(128),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/pwa/{asset_path:path}")
@@ -423,7 +514,9 @@ def pwa_static_asset(asset_path: str):
         asset = _safe_static_join(root, asset_path)
         if asset and os.path.exists(asset) and os.path.isfile(asset):
             media_type = mimetypes.guess_type(asset)[0] or "application/octet-stream"
-            return FileResponse(asset, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
+            return FileResponse(
+                asset, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"}
+            )
     return Response(status_code=404)
 
 

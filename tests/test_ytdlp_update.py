@@ -50,7 +50,7 @@ def test_enabled_false():
 def test_poll_interval_sec_default():
     with mock.patch.dict(os.environ, {}, clear=False):
         if "RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC" in os.environ:
-             del os.environ["RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC"]
+            del os.environ["RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC"]
         assert ytdlp_update._poll_interval_sec() == 3600.0
 
 

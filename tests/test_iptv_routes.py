@@ -135,15 +135,16 @@ def test_unavailable_is_hidden_by_default_and_can_be_explicitly_removed(client) 
     ).json()
     assert included["total"] == 2
 
-    removed = client.post(
-        "/iptv/channels/remove-unavailable", json={"source_id": source_id}
-    )
+    removed = client.post("/iptv/channels/remove-unavailable", json={"source_id": source_id})
     assert removed.status_code == 200
     assert removed.json()["removed"] == 1
-    assert client.get(
-        "/iptv/channels",
-        params={"source_id": source_id, "visibility": "all"},
-    ).json()["total"] == 1
+    assert (
+        client.get(
+            "/iptv/channels",
+            params={"source_id": source_id, "visibility": "all"},
+        ).json()["total"]
+        == 1
+    )
 
 
 def test_iptv_directory_search_and_add_is_opt_in(client) -> None:

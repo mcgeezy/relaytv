@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Peer device registry, transfer payload, and queue import contracts."""
+
 from __future__ import annotations
 
 import json
@@ -162,7 +163,12 @@ class _FakeServiceInfo:
 
 
 def _service_props(device_id: str, name: str = "Bedroom TV", app: str = "0.9.0") -> dict:
-    return {b"id": device_id.encode(), b"name": name.encode(), b"app": app.encode(), b"service": b"relaytv"}
+    return {
+        b"id": device_id.encode(),
+        b"name": name.encode(),
+        b"app": app.encode(),
+        b"service": b"relaytv",
+    }
 
 
 def test_discovered_record_prefers_ipv4_and_reads_txt(peers_file) -> None:
@@ -263,7 +269,9 @@ def test_refresh_keeps_live_services_and_drops_vanished(peers_file) -> None:
             "last_seen_at": stale_seen,
         }
     )
-    live = _FakeZeroconf({name: _FakeServiceInfo(["192.168.1.42"], 8787, _service_props("peerdevice"))})
+    live = _FakeZeroconf(
+        {name: _FakeServiceInfo(["192.168.1.42"], 8787, _service_props("peerdevice"))}
+    )
 
     discovery_mdns._refresh_known_services(live, "_relaytv._tcp.local.")
 
@@ -454,7 +462,9 @@ def test_queue_import_replace_clears_existing_queue(client) -> None:
     assert titles == ["New"]
 
 
-def test_send_queue_posts_wire_items_and_summarizes_result(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_send_queue_posts_wire_items_and_summarizes_result(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom", token="s3cret")
     sent: dict[str, object] = {}
 
@@ -466,7 +476,12 @@ def test_send_queue_posts_wire_items_and_summarizes_result(client, peers_file, s
             "queue_length": 4,
             "results": [
                 {"url": "https://example.com/a", "title": "Sent A", "accepted": True},
-                {"url": "https://example.com/b", "title": "Sent B", "accepted": False, "reason": "nope"},
+                {
+                    "url": "https://example.com/b",
+                    "title": "Sent B",
+                    "accepted": False,
+                    "reason": "nope",
+                },
             ],
         }
 
@@ -529,7 +544,9 @@ def test_move_clears_local_queue_only_after_confirmed_receipt(
         assert list(state.QUEUE) == []
 
 
-def test_move_of_one_item_removes_just_that_item(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_move_of_one_item_removes_just_that_item(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     monkeypatch.setattr(
         peers,
@@ -568,7 +585,11 @@ def test_handoff_requires_playback_and_stops_locally_after_success(
         playback_service,
         "handoff_snapshot",
         lambda: {
-            "item": {"url": "https://example.com/movie", "title": "Movie", "_resolved_stream": "https://cdn/secret"},
+            "item": {
+                "url": "https://example.com/movie",
+                "title": "Movie",
+                "_resolved_stream": "https://cdn/secret",
+            },
             "position": 812.5,
             "duration": 3600.0,
         },
@@ -576,11 +597,19 @@ def test_handoff_requires_playback_and_stops_locally_after_success(
 
     def _request(base_url, path, *, token="", payload=None, timeout=0.0):
         sent.update({"path": path, "payload": payload})
-        return {"status": "handed_off", "playing": True, "accepted": 1, "queue_length": 1, "results": []}
+        return {
+            "status": "handed_off",
+            "playing": True,
+            "accepted": 1,
+            "queue_length": 1,
+            "results": [],
+        }
 
     monkeypatch.setattr(peers, "_request", _request)
     calls: list[str] = []
-    monkeypatch.setattr(peers_routes, "_remove_local_queue_items", lambda items: calls.append("clear_queue") or 0)
+    monkeypatch.setattr(
+        peers_routes, "_remove_local_queue_items", lambda items: calls.append("clear_queue") or 0
+    )
     monkeypatch.setattr(
         "relaytv_app.playback_service.complete_peer_handoff",
         lambda snapshot, **kw: calls.append("clear_now_playing") or True,
@@ -615,7 +644,9 @@ def test_handoff_requires_playback_and_stops_locally_after_success(
         state.QUEUE.clear()
 
 
-def test_handoff_failure_leaves_local_playback_alone(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_handoff_failure_leaves_local_playback_alone(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     from relaytv_app import playback_service
     from relaytv_app.routes import peers as peers_routes
@@ -623,7 +654,11 @@ def test_handoff_failure_leaves_local_playback_alone(client, peers_file, stub_id
     monkeypatch.setattr(
         playback_service,
         "handoff_snapshot",
-        lambda: {"item": {"url": "https://example.com/movie", "title": "Movie"}, "position": 10.0, "duration": 60.0},
+        lambda: {
+            "item": {"url": "https://example.com/movie", "title": "Movie"},
+            "position": 10.0,
+            "duration": 60.0,
+        },
     )
 
     def _fail(*args, **kwargs):
@@ -636,7 +671,9 @@ def test_handoff_failure_leaves_local_playback_alone(client, peers_file, stub_id
         lambda snapshot, **kw: stopped.append(True) or True,
     )
     cleared: list[bool] = []
-    monkeypatch.setattr(peers_routes, "_remove_local_queue_items", lambda items: cleared.append(True) or 0)
+    monkeypatch.setattr(
+        peers_routes, "_remove_local_queue_items", lambda items: cleared.append(True) or 0
+    )
 
     response = client.post(f"/peers/{peer['id']}/handoff", json={})
     assert response.status_code == 502
@@ -688,7 +725,9 @@ def test_queue_handoff_receiver_plays_with_resume_position(client, monkeypatch) 
     assert titles == ["Next up"]
 
 
-def test_send_single_index_and_unreachable_peer(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_send_single_index_and_unreachable_peer(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     captured: dict[str, object] = {}
 
@@ -726,7 +765,9 @@ def test_send_single_index_and_unreachable_peer(client, peers_file, stub_identit
         state.QUEUE.clear()
 
 
-def test_send_single_queue_id_survives_index_shift(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_send_single_queue_id_survives_index_shift(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     captured: dict[str, object] = {}
 
@@ -764,7 +805,9 @@ def _seed_queue(*titles: str) -> None:
 
 
 @pytest.mark.parametrize("replacement", ["duplicate", "new_item"])
-def test_transfer_cleanup_preserves_unsent_instances(client, stub_identity, monkeypatch, replacement):
+def test_transfer_cleanup_preserves_unsent_instances(
+    client, stub_identity, monkeypatch, replacement
+):
     from relaytv_app import routes, player
 
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
@@ -784,9 +827,14 @@ def test_transfer_cleanup_preserves_unsent_instances(client, stub_identity, monk
         return {"accepted": 1, "queue_length": 1, "results": []}
 
     monkeypatch.setattr(peers, "_request", _blocked_request)
-    worker = threading.Thread(target=lambda: responses.append(client.post(
-        f"/peers/{peer['id']}/send", json={"mode": "move", "queue_ids": [selected_id]}
-    )), daemon=True)
+    worker = threading.Thread(
+        target=lambda: responses.append(
+            client.post(
+                f"/peers/{peer['id']}/send", json={"mode": "move", "queue_ids": [selected_id]}
+            )
+        ),
+        daemon=True,
+    )
     worker.start()
     try:
         assert entered.wait(5)
@@ -810,14 +858,22 @@ def _queue_titles() -> list[str]:
 
 
 @pytest.mark.parametrize("replacement", [False, True])
-def test_handoff_completion_owns_only_the_captured_playback(client, stub_identity, monkeypatch, replacement):
+def test_handoff_completion_owns_only_the_captured_playback(
+    client, stub_identity, monkeypatch, replacement
+):
     from relaytv_app import playback_service, player
     from relaytv_app.routes import playback as playback_routes
 
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
-    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([
-        {"url": "https://example.com/remaining", "title": "Remaining"},
-    ]))
+    monkeypatch.setattr(
+        state,
+        "QUEUE",
+        state._RevisionedQueue(
+            [
+                {"url": "https://example.com/remaining", "title": "Remaining"},
+            ]
+        ),
+    )
     monkeypatch.setattr(state, "NOW_PLAYING", {"url": "https://example.com/a", "title": "A"})
     monkeypatch.setattr(state, "SESSION_STATE", "playing")
     monkeypatch.setattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 12345678900.0)
@@ -839,9 +895,15 @@ def test_handoff_completion_owns_only_the_captured_playback(client, stub_identit
 
     monkeypatch.setattr(peers, "_request", request)
     responses = []
-    worker = threading.Thread(target=lambda: responses.append(client.post(
-        f"/peers/{peer['id']}/handoff", json={"queue_ids": []},
-    )), daemon=True)
+    worker = threading.Thread(
+        target=lambda: responses.append(
+            client.post(
+                f"/peers/{peer['id']}/handoff",
+                json={"queue_ids": []},
+            )
+        ),
+        daemon=True,
+    )
     worker.start()
     try:
         assert entered.wait(5)
@@ -868,12 +930,16 @@ def test_handoff_completion_owns_only_the_captured_playback(client, stub_identit
         assert state.AUTO_NEXT_SUPPRESS_UNTIL == 0
         # Remaining items are eligible for the existing autoplay worker.
         advances = []
-        monkeypatch.setattr(playback_service, "advance_queue", lambda **kw: advances.append(kw) or {})
+        monkeypatch.setattr(
+            playback_service, "advance_queue", lambda **kw: advances.append(kw) or {}
+        )
         playback_service.natural_end()
         assert len(advances) == 1
 
 
-def test_move_of_a_selection_removes_only_the_sent_items(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_move_of_a_selection_removes_only_the_sent_items(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     captured: dict[str, object] = {}
 
@@ -897,7 +963,9 @@ def test_move_of_a_selection_removes_only_the_sent_items(client, peers_file, stu
         state.QUEUE.clear()
 
 
-def test_send_rejects_an_empty_or_out_of_range_selection(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_send_rejects_an_empty_or_out_of_range_selection(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     calls: list[str] = []
     monkeypatch.setattr(peers, "_request", lambda *a, **k: calls.append("sent") or {"accepted": 0})
@@ -918,7 +986,9 @@ def test_send_rejects_an_empty_or_out_of_range_selection(client, peers_file, stu
         state.QUEUE.clear()
 
 
-def test_copy_sends_the_session_but_keeps_playing_here(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_copy_sends_the_session_but_keeps_playing_here(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
 
     from relaytv_app import playback_service
@@ -927,13 +997,23 @@ def test_copy_sends_the_session_but_keeps_playing_here(client, peers_file, stub_
     monkeypatch.setattr(
         playback_service,
         "handoff_snapshot",
-        lambda: {"item": {"url": "https://example.com/movie", "title": "Movie"}, "position": 30.0, "duration": 60.0},
+        lambda: {
+            "item": {"url": "https://example.com/movie", "title": "Movie"},
+            "position": 30.0,
+            "duration": 60.0,
+        },
     )
     sent: dict[str, object] = {}
 
     def _request(base_url, path, *, token="", payload=None, timeout=0.0):
         sent.update({"path": path, "payload": payload})
-        return {"status": "handed_off", "playing": True, "accepted": 1, "queue_length": 1, "results": []}
+        return {
+            "status": "handed_off",
+            "playing": True,
+            "accepted": 1,
+            "queue_length": 1,
+            "results": [],
+        }
 
     monkeypatch.setattr(peers, "_request", _request)
     stopped: list[bool] = []
@@ -942,7 +1022,9 @@ def test_copy_sends_the_session_but_keeps_playing_here(client, peers_file, stub_
         "relaytv_app.playback_service.complete_peer_handoff",
         lambda snapshot, **kw: stopped.append(True) or True,
     )
-    monkeypatch.setattr(peers_routes, "_remove_local_queue_items", lambda items: cleared.append(True) or 0)
+    monkeypatch.setattr(
+        peers_routes, "_remove_local_queue_items", lambda items: cleared.append(True) or 0
+    )
     _seed_queue("Next up")
 
     response = client.post(f"/peers/{peer['id']}/handoff", json={"keep_local": True})
@@ -1001,17 +1083,25 @@ def test_move_keeps_items_the_peer_rejected(client, peers_file, stub_identity, m
         state.QUEUE.clear()
 
 
-def test_move_keeps_items_that_could_not_travel_at_all(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_move_keeps_items_that_could_not_travel_at_all(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
-    monkeypatch.setattr(peers, "_request", lambda *a, **k: {"accepted": 1, "queue_length": 1, "results": []})
+    monkeypatch.setattr(
+        peers, "_request", lambda *a, **k: {"accepted": 1, "queue_length": 1, "results": []}
+    )
     with state.QUEUE_LOCK:
         state.QUEUE.clear()
         state.QUEUE.append({"url": "https://example.com/ok", "title": "Portable"})
-        state.QUEUE.append({"url": "http://iptv.example/live/u/p/9.ts", "title": "CNN", "provider": "iptv"})
+        state.QUEUE.append(
+            {"url": "http://iptv.example/live/u/p/9.ts", "title": "CNN", "provider": "iptv"}
+        )
 
     moved = client.post(f"/peers/{peer['id']}/send", json={"mode": "move"})
     assert moved.status_code == 200
-    assert [entry["reason"] for entry in moved.json()["rejected"]] == ["iptv_channels_stay_on_this_device"]
+    assert [entry["reason"] for entry in moved.json()["rejected"]] == [
+        "iptv_channels_stay_on_this_device"
+    ]
     # A live channel has no shareable URL, so it was never offered to the peer.
     assert _queue_titles() == ["CNN"]
 
@@ -1019,7 +1109,9 @@ def test_move_keeps_items_that_could_not_travel_at_all(client, peers_file, stub_
         state.QUEUE.clear()
 
 
-def test_move_drops_the_sent_item_even_if_the_queue_shifted(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_move_drops_the_sent_item_even_if_the_queue_shifted(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
 
     def _request_while_the_queue_moves(*args, **kwargs):
@@ -1043,7 +1135,9 @@ def test_move_drops_the_sent_item_even_if_the_queue_shifted(client, peers_file, 
         state.QUEUE.clear()
 
 
-def test_move_keeps_everything_when_the_peer_reports_nothing(client, peers_file, stub_identity, monkeypatch) -> None:
+def test_move_keeps_everything_when_the_peer_reports_nothing(
+    client, peers_file, stub_identity, monkeypatch
+) -> None:
     peer = peers.add_peer(base_url="http://tv.local:8787", name="Bedroom")
     # No per-item results and a count that does not cover what was sent: there
     # is no evidence of what landed, so nothing is given up.
@@ -1130,13 +1224,23 @@ def test_handoff_of_a_selection_leaves_the_unselected_items_here(
     monkeypatch.setattr(
         playback_service,
         "handoff_snapshot",
-        lambda: {"item": {"url": "https://example.com/movie", "title": "Movie"}, "position": 5.0, "duration": 60.0},
+        lambda: {
+            "item": {"url": "https://example.com/movie", "title": "Movie"},
+            "position": 5.0,
+            "duration": 60.0,
+        },
     )
     sent: dict[str, object] = {}
 
     def _request(base_url, path, *, token="", payload=None, timeout=0.0):
         sent.update({"payload": payload})
-        return {"status": "handed_off", "playing": True, "accepted": 1, "queue_length": 1, "results": []}
+        return {
+            "status": "handed_off",
+            "playing": True,
+            "accepted": 1,
+            "queue_length": 1,
+            "results": [],
+        }
 
     monkeypatch.setattr(peers, "_request", _request)
     monkeypatch.setattr(

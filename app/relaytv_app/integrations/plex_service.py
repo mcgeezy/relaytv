@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Plex catalog normalization and opaque public references."""
+
 from __future__ import annotations
 
 import base64
@@ -78,6 +79,8 @@ def _sweep_unopened_transcodes_locked(now: float) -> list[str]:
     for stream_id in stale:
         _TRANSCODE_SESSIONS.pop(stream_id, None)
     return stale
+
+
 PLEX_PLAYBACK_MODES = {"auto", "direct", "transcode"}
 TRANSCODE_START_PATH = "/video/:/transcode/universal/start.mkv"
 TRANSCODE_STOP_PATH = "/video/:/transcode/universal/stop"
@@ -216,9 +219,7 @@ class PlexCatalogService:
         )
         container = self._container(payload)
         records = self._records(container, "Metadata")
-        items = [
-            item for raw in records if (item := self._item(session, raw)) is not None
-        ]
+        items = [item for raw in records if (item := self._item(session, raw)) is not None]
         total = max(len(items), _integer(container.get("totalSize"), len(items)))
         offset = max(0, _integer(container.get("offset"), start))
         # Advance by what the server returned, not by what survived filtering.
@@ -313,14 +314,8 @@ class PlexCatalogService:
             },
         )
         container = self._container(payload)
-        records = self._records(container, "Metadata") + self._records(
-            container, "Directory"
-        )
-        items = [
-            item
-            for raw in records
-            if (item := self._item(session, raw)) is not None
-        ]
+        records = self._records(container, "Metadata") + self._records(container, "Directory")
+        items = [item for raw in records if (item := self._item(session, raw)) is not None]
         total = max(len(items), _integer(container.get("totalSize"), len(items)))
         offset = max(0, _integer(container.get("offset"), start))
         next_start = offset + len(records)
@@ -397,12 +392,10 @@ class PlexCatalogService:
                 selected_part,
                 stream_type=3,
             )
-        configured_mode = str(
-            state.get_settings().get("plex_playback_mode") or "auto"
-        ).strip().lower()
-        if configured_mode == "direct" and (
-            selected_audio_id or selected_subtitle_id
-        ):
+        configured_mode = (
+            str(state.get_settings().get("plex_playback_mode") or "auto").strip().lower()
+        )
+        if configured_mode == "direct" and (selected_audio_id or selected_subtitle_id):
             raise PlexError(
                 "plex_track_requires_transcode",
                 "Plex track selection requires Automatic or Always transcode playback",
@@ -417,11 +410,7 @@ class PlexCatalogService:
             "type": str(item.get("type") or ""),
             **({"plex_part_id": selected_part_id} if selected_part_id else {}),
             **({"plex_audio_id": selected_audio_id} if selected_audio_id else {}),
-            **(
-                {"plex_subtitle_id": selected_subtitle_id}
-                if selected_subtitle_id
-                else {}
-            ),
+            **({"plex_subtitle_id": selected_subtitle_id} if selected_subtitle_id else {}),
             **({"thumbnail": item["poster_url"]} if item.get("poster_url") else {}),
         }
         view_offset = max(0, _integer(item.get("view_offset_ms")))
@@ -496,8 +485,7 @@ class PlexCatalogService:
         if playback_mode != "direct":
             session_id = str(uuid.uuid4())
             profile_requires_transcode = (
-                playback_mode == "auto"
-                and self._profile_requires_transcode(media, part)
+                playback_mode == "auto" and self._profile_requires_transcode(media, part)
             )
             decision_query = self._transcode_query(
                 reference["path"],
@@ -570,9 +558,8 @@ class PlexCatalogService:
             parsed = urllib.parse.urlsplit(path)
             query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
             session_id = str(query.get("session") or "")
-            if (
-                parsed.path != TRANSCODE_START_PATH
-                or not re.fullmatch(r"[0-9a-fA-F-]{36}", session_id)
+            if parsed.path != TRANSCODE_START_PATH or not re.fullmatch(
+                r"[0-9a-fA-F-]{36}", session_id
             ):
                 raise PlexError(
                     "plex_invalid_reference",
@@ -650,19 +637,12 @@ class PlexCatalogService:
         video_stream = next(
             (
                 stream
-                for stream in (
-                    part.get("Stream")
-                    if isinstance(part.get("Stream"), list)
-                    else []
-                )
-                if isinstance(stream, dict)
-                and _integer(stream.get("streamType")) == 1
+                for stream in (part.get("Stream") if isinstance(part.get("Stream"), list) else [])
+                if isinstance(stream, dict) and _integer(stream.get("streamType")) == 1
             ),
             {},
         )
-        codec = str(
-            media.get("videoCodec") or video_stream.get("codec") or ""
-        ).strip().lower()
+        codec = str(media.get("videoCodec") or video_stream.get("codec") or "").strip().lower()
         height = _integer(media.get("height") or video_stream.get("height"))
         bit_depth = _integer(video_stream.get("bitDepth") or media.get("bitDepth"))
         bitrate = _integer(media.get("bitrate") or video_stream.get("bitrate"))
@@ -683,8 +663,7 @@ class PlexCatalogService:
         if (
             codec in {"hevc", "h265"}
             and bit_depth > 8
-            and decode_profile
-            not in {"intel_amd64_qsv", "intel_amd64_vaapi", "nvidia_cuda"}
+            and decode_profile not in {"intel_amd64_qsv", "intel_amd64_vaapi", "nvidia_cuda"}
         ):
             return True
         return False
@@ -906,8 +885,8 @@ class PlexCatalogService:
         *,
         part_path: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        part, media, _media_index, _part_index = (
-            PlexCatalogService._select_playback_part(raw, part_path=part_path)
+        part, media, _media_index, _part_index = PlexCatalogService._select_playback_part(
+            raw, part_path=part_path
         )
         return part, media
 
@@ -1086,9 +1065,7 @@ class PlexCatalogService:
             stream_id = str(stream.get("id") or "").strip()
             if re.fullmatch(r"\d+", stream_id) is None:
                 continue
-            language = str(
-                stream.get("language") or stream.get("languageCode") or ""
-            ).strip()
+            language = str(stream.get("language") or stream.get("languageCode") or "").strip()
             codec = str(stream.get("codec") or "").strip()
             label = str(
                 stream.get("extendedDisplayTitle")

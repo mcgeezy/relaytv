@@ -24,11 +24,13 @@ from typing import Optional
 _OVERLAY_LOCK = threading.Lock()
 _OVERLAY_PROC: Optional[subprocess.Popen] = None
 
+
 def x11_session() -> bool:
     # DISPLAY is the useful signal here: on Wayland hosts the container may
     # still have Xwayland available, which gives us the click-through overlay
     # semantics we need without keeping the Qt shell's black window alive.
     return bool(os.getenv("DISPLAY"))
+
 
 def overlay_enabled() -> bool:
     explicit = os.getenv("RELAYTV_X11_OVERLAY")
@@ -38,12 +40,15 @@ def overlay_enabled() -> bool:
             return True
         if value in ("0", "false", "no", "off"):
             return False
-    raw = (runtime_config.snapshot().raw("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
+    raw = (
+        (runtime_config.snapshot().raw("RELAYTV_IDLE_NOTIFICATIONS_ENABLED") or "").strip().lower()
+    )
     if raw in ("0", "false", "no", "off"):
         return False
     dashboard_disabled = False
     try:
         from . import state
+
         settings = state.get_settings() if hasattr(state, "get_settings") else {}
         if isinstance(settings, dict):
             if settings.get("idle_notifications_enabled") is False:
@@ -56,14 +61,18 @@ def overlay_enabled() -> bool:
         pass
     if dashboard_disabled:
         return True
-    raw_dashboard = (runtime_config.snapshot().raw("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
+    raw_dashboard = (
+        (runtime_config.snapshot().raw("RELAYTV_IDLE_DASHBOARD_ENABLED") or "").strip().lower()
+    )
     if raw_dashboard not in ("0", "false", "no", "off"):
         return False
     return True
 
+
 def overlay_running() -> bool:
     global _OVERLAY_PROC
     return _OVERLAY_PROC is not None and _OVERLAY_PROC.poll() is None
+
 
 def start_overlay() -> None:
     """Start overlay if enabled and X11 is available."""
@@ -96,6 +105,7 @@ def start_overlay() -> None:
             )
         except Exception:
             _OVERLAY_PROC = None
+
 
 def stop_overlay() -> None:
     global _OVERLAY_PROC

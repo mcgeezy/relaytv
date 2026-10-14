@@ -32,7 +32,11 @@ def _run_host_installer(
         # Substitute only the hardware probe result; run the real installer and
         # its generation detection/default/persistence paths unchanged.
         text = installer.read_text()
-        text = text.replace("\ndetect_host_profile() {", f"\nHOST_MODEL={shlex.quote(host_model)}\ndetect_host_profile() {{", 1)
+        text = text.replace(
+            "\ndetect_host_profile() {",
+            f"\nHOST_MODEL={shlex.quote(host_model)}\ndetect_host_profile() {{",
+            1,
+        )
         installer.write_text(text)
     env = os.environ.copy()
     for key in (
@@ -89,7 +93,13 @@ def _resolve_host_ops_delegate_qpa(
     if process_qpa is not None:
         env["QT_QPA_PLATFORM"] = process_qpa
     return subprocess.run(
-        ["bash", "-c", 'source "$1"; resolve_delegate_qpa wayland-native', "host-ops-test", str(host_ops)],
+        [
+            "bash",
+            "-c",
+            'source "$1"; resolve_delegate_qpa wayland-native',
+            "host-ops-test",
+            str(host_ops),
+        ],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -130,7 +140,7 @@ def _mock_command_path(tmp_path: Path, *, arch: str = "x86_64") -> Path:
     uname = command_dir / "uname"
     uname.write_text(
         "#!/bin/sh\n"
-        "case \"$1\" in\n"
+        'case "$1" in\n'
         "  -s) printf 'Linux\\n' ;;\n"
         f"  -m) printf '{arch}\\n' ;;\n"
         f"  *) printf '{arch}\\n' ;;\n"
@@ -173,7 +183,7 @@ def test_host_override_uses_only_existing_long_syntax_binds(tmp_path: Path) -> N
     override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
     assert "create_host_path: false" in override
     assert "/etc/timezone" not in override
-    assert "source: \"/sys\"" in override
+    assert 'source: "/sys"' in override
     assert "/tmp/.X11-unix" not in override
     assert "/run/user/" not in override
 
@@ -289,7 +299,7 @@ def test_base_compose_files_do_not_bind_optional_system_paths() -> None:
 def test_installer_never_pins_session_scoped_xauthority() -> None:
     installer = (ROOT_DIR / "scripts" / "install.sh").read_text(encoding="utf-8")
 
-    assert "append_bind_mount \"$XAUTH_HOST_PATH\"" not in installer
+    assert 'append_bind_mount "$XAUTH_HOST_PATH"' not in installer
     assert "latest_mutter_xwayland_auth" not in installer
     assert 'append_bind_mount "/run/user" "/run/user" "false"' in installer
     # Keep the legacy name installer-owned so reruns remove it from old .env files.
@@ -349,15 +359,20 @@ def test_bootstrap_no_install_docker_fails_with_actionable_guidance(tmp_path: Pa
     assert "Docker Engine with the Compose plugin" in result.stderr
 
 
-@pytest.mark.parametrize(("model", "generation"), [
-    ("Raspberry Pi 4 Model B Rev 1.5", "4"),
-    ("Raspberry Pi 3 Model B Rev 1.4", "3"),
-    ("Raspberry Pi 5 Model B Rev 1.0", "5"),
-    ("Raspberry Pi Compute Module 4 Rev 1.5", "4"),
-    ("Raspberry Pi 400 Rev 1.5", "4"),
-    ("Raspberry Pi Zero 2 W Rev 1.5", "3"),
-])
-def test_installer_pi_generation_ignores_revision(tmp_path: Path, model: str, generation: str) -> None:
+@pytest.mark.parametrize(
+    ("model", "generation"),
+    [
+        ("Raspberry Pi 4 Model B Rev 1.5", "4"),
+        ("Raspberry Pi 3 Model B Rev 1.4", "3"),
+        ("Raspberry Pi 5 Model B Rev 1.0", "5"),
+        ("Raspberry Pi Compute Module 4 Rev 1.5", "4"),
+        ("Raspberry Pi 400 Rev 1.5", "4"),
+        ("Raspberry Pi Zero 2 W Rev 1.5", "3"),
+    ],
+)
+def test_installer_pi_generation_ignores_revision(
+    tmp_path: Path, model: str, generation: str
+) -> None:
     result = _run_host_installer(tmp_path, host_model=model)
     assert result.returncode == 0, result.stderr
     env = (tmp_path / ".env").read_text()
@@ -374,7 +389,9 @@ def test_installer_pi_generation_ignores_revision(tmp_path: Path, model: str, ge
 
 @pytest.mark.parametrize("profile", ["raspi", "amd64", "arm"])
 @pytest.mark.parametrize("shell_override", [False, True])
-def test_installer_preserves_playback_overrides(tmp_path: Path, profile: str, shell_override: bool) -> None:
+def test_installer_preserves_playback_overrides(
+    tmp_path: Path, profile: str, shell_override: bool
+) -> None:
     saved = {
         "RELAYTV_ARM_FAST_PROFILE": "0",
         "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT": "1",
@@ -386,8 +403,12 @@ def test_installer_preserves_playback_overrides(tmp_path: Path, profile: str, sh
     (tmp_path / ".env").write_text("\n".join(saved_lines) + "\n")
     overrides = {"RELAYTV_HOST_PROFILE": profile}
     if shell_override:
-        overrides.update({key: "0" if "PROFILE" in key or "FORMAT" in key else "480" for key in saved})
-    result = _run_host_installer(tmp_path, env_overrides=overrides, host_model="Raspberry Pi 5 Model B Rev 1.0")
+        overrides.update(
+            {key: "0" if "PROFILE" in key or "FORMAT" in key else "480" for key in saved}
+        )
+    result = _run_host_installer(
+        tmp_path, env_overrides=overrides, host_model="Raspberry Pi 5 Model B Rev 1.0"
+    )
     assert result.returncode == 0, result.stderr
     env = (tmp_path / ".env").read_text()
     for key, original_line in zip(saved, saved_lines):
@@ -402,21 +423,28 @@ def test_installer_preserves_playback_overrides(tmp_path: Path, profile: str, sh
         assert before in (tmp_path / ".env").read_text().splitlines()
 
 
-@pytest.mark.parametrize(("saved", "shell", "expected"), [
-    (None, "5", "5"),
-    ('"5" # force generation', None, "5"),
-    ("'5'", "3", "3"),
-    (None, "4", "4"),
-    ('""', None, "4"),
-    (None, "", "4"),
-])
-def test_installer_pi_generation_override_precedes_detection(tmp_path: Path, saved: str | None, shell: str | None, expected: str) -> None:
+@pytest.mark.parametrize(
+    ("saved", "shell", "expected"),
+    [
+        (None, "5", "5"),
+        ('"5" # force generation', None, "5"),
+        ("'5'", "3", "3"),
+        (None, "4", "4"),
+        ('""', None, "4"),
+        (None, "", "4"),
+    ],
+)
+def test_installer_pi_generation_override_precedes_detection(
+    tmp_path: Path, saved: str | None, shell: str | None, expected: str
+) -> None:
     if saved is not None:
         (tmp_path / ".env").write_text(f"RELAYTV_PI_GENERATION={saved}\n")
     overrides = {"RELAYTV_HOST_PROFILE": "raspi"}
     if shell is not None:
         overrides["RELAYTV_PI_GENERATION"] = shell
-    result = _run_host_installer(tmp_path, env_overrides=overrides, host_model="Raspberry Pi 4 Model B Rev 1.4")
+    result = _run_host_installer(
+        tmp_path, env_overrides=overrides, host_model="Raspberry Pi 4 Model B Rev 1.4"
+    )
     assert result.returncode == 0, result.stderr
     env = (tmp_path / ".env").read_text()
     assert env.count("RELAYTV_PI_GENERATION=") == 1
@@ -426,7 +454,9 @@ def test_installer_pi_generation_override_precedes_detection(tmp_path: Path, sav
 
 
 @pytest.mark.parametrize("source", ["shell", "file"])
-def test_installer_rejects_invalid_pi_generation_without_evaluating_it(tmp_path: Path, source: str) -> None:
+def test_installer_rejects_invalid_pi_generation_without_evaluating_it(
+    tmp_path: Path, source: str
+) -> None:
     malicious = f"$(touch {tmp_path / 'should-not-exist'})"
     overrides = {"RELAYTV_HOST_PROFILE": "raspi"}
     original = "RELAYTV_DISPLAY_CAP_HEIGHT=720\n"

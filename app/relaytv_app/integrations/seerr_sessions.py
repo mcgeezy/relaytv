@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Memory-only caller sessions for Seerr Jellyfin Quick Connect."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

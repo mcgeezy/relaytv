@@ -15,6 +15,7 @@ consumers read snapshots; the process environment is an input at startup
 (``refresh_from_env``) and an output boundary for child processes, not an
 in-process config bus.
 """
+
 from __future__ import annotations
 
 import os
@@ -117,9 +118,7 @@ def normalize_seerr_request_mode(
 
 def seerr_settings_from_env() -> dict[str, object]:
     """Parse operator-provided Seerr defaults for the persistent settings layer."""
-    shared_requests_enabled = env_bool(
-        "RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False
-    )
+    shared_requests_enabled = env_bool("RELAYTV_SEERR_SHARED_REQUESTS_ENABLED", False)
     request_mode = normalize_seerr_request_mode(
         os.getenv("RELAYTV_SEERR_REQUEST_MODE"),
         shared_requests_enabled=shared_requests_enabled,

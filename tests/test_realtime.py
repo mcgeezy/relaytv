@@ -484,7 +484,9 @@ def test_x11_overlay_page_prefers_websocket_and_retains_sse_fallback(realtime_cl
     response = realtime_client.get("/x11/overlay")
 
     assert response.status_code == 200
-    assert re.search(r'<script src="/static/ui/realtime_transport\.js\?v=\d+"></script>', response.text)
+    assert re.search(
+        r'<script src="/static/ui/realtime_transport\.js\?v=\d+"></script>', response.text
+    )
     assert "RelayTVRealtime.createPolicy" in response.text
     assert "new WebSocket" in response.text
     assert "new EventSource" in response.text

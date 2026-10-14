@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Client login and shared casting must work at the same time."""
+
 import json
 
 import pytest
@@ -11,19 +12,33 @@ from relaytv_app.integrations import jellyfin_receiver as receiver
 
 @pytest.fixture
 def shared_client(monkeypatch):
-    monkeypatch.setattr(receiver, "_STATUS", {
-        **receiver._STATUS,
-        "enabled": True, "running": True, "connected": True,
-        "server_url": "http://jf.example", "device_id": "tv-device",
-        "auth_mode": "shared_api_key", "api_key_configured": True,
-        "auth_user_configured": True, "authenticated": False,
-        "auth_user_id": "", "last_auth_ok": None,
-        "last_register_ok": True,
-    })
+    monkeypatch.setattr(
+        receiver,
+        "_STATUS",
+        {
+            **receiver._STATUS,
+            "enabled": True,
+            "running": True,
+            "connected": True,
+            "server_url": "http://jf.example",
+            "device_id": "tv-device",
+            "auth_mode": "shared_api_key",
+            "api_key_configured": True,
+            "auth_user_configured": True,
+            "authenticated": False,
+            "auth_user_id": "",
+            "last_auth_ok": None,
+            "last_register_ok": True,
+        },
+    )
     for name, value in {
-        "_AUTH_MODE": "shared_api_key", "_API_KEY": "cast-key",
-        "_AUTH_USERNAME": "viewer", "_AUTH_PASSWORD": "password",
-        "_ACCESS_TOKEN": "", "_AUTH_USER_ID": "", "_AUTH_SESSION_ID": "",
+        "_AUTH_MODE": "shared_api_key",
+        "_API_KEY": "cast-key",
+        "_AUTH_USERNAME": "viewer",
+        "_AUTH_PASSWORD": "password",
+        "_ACCESS_TOKEN": "",
+        "_AUTH_USER_ID": "",
+        "_AUTH_SESSION_ID": "",
     }.items():
         monkeypatch.setattr(receiver, name, value)
     monkeypatch.setattr(state, "get_settings", lambda: {})
@@ -96,7 +111,11 @@ def test_pending_and_failed_client_login_never_fall_back_to_admin_key(shared_cli
     receiver._ensure_authentication()
     receiver.get_item_metadata("movie")
     assert receiver._CATALOG_CACHE
-    monkeypatch.setattr(receiver._urlrequest, "urlopen", lambda *a, **kw: (_ for _ in ()).throw(OSError("login rejected")))
+    monkeypatch.setattr(
+        receiver._urlrequest,
+        "urlopen",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("login rejected")),
+    )
     assert receiver.authenticate_once()["reason"] == "auth_failed"
     assert receiver.catalog_token() == ""
     assert receiver.session_token() == ""
@@ -143,7 +162,10 @@ def test_shared_cast_media_is_independent_of_concurrent_client_browsing(shared_c
 
     def cast():
         try:
-            assert receiver.dispatch_command("play", {"ControllingUserId": "viewer-id"})["title"] == "Movie"
+            assert (
+                receiver.dispatch_command("play", {"ControllingUserId": "viewer-id"})["title"]
+                == "Movie"
+            )
             assert receiver.catalog_token() == "client-token"
         except BaseException as exc:
             failures.append(exc)
@@ -283,12 +305,19 @@ def test_a_half_filled_login_is_not_reported_as_configured(monkeypatch) -> None:
     ):
         monkeypatch.setattr(receiver, name, value)
     raw = {
-        "enabled": True, "running": True, "connected": False,
-        "server_url": "http://jf.example", "auth_mode": "shared_api_key",
-        "api_key_configured": True, "authenticated": False,
-        "auth_user_configured": False, "auth_user_partial": True,
+        "enabled": True,
+        "running": True,
+        "connected": False,
+        "server_url": "http://jf.example",
+        "auth_mode": "shared_api_key",
+        "api_key_configured": True,
+        "authenticated": False,
+        "auth_user_configured": False,
+        "auth_user_partial": True,
         # Isolate the health verdict from the transport checks that run first.
-        "last_progress_ok": True, "last_stopped_ok": True, "last_register_ok": True,
+        "last_progress_ok": True,
+        "last_stopped_ok": True,
+        "last_register_ok": True,
     }
 
     out = receiver._status_with_sync_health(raw)
@@ -299,10 +328,15 @@ def test_a_half_filled_login_is_not_reported_as_configured(monkeypatch) -> None:
 
 def test_an_api_key_only_setup_still_browses_on_the_key() -> None:
     raw = {
-        "enabled": True, "running": True, "connected": True,
-        "server_url": "http://jf.example", "auth_mode": "shared_api_key",
-        "api_key_configured": True, "authenticated": False,
-        "auth_user_configured": False, "auth_user_partial": False,
+        "enabled": True,
+        "running": True,
+        "connected": True,
+        "server_url": "http://jf.example",
+        "auth_mode": "shared_api_key",
+        "api_key_configured": True,
+        "authenticated": False,
+        "auth_user_configured": False,
+        "auth_user_partial": False,
     }
 
     assert receiver._status_with_sync_health(raw)["catalog_auth_source"] == "api_key"
@@ -335,9 +369,7 @@ def test_binding_carries_the_cast_scope_onto_another_thread() -> None:
         wrapped = receiver.bind_catalog_scope(
             lambda: bound.append(receiver.catalog_scope_is_cast())
         )
-        plain = threading.Thread(
-            target=lambda: unbound.append(receiver.catalog_scope_is_cast())
-        )
+        plain = threading.Thread(target=lambda: unbound.append(receiver.catalog_scope_is_cast()))
         carried = threading.Thread(target=wrapped)
         plain.start()
         carried.start()

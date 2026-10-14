@@ -11,6 +11,7 @@ Transport only, in keeping with ``jellyfin_receiver``: inbound messages are
 normalized to ``(action, payload)`` and handed to the command sink the routes
 package registers. No playback logic lives here.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -159,7 +160,9 @@ def socket_url(*, server_url: str, token: str, device_id: str) -> str:
     parts = urlsplit(base)
     scheme = "wss" if parts.scheme == "https" else "ws"
     path = (parts.path or "").rstrip("/")
-    return f"{scheme}://{parts.netloc}{path}/socket?api_key={quote(token)}&deviceId={quote(device_id)}"
+    return (
+        f"{scheme}://{parts.netloc}{path}/socket?api_key={quote(token)}&deviceId={quote(device_id)}"
+    )
 
 
 def normalize_message(raw: object) -> tuple[str, dict[str, object]] | None:
@@ -268,7 +271,11 @@ def _command_worker(session: _Session) -> None:
             jellyfin_receiver.dispatch_command(action, payload, guard=_owned)
         except Exception as e:
             _mark_error(e, session=session)
-            logger.warning("jellyfin_ws_command_failed action=%s err=%s", action or "playstate", jellyfin_receiver._sanitize_error_text(e))
+            logger.warning(
+                "jellyfin_ws_command_failed action=%s err=%s",
+                action or "playstate",
+                jellyfin_receiver._sanitize_error_text(e),
+            )
 
 
 def _read_loop(ws, session: _Session) -> None:
@@ -286,7 +293,10 @@ def _read_loop(ws, session: _Session) -> None:
                 envelope = json.loads(raw) if isinstance(raw, (str, bytes, bytearray)) else raw
             except Exception:
                 envelope = None
-            if isinstance(envelope, dict) and str(envelope.get("MessageType") or "") == "ForceKeepAlive":
+            if (
+                isinstance(envelope, dict)
+                and str(envelope.get("MessageType") or "") == "ForceKeepAlive"
+            ):
                 keepalive = _keepalive_interval(envelope.get("Data"))
                 next_keepalive = time.monotonic() + keepalive
                 with _LOCK:
@@ -501,7 +511,10 @@ def _start(identity: tuple[str, str, str]) -> None:
             return
         session = _Session(identity)
         session.worker = threading.Thread(
-            target=_command_worker, args=(session,), daemon=True, name="relaytv-jellyfin-ws-commands"
+            target=_command_worker,
+            args=(session,),
+            daemon=True,
+            name="relaytv-jellyfin-ws-commands",
         )
         session.reader = threading.Thread(
             target=_socket_worker, args=(session,), daemon=True, name="relaytv-jellyfin-ws"

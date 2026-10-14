@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.2](https://github.com/mcgeezy/relaytv/compare/v0.11.1...v0.11.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* keep libmpv surfaces in Qt composition after renderer recovery ([#151](https://github.com/mcgeezy/relaytv/issues/151)) ([06e087e](https://github.com/mcgeezy/relaytv/commit/06e087e8ab20150fc3e0463decfd7d2046836ccb))
+* prevent YouTube playback stalls with bounded range requests ([#149](https://github.com/mcgeezy/relaytv/issues/149)) ([6e48c2a](https://github.com/mcgeezy/relaytv/commit/6e48c2a7dc8092cc64c260e955a7a77c460406cf))
+* skip unplayable queued items during auto-advance ([#142](https://github.com/mcgeezy/relaytv/issues/142)) ([e37e3d3](https://github.com/mcgeezy/relaytv/commit/e37e3d31274cfa31d7296c718e9f93589fa7bec3))
+* surface upcoming premieres and playback errors via toast notifications ([#143](https://github.com/mcgeezy/relaytv/issues/143)) ([438b5ba](https://github.com/mcgeezy/relaytv/commit/438b5bae157f86e8445be558815fc81568c3822e))
+
+
+### Dependencies
+
+* bump Deno to 2.9.7 with verified sha256 checksums ([#144](https://github.com/mcgeezy/relaytv/issues/144)) ([6a94698](https://github.com/mcgeezy/relaytv/commit/6a94698682746ecb7dfec31f4b102df85e4abe69))
+
 ## [0.11.1](https://github.com/mcgeezy/relaytv/compare/v0.11.0...v0.11.1) (2026-10-07)
 
 

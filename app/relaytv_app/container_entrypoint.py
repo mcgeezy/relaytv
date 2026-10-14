@@ -120,7 +120,11 @@ def _host_model() -> str:
     for candidate in (Path("/proc/device-tree/model"), Path("/sys/firmware/devicetree/base/model")):
         try:
             if candidate.is_file():
-                return candidate.read_text(encoding="utf-8", errors="ignore").replace("\x00", "").strip()
+                return (
+                    candidate.read_text(encoding="utf-8", errors="ignore")
+                    .replace("\x00", "")
+                    .strip()
+                )
         except Exception:
             continue
     return ""
@@ -195,7 +199,9 @@ def _read_json_file(path: Path) -> dict:
 def _write_json_file(path: Path, payload: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=True), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=True), encoding="utf-8"
+        )
     except Exception as exc:
         _eprint(f"entrypoint: failed to write {path}: {exc}")
 
@@ -286,9 +292,7 @@ def _prune_persisted_ytdlp(env: dict[str, str]) -> None:
         _discard_persisted_ytdlp(update_dir, "not executable")
         return
 
-    image = _yt_dlp_version(
-        env, path=_path_without(env, str(update_dir / "bin")), user_site=False
-    )
+    image = _yt_dlp_version(env, path=_path_without(env, str(update_dir / "bin")), user_site=False)
     if not image:
         return
     if _version_key(image) > _version_key(persisted):
@@ -309,9 +313,13 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
     file so both callers share one schedule. ``force`` bypasses the interval
     (used when the settings toggle is switched on).
     """
-    interval_hours = max(0.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 6.0))
+    interval_hours = max(
+        0.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS", 6.0)
+    )
     timeout_sec = max(10.0, _parse_float_env(env, "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC", 180.0))
-    state_path_raw = (env.get("RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE") or "/data/.relaytv-ytdlp-update.json").strip()
+    state_path_raw = (
+        env.get("RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE") or "/data/.relaytv-ytdlp-update.json"
+    ).strip()
     state_path = Path(state_path_raw)
     if not state_path.is_absolute():
         state_path = Path("/data") / state_path
@@ -341,10 +349,14 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
         # stable-only check — that is the whole reason for switching.
         stale_reason = f"channel={channel} state_channel={state.get('channel') or 'stable'}"
 
-    if (not force) and (not stale_reason) and interval_hours > 0 and last_ts > 0 and now < next_due_ts:
-        _eprint(
-            f"entrypoint: yt-dlp auto-update skipped (next check in {int(next_due_ts - now)}s)"
-        )
+    if (
+        (not force)
+        and (not stale_reason)
+        and interval_hours > 0
+        and last_ts > 0
+        and now < next_due_ts
+    ):
+        _eprint(f"entrypoint: yt-dlp auto-update skipped (next check in {int(next_due_ts - now)}s)")
         return False
     if stale_reason:
         _eprint(f"entrypoint: yt-dlp auto-update forced ({stale_reason})")
@@ -387,7 +399,7 @@ def run_yt_dlp_update(env: dict[str, str], *, force: bool = False) -> bool:
         err = err or "installed yt-dlp did not execute; reverted to the image copy"
 
     changed = bool(before and after and before != after)
-    ok = (rc == 0)
+    ok = rc == 0
     _write_json_file(
         state_path,
         {
@@ -489,7 +501,18 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
         _eprint(f"entrypoint: starting Xvfb display={display} screen={screen}")
         xvfb_log = open("/tmp/xvfb.log", "ab")
         xvfb = subprocess.Popen(
-            ["Xvfb", display, "-screen", "0", screen, "-ac", "+extension", "GLX", "+render", "-noreset"],
+            [
+                "Xvfb",
+                display,
+                "-screen",
+                "0",
+                screen,
+                "-ac",
+                "+extension",
+                "GLX",
+                "+render",
+                "-noreset",
+            ],
             stdout=xvfb_log,
             stderr=subprocess.STDOUT,
             env=env,
@@ -584,7 +607,12 @@ def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     if not args:
         args = _default_server_args()
-    if args and args[0] == "uvicorn" and (not access_logging_enabled()) and "--no-access-log" not in args:
+    if (
+        args
+        and args[0] == "uvicorn"
+        and (not access_logging_enabled())
+        and "--no-access-log" not in args
+    ):
         args.append("--no-access-log")
 
     env = refresh_display_credentials(os.environ)

@@ -66,8 +66,7 @@ def test_client_keeps_token_in_header_and_sends_stable_identity() -> None:
     ) == {"MediaContainer": {"size": 0}}
     request = opener.requests[0]
     assert request.full_url == (
-        "https://plex.example:32400/library/sections?includeDetails=1&"
-        "X-Plex-Container-Size=20"
+        "https://plex.example:32400/library/sections?includeDetails=1&X-Plex-Container-Size=20"
     )
     assert request.get_header("X-plex-token") == "server-secret"
     assert request.get_header("X-plex-client-identifier") == "device-123"
@@ -284,9 +283,7 @@ def test_media_stream_close_runs_transcode_cleanup_once() -> None:
             return self.status
 
     opener = _RecordingOpener({})
-    opener.open = lambda request, timeout: (
-        opener.requests.append(request) or _StreamResponse()
-    )
+    opener.open = lambda request, timeout: opener.requests.append(request) or _StreamResponse()
     closed = []
     client = plex_client.PlexClient(
         "https://plex.example:32400",

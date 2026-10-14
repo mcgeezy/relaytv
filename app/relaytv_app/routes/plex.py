@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Public RelayTV route surface for Plex account and server setup."""
+
 from __future__ import annotations
 
 import secrets
@@ -300,11 +301,7 @@ def plex_server_select(req: PlexServerSelectReq, response: Response):
     try:
         with plex_auth.PLEX_LIFECYCLE_LOCK:
             status = plex_auth.auth_manager.status()
-            selected = (
-                status.get("server")
-                if isinstance(status.get("server"), dict)
-                else {}
-            )
+            selected = status.get("server") if isinstance(status.get("server"), dict) else {}
             selected_machine_id = str(selected.get("machine_id") or "").strip()
             if plex_auth.playback_active():
                 if requested and requested == selected_machine_id:

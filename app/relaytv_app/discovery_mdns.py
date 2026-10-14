@@ -495,11 +495,7 @@ def _handle_service_state_change(session, service_type, name, state_change) -> N
         # Check ownership and delete under the same lock used by stop/start so
         # a retired browser cannot erase a record published by its replacement.
         with _BROWSE_LOCK:
-            if (
-                session is None
-                or _BROWSE_SESSION is not session
-                or session.stop.is_set()
-            ):
+            if session is None or _BROWSE_SESSION is not session or session.stop.is_set():
                 return
             _DISCOVERED.pop(str(name or ""), None)
         return

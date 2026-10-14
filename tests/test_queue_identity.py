@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Queue identity must be assigned before concurrent readers can see entries."""
+
 import threading
 
 from relaytv_app import playback_service, player, routes, state
@@ -18,9 +19,12 @@ def test_enqueue_publishes_identity_before_persistence(monkeypatch):
         assert release.wait(5)
 
     monkeypatch.setattr(state, "persist_queue", blocked_persist)
-    worker = threading.Thread(target=lambda: playback_service.queue_item(
-        {"url": "https://example.com/selected", "title": "Selected"}
-    ), daemon=True)
+    worker = threading.Thread(
+        target=lambda: playback_service.queue_item(
+            {"url": "https://example.com/selected", "title": "Selected"}
+        ),
+        daemon=True,
+    )
     worker.start()
     try:
         assert entered.wait(5)
