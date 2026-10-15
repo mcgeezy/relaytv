@@ -87,6 +87,86 @@ def test_live_seek_without_cache_returns_conflict(monkeypatch, path, body):
     assert commands == []
 
 
+@pytest.mark.parametrize("position", [None, "unavailable", float("nan"), float("inf")])
+@pytest.mark.parametrize("has_cache", [False, True])
+@pytest.mark.parametrize("delta", [-60, 60])
+def test_relative_live_seek_requires_position(monkeypatch, position, has_cache, delta):
+    commands = []
+    props = {"time-pos": position}
+    if has_cache:
+        props["demuxer-cache-state"] = {
+            "seekable-ranges": [{"start": 100.0, "end": 200.0}],
+        }
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"is_live": True})
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0)
+    monkeypatch.setattr(player, "_mark_playback_transition", lambda *_: None)
+    monkeypatch.setattr(player, "mpv_get_many", lambda _: props)
+    monkeypatch.setattr(
+        player, "mpv_command", lambda cmd: commands.append(cmd) or {"error": "success"}
+    )
+
+    response = TestClient(create_app(testing=True)).post("/seek", json={"sec": delta})
+
+    assert response.status_code == 409
+    assert "position" in response.json()["detail"].lower()
+    assert commands == []
+
+
+def test_relative_live_seek_rejects_failed_position_query(monkeypatch):
+    commands = []
+
+    def failed_query(_):
+        raise RuntimeError("player telemetry unavailable")
+
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"provider": "iptv"})
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0)
+    monkeypatch.setattr(player, "_mark_playback_transition", lambda *_: None)
+    monkeypatch.setattr(player, "mpv_get_many", failed_query)
+    monkeypatch.setattr(
+        player, "mpv_command", lambda cmd: commands.append(cmd) or {"error": "success"}
+    )
+
+    response = TestClient(create_app(testing=True)).post("/seek", json={"sec": -60})
+
+    assert response.status_code == 409
+    assert commands == []
+
+
+@pytest.mark.parametrize("delta", ["1e999", "-1e999"])
+def test_relative_live_seek_rejects_nonfinite_offset(monkeypatch, delta):
+    commands = []
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"is_live": True})
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0)
+    monkeypatch.setattr(player, "_mark_playback_transition", lambda *_: None)
+    monkeypatch.setattr(
+        player, "mpv_command", lambda cmd: commands.append(cmd) or {"error": "success"}
+    )
+
+    response = TestClient(create_app(testing=True)).post(
+        "/seek", content='{"sec":' + delta + '}', headers={"Content-Type": "application/json"}
+    )
+
+    assert response.status_code == 422
+    assert commands == []
+
+
+@pytest.mark.parametrize("delta", [-60, 60])
+def test_relative_vod_seek_keeps_positionless_fallback(monkeypatch, delta):
+    commands = []
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", {"url": "https://example.test/movie.mp4"})
+    monkeypatch.setattr(routes.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0)
+    monkeypatch.setattr(player, "_mark_playback_transition", lambda *_: None)
+    monkeypatch.setattr(player, "mpv_get_many", lambda _: {})
+    monkeypatch.setattr(
+        player, "mpv_command", lambda cmd: commands.append(cmd) or {"error": "success"}
+    )
+
+    response = TestClient(create_app(testing=True)).post("/seek", json={"sec": delta})
+
+    assert response.status_code == 200
+    assert commands == [["seek", delta, "relative"]]
+
+
 @pytest.mark.skipif(not shutil.which("mpv") or not shutil.which("ffmpeg"),
                     reason="live transport integration needs mpv and ffmpeg")
 def test_live_route_seeks_real_http_mpegts_cache(monkeypatch, tmp_path):

@@ -3265,10 +3265,16 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
     plex_result = playback_service.seek_plex_conversion(delta_sec=delta_sec)
     if isinstance(plex_result, dict):
         return plex_result
+    now = getattr(state, "NOW_PLAYING", None)
+    is_live = player._item_looks_like_live_stream(now) or (
+        isinstance(now, dict) and bool(now.get("is_live"))
+    )
     try:
         delta = float(delta_sec)
     except Exception:
         delta = 0.0
+    if is_live and not math.isfinite(delta):
+        raise HTTPException(status_code=422, detail="Seek offset must be finite")
     if math.isfinite(delta):
         try:
             props = player.mpv_get_many(["time-pos", "duration", "demuxer-cache-state"])
@@ -3278,11 +3284,9 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
             current = float((props or {}).get("time-pos"))
         except Exception:
             current = None
+        if is_live and (current is None or not math.isfinite(current)):
+            raise HTTPException(status_code=409, detail="Live DVR playback position is unavailable")
         if current is not None and math.isfinite(current):
-            now = getattr(state, "NOW_PLAYING", None)
-            is_live = player._item_looks_like_live_stream(now) or (
-                isinstance(now, dict) and bool(now.get("is_live"))
-            )
             if is_live and delta > 0:
                 dvr = player.extract_dvr_status(props.get("demuxer-cache-state"), pos=current, dur=props.get("duration"), is_live=True)
                 if dvr and dvr["seekable"] and float(dvr["delay_sec"]) <= (delta + 2.0):
