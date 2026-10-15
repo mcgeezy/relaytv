@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
+from contextlib import nullcontext
 import importlib.util
 from .config import env_bool as _env_bool
 from .config import runtime_config
@@ -7527,45 +7528,109 @@ def _current_runtime_paused() -> bool:
         return str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
 
 
-def _restart_active_qt_shell_playback(reason: str) -> bool:
+def _restart_active_qt_shell_playback(reason: str, *, playback_intent: int | None = None) -> bool:
     _reset_qt_shell_playback_progress_state()
-    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+    intent = current_playback_intent() if playback_intent is None else playback_intent
+    current = state.NOW_PLAYING
+    now = dict(current) if isinstance(current, dict) else None
     if not now:
         return False
-    stream = str(now.get("_resolved_stream") or now.get("stream") or now.get("url") or "").strip()
-    if not stream:
-        return False
-    audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip() or None
-    pos = _current_runtime_position()
-    paused = _current_runtime_paused()
-    start_pos = _normalize_start_pos(pos)
-    _mark_playback_transition(window_sec=8.0)
+    identity = tuple(now.get(key) for key in ("history_id", "started", "url"))
+
+    def still_current() -> bool:
+        current = state.NOW_PLAYING
+        return (
+            playback_intent_current(intent)
+            and state.SESSION_STATE in ("playing", "paused")
+            and isinstance(current, dict)
+            and tuple(current.get(key) for key in ("history_id", "started", "url")) == identity
+        )
+
+    plex_restart = str(now.get("provider") or "").lower() == "plex" and bool(
+        now.get("plex_item_id")
+    )
+    lifecycle = nullcontext()
+    if plex_restart:
+        from .integrations import plex_auth, plex_service
+
+        lifecycle = plex_auth.PLEX_LIFECYCLE_LOCK
+    prepared_stream = ""
+    recovered = False
     try:
-        with MPV_LOCK:
-            start_mpv(stream, audio_url=audio, start_pos=start_pos)
-        if paused:
-            try:
-                mpv_set("pause", True)
-            except Exception:
-                pass
-        updated = dict(now)
-        updated["stream"] = stream
-        updated["audio"] = audio
-        updated["mode"] = "supervisor_recover"
-        updated["started"] = int(time.time())
-        if pos is not None:
-            updated["resume_pos"] = float(pos)
-            updated["_playback_started_pos"] = float(pos)
-        state.set_now_playing(updated)
-        state.set_session_state("paused" if paused else "playing")
-        if pos is not None:
-            state.set_session_position(float(pos))
+        # Match play_item's Plex lifecycle -> MPV -> intent lock order. Keep
+        # network resolution outside MPV_LOCK so Stop and newer Play can win.
+        with lifecycle:
+            if not still_current():
+                return False
+            pos = _current_runtime_position()
+            paused = _current_runtime_paused()
+            start_pos = _normalize_start_pos(pos)
+            updated = dict(now)
+            if plex_restart:
+                # Conversion URLs die when their old response closes. Mint a
+                # new reference before teardown, at absolute library time.
+                updated = plex_service.catalog_service.resolve_playback_item(now, start_pos=pos)
+                prepared_stream = str(updated["url"])
+                for key in (
+                    "_resolved_stream",
+                    "_resolved_audio",
+                    "_resolved_source_url",
+                    "_resolved_at",
+                ):
+                    updated.pop(key, None)
+                stream = prepared_stream
+                audio = None
+                if updated.get("plex_stream_mode") in ("remux", "transcode"):
+                    start_pos = None  # PMS applied the offset; mpv starts at zero.
+            else:
+                stream = str(
+                    now.get("_resolved_stream") or now.get("stream") or now.get("url") or ""
+                ).strip()
+                audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip() or None
+            if not stream:
+                return False
+            with MPV_LOCK:
+                if not still_current():
+                    return False
+                _mark_playback_transition(window_sec=8.0)
+                headers = _item_http_headers(updated)
+                start_mpv(
+                    stream,
+                    audio_url=audio,
+                    start_pos=start_pos,
+                    **({"http_headers": headers} if headers else {}),
+                )
+                # Stop retires intents before waiting for MPV_LOCK. Never
+                # publish the captured item over that terminal transition.
+                with _INTENT_LOCK:
+                    if intent != _PLAYBACK_INTENT:
+                        return False
+                    if paused:
+                        try:
+                            mpv_set("pause", True)
+                        except Exception:
+                            pass
+                    updated["stream"] = stream
+                    updated["audio"] = audio
+                    updated["mode"] = "supervisor_recover"
+                    updated["started"] = int(time.time())
+                    if pos is not None:
+                        updated["resume_pos"] = float(pos)
+                        updated["_playback_started_pos"] = float(pos)
+                    state.set_now_playing(updated)
+                    state.set_session_state("paused" if paused else "playing")
+                    if pos is not None:
+                        state.set_session_position(float(pos))
+                    recovered = True
         logger.warning("qt_shell_supervisor_restarted_active_playback reason=%s", reason)
         return True
     except Exception as exc:
         logger.warning("qt_shell_supervisor_active_repair_failed reason=%s error=%s", reason, exc)
         _qt_shell_supervisor_set(last_action="repair_failed", last_reason=reason)
         return False
+    finally:
+        if prepared_stream and not recovered:
+            plex_service.stop_transcode_stream(prepared_stream)
 
 
 def _repair_idle_qt_shell(reason: str) -> bool:
@@ -7606,12 +7671,13 @@ def _qt_shell_supervisor_tick(now_mono: float | None = None) -> bool:
         _qt_shell_supervisor_set(last_action="skipped", last_reason="playback_transition")
         return False
 
+    intent = current_playback_intent()
     telemetry = qt_shell_runtime_telemetry(max_age_sec=3.0)
     active_reason = _qt_shell_active_video_repair_reason(telemetry, now_mono=now)
     if active_reason:
         if not _qt_shell_supervisor_restart_allowed(now, active_reason):
             return False
-        if _restart_active_qt_shell_playback(active_reason):
+        if _restart_active_qt_shell_playback(active_reason, playback_intent=intent):
             _qt_shell_supervisor_record_restart(active_reason, "restarted_active_playback")
             return True
         return False
