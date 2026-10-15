@@ -389,6 +389,11 @@ def same_playback_item(
     if left is None or right is None:
         return False
     if isinstance(left, dict) and isinstance(right, dict):
+        left_hist = str(left.get("history_id") or "").strip()
+        right_hist = str(right.get("history_id") or "").strip()
+        if left_hist and right_hist and left_hist == right_hist:
+            return True
+
         left_iptv = (
             str(left.get("iptv_source_id") or "").strip(),
             str(left.get("iptv_channel_id") or "").strip(),
@@ -397,29 +402,31 @@ def same_playback_item(
             str(right.get("iptv_source_id") or "").strip(),
             str(right.get("iptv_channel_id") or "").strip(),
         )
-        if any(left_iptv) or any(right_iptv):
-            return bool(left_iptv[0] and left_iptv[1]) and left_iptv == right_iptv
+        if (any(left_iptv) and not all(left_iptv)) or (any(right_iptv) and not all(right_iptv)):
+            return False
+        if all(left_iptv) and all(right_iptv):
+            return left_iptv == right_iptv
 
         left_plex = str(left.get("plex_item_id") or "").strip()
         right_plex = str(right.get("plex_item_id") or "").strip()
-        if left_plex or right_plex:
-            return bool(left_plex) and left_plex == right_plex
+        if left_plex and right_plex:
+            return left_plex == right_plex
 
         left_jf = str(left.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
         right_jf = str(right.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
-        if left_jf or right_jf:
-            return bool(left_jf) and left_jf == right_jf
-
-        left_hist = str(left.get("history_id") or "").strip()
-        right_hist = str(right.get("history_id") or "").strip()
-        if left_hist and right_hist and left_hist == right_hist:
-            return True
+        if left_jf and right_jf:
+            return left_jf == right_jf
 
     u_left = _extract_item_url(left, left_url)
     u_right = _extract_item_url(right, right_url)
     if not u_left or not u_right:
         return False
-    if u_left == "https://plex.invalid/item" or u_right == "https://plex.invalid/item":
+    placeholder_urls = {
+        "https://plex.invalid/item",
+        "https://iptv.invalid/channel",
+        "https://jellyfin.invalid/item",
+    }
+    if u_left in placeholder_urls or u_right in placeholder_urls:
         return False
     if resolver.is_youtube_url(u_left) and resolver.is_youtube_url(u_right):
         vid_left = resolver.youtube_id_from_url(u_left)

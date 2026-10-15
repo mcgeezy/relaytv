@@ -1161,3 +1161,85 @@ def test_play_now_route_does_not_preserve_duplicate_when_replaying_current_item(
     assert body["preserved"] is None
     assert [item["url"] for item in routes.state.QUEUE] == [queued["url"]]
     assert persisted == []
+
+
+@pytest.mark.parametrize(
+    ("current", "payload"),
+    [
+        (
+            {
+                "url": "http://jellyfin.local:8096/Videos/abc123/stream.mkv",
+                "title": "Jellyfin Movie",
+                "provider": "jellyfin",
+                "jellyfin_item_id": "abc-123",
+                "history_id": "hist-jf-1",
+            },
+            {
+                "url": "http://jellyfin.local:8096/Videos/abc123/stream.mkv",
+                "title": "Jellyfin Movie",
+                "preserve_current": True,
+            },
+        ),
+        (
+            {
+                "url": "https://plex.invalid/item",
+                "title": "Plex Episode",
+                "provider": "plex",
+                "plex_item_id": "9988",
+                "history_id": "hist-plex-1",
+            },
+            {
+                "url": "https://plex.invalid/item",
+                "title": "Plex Episode",
+                "history_id": "hist-plex-1",
+                "preserve_current": True,
+            },
+        ),
+        (
+            {
+                "url": "https://iptv.invalid/src1/ch1",
+                "title": "Live Channel",
+                "provider": "iptv",
+                "iptv_source_id": "src1",
+                "iptv_channel_id": "ch1",
+                "history_id": "hist-iptv-1",
+            },
+            {
+                "url": "https://iptv.invalid/src1/ch1",
+                "title": "Live Channel",
+                "preserve_current": True,
+            },
+        ),
+    ],
+)
+def test_play_now_route_does_not_preserve_provider_item_when_request_omits_provider_ids(
+    monkeypatch,
+    current: dict,
+    payload: dict,
+) -> None:
+    persisted: list[dict] = []
+    queued = {"url": "https://www.youtube.com/watch?v=next123", "title": "Next Up"}
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes.player, "mpv_get", lambda prop: 120.0 if prop == "time-pos" else 600.0
+    )
+    monkeypatch.setattr(routes.player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", dict(current), raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [dict(queued)], raising=False)
+    monkeypatch.setattr(
+        routes.state, "persist_queue_payload", lambda snap: persisted.append(dict(snap))
+    )
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.player, "play_item", lambda item, **kwargs: dict(current))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play_now", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["preserved"] is None
+    assert [item["url"] for item in routes.state.QUEUE] == [queued["url"]]
+    assert persisted == []
