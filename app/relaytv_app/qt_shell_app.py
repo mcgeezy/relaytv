@@ -1246,6 +1246,7 @@ class _QtLibMpvPlayer:
         self._set_opt_best_effort("term-playing-msg", "")
         self._set_opt_best_effort("terminal", "no")
         self._set_opt_best_effort("force-window", "yes")
+        self._set_opt_best_effort("demuxer-donate-buffer", "no")
 
         log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
         self._set_opt_best_effort("log-file", log_file)

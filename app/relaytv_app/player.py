@@ -2177,6 +2177,9 @@ def _qt_shell_runtime_output_state(*, max_age_sec: float = 1.0) -> dict[str, Any
         "playback_active": snap.get("mpv_runtime_playback_active") is True,
         "stream_loaded": snap.get("mpv_runtime_stream_loaded") is True,
         "playback_started": snap.get("mpv_runtime_playback_started") is True,
+        "paused": snap.get("mpv_runtime_paused"),
+        "time_pos": snap.get("mpv_runtime_time_pos"),
+        "duration": snap.get("mpv_runtime_duration"),
         "core_idle": snap.get("mpv_runtime_core_idle"),
         "eof_reached": snap.get("mpv_runtime_eof_reached"),
         "sample_detail": str(snap.get("mpv_runtime_sample_detail") or "").strip().lower(),
@@ -6595,6 +6598,13 @@ _QT_SHELL_SUPERVISOR_THREAD_LOCK = threading.Lock()
 _QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC = 0.0
 _QT_SHELL_DISPLAY_READY_MONOTONIC = 0.0
 _QT_SHELL_DISPLAY_READY_WALL = 0.0
+_QT_SHELL_PLAYBACK_STALL_SEC = 12.0
+_QT_SHELL_PLAYBACK_STALL_EPSILON_SEC = 0.05
+_QT_SHELL_PLAYBACK_PROGRESS_STATE: dict[str, object] = {
+    "identity": None,
+    "time_pos": None,
+    "changed_monotonic": 0.0,
+}
 _SESSION_RESTORE_ATTEMPTED = False
 _AUTO_NEXT_TRANSITION_LOCK = threading.Lock()
 _AUTO_NEXT_TRANSITION = False
@@ -7357,13 +7367,29 @@ def _qt_shell_idle_needs_repair(telemetry: dict[str, Any]) -> tuple[bool, str]:
     return False, ""
 
 
-def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
+def _reset_qt_shell_playback_progress_state() -> None:
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        _QT_SHELL_PLAYBACK_PROGRESS_STATE.update(
+            {
+                "identity": None,
+                "time_pos": None,
+                "changed_monotonic": 0.0,
+            }
+        )
+
+
+def _qt_shell_active_video_repair_reason(
+    telemetry: dict[str, Any], *, now_mono: float | None = None
+) -> str:
     if not isinstance(getattr(state, "NOW_PLAYING", None), dict):
+        _reset_qt_shell_playback_progress_state()
         return ""
     sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
     if sess not in ("playing", "paused"):
+        _reset_qt_shell_playback_progress_state()
         return ""
     if not _is_playing():
+        _reset_qt_shell_playback_progress_state()
         return ""
     now = state.NOW_PLAYING
     try:
@@ -7375,16 +7401,20 @@ def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
     except Exception:
         started_at = 0.0
     if started_at > 0.0 and (time.time() - started_at) < grace:
+        _reset_qt_shell_playback_progress_state()
         return ""
     if not _qt_shell_running():
+        _reset_qt_shell_playback_progress_state()
         return "active_shell_not_running"
 
     freshness = str(telemetry.get("freshness") or "missing").strip().lower()
     if freshness != "fresh":
+        _reset_qt_shell_playback_progress_state()
         return f"active_telemetry_{freshness or 'missing'}"
 
     native_state = _qt_shell_runtime_output_state(max_age_sec=2.0)
     if not isinstance(native_state, dict):
+        _reset_qt_shell_playback_progress_state()
         return ""
     has_video = bool(native_state.get("current_vo"))
     playback_active = bool(native_state.get("playback_active"))
@@ -7398,7 +7428,72 @@ def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
         or native_state.get("path")
     )
     if media_loaded and has_audio and not has_video:
+        _reset_qt_shell_playback_progress_state()
         return "active_audio_without_video"
+
+    paused = native_state.get("paused")
+    live_status = str(now.get("live_status") or "").strip().lower()
+    is_live = bool(now.get("is_live")) or live_status in ("is_live", "live")
+    if (
+        sess != "playing"
+        or paused is not False
+        or not playback_active
+        or native_state.get("core_idle") is True
+        or native_state.get("eof_reached") is True
+        or is_live
+    ):
+        _reset_qt_shell_playback_progress_state()
+        return ""
+
+    raw_time_pos = native_state.get("time_pos")
+    try:
+        time_pos = float(raw_time_pos) if raw_time_pos is not None else None
+    except Exception:
+        time_pos = None
+    if time_pos is None or time_pos < 0.0:
+        _reset_qt_shell_playback_progress_state()
+        return ""
+
+    raw_duration = native_state.get("duration")
+    try:
+        duration = float(raw_duration) if raw_duration is not None else None
+    except Exception:
+        duration = None
+    if duration is not None and duration > 0.0 and time_pos >= duration:
+        _reset_qt_shell_playback_progress_state()
+        return ""
+
+    mono = time.monotonic() if now_mono is None else float(now_mono)
+    identity = (
+        str(now.get("history_id") or ""),
+        now.get("started"),
+        str(now.get("url") or ""),
+        str(native_state.get("path") or ""),
+    )
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        prev_identity = _QT_SHELL_PLAYBACK_PROGRESS_STATE.get("identity")
+        prev_pos_raw = _QT_SHELL_PLAYBACK_PROGRESS_STATE.get("time_pos")
+        try:
+            prev_pos = float(prev_pos_raw) if prev_pos_raw is not None else None
+        except Exception:
+            prev_pos = None
+        changed_mono = float(_QT_SHELL_PLAYBACK_PROGRESS_STATE.get("changed_monotonic") or 0.0)
+        if (
+            prev_identity != identity
+            or prev_pos is None
+            or abs(time_pos - prev_pos) >= _QT_SHELL_PLAYBACK_STALL_EPSILON_SEC
+            or changed_mono <= 0.0
+        ):
+            _QT_SHELL_PLAYBACK_PROGRESS_STATE.update(
+                {
+                    "identity": identity,
+                    "time_pos": time_pos,
+                    "changed_monotonic": mono,
+                }
+            )
+            return ""
+        if (mono - changed_mono) >= _QT_SHELL_PLAYBACK_STALL_SEC:
+            return "active_playback_stalled"
     return ""
 
 
@@ -7433,6 +7528,7 @@ def _current_runtime_paused() -> bool:
 
 
 def _restart_active_qt_shell_playback(reason: str) -> bool:
+    _reset_qt_shell_playback_progress_state()
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     if not now:
         return False
@@ -7506,11 +7602,12 @@ def _qt_shell_supervisor_tick(now_mono: float | None = None) -> bool:
         _qt_shell_supervisor_set(last_action="waiting", last_reason="display_not_stable")
         return False
     if playback_transitioning() or auto_next_transitioning():
+        _reset_qt_shell_playback_progress_state()
         _qt_shell_supervisor_set(last_action="skipped", last_reason="playback_transition")
         return False
 
     telemetry = qt_shell_runtime_telemetry(max_age_sec=3.0)
-    active_reason = _qt_shell_active_video_repair_reason(telemetry)
+    active_reason = _qt_shell_active_video_repair_reason(telemetry, now_mono=now)
     if active_reason:
         if not _qt_shell_supervisor_restart_allowed(now, active_reason):
             return False

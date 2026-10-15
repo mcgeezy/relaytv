@@ -8497,3 +8497,221 @@ def test_video_profile_pi_generation_env_override(monkeypatch) -> None:
     monkeypatch.setenv("RELAYTV_PI_GENERATION", "4")
     assert video_profile._pi_generation("Raspberry Pi 5 Model B Rev 1.0") == 4
     monkeypatch.delenv("RELAYTV_PI_GENERATION", raising=False)
+
+
+def test_qt_shell_supervisor_recovers_stalled_active_playback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    stalled_pos = 2436.083333
+    now = {
+        "history_id": "hist-stalled",
+        "url": "https://www.youtube.com/watch?v=qD3xYUIPS5U",
+        "title": "Stalled Stream",
+        "stream": "https://video.example/stalled.mp4",
+        "audio": "https://audio.example/stalled.m4a",
+        "started": player.time.time() - 60,
+        "resume_pos": stalled_pos,
+        "duration_sec": 2534.633333,
+    }
+
+    player._reset_qt_shell_playback_progress_state()
+    monkeypatch.setenv("RELAYTV_QT_SHELL_BOOT_GRACE_SEC", "0")
+    monkeypatch.setenv("RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC", "0")
+    monkeypatch.setenv("RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC", "0")
+    monkeypatch.setenv("RELAYTV_QT_SHELL_VIDEO_GRACE_SEC", "0")
+    monkeypatch.setattr(player, "_QT_SHELL_DISPLAY_READY_MONOTONIC", 0.0, raising=False)
+    monkeypatch.setattr(player, "_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC", 0.0, raising=False)
+    monkeypatch.setattr(player, "_QT_SHELL_SUPERVISOR_THREAD_STARTED", True, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "NOW_PLAYING", dict(now), raising=False)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: True)
+    monkeypatch.setattr(player, "_qt_shell_runtime_preferred", lambda: True)
+    monkeypatch.setattr(player, "_qt_runtime_uses_external_mpv", lambda: False)
+    monkeypatch.setattr(player, "_qt_shell_display_available", lambda: True)
+    monkeypatch.setattr(player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(player, "_is_playing", lambda: True)
+    monkeypatch.setattr(player, "_qt_shell_running", lambda: True)
+    monkeypatch.setattr(
+        player,
+        "qt_shell_runtime_telemetry",
+        lambda **_: {
+            "selected": True,
+            "available": True,
+            "freshness": "fresh",
+            "alive": True,
+        },
+    )
+    monkeypatch.setattr(
+        player,
+        "_qt_shell_runtime_snapshot",
+        lambda max_age_sec=3.0: {
+            "mpv_runtime_path": "https://video.example/stalled.mp4",
+            "mpv_runtime_current_vo": "libmpv",
+            "mpv_runtime_current_ao": "alsa",
+            "mpv_runtime_aid": 1,
+            "mpv_runtime_playback_active": True,
+            "mpv_runtime_stream_loaded": True,
+            "mpv_runtime_playback_started": True,
+            "mpv_runtime_paused": False,
+            "mpv_runtime_time_pos": stalled_pos,
+            "mpv_runtime_duration": 2534.633333,
+            "mpv_runtime_core_idle": False,
+            "mpv_runtime_eof_reached": False,
+            "mpv_runtime_sample_detail": "",
+        },
+    )
+    monkeypatch.setattr(
+        player, "mpv_get", lambda prop: stalled_pos if prop == "time-pos" else False
+    )
+
+    def fake_start_mpv(stream: str, audio_url: str | None = None, start_pos: float | None = None):
+        calls.append(("start_mpv", {"stream": stream, "audio": audio_url, "start_pos": start_pos}))
+
+    def fake_set_now_playing(payload: dict):
+        player.state.NOW_PLAYING = dict(payload)
+        calls.append(("now", dict(payload)))
+
+    monkeypatch.setattr(player, "start_mpv", fake_start_mpv)
+    monkeypatch.setattr(player.state, "set_now_playing", fake_set_now_playing)
+    monkeypatch.setattr(
+        player.state, "set_session_state", lambda value: calls.append(("state", value))
+    )
+    monkeypatch.setattr(
+        player.state, "set_session_position", lambda value: calls.append(("position", value))
+    )
+
+    assert player._qt_shell_supervisor_tick(now_mono=100.0) is False
+    assert calls == []
+    assert player._qt_shell_supervisor_tick(now_mono=106.0) is False
+    assert calls == []
+    assert player._qt_shell_supervisor_tick(now_mono=112.0) is True
+
+    supervisor = player.qt_shell_supervisor_state()
+    assert calls[0] == (
+        "start_mpv",
+        {
+            "stream": "https://video.example/stalled.mp4",
+            "audio": "https://audio.example/stalled.m4a",
+            "start_pos": stalled_pos,
+        },
+    )
+    assert player.state.NOW_PLAYING["mode"] == "supervisor_recover"
+    assert player.state.NOW_PLAYING["resume_pos"] == stalled_pos
+    assert supervisor["last_action"] == "restarted_active_playback"
+    assert supervisor["last_reason"] == "active_playback_stalled"
+
+
+def test_qt_shell_supervisor_ignores_advancing_paused_or_live_playback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    state_snapshot = {
+        "pos": 10.0,
+        "paused": False,
+        "is_live": False,
+    }
+    now = {
+        "history_id": "hist-normal",
+        "url": "https://www.youtube.com/watch?v=normal",
+        "title": "Normal Stream",
+        "stream": "https://video.example/normal.mp4",
+        "started": player.time.time() - 60,
+        "resume_pos": 10.0,
+        "duration_sec": 300.0,
+    }
+
+    player._reset_qt_shell_playback_progress_state()
+    monkeypatch.setenv("RELAYTV_QT_SHELL_BOOT_GRACE_SEC", "0")
+    monkeypatch.setenv("RELAYTV_QT_SHELL_DISPLAY_SETTLE_SEC", "0")
+    monkeypatch.setenv("RELAYTV_QT_SHELL_SUPERVISOR_COOLDOWN_SEC", "0")
+    monkeypatch.setenv("RELAYTV_QT_SHELL_VIDEO_GRACE_SEC", "0")
+    monkeypatch.setattr(player, "_QT_SHELL_DISPLAY_READY_MONOTONIC", 0.0, raising=False)
+    monkeypatch.setattr(player, "_QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC", 0.0, raising=False)
+    monkeypatch.setattr(player, "_QT_SHELL_SUPERVISOR_THREAD_STARTED", True, raising=False)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(player.state, "NOW_PLAYING", dict(now), raising=False)
+    monkeypatch.setattr(player, "_qt_shell_backend_enabled", lambda: True)
+    monkeypatch.setattr(player, "_qt_runtime_uses_external_mpv", lambda: False)
+    monkeypatch.setattr(player, "_qt_shell_display_available", lambda: True)
+    monkeypatch.setattr(player, "playback_transitioning", lambda: False)
+    monkeypatch.setattr(player, "auto_next_transitioning", lambda: False)
+    monkeypatch.setattr(player, "_is_playing", lambda: True)
+    monkeypatch.setattr(player, "_qt_shell_running", lambda: True)
+    monkeypatch.setattr(
+        player,
+        "qt_shell_runtime_telemetry",
+        lambda **_: {"selected": True, "available": True, "freshness": "fresh", "alive": True},
+    )
+    monkeypatch.setattr(
+        player,
+        "_qt_shell_runtime_output_state",
+        lambda max_age_sec=2.0: {
+            "path": "https://video.example/normal.mp4",
+            "current_vo": "libmpv",
+            "current_ao": "alsa",
+            "aid": 1,
+            "playback_active": True,
+            "stream_loaded": True,
+            "playback_started": True,
+            "paused": state_snapshot["paused"],
+            "time_pos": state_snapshot["pos"],
+            "duration": 300.0,
+            "core_idle": False,
+            "eof_reached": False,
+            "sample_detail": "",
+        },
+    )
+    monkeypatch.setattr(player, "start_mpv", lambda *a, **k: calls.append(("start_mpv", a, k)))
+
+    for idx in range(5):
+        state_snapshot["pos"] = 10.0 + idx * 3.0
+        assert player._qt_shell_supervisor_tick(now_mono=200.0 + idx * 6.0) is False
+
+    state_snapshot["paused"] = True
+    assert player._qt_shell_supervisor_tick(now_mono=300.0) is False
+    assert player._qt_shell_supervisor_tick(now_mono=320.0) is False
+
+    state_snapshot["paused"] = False
+    player.state.NOW_PLAYING["is_live"] = True
+    assert player._qt_shell_supervisor_tick(now_mono=400.0) is False
+    assert player._qt_shell_supervisor_tick(now_mono=420.0) is False
+
+    assert calls == []
+
+
+def test_qt_libmpv_disables_demuxer_buffer_donation(monkeypatch: pytest.MonkeyPatch) -> None:
+    opts: list[tuple[str, str]] = []
+
+    class FakeLib:
+        @staticmethod
+        def mpv_create() -> int:
+            return 1
+
+        @staticmethod
+        def mpv_initialize(_handle: object) -> int:
+            return 0
+
+    mpv_player = qt_shell_app._QtLibMpvPlayer(debug=False)
+    monkeypatch.setattr(mpv_player, "_bind_api", lambda: None)
+    mpv_player._lib = FakeLib()
+    monkeypatch.setattr(mpv_player, "_set_opt", lambda name, value: opts.append((name, value)))
+
+    mpv_player.start(
+        stream="https://video.example/stream.mp4",
+        audio="https://audio.example/stream.m4a",
+        start_pos=None,
+        ipc_path=None,
+        audio_device=None,
+        sub_lang=None,
+        volume=None,
+        ytdl_enabled=False,
+        ytdl_path=None,
+        ytdl_format=None,
+        ytdl_raw_options=None,
+        user_agent=None,
+        referrer=None,
+    )
+
+    assert ("demuxer-donate-buffer", "no") in opts
