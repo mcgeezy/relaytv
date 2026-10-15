@@ -2229,6 +2229,7 @@ def _qt_shell_runtime_requires_live_mpv_ipc(props: list[str] | None = None) -> b
         "playlist-pos",
         "playlist-count",
         "track-list",
+        "demuxer-cache-state",
     }
     for prop in list(props or []):
         key = str(prop or "").strip().lower()

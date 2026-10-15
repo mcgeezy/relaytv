@@ -1338,3 +1338,19 @@ def test_native_qt_playback_state_preserves_dvr_cache_ranges(monkeypatch, positi
         "delay_sec": 300.0 - position,
         "is_at_live": (300.0 - position) < 5.0,
     }
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(routes.player, "startup_session_restore_pending", lambda: False)
+    status_response = client.get("/status")
+    assert status_response.status_code == 200
+    status_body = status_response.json()
+    assert status_body["dvr"] == body["dvr"]
+
+
+def test_subprocess_runtime_requires_live_mpv_ipc_for_demuxer_cache_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        routes.player,
+        "_qt_shell_runtime_snapshot",
+        lambda **kwargs: {"mpv_runtime_sample_detail": "subprocess_runtime"},
+    )
+    assert routes.player._qt_shell_runtime_requires_live_mpv_ipc(["demuxer-cache-state"]) is True

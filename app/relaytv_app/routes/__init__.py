@@ -853,6 +853,9 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
             qt_runtime_telemetry.get("mpv_runtime_current_ao") or ""
         ),
         "native_qt_mpv_runtime_aid": qt_runtime_telemetry.get("mpv_runtime_aid"),
+        "native_qt_mpv_runtime_demuxer_cache_state": qt_runtime_telemetry.get(
+            "mpv_runtime_demuxer_cache_state"
+        ),
         "native_qt_mpv_runtime_sample_detail": str(
             qt_runtime_telemetry.get("mpv_runtime_sample_detail") or ""
         ),
