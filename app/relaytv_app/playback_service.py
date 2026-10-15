@@ -583,24 +583,25 @@ def resume_paused_in_place() -> dict[str, Any] | None:
     Returns the successful mpv control result (for the caller's ack payload),
     or None when there is nothing to resume or the unpause failed.
     """
-    sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
-    now = getattr(state, "NOW_PLAYING", None)
-    if sess != "paused" or not isinstance(now, dict):
-        return None
+    with player.MPV_LOCK:
+        sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
+        now = getattr(state, "NOW_PLAYING", None)
+        if sess != "paused" or not isinstance(now, dict):
+            return None
 
-    try:
-        result = player.mpv_set_result("pause", False)
-    except Exception:
-        return None
-    if not isinstance(result, dict) or result.get("error") != "success":
-        return None
+        try:
+            result = player.mpv_set_result("pause", False)
+        except Exception:
+            return None
+        if not isinstance(result, dict) or result.get("error") != "success":
+            return None
 
-    resumed = dict(now)
-    resumed["closed"] = False
-    suppress_auto_next(2.0)
-    # One mutation, one write: the three-setter form persisted twice through
-    # combinations the session was never conceptually in.
-    state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
+        resumed = dict(now)
+        resumed["closed"] = False
+        suppress_auto_next(2.0)
+        # One mutation, one write: the three-setter form persisted twice through
+        # combinations the session was never conceptually in.
+        state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
     player._emit_plex_timeline_from_now(resumed, "playing")
     return result
 
@@ -777,16 +778,35 @@ def clear_session() -> None:
         pass
 
 
+def set_paused(paused: bool | None = None) -> tuple[dict[str, Any], bool]:
+    """Apply pause/resume (or toggle) and its session update across restarts."""
+    with player.MPV_LOCK:
+        target = not bool(player.mpv_get("pause")) if paused is None else bool(paused)
+        result = player.mpv_set_result("pause", target)
+        success = isinstance(result, dict) and result.get("error") == "success"
+        now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        if success:
+            _record_paused(target)
+    # Server timeline I/O must not hold the player lock and delay Stop/Play.
+    if success:
+        player._emit_plex_timeline_from_now(now, "paused" if target else "playing")
+    return result, target
+
+
+def _record_paused(paused: bool, *, reason: str | None = None) -> None:
+    state.update_session(
+        session_state="paused" if paused else "playing",
+        pause_reason=(reason if reason is not None else "user") if paused else None,
+    )
+
+
 def mark_paused(paused: bool, *, reason: str | None = None) -> None:
     """Record a user pause/unpause of the current session.
 
     ``reason`` preserves a pre-existing pause reason across an in-place
     restart (Jellyfin track switches); it defaults to a user pause.
     """
-    state.update_session(
-        session_state="paused" if paused else "playing",
-        pause_reason=(reason if reason is not None else "user") if paused else None,
-    )
+    _record_paused(paused, reason=reason)
     player._emit_plex_timeline_from_now(
         state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None,
         "paused" if paused else "playing",

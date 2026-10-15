@@ -1144,3 +1144,113 @@ def test_supervisor_resolves_fresh_plex_conversion(
             stream.close()
         for stream_id in prepared:
             plex_service.stop_transcode_stream(stream_id)
+
+
+@pytest.mark.parametrize("phase", ["resolve", "start"])
+@pytest.mark.parametrize(
+    "endpoint, initial_paused",
+    [
+        ("/pause", False),
+        ("/resume", True),
+        ("/toggle_pause", False),
+        ("/toggle_pause", True),
+        ("/playback/play", False),
+        ("/playback/play", True),
+        ("/playback/toggle", False),
+        ("/playback/toggle", True),
+    ],
+)
+def test_pause_commands_survive_plex_recovery(
+    service, stalled_qt_playback, monkeypatch, phase, endpoint, initial_paused
+):
+    import threading
+    from fastapi.testclient import TestClient
+    from relaytv_app import playback_service, player, state
+    from relaytv_app.main import create_app
+
+    catalog, _auth = service
+    monkeypatch.setattr(plex_service, "catalog_service", catalog)
+    monkeypatch.setattr(state, "get_settings", lambda: {"plex_playback_mode": "transcode"})
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    now = catalog.resolve_playback_item(catalog.durable_item(item_id), start_pos=60.0)
+    stalled_qt_playback.update(now)
+    stalled_qt_playback["stream"] = now["url"]
+    monkeypatch.setattr(state, "SESSION_STATE", "paused" if initial_paused else "playing")
+    runtime = {"pause": initial_paused}
+    monkeypatch.setattr(
+        player, "mpv_get", lambda prop: 120.0 if prop == "time-pos" else runtime.get(prop)
+    )
+    monkeypatch.setattr(player, "_emit_plex_timeline_from_now", lambda *a, **kw: None)
+
+    def set_property(prop, value):
+        runtime[prop] = value
+        return {"error": "success"}
+
+    monkeypatch.setattr(player, "mpv_set_result", set_property)
+    entered, release, requested, done = (threading.Event() for _ in range(4))
+    prepared, results, responses, errors = [], [], [], []
+    resolve = catalog.resolve_playback_item
+    set_paused = playback_service.set_paused
+
+    def slow_resolve(item, *, start_pos=None):
+        fresh = resolve(item, start_pos=start_pos)
+        prepared.append(fresh["url"])
+        if phase == "resolve":
+            entered.set()
+            assert release.wait(5)
+        return fresh
+
+    def start(*a, **kw):
+        if phase == "start":
+            entered.set()
+            assert release.wait(5)
+        runtime["pause"] = False  # A new libmpv runtime starts unpaused.
+
+    def command(*a, **kw):
+        requested.set()
+        return set_paused(*a, **kw)
+
+    def recover():
+        try:
+            results.append(player._restart_active_qt_shell_playback("active_audio_without_video"))
+        except BaseException as exc:
+            errors.append(exc)
+
+    def send():
+        try:
+            responses.append(TestClient(create_app(testing=True)).post(endpoint))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(catalog, "resolve_playback_item", slow_resolve)
+    monkeypatch.setattr(player, "start_mpv", start)
+    monkeypatch.setattr(playback_service, "set_paused", command)
+    recovery = threading.Thread(target=recover, daemon=True)
+    request = threading.Thread(target=send, daemon=True)
+    recovery.start()
+    try:
+        assert entered.wait(5), "recovery must be in flight"
+        request.start()
+        assert requested.wait(5), "the real HTTP pause command must reach the service"
+        if phase == "resolve":
+            assert done.wait(5), "pause commands must remain available during resolution"
+        else:
+            assert not done.wait(0.1), "pause command bypassed the in-flight restart"
+    finally:
+        release.set()
+        recovery.join(5)
+        if request.ident is not None:
+            request.join(5)
+        plex_service.stop_transcode_stream(now["url"])
+        for stream in prepared:
+            plex_service.stop_transcode_stream(stream)
+    assert not recovery.is_alive() and not request.is_alive()
+    assert errors == []
+    assert results == [True]
+    assert len(responses) == 1 and responses[0].status_code == 200
+    target = not initial_paused
+    assert responses[0].json()["paused"] is target
+    assert runtime["pause"] is target
+    assert state.SESSION_STATE == ("paused" if target else "playing")

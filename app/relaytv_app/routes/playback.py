@@ -789,24 +789,22 @@ def stop():
 
 @router.post("/pause")
 def pause():
-    result = _control_result_or_raise(player.mpv_set_result("pause", True), action="pause")
-    playback_service.mark_paused(True)
+    result, _target = playback_service.set_paused(True)
+    result = _control_result_or_raise(result, action="pause")
     return {"ok": True, "paused": True, **_control_ack_payload(result)}
 
 
 @router.post("/resume")
 def resume():
-    result = _control_result_or_raise(player.mpv_set_result("pause", False), action="resume")
-    playback_service.mark_paused(False)
+    result, _target = playback_service.set_paused(False)
+    result = _control_result_or_raise(result, action="resume")
     return {"ok": True, "paused": False, **_control_ack_payload(result)}
 
 
 @router.post("/toggle_pause")
 def toggle_pause():
-    cur = bool(player.mpv_get("pause"))
-    target = not cur
-    result = _control_result_or_raise(player.mpv_set_result("pause", target), action="toggle_pause")
-    playback_service.mark_paused(target)
+    result, target = playback_service.set_paused()
+    result = _control_result_or_raise(result, action="toggle_pause")
     return {"ok": True, "paused": target, **_control_ack_payload(result)}
 
 
@@ -821,12 +819,8 @@ def playback_play():
     # If already playing, behave as play/pause for stale clients that still call
     # /playback/play instead of /playback/toggle.
     if player.is_playing():
-        cur = bool(player.mpv_get("pause"))
-        target = not cur
-        result = _control_result_or_raise(
-            player.mpv_set_result("pause", target), action="playback_play"
-        )
-        playback_service.mark_paused(target)
+        result, target = playback_service.set_paused()
+        result = _control_result_or_raise(result, action="playback_play")
         return {
             "ok": True,
             "action": ("pause" if target else "resume"),
@@ -921,12 +915,8 @@ def playback_toggle():
       - If not playing: behave like /playback/play
     """
     if player.is_playing():
-        cur = bool(player.mpv_get("pause"))
-        target = not cur
-        result = _control_result_or_raise(
-            player.mpv_set_result("pause", target), action="toggle_pause"
-        )
-        playback_service.mark_paused(target)
+        result, target = playback_service.set_paused()
+        result = _control_result_or_raise(result, action="toggle_pause")
         return {
             "ok": True,
             "action": "toggle_pause",

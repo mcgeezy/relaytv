@@ -7563,7 +7563,6 @@ def _restart_active_qt_shell_playback(reason: str, *, playback_intent: int | Non
             if not still_current():
                 return False
             pos = _current_runtime_position()
-            paused = _current_runtime_paused()
             start_pos = _normalize_start_pos(pos)
             updated = dict(now)
             if plex_restart:
@@ -7592,6 +7591,9 @@ def _restart_active_qt_shell_playback(reason: str, *, playback_intent: int | Non
             with MPV_LOCK:
                 if not still_current():
                     return False
+                # Pause/resume commands share MPV_LOCK. Sample after slow
+                # resolution and preserve that state through the restart.
+                paused = _current_runtime_paused()
                 _mark_playback_transition(window_sec=8.0)
                 headers = _item_http_headers(updated)
                 start_mpv(
