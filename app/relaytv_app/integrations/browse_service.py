@@ -42,6 +42,8 @@ _SERIES_GROUPS: dict[str, list[tuple[str, str, str, str]]] = {}
 
 # canonical_item_id (winning item_id) -> merged deduplication overlay fields
 _DEDUPED_ITEMS: dict[str, dict[str, Any]] = {}
+# dedupe_key -> last winning item_id (so randomized primary Plex references are evicted on singleton refresh)
+_DEDUPE_KEY_TO_ITEM_ID: dict[str, str] = {}
 
 # server_id -> {"access_token": str, "user_id": str, "authenticated_at": float}
 _CUSTOM_JF_SESSIONS: dict[str, dict[str, Any]] = {}
@@ -869,6 +871,9 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 _register_series_group(single["item_id"], candidates)
             with _SERIES_GROUP_LOCK:
                 _DEDUPED_ITEMS.pop(single["item_id"], None)
+                prev_win = _DEDUPE_KEY_TO_ITEM_ID.pop(k, None)
+                if prev_win:
+                    _DEDUPED_ITEMS.pop(prev_win, None)
             deduped.append(single)
             continue
 
@@ -927,13 +932,13 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
         if str(winner.get("type") or "").lower() == "series":
             _register_series_group(winner["item_id"], sorted_cands)
-        _register_deduped_item(winner)
+        _register_deduped_item(winner, dedupe_key=k)
         deduped.append(winner)
 
     return deduped
 
 
-def _register_deduped_item(winner: dict[str, Any]) -> None:
+def _register_deduped_item(winner: dict[str, Any], *, dedupe_key: str = "") -> None:
     winning_id = str(winner.get("item_id") or "").strip()
     if not winning_id:
         return
@@ -952,6 +957,8 @@ def _register_deduped_item(winner: dict[str, Any]) -> None:
         "thumbnail": winner.get("thumbnail"),
     }
     with _SERIES_GROUP_LOCK:
+        if dedupe_key:
+            _DEDUPE_KEY_TO_ITEM_ID[dedupe_key] = winning_id
         _DEDUPED_ITEMS[winning_id] = overlay
 
 
@@ -1750,6 +1757,32 @@ def _all_primary_plex_children(item_id: str) -> list[dict[str, Any]]:
         start = next_start
 
 
+def _all_custom_plex_children(client: PlexClient, raw_path: str) -> list[dict[str, Any]]:
+    safe_path = plex_service._safe_upstream_path(raw_path)
+    if not safe_path or not safe_path.startswith("/library/metadata/"):
+        return []
+    base_path = safe_path.removesuffix("/children").rstrip("/")
+    children_path = f"{base_path}/children"
+    items: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        query = (
+            {"X-Plex-Container-Start": offset, "X-Plex-Container-Size": 100}
+            if offset > 0
+            else None
+        )
+        p = client.get(children_path, query=query) if query else client.get(children_path)
+        c = p.get("MediaContainer") if isinstance(p, dict) else {}
+        recs = (c.get("Metadata") or []) if isinstance(c, dict) else []
+        for r in recs:
+            if isinstance(r, dict):
+                items.append(r)
+        total = _safe_int(c.get("totalSize") if isinstance(c, dict) else None)
+        offset += len(recs)
+        if not recs or total is None or offset >= total:
+            return items
+
+
 def _series_member_seasons(
     series_id: str, *, refresh: bool = False
 ) -> list[dict[str, Any]]:
@@ -1799,9 +1832,9 @@ def _series_member_seasons(
                     if num is None:
                         continue
                     s_id = str(row.get("season_id") or "")
-                    thumb = f"{base}/Items/{_urlparse.quote(s_id or raw_sid)}/Images/Primary"
+                    thumb = f"{base}/Items/{_urlparse.quote(s_id or raw_sid, safe='')}/Images/Primary"
                     if token:
-                        thumb = f"{thumb}?api_key={_urlparse.quote(token)}"
+                        thumb = f"{thumb}?api_key={_urlparse.quote(token, safe='')}"
                     out.append(
                         attach_local_thumbnail(
                             {
@@ -1818,13 +1851,7 @@ def _series_member_seasons(
                     )
             elif stype == "plex":
                 client = _custom_plex_client(server)
-                base_path = raw_sid.partition("?")[0].rstrip("/")
-                p = client.get(f"{base_path}/children")
-                c = p.get("MediaContainer") if isinstance(p, dict) else {}
-                recs = (c.get("Metadata") or []) if isinstance(c, dict) else []
-                for r in recs:
-                    if not isinstance(r, dict):
-                        continue
+                for r in _all_custom_plex_children(client, raw_sid):
                     num = _safe_int(r.get("index"))
                     if num is None:
                         continue
@@ -1856,18 +1883,15 @@ def list_unified_series_episodes(
     members = _series_member_sources(series_id)
     all_episodes: list[dict[str, Any]] = []
     wanted_season = _safe_int(season_number)
+    wanted_season_srv, wanted_season_raw = decode_item_id(season_id) if season_id else ("", "")
 
     for server, raw_sid in members:
         sid = str(server.get("id") or "")
         stype = str(server.get("type") or "jellyfin").lower()
         lat = get_server_metrics(sid).get("latency_ms")
+        raw_seas = wanted_season_raw if (season_id and wanted_season_srv == sid) else ""
         try:
             if sid == "jf_primary":
-                raw_seas = ""
-                if season_id:
-                    s_srv, s_raw = decode_item_id(season_id)
-                    if s_srv == sid:
-                        raw_seas = s_raw
                 res = jellyfin_receiver.list_series_episodes(
                     raw_sid,
                     season_id=raw_seas,
@@ -1885,9 +1909,11 @@ def list_unified_series_episodes(
                     if not isinstance(s, dict) or str(s.get("type") or "").lower() != "season":
                         continue
                     s_num = _safe_int(s.get("index"))
+                    s_ref = str(s.get("id") or "")
                     if wanted_season is not None and s_num != wanted_season:
                         continue
-                    s_ref = str(s.get("id") or "")
+                    if wanted_season is None and raw_seas and s_ref != raw_seas:
+                        continue
                     if not s_ref:
                         continue
                     for ep in _all_primary_plex_children(s_ref):
@@ -1918,9 +1944,11 @@ def list_unified_series_episodes(
                     )
                 else:
                     q_f = _urlparse.quote(fields)
-                    u = f"{base}/Shows/{_urlparse.quote(raw_sid)}/Episodes?Limit=5000&Fields={q_f}"
+                    u = f"{base}/Shows/{_urlparse.quote(raw_sid, safe='')}/Episodes?Limit=5000&Fields={q_f}"
+                    if raw_seas:
+                        u += f"&SeasonId={_urlparse.quote(raw_seas, safe='')}"
                     if uid:
-                        u += f"&UserId={_urlparse.quote(uid)}"
+                        u += f"&UserId={_urlparse.quote(uid, safe='')}"
                     rows = jellyfin_receiver._extract_items(
                         _custom_jf_get_json(u, token=token, timeout=5.0)
                     )
@@ -1931,30 +1959,24 @@ def list_unified_series_episodes(
                     all_episodes.append(tagged)
             elif stype == "plex":
                 client = _custom_plex_client(server)
-                base_path = raw_sid.partition("?")[0].rstrip("/")
-                p = client.get(f"{base_path}/children")
-                c = p.get("MediaContainer") if isinstance(p, dict) else {}
-                seasons_list = (c.get("Metadata") or []) if isinstance(c, dict) else []
+                seasons_list = _all_custom_plex_children(client, raw_sid)
                 for s in seasons_list:
                     if not isinstance(s, dict):
                         continue
                     s_num = _safe_int(s.get("index"))
                     if wanted_season is not None and s_num != wanted_season:
                         continue
-                    s_key = str(s.get("key") or "").partition("?")[0].rstrip("/")
+                    s_key = plex_service._safe_upstream_path(s.get("key")).removesuffix("/children").rstrip("/")
+                    if wanted_season is None and raw_seas and s_key != raw_seas.removesuffix("/children").rstrip("/"):
+                        continue
                     if not s_key.startswith("/library/metadata/"):
                         continue
-                    ep_p = client.get(
-                        f"{s_key if s_key.endswith('/children') else s_key + '/children'}"
-                    )
-                    ep_c = ep_p.get("MediaContainer") if isinstance(ep_p, dict) else {}
-                    for r in (ep_c.get("Metadata") or []) if isinstance(ep_c, dict) else []:
-                        if isinstance(r, dict):
-                            conv = _custom_plex_raw_to_dict(server, r)
-                            if conv:
-                                adapted = _adapt_plex_item(conv, server, latency_ms=lat)
-                                adapted["series_id"] = series_id
-                                all_episodes.append(adapted)
+                    for r in _all_custom_plex_children(client, s_key):
+                        conv = _custom_plex_raw_to_dict(server, r)
+                        if conv:
+                            adapted = _adapt_plex_item(conv, server, latency_ms=lat)
+                            adapted["series_id"] = series_id
+                            all_episodes.append(adapted)
         except Exception as exc:
             logger.debug("browse_episodes_failed server=%s err=%s", sid, exc)
 

@@ -19,11 +19,13 @@ def _isolated_browse_state(tmp_path, monkeypatch):
     browse_service._SERVER_METRICS.clear()
     browse_service._SERIES_GROUPS.clear()
     browse_service._DEDUPED_ITEMS.clear()
+    browse_service._DEDUPE_KEY_TO_ITEM_ID.clear()
     browse_service._CUSTOM_JF_SESSIONS.clear()
     yield
     browse_service._SERVER_METRICS.clear()
     browse_service._SERIES_GROUPS.clear()
     browse_service._DEDUPED_ITEMS.clear()
+    browse_service._DEDUPE_KEY_TO_ITEM_ID.clear()
     browse_service._CUSTOM_JF_SESSIONS.clear()
 
 
@@ -749,7 +751,7 @@ def test_plex_full_season_and_play_all_follow_real_child_cursors(normalized_plex
     assert all(command == "play_last" for _, command in actions[1:])
 
 
-def test_singleton_refresh_invalidates_prior_duplicate_overlay(monkeypatch):
+def test_singleton_refresh_invalidates_prior_duplicate_overlay(monkeypatch, normalized_plex):
     iid = browse_service.encode_item_id("jf_primary", "movie")
     winner = {"item_id": iid, "source_id": "jf_primary", "type": "movie", "title": "Example",
               "source_latency_ms": 1, "resume_pos": 0, "progress_percent": 0}
@@ -768,6 +770,70 @@ def test_singleton_refresh_invalidates_prior_duplicate_overlay(monkeypatch):
     assert item["resume_pos"] == 0
     assert item.get("duplicate_count", 1) == 1
     assert not item.get("alternate_sources")
+
+    # Also verify that when plex_primary issues a newly randomized reference on singleton refresh,
+    # the prior encrypted reference is evicted from _DEDUPED_ITEMS via _DEDUPE_KEY_TO_ITEM_ID.
+    pms = normalized_plex
+    plex_iid_a = pms.reference("/library/metadata/movie")
+    plex_iid_b = pms.reference("/library/metadata/movie")
+    assert plex_iid_a != plex_iid_b
+    plex_winner_a = {
+        "item_id": plex_iid_a, "source_id": "plex_primary", "type": "movie", "title": "Example",
+        "year": 2024, "source_latency_ms": 1, "resume_pos": 300,
+    }
+    plex_winner_b = {**plex_winner_a, "item_id": plex_iid_b}
+    browse_service.deduplicate_items([plex_winner_a, other])
+    assert plex_iid_a in browse_service._DEDUPED_ITEMS
+    browse_service.deduplicate_items([plex_winner_b])
+    assert plex_iid_a not in browse_service._DEDUPED_ITEMS
+    assert plex_iid_b not in browse_service._DEDUPED_ITEMS
+
+
+def test_custom_plex_child_pagination_and_season_id_filter(monkeypatch):
+    from urllib.parse import quote
+
+    server = {"id": "srv_plex", "type": "plex", "name": "Custom Plex"}
+    monkeypatch.setattr(browse_service, "_find_server_by_id", lambda _: server)
+    monkeypatch.setattr(
+        browse_service, "status_summary", lambda: {"connected": True, "active_server_count": 1}
+    )
+    all_eps = [
+        {"key": f"/library/metadata/ep{i}", "type": "episode", "title": f"Ep {i}",
+         "grandparentTitle": "Big Show", "parentIndex": 1, "index": i}
+        for i in range(1, 136)
+    ]
+    calls = []
+
+    class PagedCustomPlexClient:
+        def get(self, path, *, query=None):
+            calls.append((path, dict(query or {})))
+            if path == "/library/metadata/show99/children":
+                return {"MediaContainer": {"Metadata": [
+                    {"key": "/library/metadata/season99/children", "type": "season", "index": 1}
+                ], "totalSize": 1}}
+            if path == "/library/metadata/season99/children":
+                start = int((query or {}).get("X-Plex-Container-Start", 0))
+                size = int((query or {}).get("X-Plex-Container-Size", 100))
+                return {"MediaContainer": {
+                    "Metadata": all_eps[start:start + size],
+                    "totalSize": len(all_eps),
+                }}
+            pytest.fail(f"Unexpected custom Plex path: {path}")
+
+    monkeypatch.setattr(browse_service, "_custom_plex_client", lambda _: PagedCustomPlexClient())
+    series_id = browse_service.encode_item_id("srv_plex", "/library/metadata/show99/children")
+    season_id = browse_service.encode_item_id("srv_plex", "/library/metadata/season99")
+    client = TestClient(create_app(testing=True))
+    res = client.get(
+        f"/browse/tv/series/{quote(series_id, safe='')}/episodes?season_id={quote(season_id, safe='')}"
+    )
+    assert res.status_code == 200
+    eps = res.json()["episodes"]
+    assert [ep["episode_number"] for ep in eps] == list(range(1, 136))
+    assert any(
+        path == "/library/metadata/season99/children" and q.get("X-Plex-Container-Start") == 100
+        for path, q in calls
+    )
 
 
 @pytest.mark.parametrize("server_id", [None, "srv_good", "srv_bad"])
