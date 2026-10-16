@@ -1261,6 +1261,7 @@ class _QtLibMpvPlayer:
         self._set_opt_best_effort("term-playing-msg", "")
         self._set_opt_best_effort("terminal", "no")
         self._set_opt_best_effort("force-window", "yes")
+        self._set_opt_best_effort("demuxer-donate-buffer", "no")
         self._set_opt_best_effort("force-seekable", "yes")
         self._set_opt_best_effort("demuxer-seekable-cache", "yes")
         back_bytes = (os.getenv("RELAYTV_DEMUXER_MAX_BACK_BYTES") or "").strip() or (

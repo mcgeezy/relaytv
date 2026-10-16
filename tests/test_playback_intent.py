@@ -889,6 +889,123 @@ def test_jellyfin_startup_tracks_receive_the_owning_playback_intent(harness, mon
     ]
 
 
+@pytest.mark.parametrize("competing_action", ["stop", "play"])
+@pytest.mark.parametrize("boundary", ["position_sample", "stall_detection"])
+def test_supervisor_recovery_retires_before_load(
+    harness, stalled_qt_playback, monkeypatch, competing_action, boundary
+):
+    from relaytv_app import playback_service
+
+    entered, release = threading.Event(), threading.Event()
+    results, errors, starts = [], [], []
+
+    def blocked_position():
+        entered.set()
+        assert release.wait(5)
+        return 120.0
+
+    def recover():
+        try:
+            results.append(player._qt_shell_supervisor_tick(now_mono=112.0))
+        except BaseException as exc:
+            errors.append(exc)
+
+    if boundary == "position_sample":
+        monkeypatch.setattr(player, "_current_runtime_position", blocked_position)
+    else:
+        detect = player._qt_shell_active_video_repair_reason
+
+        def blocked_detection(*a, **kw):
+            reason = detect(*a, **kw)
+            if reason:
+                entered.set()
+                assert release.wait(5)
+            return reason
+
+        monkeypatch.setattr(player, "_qt_shell_active_video_repair_reason", blocked_detection)
+    monkeypatch.setattr(player, "start_mpv", lambda *a, **kw: starts.append(a))
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    monkeypatch.setattr(playback_service, "can_preserve_closed_session", lambda: True)
+    assert player._qt_shell_supervisor_tick(now_mono=100.0) is False
+    worker = threading.Thread(target=recover, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5), "recovery must actually be in flight"
+        if competing_action == "stop":
+            client = TestClient(create_app(testing=True))
+            assert client.post("/stop").status_code == 200
+            expected = "closed"
+        else:
+            player.play_item(
+                {"url": "https://example.test/new.mp4"},
+                use_resolver=False,
+                cec=False,
+                clear_queue=False,
+                mode="test",
+            )
+            expected = "playing"
+        winner = dict(state.NOW_PLAYING)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert results == [False]
+    assert starts == [], "retired recovery loaded its stale item"
+    assert state.SESSION_STATE == expected
+    assert state.NOW_PLAYING == winner
+
+
+def test_stop_during_supervisor_start_prevents_stale_publication(stalled_qt_playback, monkeypatch):
+    from relaytv_app import playback_service
+
+    entered, release, retired = (threading.Event() for _ in range(3))
+    results, errors = [], []
+    retire = player.retire_playback_intents
+
+    def tracked_retire(reason=""):
+        result = retire(reason)
+        retired.set()
+        return result
+
+    def blocked_start(*a, **kw):
+        entered.set()
+        assert release.wait(5)
+
+    def run(effect):
+        try:
+            results.append(effect())
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(player, "start_mpv", blocked_start)
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    monkeypatch.setattr(player, "retire_playback_intents", tracked_retire)
+    monkeypatch.setattr(player, "update_history_progress", lambda *a, **kw: None)
+    monkeypatch.setattr(playback_service, "can_preserve_closed_session", lambda: True)
+    assert player._qt_shell_supervisor_tick(now_mono=100.0) is False
+    recovery = threading.Thread(
+        target=lambda: run(lambda: player._qt_shell_supervisor_tick(now_mono=112.0)), daemon=True
+    )
+    recovery.start()
+    stopper = threading.Thread(target=lambda: run(playback_service.stop_current), daemon=True)
+    try:
+        assert entered.wait(5)
+        stopper.start()
+        assert retired.wait(5), "Stop must retire recovery while start holds MPV_LOCK"
+    finally:
+        release.set()
+        recovery.join(5)
+        if stopper.ident is not None:
+            stopper.join(5)
+    assert not recovery.is_alive() and not stopper.is_alive()
+    assert errors == []
+    assert False in results
+    assert state.SESSION_STATE == "closed"
+    assert state.NOW_PLAYING["started"] == 1
+    assert state.NOW_PLAYING["closed"] is True
+
+
 def test_superseded_play_now_rolls_back_preserved_current_when_closed(
     harness,
     monkeypatch,

@@ -1044,3 +1044,213 @@ def test_the_next_page_starts_after_every_record_the_server_sent(service, monkey
     assert dropped["items"] == []
     # The server still sent a record, so the cursor moves past it.
     assert dropped["next_start"] == 1
+
+
+@pytest.mark.parametrize("retire_during_resolve", [False, True])
+def test_supervisor_resolves_fresh_plex_conversion(
+    service, stalled_qt_playback, monkeypatch, retire_during_resolve
+):
+    import threading
+    from relaytv_app import playback_service, player, state, x11_overlay
+
+    catalog, auth = service
+    monkeypatch.setattr(state, "get_settings", lambda: {"plex_playback_mode": "transcode"})
+    monkeypatch.setattr(plex_service, "catalog_service", catalog)
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    resolved = catalog.resolve_playback_item(catalog.durable_item(item_id), start_pos=60.0)
+    stalled_qt_playback.update(resolved)
+    stalled_qt_playback["stream"] = resolved["url"]
+    stalled_qt_playback["_resolved_stream"] = resolved["url"]
+    old_id = resolved["url"].rsplit("/", 1)[-1]
+    response = catalog.media_stream(old_id, range_header="")
+    entered, release = threading.Event(), threading.Event()
+    prepared, opened, starts, results, errors = [], [], [], [], []
+    resolve = catalog.resolve_playback_item
+
+    def blocked_resolve(item, *, start_pos=None):
+        fresh = resolve(item, start_pos=start_pos)
+        prepared.append(fresh["url"].rsplit("/", 1)[-1])
+        entered.set()
+        assert release.wait(5)
+        return fresh
+
+    def spawn(stream, **kwargs):
+        starts.append(kwargs.get("start_pos"))
+        opened.append(catalog.media_stream(stream.rsplit("/", 1)[-1], range_header=""))
+
+    def recover():
+        try:
+            results.append(player._qt_shell_supervisor_tick(now_mono=112.0))
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(catalog, "resolve_playback_item", blocked_resolve)
+    # Exercise real start_mpv -> stop_mpv; replace only the process boundary.
+    monkeypatch.setattr(player, "_stop_qt_shell", response.close)
+    monkeypatch.setattr(player, "_start_qt_shell", spawn)
+    monkeypatch.setattr(player, "stop_splash_screen", lambda: None)
+    monkeypatch.setattr(player, "_persist_runtime_volume_before_stop", lambda: None)
+    monkeypatch.setattr(player, "_cleanup_ipc_socket", lambda: None)
+    monkeypatch.setattr(player, "wait_for_ipc_ready", lambda **kw: True)
+    monkeypatch.setattr(player, "_apply_startup_mpv_runtime_settings", lambda *a: None)
+    monkeypatch.setattr(player, "_recover_audio_output_if_needed", lambda *a: None)
+    monkeypatch.setattr(player, "MPV_PROC", None)
+    monkeypatch.setattr(x11_overlay, "stop_overlay", lambda: None)
+    assert player._qt_shell_supervisor_tick(now_mono=100.0) is False
+    worker = threading.Thread(target=recover, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5), "fresh conversion must be prepared before recovery starts"
+        if retire_during_resolve:
+            monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+            monkeypatch.setattr(player, "update_history_progress", lambda *a, **kw: None)
+            monkeypatch.setattr(player, "_emit_plex_timeline_from_now", lambda *a, **kw: None)
+            monkeypatch.setattr(playback_service, "can_preserve_closed_session", lambda: True)
+            playback_service.stop_current()
+    finally:
+        release.set()
+        worker.join(5)
+    try:
+        assert not worker.is_alive()
+        assert errors == []
+        assert prepared and prepared[0] != old_id
+        if retire_during_resolve:
+            assert results == [False]
+            assert opened == []
+            assert state.SESSION_STATE == "closed"
+            assert prepared[0] not in plex_service._TRANSCODE_SESSIONS
+            assert old_id in plex_service._TRANSCODE_SESSIONS
+        else:
+            assert results == [True]
+            assert len(opened) == 1
+            assert starts == [None], "PMS applied the offset; mpv must not seek it again"
+            assert old_id not in plex_service._TRANSCODE_SESSIONS
+            assert state.NOW_PLAYING["stream"].endswith(prepared[0])
+            assert state.NOW_PLAYING["resume_pos"] == 120.0
+            assert state.NOW_PLAYING["_playback_started_pos"] == 120.0
+            assert "_resolved_stream" not in state.NOW_PLAYING
+            reference = catalog._resolve(
+                auth.session, prepared[0], expected_kind="transcode_stream"
+            )
+            query = dict(
+                plex_service.urllib.parse.parse_qsl(
+                    plex_service.urllib.parse.urlsplit(reference["path"]).query
+                )
+            )
+            assert query["offset"] == "120.0"
+    finally:
+        response.close()
+        for stream in opened:
+            stream.close()
+        for stream_id in prepared:
+            plex_service.stop_transcode_stream(stream_id)
+
+
+@pytest.mark.parametrize("phase", ["resolve", "start"])
+@pytest.mark.parametrize(
+    "endpoint, initial_paused",
+    [
+        ("/pause", False),
+        ("/resume", True),
+        ("/toggle_pause", False),
+        ("/toggle_pause", True),
+        ("/playback/play", False),
+        ("/playback/play", True),
+        ("/playback/toggle", False),
+        ("/playback/toggle", True),
+    ],
+)
+def test_pause_commands_survive_plex_recovery(
+    service, stalled_qt_playback, monkeypatch, phase, endpoint, initial_paused
+):
+    import threading
+    from fastapi.testclient import TestClient
+    from relaytv_app import playback_service, player, state
+    from relaytv_app.main import create_app
+
+    catalog, _auth = service
+    monkeypatch.setattr(plex_service, "catalog_service", catalog)
+    monkeypatch.setattr(state, "get_settings", lambda: {"plex_playback_mode": "transcode"})
+    item_id = catalog.home()["rows"][0]["items"][0]["id"]
+    now = catalog.resolve_playback_item(catalog.durable_item(item_id), start_pos=60.0)
+    stalled_qt_playback.update(now)
+    stalled_qt_playback["stream"] = now["url"]
+    monkeypatch.setattr(state, "SESSION_STATE", "paused" if initial_paused else "playing")
+    runtime = {"pause": initial_paused}
+    monkeypatch.setattr(
+        player, "mpv_get", lambda prop: 120.0 if prop == "time-pos" else runtime.get(prop)
+    )
+    monkeypatch.setattr(player, "_emit_plex_timeline_from_now", lambda *a, **kw: None)
+
+    def set_property(prop, value):
+        runtime[prop] = value
+        return {"error": "success"}
+
+    monkeypatch.setattr(player, "mpv_set_result", set_property)
+    entered, release, requested, done = (threading.Event() for _ in range(4))
+    prepared, results, responses, errors = [], [], [], []
+    resolve = catalog.resolve_playback_item
+    set_paused = playback_service.set_paused
+
+    def slow_resolve(item, *, start_pos=None):
+        fresh = resolve(item, start_pos=start_pos)
+        prepared.append(fresh["url"])
+        if phase == "resolve":
+            entered.set()
+            assert release.wait(5)
+        return fresh
+
+    def start(*a, **kw):
+        if phase == "start":
+            entered.set()
+            assert release.wait(5)
+        runtime["pause"] = False  # A new libmpv runtime starts unpaused.
+
+    def command(*a, **kw):
+        requested.set()
+        return set_paused(*a, **kw)
+
+    def recover():
+        try:
+            results.append(player._restart_active_qt_shell_playback("active_audio_without_video"))
+        except BaseException as exc:
+            errors.append(exc)
+
+    def send():
+        try:
+            responses.append(TestClient(create_app(testing=True)).post(endpoint))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(catalog, "resolve_playback_item", slow_resolve)
+    monkeypatch.setattr(player, "start_mpv", start)
+    monkeypatch.setattr(playback_service, "set_paused", command)
+    recovery = threading.Thread(target=recover, daemon=True)
+    request = threading.Thread(target=send, daemon=True)
+    recovery.start()
+    try:
+        assert entered.wait(5), "recovery must be in flight"
+        request.start()
+        assert requested.wait(5), "the real HTTP pause command must reach the service"
+        if phase == "resolve":
+            assert done.wait(5), "pause commands must remain available during resolution"
+        else:
+            assert not done.wait(0.1), "pause command bypassed the in-flight restart"
+    finally:
+        release.set()
+        recovery.join(5)
+        if request.ident is not None:
+            request.join(5)
+        plex_service.stop_transcode_stream(now["url"])
+        for stream in prepared:
+            plex_service.stop_transcode_stream(stream)
+    assert not recovery.is_alive() and not request.is_alive()
+    assert errors == []
+    assert results == [True]
+    assert len(responses) == 1 and responses[0].status_code == 200
+    target = not initial_paused
+    assert responses[0].json()["paused"] is target
+    assert runtime["pause"] is target
+    assert state.SESSION_STATE == ("paused" if target else "playing")

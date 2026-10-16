@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
+from contextlib import nullcontext
 import math
 import importlib.util
 from .config import env_bool as _env_bool
@@ -119,10 +120,8 @@ def _native_sidecar_health_snapshot(require_qt_shell: bool = False):
     return None
 
 
-# =========================
-# CEC (optional)
-# =========================
-#
+# ==================# CEC (optional)
+# ==================#
 # Goals (Phase 1+2):
 #  1) When playback starts, optionally power on the TV and switch to this HDMI input.
 #  2) When the TV goes to standby, pause playback and persist a resume position.
@@ -714,10 +713,8 @@ def start_cec_monitor() -> None:
     t.start()
 
 
-# =========================
-# MPV + IPC
-# =========================
-
+# ==================# MPV + IPC
+# ==================
 MPV_PROC: subprocess.Popen | None = None
 MPV_LOCK = threading.Lock()
 
@@ -2184,6 +2181,9 @@ def _qt_shell_runtime_output_state(*, max_age_sec: float = 1.0) -> dict[str, Any
         "playback_active": snap.get("mpv_runtime_playback_active") is True,
         "stream_loaded": snap.get("mpv_runtime_stream_loaded") is True,
         "playback_started": snap.get("mpv_runtime_playback_started") is True,
+        "paused": snap.get("mpv_runtime_paused"),
+        "time_pos": snap.get("mpv_runtime_time_pos"),
+        "duration": snap.get("mpv_runtime_duration"),
         "core_idle": snap.get("mpv_runtime_core_idle"),
         "eof_reached": snap.get("mpv_runtime_eof_reached"),
         "sample_detail": str(snap.get("mpv_runtime_sample_detail") or "").strip().lower(),
@@ -6705,6 +6705,13 @@ _QT_SHELL_SUPERVISOR_THREAD_LOCK = threading.Lock()
 _QT_SHELL_SUPERVISOR_LAST_RESTART_MONOTONIC = 0.0
 _QT_SHELL_DISPLAY_READY_MONOTONIC = 0.0
 _QT_SHELL_DISPLAY_READY_WALL = 0.0
+_QT_SHELL_PLAYBACK_STALL_SEC = 12.0
+_QT_SHELL_PLAYBACK_STALL_EPSILON_SEC = 0.05
+_QT_SHELL_PLAYBACK_PROGRESS_STATE: dict[str, object] = {
+    "identity": None,
+    "time_pos": None,
+    "changed_monotonic": 0.0,
+}
 _SESSION_RESTORE_ATTEMPTED = False
 _AUTO_NEXT_TRANSITION_LOCK = threading.Lock()
 _AUTO_NEXT_TRANSITION = False
@@ -7467,13 +7474,29 @@ def _qt_shell_idle_needs_repair(telemetry: dict[str, Any]) -> tuple[bool, str]:
     return False, ""
 
 
-def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
+def _reset_qt_shell_playback_progress_state() -> None:
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        _QT_SHELL_PLAYBACK_PROGRESS_STATE.update(
+            {
+                "identity": None,
+                "time_pos": None,
+                "changed_monotonic": 0.0,
+            }
+        )
+
+
+def _qt_shell_active_video_repair_reason(
+    telemetry: dict[str, Any], *, now_mono: float | None = None
+) -> str:
     if not isinstance(getattr(state, "NOW_PLAYING", None), dict):
+        _reset_qt_shell_playback_progress_state()
         return ""
     sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
     if sess not in ("playing", "paused"):
+        _reset_qt_shell_playback_progress_state()
         return ""
     if not _is_playing():
+        _reset_qt_shell_playback_progress_state()
         return ""
     now = state.NOW_PLAYING
     try:
@@ -7485,16 +7508,20 @@ def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
     except Exception:
         started_at = 0.0
     if started_at > 0.0 and (time.time() - started_at) < grace:
+        _reset_qt_shell_playback_progress_state()
         return ""
     if not _qt_shell_running():
+        _reset_qt_shell_playback_progress_state()
         return "active_shell_not_running"
 
     freshness = str(telemetry.get("freshness") or "missing").strip().lower()
     if freshness != "fresh":
+        _reset_qt_shell_playback_progress_state()
         return f"active_telemetry_{freshness or 'missing'}"
 
     native_state = _qt_shell_runtime_output_state(max_age_sec=2.0)
     if not isinstance(native_state, dict):
+        _reset_qt_shell_playback_progress_state()
         return ""
     has_video = bool(native_state.get("current_vo"))
     playback_active = bool(native_state.get("playback_active"))
@@ -7508,7 +7535,72 @@ def _qt_shell_active_video_repair_reason(telemetry: dict[str, Any]) -> str:
         or native_state.get("path")
     )
     if media_loaded and has_audio and not has_video:
+        _reset_qt_shell_playback_progress_state()
         return "active_audio_without_video"
+
+    paused = native_state.get("paused")
+    live_status = str(now.get("live_status") or "").strip().lower()
+    is_live = bool(now.get("is_live")) or live_status in ("is_live", "live")
+    if (
+        sess != "playing"
+        or paused is not False
+        or not playback_active
+        or native_state.get("core_idle") is True
+        or native_state.get("eof_reached") is True
+        or is_live
+    ):
+        _reset_qt_shell_playback_progress_state()
+        return ""
+
+    raw_time_pos = native_state.get("time_pos")
+    try:
+        time_pos = float(raw_time_pos) if raw_time_pos is not None else None
+    except Exception:
+        time_pos = None
+    if time_pos is None or time_pos < 0.0:
+        _reset_qt_shell_playback_progress_state()
+        return ""
+
+    raw_duration = native_state.get("duration")
+    try:
+        duration = float(raw_duration) if raw_duration is not None else None
+    except Exception:
+        duration = None
+    if duration is not None and duration > 0.0 and time_pos >= duration:
+        _reset_qt_shell_playback_progress_state()
+        return ""
+
+    mono = time.monotonic() if now_mono is None else float(now_mono)
+    identity = (
+        str(now.get("history_id") or ""),
+        now.get("started"),
+        str(now.get("url") or ""),
+        str(native_state.get("path") or ""),
+    )
+    with _QT_SHELL_SUPERVISOR_LOCK:
+        prev_identity = _QT_SHELL_PLAYBACK_PROGRESS_STATE.get("identity")
+        prev_pos_raw = _QT_SHELL_PLAYBACK_PROGRESS_STATE.get("time_pos")
+        try:
+            prev_pos = float(prev_pos_raw) if prev_pos_raw is not None else None
+        except Exception:
+            prev_pos = None
+        changed_mono = float(_QT_SHELL_PLAYBACK_PROGRESS_STATE.get("changed_monotonic") or 0.0)
+        if (
+            prev_identity != identity
+            or prev_pos is None
+            or abs(time_pos - prev_pos) >= _QT_SHELL_PLAYBACK_STALL_EPSILON_SEC
+            or changed_mono <= 0.0
+        ):
+            _QT_SHELL_PLAYBACK_PROGRESS_STATE.update(
+                {
+                    "identity": identity,
+                    "time_pos": time_pos,
+                    "changed_monotonic": mono,
+                }
+            )
+            return ""
+        if (mono - changed_mono) >= _QT_SHELL_PLAYBACK_STALL_SEC:
+            return "active_playback_stalled"
     return ""
 
 
@@ -7542,44 +7634,111 @@ def _current_runtime_paused() -> bool:
         return str(getattr(state, "SESSION_STATE", "") or "").strip().lower() == "paused"
 
 
-def _restart_active_qt_shell_playback(reason: str) -> bool:
-    now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+def _restart_active_qt_shell_playback(reason: str, *, playback_intent: int | None = None) -> bool:
+    _reset_qt_shell_playback_progress_state()
+    intent = current_playback_intent() if playback_intent is None else playback_intent
+    current = state.NOW_PLAYING
+    now = dict(current) if isinstance(current, dict) else None
     if not now:
         return False
-    stream = str(now.get("_resolved_stream") or now.get("stream") or now.get("url") or "").strip()
-    if not stream:
-        return False
-    audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip() or None
-    pos = _current_runtime_position()
-    paused = _current_runtime_paused()
-    start_pos = _normalize_start_pos(pos)
-    _mark_playback_transition(window_sec=8.0)
+    identity = tuple(now.get(key) for key in ("history_id", "started", "url"))
+
+    def still_current() -> bool:
+        current = state.NOW_PLAYING
+        return (
+            playback_intent_current(intent)
+            and state.SESSION_STATE in ("playing", "paused")
+            and isinstance(current, dict)
+            and tuple(current.get(key) for key in ("history_id", "started", "url")) == identity
+        )
+
+    plex_restart = str(now.get("provider") or "").lower() == "plex" and bool(
+        now.get("plex_item_id")
+    )
+    lifecycle = nullcontext()
+    if plex_restart:
+        from .integrations import plex_auth, plex_service
+
+        lifecycle = plex_auth.PLEX_LIFECYCLE_LOCK
+    prepared_stream = ""
+    recovered = False
     try:
-        with MPV_LOCK:
-            start_mpv(stream, audio_url=audio, start_pos=start_pos)
-        if paused:
-            try:
-                mpv_set("pause", True)
-            except Exception:
-                pass
-        updated = dict(now)
-        updated["stream"] = stream
-        updated["audio"] = audio
-        updated["mode"] = "supervisor_recover"
-        updated["started"] = int(time.time())
-        if pos is not None:
-            updated["resume_pos"] = float(pos)
-            updated["_playback_started_pos"] = float(pos)
-        state.set_now_playing(updated)
-        state.set_session_state("paused" if paused else "playing")
-        if pos is not None:
-            state.set_session_position(float(pos))
+        # Match play_item's Plex lifecycle -> MPV -> intent lock order. Keep
+        # network resolution outside MPV_LOCK so Stop and newer Play can win.
+        with lifecycle:
+            if not still_current():
+                return False
+            pos = _current_runtime_position()
+            start_pos = _normalize_start_pos(pos)
+            updated = dict(now)
+            if plex_restart:
+                # Conversion URLs die when their old response closes. Mint a
+                # new reference before teardown, at absolute library time.
+                updated = plex_service.catalog_service.resolve_playback_item(now, start_pos=pos)
+                prepared_stream = str(updated["url"])
+                for key in (
+                    "_resolved_stream",
+                    "_resolved_audio",
+                    "_resolved_source_url",
+                    "_resolved_at",
+                ):
+                    updated.pop(key, None)
+                stream = prepared_stream
+                audio = None
+                if updated.get("plex_stream_mode") in ("remux", "transcode"):
+                    start_pos = None  # PMS applied the offset; mpv starts at zero.
+            else:
+                stream = str(
+                    now.get("_resolved_stream") or now.get("stream") or now.get("url") or ""
+                ).strip()
+                audio = str(now.get("_resolved_audio") or now.get("audio") or "").strip() or None
+            if not stream:
+                return False
+            with MPV_LOCK:
+                if not still_current():
+                    return False
+                # Pause/resume commands share MPV_LOCK. Sample after slow
+                # resolution and preserve that state through the restart.
+                paused = _current_runtime_paused()
+                _mark_playback_transition(window_sec=8.0)
+                headers = _item_http_headers(updated)
+                start_mpv(
+                    stream,
+                    audio_url=audio,
+                    start_pos=start_pos,
+                    **({"http_headers": headers} if headers else {}),
+                )
+                # Stop retires intents before waiting for MPV_LOCK. Never
+                # publish the captured item over that terminal transition.
+                with _INTENT_LOCK:
+                    if intent != _PLAYBACK_INTENT:
+                        return False
+                    if paused:
+                        try:
+                            mpv_set("pause", True)
+                        except Exception:
+                            pass
+                    updated["stream"] = stream
+                    updated["audio"] = audio
+                    updated["mode"] = "supervisor_recover"
+                    updated["started"] = int(time.time())
+                    if pos is not None:
+                        updated["resume_pos"] = float(pos)
+                        updated["_playback_started_pos"] = float(pos)
+                    state.set_now_playing(updated)
+                    state.set_session_state("paused" if paused else "playing")
+                    if pos is not None:
+                        state.set_session_position(float(pos))
+                    recovered = True
         logger.warning("qt_shell_supervisor_restarted_active_playback reason=%s", reason)
         return True
     except Exception as exc:
         logger.warning("qt_shell_supervisor_active_repair_failed reason=%s error=%s", reason, exc)
         _qt_shell_supervisor_set(last_action="repair_failed", last_reason=reason)
         return False
+    finally:
+        if prepared_stream and not recovered:
+            plex_service.stop_transcode_stream(prepared_stream)
 
 
 def _repair_idle_qt_shell(reason: str) -> bool:
@@ -7616,15 +7775,17 @@ def _qt_shell_supervisor_tick(now_mono: float | None = None) -> bool:
         _qt_shell_supervisor_set(last_action="waiting", last_reason="display_not_stable")
         return False
     if playback_transitioning() or auto_next_transitioning():
+        _reset_qt_shell_playback_progress_state()
         _qt_shell_supervisor_set(last_action="skipped", last_reason="playback_transition")
         return False
 
+    intent = current_playback_intent()
     telemetry = qt_shell_runtime_telemetry(max_age_sec=3.0)
-    active_reason = _qt_shell_active_video_repair_reason(telemetry)
+    active_reason = _qt_shell_active_video_repair_reason(telemetry, now_mono=now)
     if active_reason:
         if not _qt_shell_supervisor_restart_allowed(now, active_reason):
             return False
-        if _restart_active_qt_shell_playback(active_reason):
+        if _restart_active_qt_shell_playback(active_reason, playback_intent=intent):
             _qt_shell_supervisor_record_restart(active_reason, "restarted_active_playback")
             return True
         return False
