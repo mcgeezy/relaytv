@@ -32,8 +32,10 @@ VIDEO_TYPES = {"movie", "show", "season", "episode"}
 SECTION_TYPES = {"movie", "show"}
 SORTS = {
     "title": "titleSort:asc",
+    "title_desc": "titleSort:desc",
     "added": "addedAt:desc",
     "year": "year:desc",
+    "year_asc": "year:asc",
     "rating": "rating:desc",
 }
 TIMELINE_STATES = {"buffering", "playing", "paused", "stopped"}
@@ -429,6 +431,10 @@ class PlexCatalogService:
         start_pos: float | None = None,
     ) -> dict[str, object]:
         item_id = str(item.get("plex_item_id") or "").strip()
+        if item_id.startswith(("ms2~", "ms~")):
+            from .browse_service import resolve_custom_plex_playback_item
+
+            return resolve_custom_plex_playback_item(item)
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         raw = self._fetch_item_record(session, reference["path"])
@@ -831,6 +837,13 @@ class PlexCatalogService:
         item_id = str(now.get("plex_item_id") or "").strip()
         if not item_id:
             return False
+        if item_id.startswith(("ms2~", "ms~")):
+            from .browse_service import report_custom_plex_timeline
+
+            return report_custom_plex_timeline(
+                now, playback_state=state_name,
+                position_sec=position_sec, duration_sec=duration_sec,
+            )
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         path = str(reference["path"]).partition("?")[0]

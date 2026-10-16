@@ -19,13 +19,13 @@ def _isolated_browse_state(tmp_path, monkeypatch):
     browse_service._SERVER_METRICS.clear()
     browse_service._SERIES_GROUPS.clear()
     browse_service._DEDUPED_ITEMS.clear()
-    browse_service._DEDUPE_KEY_TO_ITEM_ID.clear()
+    browse_service._DEDUPE_KEY_TO_ITEM_IDS.clear()
     browse_service._CUSTOM_JF_SESSIONS.clear()
     yield
     browse_service._SERVER_METRICS.clear()
     browse_service._SERIES_GROUPS.clear()
     browse_service._DEDUPED_ITEMS.clear()
-    browse_service._DEDUPE_KEY_TO_ITEM_ID.clear()
+    browse_service._DEDUPE_KEY_TO_ITEM_IDS.clear()
     browse_service._CUSTOM_JF_SESSIONS.clear()
 
 
@@ -772,7 +772,7 @@ def test_singleton_refresh_invalidates_prior_duplicate_overlay(monkeypatch, norm
     assert not item.get("alternate_sources")
 
     # Also verify that when plex_primary issues a newly randomized reference on singleton refresh,
-    # the prior encrypted reference is evicted from _DEDUPED_ITEMS via _DEDUPE_KEY_TO_ITEM_ID.
+    # the prior encrypted reference is evicted from _DEDUPED_ITEMS via _DEDUPE_KEY_TO_ITEM_IDS.
     pms = normalized_plex
     plex_iid_a = pms.reference("/library/metadata/movie")
     plex_iid_b = pms.reference("/library/metadata/movie")
@@ -864,3 +864,169 @@ def test_probe_endpoint_matches_ui_result_contract(monkeypatch, server_id):
         assert body['result']['connected'] is (server_id == 'srv_good')
     else:
         assert sum(1 for server in body['results'] if server['connected']) == 1
+
+
+@pytest.mark.parametrize('source', ['plex_primary', 'srv_custom'])
+@pytest.mark.parametrize('sort', ['title_desc', 'year_asc'])
+def test_plex_catalog_sort_direction_before_paging(monkeypatch, source, sort):
+    from types import SimpleNamespace
+    from relaytv_app.integrations import plex_service
+
+    rows = [{'key': f'/library/metadata/{i}', 'type': 'movie',
+             'title': f'Movie {i:03}', 'year': 1950 + i} for i in range(150)]
+    calls = []
+
+    class PMS:
+        def get(self, path, *, query=None):
+            if path == '/library/sections':
+                return {'MediaContainer': {'Directory': [{'key': '1', 'type': 'movie'}]}}
+            assert path == '/library/sections/1/all'
+            calls.append(query)
+            key = 'year' if query['sort'].startswith('year') else 'title'
+            ordered = sorted(rows, key=lambda row: row[key], reverse=query['sort'].endswith('desc'))
+            offset, size = query['X-Plex-Container-Start'], query['X-Plex-Container-Size']
+            return {'MediaContainer': {'Metadata': ordered[offset:offset + size],
+                                       'totalSize': len(rows), 'offset': offset}}
+
+    server = {'id': source, 'type': 'plex'}
+    monkeypatch.setattr(browse_service, '_active_servers', lambda: [server])
+    monkeypatch.setattr(browse_service, 'status_summary', lambda: {})
+    monkeypatch.setattr(browse_service, '_custom_plex_client', lambda _: PMS())
+    # Exercise the actual primary Plex library adapter and its sort-to-query mapping.
+    session = SimpleNamespace(account_id='account', machine_id='machine',
+                              reference_key=b'x' * 32, client=PMS())
+    manager = SimpleNamespace(selected_server_session=lambda: session,
+                              assert_server_session_current=lambda _: None)
+    catalog = plex_service.PlexCatalogService(manager)
+    monkeypatch.setattr(plex_service, 'catalog_service', catalog)
+    ref = catalog._reference(session, 'section', '/library/sections/1/all', 'movie')
+    monkeypatch.setattr(catalog, 'libraries', lambda: {'libraries': [{'id': ref, 'type': 'movie'}]})
+    client = TestClient(create_app(testing=True))
+    titles = []
+    start = 0
+    while start is not None:
+        response = client.get('/browse/movies', params={'sort': sort, 'start': start, 'limit': 60})
+        assert response.status_code == 200
+        page = response.json()
+        titles.extend(item['title'] for item in page['items'])
+        start = page['next_start_index']
+        assert len(titles) <= len(rows)
+    expected = sorted(rows, key=lambda row: row['title' if sort == 'title_desc' else 'year'],
+                      reverse=sort == 'title_desc')
+    assert titles == [row['title'] for row in expected]
+    assert {call['sort'] for call in calls} == (
+        {'titleSort:desc'} if sort == 'title_desc' else {'year:asc'}
+    )
+
+
+def test_primary_plex_season_id_matches_decoded_identity(normalized_plex):
+    pms = normalized_plex
+    pms.children['/library/metadata/season'] = [
+        {'key': f'/library/metadata/ep{i}', 'type': 'episode', 'title': f'Episode {i}',
+         'grandparentTitle': 'Example Show', 'parentIndex': 1, 'index': i}
+        for i in range(1, 4)
+    ]
+    client = TestClient(create_app(testing=True))
+    series_id = pms.reference('/library/metadata/show')
+    seasons = client.get(f'/browse/tv/series/{series_id}/seasons').json()['seasons']
+    response = client.get(f'/browse/tv/series/{series_id}/episodes',
+                          params={'season_id': seasons[0]['season_id']})
+    assert response.status_code == 200
+    assert [ep['episode_number'] for ep in response.json()['episodes']] == [1, 2, 3]
+
+
+def test_all_overlay_aliases_invalidated_and_cache_bounded(normalized_plex, monkeypatch):
+    pms = normalized_plex
+    monkeypatch.setattr(browse_service, 'MAX_DEDUPED_ITEMS', 4)
+    slow = {'item_id': browse_service.encode_item_id('srv_slow', 'movie'),
+            'source_id': 'srv_slow', 'type': 'movie', 'title': 'Example', 'year': 2024,
+            'resume_pos': 1950, 'source_latency_ms': 40}
+    refs = [pms.reference('/library/metadata/movie') for _ in range(12)]
+    for iid in refs:
+        fast = {**slow, 'item_id': iid, 'source_id': 'plex_primary',
+                'resume_pos': 300, 'source_latency_ms': 1}
+        browse_service.deduplicate_items([fast, slow])
+    assert len(browse_service._DEDUPED_ITEMS) == 4
+    assert sum(map(len, browse_service._DEDUPE_KEY_TO_ITEM_IDS.values())) == 4
+    assert refs[-2] in browse_service._DEDUPED_ITEMS
+    fresh = {**fast, 'item_id': pms.reference('/library/metadata/movie')}
+    browse_service.deduplicate_items([fresh])
+    assert not browse_service._DEDUPED_ITEMS
+    assert not browse_service._DEDUPE_KEY_TO_ITEM_IDS
+    response = TestClient(create_app(testing=True)).get('/browse/item/' + refs[-2])
+    assert response.status_code == 200
+    assert response.json()['item']['resume_pos'] == 300
+    assert response.json()['item'].get('duplicate_count', 1) == 1
+    for index, iid in enumerate(refs):
+        fast = {**fast, 'item_id': iid, 'title': f'Example {index}'}
+        browse_service.deduplicate_items([fast, {**slow, 'title': fast['title']}])
+    assert len(browse_service._DEDUPED_ITEMS) == 4
+    assert len(browse_service._DEDUPE_KEY_TO_ITEM_IDS) == 4
+
+
+def test_custom_plex_action_survives_player_lifecycle_and_reports_to_source(monkeypatch, tmp_path):
+    import threading
+    from relaytv_app import player
+    from relaytv_app.integrations import plex_service
+
+    server = {'id': 'srv_custom', 'type': 'plex', 'enabled': True}
+    raw = {'key': '/library/metadata/movie', 'type': 'movie', 'title': 'Example',
+           'duration': 6000000, 'Media': [{'container': 'mp4', 'Part': [
+               {'key': '/library/parts/movie/file.mp4', 'accessible': True, 'exists': True}
+           ]}]}
+    reports = []
+    reported = threading.Event()
+
+    class PMS:
+        def get(self, path, *, query=None):
+            assert path == '/library/metadata/movie'
+            return {'MediaContainer': {'Metadata': [raw]}}
+
+        def request_no_content(self, method, path, *, query):
+            assert (method, path) == ('POST', '/:/timeline')
+            reports.append(dict(query))
+            reported.set()
+
+    monkeypatch.setattr(browse_service, '_find_server_by_id', lambda _: server)
+    monkeypatch.setattr(browse_service, '_custom_plex_client', lambda _: PMS())
+    monkeypatch.setattr(plex_service.catalog_service.auth_manager, 'selected_server_session',
+                        lambda: pytest.fail('Custom playback accessed the primary server session'))
+    monkeypatch.setattr(player, 'update_history_progress', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_mark_playback_transition', lambda *a, **k: None)
+    monkeypatch.setattr(player, 'cec_auto_on_switch', lambda _: False)
+    monkeypatch.setattr(player, '_load_stream_in_existing_mpv', lambda *a, **k: False)
+    streams = []
+    monkeypatch.setattr(player, 'start_mpv', lambda stream, **kw: streams.append(stream))
+    monkeypatch.setattr(player, 'mpv_set', lambda *a, **k: None)
+    monkeypatch.setattr(player, '_add_history_entry', lambda _: None)
+    monkeypatch.setattr(player, '_prime_mpv_up_next_from_queue', lambda **kw: False)
+    monkeypatch.setattr(state, 'NOW_PLAYING', None)
+    monkeypatch.setattr(state, 'QUEUE', [])
+    monkeypatch.setattr(state, 'get_tv_state', lambda: {})
+    monkeypatch.setattr(state, 'update_session', lambda **kw: True)
+    monkeypatch.setattr(state, '_state_path', lambda name: str(tmp_path / name))
+    with plex_service._TIMELINE_LOCK:
+        plex_service._TIMELINE_LAST.clear()
+    iid = browse_service.encode_item_id('srv_custom', '/library/metadata/movie')
+    response = TestClient(create_app(testing=True)).post('/browse/action', json={
+        'item_id': iid, 'command': 'resume', 'resume_pos': 100,
+    })
+    assert response.status_code == 200, response.text
+    now = response.json()['now_playing']
+    assert now['plex_item_id'] == iid
+    assert streams and '/browse/stream/srv_custom' in streams[0]
+    assert reported.wait(2), 'Real player start did not emit a custom Plex timeline report'
+    assert reports[-1]['ratingKey'] == 'movie'
+    assert reports[-1]['state'] == 'playing'
+    assert reports[-1]['time'] == 100000
+    # Round-trip through the actual persisted queue/session formatter and resolver.
+    persisted = state._persistable_queue_item(now)
+    assert persisted['plex_item_id'] == iid
+    replayed = plex_service.catalog_service.resolve_playback_item(persisted)
+    assert '/browse/stream/srv_custom' in replayed['url']
+    reported.clear()
+    player._emit_plex_timeline_from_now(now, 'stopped', position_sec=125, duration_sec=6000)
+    assert reported.wait(2), 'Real stop adapter did not report to custom Plex'
+    assert reports[-1]['time'] == 125000
+    assert reports[-1]['duration'] == 6000000
+    assert reports[-1]['state'] == 'stopped'

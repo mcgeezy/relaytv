@@ -42,8 +42,9 @@ _SERIES_GROUPS: dict[str, list[tuple[str, str, str, str]]] = {}
 
 # canonical_item_id (winning item_id) -> merged deduplication overlay fields
 _DEDUPED_ITEMS: dict[str, dict[str, Any]] = {}
-# dedupe_key -> last winning item_id (so randomized primary Plex references are evicted on singleton refresh)
-_DEDUPE_KEY_TO_ITEM_ID: dict[str, str] = {}
+# dedupe_key -> every cached winning reference, including randomized Plex aliases.
+_DEDUPE_KEY_TO_ITEM_IDS: dict[str, set[str]] = {}
+MAX_DEDUPED_ITEMS = 512
 
 # server_id -> {"access_token": str, "user_id": str, "authenticated_at": float}
 _CUSTOM_JF_SESSIONS: dict[str, dict[str, Any]] = {}
@@ -871,9 +872,9 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 _register_series_group(single["item_id"], candidates)
             with _SERIES_GROUP_LOCK:
                 _DEDUPED_ITEMS.pop(single["item_id"], None)
-                prev_win = _DEDUPE_KEY_TO_ITEM_ID.pop(k, None)
-                if prev_win:
-                    _DEDUPED_ITEMS.pop(prev_win, None)
+                previous_ids = _DEDUPE_KEY_TO_ITEM_IDS.pop(k, set())
+                for previous_id in previous_ids:
+                    _DEDUPED_ITEMS.pop(previous_id, None)
             deduped.append(single)
             continue
 
@@ -943,6 +944,7 @@ def _register_deduped_item(winner: dict[str, Any], *, dedupe_key: str = "") -> N
     if not winning_id:
         return
     overlay = {
+        "_dedupe_key": dedupe_key,
         "resume_pos": winner.get("resume_pos"),
         "progress_percent": winner.get("progress_percent"),
         "source_count": winner.get("source_count", 1),
@@ -958,8 +960,17 @@ def _register_deduped_item(winner: dict[str, Any], *, dedupe_key: str = "") -> N
     }
     with _SERIES_GROUP_LOCK:
         if dedupe_key:
-            _DEDUPE_KEY_TO_ITEM_ID[dedupe_key] = winning_id
+            _DEDUPE_KEY_TO_ITEM_IDS.setdefault(dedupe_key, set()).add(winning_id)
         _DEDUPED_ITEMS[winning_id] = overlay
+        while len(_DEDUPED_ITEMS) > MAX_DEDUPED_ITEMS:
+            oldest_id = next(iter(_DEDUPED_ITEMS))
+            oldest = _DEDUPED_ITEMS.pop(oldest_id)
+            oldest_key = str(oldest.get("_dedupe_key") or "")
+            aliases = _DEDUPE_KEY_TO_ITEM_IDS.get(oldest_key)
+            if aliases is not None:
+                aliases.discard(oldest_id)
+                if not aliases:
+                    _DEDUPE_KEY_TO_ITEM_IDS.pop(oldest_key, None)
 
 
 def _apply_deduped_item_overlay(item: dict[str, Any]) -> dict[str, Any]:
@@ -1342,7 +1353,11 @@ def _plex_sort_for_unified(sort_key: str) -> str:
     s = str(sort_key or "").strip().lower()
     if s == "added":
         return "added"
-    if s in {"year_desc", "year_asc"}:
+    if s == "title_desc":
+        return "title_desc"
+    if s == "year_asc":
+        return "year_asc"
+    if s == "year_desc":
         return "year"
     return "title"
 
@@ -1905,6 +1920,11 @@ def list_unified_series_episodes(
                         all_episodes.append(tagged)
             elif sid == "plex_primary":
                 seasons_list = _all_primary_plex_children(raw_sid)
+                wanted_path = ""
+                if wanted_season is None and raw_seas:
+                    catalog = plex_service.catalog_service
+                    session = catalog.auth_manager.selected_server_session()
+                    wanted_path = catalog._resolve(session, raw_seas, expected_kind="item")["path"]
                 for s in seasons_list:
                     if not isinstance(s, dict) or str(s.get("type") or "").lower() != "season":
                         continue
@@ -1912,8 +1932,10 @@ def list_unified_series_episodes(
                     s_ref = str(s.get("id") or "")
                     if wanted_season is not None and s_num != wanted_season:
                         continue
-                    if wanted_season is None and raw_seas and s_ref != raw_seas:
-                        continue
+                    if wanted_path:
+                        path = catalog._resolve(session, s_ref, expected_kind="item")["path"]
+                        if path != wanted_path:
+                            continue
                     if not s_ref:
                         continue
                     for ep in _all_primary_plex_children(s_ref):
@@ -2318,28 +2340,17 @@ def perform_unified_action(
             "thumbnail": thumb,
         }
     else:
-        # Custom Plex server: resolve first media part path
-        safe_path = plex_service._safe_upstream_path(raw_id)
-        if not safe_path or not safe_path.startswith("/library/metadata/"):
-            raise ValueError("Invalid Plex item path")
-        client = _custom_plex_client(server)
-        payload = client.get(safe_path, query={"includeGuids": 1, "includeExtras": 0})
-        c = payload.get("MediaContainer") if isinstance(payload, dict) else {}
-        recs = (c.get("Metadata") or []) if isinstance(c, dict) else []
-        if not recs or not isinstance(recs[0], dict):
-            raise ValueError("Plex item not found")
-        part, _media, _mi, _pi = plex_service.PlexCatalogService._select_playback_part(recs[0])
-        part_key = str(part.get("key") or "").strip()
-        stream_url = (
-            f"http://127.0.0.1:{config.server_port()}/browse/stream/{_urlparse.quote(sid, safe='')}"
-            f"?path={_urlparse.quote(part_key, safe='')}"
-        )
+        # Keep a server-aware durable reference so the normal player lifecycle
+        # can resolve this source again and send its watch-state reports.
         queue_entry = {
-            "url": stream_url,
+            "url": "https://plex.invalid/item",
             "title": display_title,
             "provider": "plex",
             "thumbnail": thumb,
+            "plex_item_id": encode_item_id(sid, raw_id),
         }
+        if detail.get("runtime_sec"):
+            queue_entry["duration_sec"] = detail["runtime_sec"]
 
     if cmd == "play_next":
         qlen, _snap = playback_service.queue_item_next(queue_entry)
@@ -2394,6 +2405,58 @@ def play_all_unified_series(series_id: str, *, refresh: bool = False) -> dict[st
         "queued_count": queued,
         "now_playing": play_res.get("now_playing"),
     }
+
+
+def _custom_plex_item_source(item_id: str) -> tuple[dict[str, Any], str]:
+    sid, raw_path = decode_item_id(item_id)
+    server = _find_server_by_id(sid)
+    path = plex_service._safe_upstream_path(raw_path)
+    if (
+        not server or sid in {"jf_primary", "plex_primary"}
+        or server.get("type") != "plex" or not server.get("enabled", True)
+        or not re.fullmatch(r"/library/metadata/[^/?]+", path)
+    ):
+        raise PlexError("plex_invalid_reference", "Custom Plex item is unavailable", status_code=404)
+    return server, path
+
+
+def resolve_custom_plex_playback_item(item: dict[str, Any]) -> dict[str, Any]:
+    server, path = _custom_plex_item_source(str(item.get("plex_item_id") or ""))
+    client = _custom_plex_client(server)
+    payload = client.get(path, query={"includeGuids": 1, "includeExtras": 0})
+    records = (payload.get("MediaContainer") or {}).get("Metadata") or []
+    if not records or records[0].get("type") not in {"movie", "episode"}:
+        raise PlexError("plex_not_found", "Custom Plex media item not found", status_code=404)
+    part, _media, _mi, _pi = plex_service.PlexCatalogService._select_playback_part(records[0])
+    part_path = plex_service._safe_upstream_path(part.get("key"))
+    if not part_path.startswith("/library/parts/"):
+        raise PlexError("plex_media_unavailable", "Plex media part is unavailable", status_code=502)
+    sid = str(server["id"])
+    url = (
+        f"http://127.0.0.1:{config.server_port()}/browse/stream/{_urlparse.quote(sid, safe='')}"
+        f"?path={_urlparse.quote(part_path, safe='')}"
+    )
+    resolved = {**item, "url": url, "plex_stream_mode": "direct"}
+    duration = _safe_float(records[0].get("duration"))
+    if duration and duration > 0:
+        resolved["duration_sec"] = duration / 1000.0
+    return resolved
+
+
+def report_custom_plex_timeline(
+    now: dict[str, Any], *, playback_state: str,
+    position_sec: float | None = None, duration_sec: float | None = None,
+) -> bool:
+    server, path = _custom_plex_item_source(str(now.get("plex_item_id") or ""))
+    client = _custom_plex_client(server)
+    position = _safe_float(position_sec if position_sec is not None else now.get("resume_pos")) or 0
+    duration = _safe_float(duration_sec if duration_sec is not None else now.get("duration_sec")) or 0
+    client.request_no_content("POST", "/:/timeline", query={
+        "ratingKey": path.rsplit("/", 1)[1], "key": path,
+        "identifier": "com.plexapp.plugins.library", "state": playback_state,
+        "time": max(0, int(position * 1000)), "duration": max(0, int(duration * 1000)),
+    })
+    return True
 
 
 def fetch_custom_plex_artwork(server_id: str, path: str) -> PlexBinaryResponse:
