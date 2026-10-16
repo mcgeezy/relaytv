@@ -597,7 +597,14 @@ def probe_all_servers(server_id: str = "") -> dict[str, Any]:
                     fut.result()
                 except Exception:
                     pass
-    return list_servers_public()
+    summary = list_servers_public()
+    target_ids = {str(server.get("id") or "") for server in targets}
+    results = [server for server in summary["servers"] if server["id"] in target_ids]
+    return {
+        **summary,
+        "results": results,
+        "result": next((server for server in results if server["id"] == server_id), None),
+    }
 
 
 def _active_servers() -> list[dict[str, Any]]:
@@ -860,6 +867,8 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             single["duplicate_count"] = 1
             if str(single.get("type") or "").lower() == "series":
                 _register_series_group(single["item_id"], candidates)
+            with _SERIES_GROUP_LOCK:
+                _DEDUPED_ITEMS.pop(single["item_id"], None)
             deduped.append(single)
             continue
 
@@ -1171,6 +1180,8 @@ def _custom_plex_raw_to_dict(
     key = str(raw.get("key") or "").strip()
     if mtype not in {"movie", "show", "season", "episode"} or not key.startswith("/"):
         return None
+    if mtype in {"show", "season"}:
+        key = key.removesuffix("/children")
     duration = int(raw.get("duration") or 0)
     offset = int(raw.get("viewOffset") or 0)
     progress = round(min(100.0, (offset / duration) * 100.0), 1) if duration > 0 else 0.0
@@ -1727,6 +1738,18 @@ def list_unified_series_seasons(series_id: str, *, refresh: bool = False) -> dic
     }
 
 
+def _all_primary_plex_children(item_id: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        page = plex_service.catalog_service.children(item_id, start=start, limit=100)
+        items.extend(item for item in (page.get("items") or []) if isinstance(item, dict))
+        next_start = _safe_int(page.get("next_start"))
+        if next_start is None or next_start <= start:
+            return items
+        start = next_start
+
+
 def _series_member_seasons(
     series_id: str, *, refresh: bool = False
 ) -> list[dict[str, Any]]:
@@ -1747,8 +1770,7 @@ def _series_member_seasons(
                         sc["source_latency_ms"] = lat
                         out.append(sc)
             elif sid == "plex_primary":
-                res = plex_service.catalog_service.children(raw_sid, start=0, limit=100)
-                for s in res.get("items") or []:
+                for s in _all_primary_plex_children(raw_sid):
                     if isinstance(s, dict) and str(s.get("type") or "").lower() == "season":
                         num = _safe_int(s.get("index"))
                         if num is None:
@@ -1810,7 +1832,7 @@ def _series_member_seasons(
                     out.append(
                         {
                             "series_id": series_id,
-                            "season_id": encode_item_id(sid, str(r.get("key") or "")),
+                            "season_id": encode_item_id(sid, str((conv or {}).get("id") or "")),
                             "season_number": num,
                             "title": str(r.get("title") or f"Season {num}"),
                             "subtitle": str(r.get("title") or f"Season {num}"),
@@ -1858,8 +1880,7 @@ def list_unified_series_episodes(
                         tagged["series_id"] = series_id
                         all_episodes.append(tagged)
             elif sid == "plex_primary":
-                seasons_res = plex_service.catalog_service.children(raw_sid, start=0, limit=100)
-                seasons_list = seasons_res.get("items") or []
+                seasons_list = _all_primary_plex_children(raw_sid)
                 for s in seasons_list:
                     if not isinstance(s, dict) or str(s.get("type") or "").lower() != "season":
                         continue
@@ -1869,8 +1890,7 @@ def list_unified_series_episodes(
                     s_ref = str(s.get("id") or "")
                     if not s_ref:
                         continue
-                    ep_res = plex_service.catalog_service.children(s_ref, start=0, limit=100)
-                    for ep in ep_res.get("items") or []:
+                    for ep in _all_primary_plex_children(s_ref):
                         if isinstance(ep, dict) and str(ep.get("type") or "").lower() == "episode":
                             adapted = _adapt_plex_item(ep, server, latency_ms=lat)
                             adapted["series_id"] = series_id
@@ -2095,6 +2115,9 @@ def get_unified_item_detail(item_id: str, *, refresh: bool = False) -> dict[str,
         pitem = res.get("item") if isinstance(res, dict) else None
         if not isinstance(pitem, dict):
             return None
+        # Plex encrypts a fresh reference for each response. Retain the requested
+        # reference so detail, cached overlays, and later actions share an identity.
+        pitem = {**pitem, "id": raw_id}
         tagged = _adapt_plex_item(pitem, server, latency_ms=lat)
     elif stype in {"jellyfin", "emby"}:
         base, token, uid = _resolve_custom_jf_auth(server)

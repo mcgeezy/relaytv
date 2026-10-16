@@ -380,11 +380,11 @@ def test_custom_plex_ids_reach_detail_and_series_routes(monkeypatch) -> None:
         def get(self, path, *, query=None):
             if path == "/library/metadata/123":
                 return {"MediaContainer": {"Metadata": [
-                    {"key": path, "type": "show", "title": "Example"}
+                    {"key": path + "/children", "type": "show", "title": "Example"}
                 ]}}
             if path == "/library/metadata/123/children":
                 return {"MediaContainer": {"Metadata": [
-                    {"key": "/library/metadata/124", "type": "season", "index": 1}
+                    {"key": "/library/metadata/124/children", "type": "season", "index": 1}
                 ]}}
             if path == "/library/metadata/124/children":
                 return {"MediaContainer": {"Metadata": [
@@ -406,9 +406,13 @@ def test_custom_plex_ids_reach_detail_and_series_routes(monkeypatch) -> None:
     detail = client.get(f"/browse/item/{quote(item_id, safe='')}")
     assert detail.status_code == 200
     assert detail.json()["item"]["title"] == "Example"
+    assert detail.json()["item"]["item_id"] == item_id
     seasons = client.get(f"/browse/tv/series/{quote(item_id, safe='')}/seasons")
     assert seasons.status_code == 200
     assert seasons.json()["seasons"][0]["season_number"] == 1
+    assert browse_service.decode_item_id(seasons.json()["seasons"][0]["season_id"]) == (
+        "srv_plex", "/library/metadata/124"
+    )
     episodes = client.get(f"/browse/tv/series/{quote(item_id, safe='')}/episodes?season_number=1")
     assert episodes.status_code == 200
     assert episodes.json()["episodes"][0]["episode_number"] == 1
@@ -615,3 +619,182 @@ def test_deduped_detail_overlay_and_adjacent_episode_navigation(monkeypatch) -> 
     adj = adj_res.json()
     assert adj["prev"]["item_id"] == ep1_id
     assert adj["next"]["item_id"] == ep3_id
+
+
+@pytest.fixture
+def normalized_plex(monkeypatch):
+    """Keep Plex encryption, detail normalization, and child pagination real."""
+    import os
+    from types import SimpleNamespace
+    from relaytv_app.integrations import plex_service
+
+    records = {
+        "/library/metadata/movie": {
+            "key": "/library/metadata/movie", "type": "movie", "title": "Example",
+            "year": 2024, "duration": 6000000, "viewOffset": 300000,
+        },
+        "/library/metadata/show": {
+            "key": "/library/metadata/show/children", "type": "show", "title": "Example Show",
+        },
+        "/library/metadata/season": {
+            "key": "/library/metadata/season/children", "type": "season", "index": 1,
+        },
+    }
+    children = {"/library/metadata/show": [records["/library/metadata/season"]]}
+    calls = []
+
+    class PMSClient:
+        def get(self, path, *, query=None):
+            calls.append((path, dict(query or {})))
+            if path.endswith('/children'):
+                rows = children[path.removesuffix('/children')]
+                start = query['X-Plex-Container-Start']
+                limit = query['X-Plex-Container-Size']
+                return {"MediaContainer": {
+                    "Metadata": rows[start:start + limit], "totalSize": len(rows), "offset": start,
+                }}
+            assert path in records, path
+            return {"MediaContainer": {"Metadata": [records[path]]}}
+
+    session = SimpleNamespace(account_id="account", machine_id="machine",
+                              reference_key=os.urandom(32), client=PMSClient())
+    manager = SimpleNamespace(selected_server_session=lambda: session,
+                              assert_server_session_current=lambda _: None)
+    catalog = plex_service.PlexCatalogService(manager)
+    monkeypatch.setattr(plex_service, "catalog_service", catalog)
+    monkeypatch.setattr(browse_service, "_find_server_by_id",
+                        lambda sid: {"id": sid, "type": "plex", "name": "Plex"})
+    monkeypatch.setattr(browse_service, "status_summary", lambda: {"connected": True})
+
+    def reference(path):
+        raw = catalog._item(session, records[path])
+        return browse_service.encode_item_id("plex_primary", raw["id"])
+
+    return SimpleNamespace(records=records, children=children, calls=calls,
+                           reference=reference, session=session, catalog=catalog)
+
+
+def test_plex_detail_keeps_overlay_with_real_randomized_references(normalized_plex) -> None:
+    from urllib.parse import quote
+
+    pms = normalized_plex
+    iid = pms.reference("/library/metadata/movie")
+    assert pms.reference("/library/metadata/movie") != iid
+    winner = {
+        "item_id": iid, "source_id": "plex_primary", "type": "movie", "title": "Example",
+        "year": 2024, "source_latency_ms": 1, "resume_pos": 300,
+    }
+    slower = {**winner, "item_id": browse_service.encode_item_id("srv_slow", "movie"),
+              "source_id": "srv_slow", "source_latency_ms": 40, "resume_pos": 1950}
+    browse_service.deduplicate_items([winner, slower])
+    client = TestClient(create_app(testing=True))
+    for _ in range(2):
+        response = client.get(f"/browse/item/{quote(iid, safe='')}?refresh=true")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["item_id"] == iid
+        assert item["resume_pos"] == 1950
+        assert item["duplicate_count"] == 2
+
+
+@pytest.mark.parametrize("season_number", [0, 1])
+def test_plex_adjacent_episodes_through_real_detail_and_children(normalized_plex, season_number):
+    pms = normalized_plex
+    season = pms.records["/library/metadata/season"]
+    season["index"] = season_number
+    episodes = []
+    for index in range(1, 4):
+        path = f"/library/metadata/ep{index}"
+        raw = {"key": path, "type": "episode", "title": f"Episode {index}",
+               "grandparentTitle": "Example Show", "grandparentKey": "/library/metadata/show",
+               "parentIndex": season_number, "index": index}
+        pms.records[path] = raw
+        episodes.append(raw)
+    pms.children["/library/metadata/season"] = episodes
+    iid = pms.reference("/library/metadata/ep2")
+    client = TestClient(create_app(testing=True))
+    response = client.get(f"/browse/item/{iid}/adjacent")
+    assert response.status_code == 200
+    nav = response.json()
+    assert nav["prev"]["episode_number"] == 1
+    assert nav["next"]["episode_number"] == 3
+    assert nav["next"]["season_number"] == season_number
+    # Confirm that the actual Plex child path was reached with a decoded series reference.
+    assert any(path == "/library/metadata/show/children" for path, _ in pms.calls)
+
+
+def test_plex_full_season_and_play_all_follow_real_child_cursors(normalized_plex, monkeypatch):
+    pms = normalized_plex
+    pms.children["/library/metadata/season"] = [
+        {"key": f"/library/metadata/ep{i}", "type": "episode", "title": f"Episode {i}",
+         "grandparentTitle": "Example Show", "parentIndex": 1, "index": i}
+        for i in range(1, 151)
+    ]
+    iid = pms.reference("/library/metadata/show")
+    client = TestClient(create_app(testing=True))
+    response = client.get(f"/browse/tv/series/{iid}/episodes?season_number=1")
+    assert response.status_code == 200
+    episodes = response.json()["episodes"]
+    assert [ep["episode_number"] for ep in episodes] == list(range(1, 151))
+    assert any(path == "/library/metadata/season/children" and query['X-Plex-Container-Start'] == 100
+               for path, query in pms.calls)
+    actions = []
+    monkeypatch.setattr(browse_service, "perform_unified_action",
+                        lambda iid, cmd: actions.append((iid, cmd)) or {"now_playing": {}})
+    response = client.post(f"/browse/tv/series/{iid}/play_all")
+    assert response.status_code == 200
+    assert response.json()["queued_count"] == 149
+    assert len(actions) == 150
+    assert actions[0][1] == "play_now"
+    assert all(command == "play_last" for _, command in actions[1:])
+
+
+def test_singleton_refresh_invalidates_prior_duplicate_overlay(monkeypatch):
+    iid = browse_service.encode_item_id("jf_primary", "movie")
+    winner = {"item_id": iid, "source_id": "jf_primary", "type": "movie", "title": "Example",
+              "source_latency_ms": 1, "resume_pos": 0, "progress_percent": 0}
+    other = {**winner, "item_id": browse_service.encode_item_id("srv_old", "other"),
+             "source_id": "srv_old", "source_latency_ms": 40, "resume_pos": 1950}
+    browse_service.deduplicate_items([winner, other])
+    assert iid in browse_service._DEDUPED_ITEMS
+    browse_service.deduplicate_items([winner])
+    monkeypatch.setattr(browse_service, "_find_server_by_id",
+                        lambda _: {"id": "jf_primary", "type": "jellyfin"})
+    monkeypatch.setattr(browse_service.jellyfin_receiver, "get_item_detail",
+                        lambda *args, **kwargs: {**winner, "item_id": "movie"})
+    response = TestClient(create_app(testing=True)).get(f"/browse/item/{iid}?refresh=true")
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["resume_pos"] == 0
+    assert item.get("duplicate_count", 1) == 1
+    assert not item.get("alternate_sources")
+
+
+@pytest.mark.parametrize("server_id", [None, "srv_good", "srv_bad"])
+def test_probe_endpoint_matches_ui_result_contract(monkeypatch, server_id):
+    servers = [
+        {"id": "srv_good", "type": "plex", "enabled": True},
+        {"id": "srv_bad", "type": "jellyfin", "enabled": True},
+        {"id": "srv_disabled", "type": "plex", "enabled": False},
+    ]
+    monkeypatch.setattr(browse_service, "_collect_configured_servers", lambda **_: servers)
+
+    def probe(server):
+        connected = server['id'] == "srv_good"
+        browse_service._record_latency(server['id'], 5 if connected else None,
+                                       connected=connected, error='' if connected else 'offline')
+        return browse_service._public_server_entry(server)
+
+    monkeypatch.setattr(browse_service, "probe_single_server", probe)
+    client = TestClient(create_app(testing=True))
+    response = client.post('/browse/servers/probe', json={"server_id": server_id})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body['servers']) == 3  # Preserve the existing response for other clients.
+    expected_ids = {server_id} if server_id else {"srv_good", "srv_bad"}
+    assert {server['id'] for server in body['results']} == expected_ids
+    if server_id:
+        assert body['result']['id'] == server_id
+        assert body['result']['connected'] is (server_id == 'srv_good')
+    else:
+        assert sum(1 for server in body['results'] if server['connected']) == 1
