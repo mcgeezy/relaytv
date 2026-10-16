@@ -34,7 +34,7 @@ from .. import (
 )
 from ..debug import debug_log, get_logger
 from ..config import env_choice, runtime_config
-from ..integrations import iptv_service, jellyfin_receiver, jellyfin_service
+from ..integrations import browse_service, iptv_service, jellyfin_receiver, jellyfin_service
 from ..realtime import (
     HEARTBEAT_SEC,
     PROTOCOL_VERSION,
@@ -49,6 +49,7 @@ from ..realtime import (
 from ..thumb_cache import ensure_cached_sync, attach_local_thumbnail, thumb_id, local_rel_path
 from .app_info import router as app_info_router
 from .assets import _resolve_static_asset, router as assets_router
+from .browse import router as browse_router
 from .capabilities import (
     notifications_capabilities as notifications_capabilities,
     router as capabilities_router,
@@ -173,6 +174,7 @@ from .uploads import (
 router = APIRouter()
 router.include_router(app_info_router)
 router.include_router(assets_router)
+router.include_router(browse_router)
 router.include_router(capabilities_router)
 router.include_router(devices_router)
 router.include_router(health_router)
@@ -3884,6 +3886,11 @@ def _status_payload() -> dict[str, object]:
             iptv_status = iptv_service.status()
         except Exception:
             iptv_status.update({"source_count": 0, "channel_count": 0})
+    browse_st: dict[str, object] = {}
+    try:
+        browse_st = browse_service.status()
+    except Exception:
+        browse_st = {}
     # Durable-write health. A device whose disk stopped accepting writes used
     # to look completely healthy while quietly discarding every setting and
     # queue change; the key is absent while writes are landing, so the payload
@@ -3904,6 +3911,11 @@ def _status_payload() -> dict[str, object]:
         "iptv_enabled": bool(iptv_status.get("enabled")),
         "iptv_source_count": int(iptv_status.get("source_count") or 0),
         "iptv_channel_count": int(iptv_status.get("channel_count") or 0),
+        "browse_enabled": bool(browse_st.get("enabled")),
+        "browse_connected": bool(browse_st.get("connected")),
+        "browse_server_count": int(browse_st.get("server_count") or 0),
+        "browse_connected_count": int(browse_st.get("connected_count") or 0),
+        "browse_best_latency_ms": browse_st.get("best_latency_ms"),
         "jellyfin_enabled": jf_enabled,
         "jellyfin_running": jf_running,
         "jellyfin_connected": jf_connected,
@@ -5076,6 +5088,67 @@ def ui():
         <div class="inlineApplyRow">
           <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
           <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup" id="setBrowseServersGroup">
+      <summary>Media Servers &amp; Unified Browse <span id="setBrowseStatus" class="sectionStatus unknown">0 connected</span></summary>
+      <div class="settingsBody">
+        <div class="hint">Combine multiple Jellyfin, Emby, and Plex servers into a single unified Browse library. Duplicate movies and shows are deduplicated automatically using the lowest-latency server.</div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setBrowseProbeBtn" class="btn electricBlue">Probe latencies</button>
+          <button type="button" id="setBrowseAddServerBtn" class="btn">+ Add server</button>
+          <div id="setBrowseActionMsg" class="inlineApplyMsg" aria-live="polite"></div>
+        </div>
+        <div id="setBrowseServerList" class="browseServerList"></div>
+        <div id="setBrowseServerForm" class="browseServerForm hidden">
+          <h3 id="setBrowseFormTitle">Add media server</h3>
+          <input type="hidden" id="setBrowseFormId" value="" />
+          <div class="fieldRow">
+            <label class="fieldLbl" for="setBrowseFormType">Server type</label>
+            <select id="setBrowseFormType" class="input">
+              <option value="jellyfin">Jellyfin</option>
+              <option value="emby">Emby</option>
+              <option value="plex">Plex</option>
+            </select>
+          </div>
+          <div class="fieldRow">
+            <label class="fieldLbl" for="setBrowseFormName">Display name</label>
+            <input id="setBrowseFormName" class="input" placeholder="e.g. NAS Jellyfin, Secondary Plex" maxlength="80" />
+          </div>
+          <div class="fieldRow">
+            <label class="fieldLbl" for="setBrowseFormUrl">Server URL</label>
+            <input id="setBrowseFormUrl" class="input" type="url" placeholder="http://10.0.55.2:8096" />
+          </div>
+          <div id="setBrowseFormJfFields">
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setBrowseFormUsername">Username (optional if API key set)</label>
+              <input id="setBrowseFormUsername" class="input" placeholder="username" />
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setBrowseFormPassword">Password</label>
+              <input id="setBrowseFormPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setBrowseFormApiKey">API key (optional)</label>
+              <input id="setBrowseFormApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setBrowseFormUserId">User ID (optional)</label>
+              <input id="setBrowseFormUserId" class="input" placeholder="UUID (optional)" />
+            </div>
+          </div>
+          <div id="setBrowseFormPlexFields" class="hidden">
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setBrowseFormToken">X-Plex-Token (optional if account linked)</label>
+              <input id="setBrowseFormToken" class="input" type="password" autocomplete="new-password" placeholder="(uses linked Plex account token if blank)" />
+            </div>
+          </div>
+          <div class="inlineApplyRow">
+            <button type="button" id="setBrowseFormSaveBtn" class="btn primary electricBlue">Save server</button>
+            <button type="button" id="setBrowseFormCancelBtn" class="btn">Cancel</button>
+          </div>
         </div>
       </div>
     </details>

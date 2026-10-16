@@ -2703,3 +2703,107 @@
     pointer-events: auto;
   }
 }
+
+/* --- Multi-Server & Latency management in Settings --- */
+.browseServerList{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.browseServerRow{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(96, 165, 250, .24);
+  background: rgba(15, 23, 42, .38);
+}
+.browseServerInfo{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.browseServerTop{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.browseServerName{
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.browseServerBadge{
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  border: 1px solid rgba(148, 163, 184, .35);
+  background: rgba(148, 163, 184, .14);
+}
+.browseServerBadge.type{
+  border-color: rgba(56, 189, 248, .45);
+  background: rgba(56, 189, 248, .15);
+  color: #bae6fd;
+}
+.browseServerBadge.up{
+  border-color: rgba(52, 211, 153, .55);
+  background: rgba(16, 185, 129, .18);
+  color: #a7f3d0;
+}
+.browseServerBadge.down{
+  border-color: rgba(248, 113, 113, .55);
+  background: rgba(239, 68, 68, .18);
+  color: #fecaca;
+}
+.browseServerBadge.latency{
+  border-color: rgba(167, 139, 250, .45);
+  background: rgba(139, 92, 246, .16);
+  color: #ddd6fe;
+}
+.browseServerBadge.latency.fastest{
+  border-color: rgba(52, 211, 153, .65);
+  background: rgba(16, 185, 129, .24);
+  color: #bbf7d0;
+}
+.browseServerActions{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.browseServerForm{
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, .34);
+  background: rgba(15, 23, 42, .45);
+}
+.browseServerForm h3{
+  margin: 0 0 10px 0;
+  font-size: 14px;
+}
+@media (prefers-color-scheme: light){
+  .browseServerRow{
+    background: rgba(255, 255, 255, .74);
+    border-color: rgba(37, 99, 235, .20);
+  }
+  .browseServerBadge.type{ color: #0369a1; background: rgba(56, 189, 248, .18); }
+  .browseServerBadge.up{ color: #065f46; background: rgba(16, 185, 129, .20); }
+  .browseServerBadge.down{ color: #991b1b; background: rgba(239, 68, 68, .18); }
+  .browseServerBadge.latency{ color: #5b21b6; background: rgba(139, 92, 246, .15); }
+  .browseServerBadge.latency.fastest{ color: #065f46; background: rgba(16, 185, 129, .24); }
+  .browseServerForm{
+    background: rgba(255, 255, 255, .82);
+    border-color: rgba(37, 99, 235, .24);
+  }
+}

@@ -80,6 +80,7 @@ function applyJfBranding(serverType, serverConfigured){
 
 function _jfCanLaunchFromStatus(st){
   if (!st || typeof st !== 'object') return false;
+  if (st.browse_connected) return true;
   const enabled = !!st.jellyfin_enabled;
   const running = !!st.jellyfin_running;
   const connected = !!(st.jellyfin_connected || st.jellyfin_authenticated);
@@ -89,12 +90,15 @@ function _jfCanLaunchFromStatus(st){
 function _jfSetLaunchVisible(visible){
   __jfLaunchVisible = !!visible;
   const btn = document.getElementById('jellyfinOpenBtn');
+  const anyVisible = __jfLaunchVisible
+    || (typeof __plexReady !== 'undefined' && !!__plexReady)
+    || (typeof __plexLaunchVisible !== 'undefined' && !!__plexLaunchVisible);
   if (btn) {
-    btn.classList.toggle('show', __jfLaunchVisible);
-    btn.disabled = !__jfLaunchVisible;
+    btn.classList.toggle('show', anyVisible);
+    btn.disabled = !anyVisible;
   }
   if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
-  if (!__jfLaunchVisible) closeJellyfinShell({fromNav:true, force:true});
+  if (!anyVisible) closeJellyfinShell({fromNav:true, force:true});
 }
 
 function _jfSetShellVisible(visible){
@@ -114,9 +118,11 @@ function _jfSetShellVisible(visible){
 }
 
 function openJellyfinShell(){
-  if (!__jfLaunchVisible) return;
+  const anyVisible = __jfLaunchVisible
+    || (typeof __plexReady !== 'undefined' && !!__plexReady)
+    || (typeof __plexLaunchVisible !== 'undefined' && !!__plexLaunchVisible);
+  if (!anyVisible) return;
   if (__jfUiVisible) return;
-  if (typeof _setPreferredBrowseProvider === 'function') _setPreferredBrowseProvider('jellyfin');
   if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
   __jfLastFocus = document.activeElement || null;
   _jfSetShellVisible(true);
@@ -570,7 +576,7 @@ async function _jfFetchAdjacentEpisodeNav(itemId){
   const iid = String(itemId || '').trim();
   if (!iid) return {prev:null, next:null};
   try {
-    const j = await _jfFetchJson(`/jellyfin/item/${encodeURIComponent(iid)}/adjacent`);
+    const j = await _jfFetchJson(`/browse/item/${encodeURIComponent(iid)}/adjacent`);
     const prev = (j && typeof j.prev === 'object') ? j.prev : null;
     const next = (j && typeof j.next === 'object') ? j.next : null;
     return {prev, next};
@@ -733,6 +739,13 @@ function _jfRenderDetail(item){
 
   const chips = [];
   if (item.type) chips.push(String(item.type));
+  if (item.server_name) {
+    const latNum = Number(item.latency_ms);
+    const latTxt = Number.isFinite(latNum) ? ` (${Math.round(latNum)}ms)` : '';
+    const dupCount = Number(item.duplicate_count || 1);
+    const dupTxt = dupCount > 1 ? ` · Best of ${dupCount} sources` : '';
+    chips.push(`${item.server_name}${latTxt}${dupTxt}`);
+  }
   if (item.season_number != null && item.episode_number != null) chips.push(`S${String(item.season_number).padStart(2,'0')}E${String(item.episode_number).padStart(2,'0')}`);
   if (item.resume_pos && Number(item.resume_pos) > 0) chips.push(`Resume ${_jfFmtSec(item.resume_pos)}`);
   if (item.audio_language) chips.push(`Audio ${String(item.audio_language)}`);
@@ -947,7 +960,7 @@ function _jfBuildRowItemCard(item, rowId){
     const bPlay = document.createElement('button');
     bPlay.type = 'button';
     bPlay.className = 'jfQuickBtn';
-    const canResume = resumePos > 0 && normalizedRowId === 'continue_watching';
+    const canResume = resumePos > 0 && normalizedRowId.startsWith('continue_watching');
     bPlay.setAttribute('data-jf-action', canResume ? 'resume' : 'play_now');
     bPlay.textContent = canResume ? 'Resume' : 'Play';
     const bNext = document.createElement('button');
@@ -1047,7 +1060,7 @@ function _jfCatalogKindIsActive(kind){
 }
 
 function _jfCatalogEndpoint(kind){
-  return kind === 'movies' ? '/jellyfin/movies' : '/jellyfin/tv/series';
+  return kind === 'movies' ? '/browse/movies' : '/browse/tv/series';
 }
 
 function _jfCatalogRowId(kind){
@@ -1455,13 +1468,53 @@ async function _jfFetchJson(url, options){
   return body;
 }
 
+function _jfConnLabelFromResponse(j){
+  const up = !!(j && (j.connected || j.authenticated));
+  if (!up) {
+    const reason = String((j && j.last_error) || '').trim();
+    return reason ? `Unavailable · ${reason}` : 'Unavailable';
+  }
+  const servers = Array.isArray(j && j.servers) ? j.servers.filter((s) => s && s.enabled && s.connected) : [];
+  if (servers.length > 1) {
+    const best = servers.reduce((acc, s) => {
+      const lat = Number(s.latency_ms);
+      return (Number.isFinite(lat) && (acc === null || lat < acc)) ? lat : acc;
+    }, null);
+    return best !== null ? `${servers.length} servers · ${Math.round(best)}ms` : `${servers.length} servers`;
+  }
+  if (servers.length === 1) {
+    const s = servers[0];
+    const lat = Number(s.latency_ms);
+    const name = String(s.name || s.type || 'Connected').replace(/\s*\(Primary\)$/i, '');
+    return Number.isFinite(lat) ? `${name} · ${Math.round(lat)}ms` : `${name} · Connected`;
+  }
+  return 'Connected';
+}
+
+function _jfSyncUnifiedHeaderFromResponse(j){
+  const servers = Array.isArray(j && j.servers) ? j.servers.filter((s) => s && s.enabled && s.connected) : [];
+  const headLabel = document.getElementById('jfCardHeadLabel');
+  const shellTitle = document.querySelector('#jellyfinShell .jfShellTitle');
+  if (servers.length > 1) {
+    const types = [...new Set(servers.map((s) => String(s.type || '').toUpperCase()).filter(Boolean))];
+    if (headLabel) headLabel.textContent = types.join(' + ') || 'UNIFIED LIBRARY';
+    if (shellTitle) shellTitle.textContent = 'Browse All Libraries';
+  } else if (servers.length === 1) {
+    const s = servers[0];
+    const name = String(s.name || s.type || jfBrandName()).replace(/\s*\(Primary\)$/i, '');
+    if (headLabel) headLabel.textContent = name.toUpperCase();
+    if (shellTitle) shellTitle.textContent = name;
+  }
+}
+
 async function loadJellyfinHome(force){
   const request = _jfBeginBrowseRequest();
   try {
     _jfSetStatus('Loading…');
     _jfSetConn(false, 'Checking…');
-    const j = await _jfFetchJson(`/jellyfin/home?limit=24${force ? '&refresh=1' : ''}`, {signal: request.signal});
+    const j = await _jfFetchJson(`/browse/home?limit=24${force ? '&refresh=1' : ''}`, {signal: request.signal});
     if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'dashboard') return;
+    _jfSyncUnifiedHeaderFromResponse(j);
     __jfDashboardRows = Array.isArray(j.rows) ? j.rows : [];
     if (__jfActiveTab === 'dashboard') _jfRenderRows(__jfDashboardRows);
     __jfLastMode = 'home';
@@ -1469,7 +1522,7 @@ async function loadJellyfinHome(force){
     _jfApplySelectionUi();
     const up = !!(j.connected || j.authenticated);
     const reason = String(j.last_error || '').trim();
-    _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
+    _jfSetConn(up, _jfConnLabelFromResponse(j));
     if (!up) _jfSetBrowseUnavailable(reason);
     // A bare "Ready" under the search box read as a UI bug; only say something
     // when the state actually needs attention.
@@ -1497,9 +1550,10 @@ async function runJellyfinSearch(force){
   try {
     _jfSetStatus(`Searching "${q}"…`);
     _jfSetConn(false, 'Checking…');
-    const j = await _jfFetchJson(`/jellyfin/search?q=${encodeURIComponent(q)}&limit=30${force ? '&refresh=1' : ''}`, {signal: request.signal});
+    const j = await _jfFetchJson(`/browse/search?q=${encodeURIComponent(q)}&limit=30${force ? '&refresh=1' : ''}`, {signal: request.signal});
     const currentQuery = (document.getElementById('jfSearchInput')?.value || '').trim();
     if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== activeTab || currentQuery !== q) return;
+    _jfSyncUnifiedHeaderFromResponse(j);
     const scopedItems = _jfFilterSearchItems(j.items || []);
     _jfRenderRows([{id:'search', title:_jfSearchTitle(q), items: scopedItems}]);
     __jfLastMode = 'search';
@@ -1507,7 +1561,7 @@ async function runJellyfinSearch(force){
     _jfApplySelectionUi();
     const up = !!(j.connected || j.authenticated);
     const reason = String(j.last_error || '').trim();
-    _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
+    _jfSetConn(up, _jfConnLabelFromResponse(j));
     if (!up) _jfSetBrowseUnavailable(reason);
     _jfSetStatus(`${scopedItems.length} ${scopedItems.length === 1 ? 'result' : 'results'}`, 'ok');
   } catch (e) {
@@ -1532,8 +1586,9 @@ async function loadJellyfinMovies(force){
     qs.set('limit', String(__JF_CATALOG_PAGE_SIZE));
     qs.set('start', '0');
     if (force) qs.set('refresh', '1');
-    const j = await _jfFetchJson(`/jellyfin/movies?${qs.toString()}`, {signal: request.signal});
+    const j = await _jfFetchJson(`/browse/movies?${qs.toString()}`, {signal: request.signal});
     if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'movies' || __jfMoviesSort !== sort) return;
+    _jfSyncUnifiedHeaderFromResponse(j);
     _jfAddCatalogItems(state, j.items);
     state.nextStart = _jfNextStart(j.next_start_index);
     state.count = Math.max(0, Number(j.count || state.items.length));
@@ -1546,7 +1601,7 @@ async function loadJellyfinMovies(force){
     _jfApplySelectionUi();
     const up = !!(j.connected);
     const reason = String(j.last_error || '').trim();
-    _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
+    _jfSetConn(up, _jfConnLabelFromResponse(j));
     if (!up) _jfSetBrowseUnavailable(reason);
     _jfSetStatus(_jfCatalogStatus('movies', state.items.length, state.count), up ? 'ok' : '');
     _jfSyncTabControls();
@@ -1573,8 +1628,9 @@ async function loadJellyfinTvSeries(force){
     qs.set('limit', String(__JF_CATALOG_PAGE_SIZE));
     qs.set('start', '0');
     if (force) qs.set('refresh', '1');
-    const j = await _jfFetchJson(`/jellyfin/tv/series?${qs.toString()}`, {signal: request.signal});
+    const j = await _jfFetchJson(`/browse/tv/series?${qs.toString()}`, {signal: request.signal});
     if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'tv' || __jfTvSort !== sort) return;
+    _jfSyncUnifiedHeaderFromResponse(j);
     _jfAddCatalogItems(state, j.items);
     state.nextStart = _jfNextStart(j.next_start_index);
     state.count = Math.max(0, Number(j.count || state.items.length));
@@ -1597,7 +1653,7 @@ async function loadJellyfinTvSeries(force){
     __jfTvViewMode = 'series';
     const up = !!(j.connected);
     const reason = String(j.last_error || '').trim();
-    _jfSetConn(up, up ? 'Connected' : (reason ? `Unavailable · ${reason}` : 'Unavailable'));
+    _jfSetConn(up, _jfConnLabelFromResponse(j));
     if (!up) _jfSetBrowseUnavailable(reason);
     _jfSetStatus(_jfCatalogStatus('tv', state.items.length, state.count), up ? 'ok' : '');
     _jfSyncTabControls();
@@ -1696,7 +1752,7 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
   __jfBusy = true;
   try {
     _jfSetStatus('Loading seasons…');
-    const seasonRes = await _jfFetchJson(`/jellyfin/tv/series/${encodeURIComponent(sid)}/seasons${refresh ? '?refresh=1' : ''}`);
+    const seasonRes = await _jfFetchJson(`/browse/tv/series/${encodeURIComponent(sid)}/seasons${refresh ? '?refresh=1' : ''}`);
     const seasons = Array.isArray(seasonRes.seasons) ? seasonRes.seasons : [];
     let seasonNum = __jfTvSeasonNumber;
     if (!_jfHasFiniteNumber(seasonNum)) {
@@ -1704,7 +1760,7 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
       seasonNum = first ? Number(first.season_number) : null;
     }
 
-    let epUrl = `/jellyfin/tv/series/${encodeURIComponent(sid)}/episodes`;
+    let epUrl = `/browse/tv/series/${encodeURIComponent(sid)}/episodes`;
     const epQs = new URLSearchParams();
     if (_jfHasFiniteNumber(seasonNum)) epQs.set('season_number', String(Number(seasonNum)));
     if (refresh) epQs.set('refresh', '1');
@@ -1786,7 +1842,7 @@ async function _jfPlayAllSeries(seriesId, title){
   _jfSetActionButtonsDisabled(true);
   _jfSetActionStatus('Queueing series…', '');
   try {
-    const r = await _jfFetchWithTimeout(`/jellyfin/tv/series/${encodeURIComponent(sid)}/play_all`, {method: 'POST'}, __JF_REQ_TIMEOUT_MS);
+    const r = await _jfFetchWithTimeout(`/browse/tv/series/${encodeURIComponent(sid)}/play_all`, {method: 'POST'}, __JF_REQ_TIMEOUT_MS);
     let j = {};
     try { j = await r.json(); } catch (_e) {}
     if (!r.ok || !j || j.ok === false) {
@@ -1810,7 +1866,14 @@ async function reconnectJellyfin(){
   if (__jfBusy) return;
   _jfSetStatus('Reconnecting…');
   try {
-    const r = await _jfFetchWithTimeout('/integrations/jellyfin/register', {method:'POST'}, __JF_REQ_TIMEOUT_MS);
+    try {
+      await _jfFetchWithTimeout('/integrations/jellyfin/register', {method:'POST'}, __JF_REQ_TIMEOUT_MS);
+    } catch (_e) {}
+    const r = await _jfFetchWithTimeout('/browse/servers/probe', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    }, __JF_REQ_TIMEOUT_MS);
     const body = await r.json().catch(() => ({}));
     if (!r.ok || (body && body.ok === false)) {
       const msg = String((body && (body.reason || body.error || body.detail)) || `HTTP ${r.status}`);
@@ -1845,7 +1908,7 @@ async function loadJellyfinDetail(itemId, opts){
     _jfDetailPlaceholder('Loading details…');
   }
   try {
-    const j = await _jfFetchJson(`/jellyfin/item/${encodeURIComponent(iid)}`);
+    const j = await _jfFetchJson(`/browse/item/${encodeURIComponent(iid)}`);
     __jfSelectedItem = (j && j.item) ? j.item : null;
     if (preloadThumb && __jfSelectedItem) {
       await _jfPreloadImage(__jfSelectedItem.thumbnail_local || __jfSelectedItem.thumbnail || '');
@@ -2027,7 +2090,7 @@ async function _jfPerformItemAction(item, kind, target){
 
   _jfNotifyAction(target, `${human}…`, '');
   try {
-    const r = await _jfFetchWithTimeout('/jellyfin/action', {
+    const r = await _jfFetchWithTimeout('/browse/action', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body),
