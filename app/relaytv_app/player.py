@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
 from contextlib import nullcontext
+import math
 import importlib.util
 from .config import env_bool as _env_bool
 from .config import runtime_config
@@ -119,10 +120,8 @@ def _native_sidecar_health_snapshot(require_qt_shell: bool = False):
     return None
 
 
-# =========================
-# CEC (optional)
-# =========================
-#
+# ==================# CEC (optional)
+# ==================#
 # Goals (Phase 1+2):
 #  1) When playback starts, optionally power on the TV and switch to this HDMI input.
 #  2) When the TV goes to standby, pause playback and persist a resume position.
@@ -714,10 +713,8 @@ def start_cec_monitor() -> None:
     t.start()
 
 
-# =========================
-# MPV + IPC
-# =========================
-
+# ==================# MPV + IPC
+# ==================
 MPV_PROC: subprocess.Popen | None = None
 MPV_LOCK = threading.Lock()
 
@@ -1777,6 +1774,9 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--cache",
         "--cache-secs",
         "--demuxer-readahead-secs",
+        "--demuxer-seekable-cache",
+        "--demuxer-max-back-bytes",
+        "--force-seekable",
         "--msg-level",
         "--osd-level",
         "--osd-playing-msg",
@@ -2091,6 +2091,7 @@ def qt_shell_runtime_telemetry(*, max_age_sec: float = 3.0) -> dict[str, Any]:
         "mpv_runtime_playlist_pos": (data or {}).get("mpv_runtime_playlist_pos"),
         "mpv_runtime_playlist_count": (data or {}).get("mpv_runtime_playlist_count"),
         "mpv_runtime_track_list": (data or {}).get("mpv_runtime_track_list"),
+        "mpv_runtime_demuxer_cache_state": (data or {}).get("mpv_runtime_demuxer_cache_state"),
         "mpv_runtime_sample_detail": str((data or {}).get("mpv_runtime_sample_detail") or ""),
         **fd_diag,
     }
@@ -2113,6 +2114,7 @@ def _qt_shell_runtime_mpv_property(prop: str):
         "playlist-pos": "mpv_runtime_playlist_pos",
         "playlist-count": "mpv_runtime_playlist_count",
         "track-list": "mpv_runtime_track_list",
+        "demuxer-cache-state": "mpv_runtime_demuxer_cache_state",
     }
     field = mapping.get(key)
     if not field:
@@ -2134,6 +2136,7 @@ def _qt_shell_runtime_supports_mpv_property(prop: str) -> bool:
         "playlist-pos",
         "playlist-count",
         "track-list",
+        "demuxer-cache-state",
     }
 
 
@@ -2226,6 +2229,7 @@ def _qt_shell_runtime_requires_live_mpv_ipc(props: list[str] | None = None) -> b
         "playlist-pos",
         "playlist-count",
         "track-list",
+        "demuxer-cache-state",
     }
     for prop in list(props or []):
         key = str(prop or "").strip().lower()
@@ -2942,6 +2946,28 @@ def _effective_sub_lang(settings: dict[str, Any] | None = None) -> str:
     ).strip()
 
 
+def _demuxer_max_back_bytes(settings: dict[str, Any] | None = None) -> str:
+    """Resolve back-buffer size for demuxer seekable DVR cache."""
+    s = settings if isinstance(settings, dict) else getattr(state, "get_settings", lambda: {})()
+    explicit = (
+        (os.getenv("RELAYTV_DEMUXER_MAX_BACK_BYTES") or "").strip()
+        or str(s.get("demuxer_max_back_bytes") or "").strip()
+        or runtime_config.snapshot().raw("RELAYTV_DEMUXER_MAX_BACK_BYTES")
+    )
+    if explicit:
+        return explicit
+    arm_machine = (platform.machine() or "").lower() in ("aarch64", "arm64")
+    tune_enabled = _env_bool("RELAYTV_MPV_AUTO_TUNE", False)
+    try:
+        profile = dict(video_profile.get_profile() or {}) if tune_enabled else {}
+    except Exception:
+        profile = {}
+    decode_profile = str(profile.get("decode_profile") or "").strip().lower()
+    if arm_machine or decode_profile == "arm_safe":
+        return "128MiB"
+    return "256MiB"
+
+
 def _build_mpv_args(
     stream_url: str,
     audio_url: str | None,
@@ -2986,6 +3012,15 @@ def _build_mpv_args(
 
     if debug and not _has_opt(mpv_args + extra, "--msg-level"):
         mpv_args.append("--msg-level=all=debug")
+
+    # Enable seekable demuxer cache and back-buffer for live stream DVR rewind.
+    if not _has_opt(mpv_args + extra, "--force-seekable"):
+        mpv_args.append("--force-seekable=yes")
+    if not _has_opt(mpv_args + extra, "--demuxer-seekable-cache"):
+        mpv_args.append("--demuxer-seekable-cache=yes")
+    back_bytes = _demuxer_max_back_bytes(settings)
+    if not _has_opt(mpv_args + extra, "--demuxer-max-back-bytes"):
+        mpv_args.append(f"--demuxer-max-back-bytes={back_bytes}")
 
     # Conservative decode defaults by runtime profile.
     # MPV_ARGS retains override priority by short-circuiting when explicit opts
@@ -4243,6 +4278,62 @@ def _provider_item_is_live_stream(item: object, url: str, provider: str) -> bool
         if live_status:
             item["live_status"] = live_status
     return is_live
+
+
+def extract_dvr_status(
+    cache_state: dict[str, Any] | None,
+    *,
+    pos: float | None = None,
+    dur: float | None = None,
+    is_live: bool = False,
+) -> dict[str, Any] | None:
+    """Expose only the newest contiguous range usable for cached seeking.
+
+    Duration and cache-end can extend beyond decodable cached packets. Neither
+    is a safe seek boundary, even when mpv reports no seekable ranges at all.
+    """
+    if not is_live:
+        return None
+    cache = cache_state if isinstance(cache_state, dict) else {}
+    ranges: list[tuple[float, float]] = []
+    raw_ranges = cache.get("seekable-ranges")
+    for entry in raw_ranges if isinstance(raw_ranges, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            start, end = float(entry["start"]), float(entry["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and end > max(0.0, start):
+            ranges.append((max(0.0, start), end))
+
+    # mpv returns ranges in arbitrary order, sometimes with overlapping ranges.
+    # Join overlaps, but never bridge a gap the demuxer cannot seek within.
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    buffer_start, live_edge = merged[-1] if merged else (None, None)
+    window_sec = live_edge - buffer_start if merged else 0.0
+    try:
+        position = float(pos)
+    except (TypeError, ValueError):
+        position = math.nan
+    delay_sec = max(0.0, live_edge - position) if merged and math.isfinite(position) else 0.0
+
+    return {
+        "supported": True,
+        "seekable": window_sec >= 2.0,
+        # Keep the actual boundaries: rounding outward can advertise uncached data.
+        "buffer_start": buffer_start,
+        "buffer_end": live_edge,
+        "live_edge": live_edge,
+        "window_sec": round(window_sec, 2),
+        "delay_sec": round(delay_sec, 2),
+        "is_at_live": delay_sec < 5.0,
+    }
 
 
 def _item_should_prefetch_stream(item: object) -> bool:

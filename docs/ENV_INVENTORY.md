@@ -106,6 +106,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_CURSOR_MODE` | `qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEBUG` | `debug.py`<br>`player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEFAULT_VOLUME` | `state.py` | - | static env |
+| `RELAYTV_DEMUXER_MAX_BACK_BYTES` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_DEVICE_ID` | `device_identity.py` | - | static env |
 | `RELAYTV_DEVICE_NAME` | `config.py`<br>`device_identity.py`<br>`integrations/jellyfin_receiver.py`<br>`qt_shell_app.py`<br>`routes/settings.py`<br>`state.py` | `routes/settings.py` | settings bus, child process input |
 | `RELAYTV_DISABLE_WORKERS` | `main.py` | - | static env |

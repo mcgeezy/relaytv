@@ -979,6 +979,10 @@
       background: #ff5f6d;
       box-shadow: 0 0 8px rgba(255,95,109,.82);
     }
+    .nStateDot.dvr{
+      background: #ffb300;
+      box-shadow: 0 0 8px rgba(255,179,0,.85);
+    }
     @keyframes nDotPulse{
       0%, 100%{ box-shadow: 0 0 4px rgba(96,180,255,.55); opacity: .75; }
       50%{ box-shadow: 0 0 12px rgba(96,180,255,.95); opacity: 1; }
@@ -998,6 +1002,17 @@
       color: #ffdce0;
       border-color: rgba(255,95,109,.55);
       background: rgba(118,24,38,.42);
+    }
+    .nStateTag.dvr{
+      cursor: pointer;
+      color: #ffe082;
+      border-color: rgba(255,193,7,.55);
+      background: rgba(100,75,10,.45);
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .nStateTag.dvr:hover{
+      background: rgba(140,105,15,.65);
+      border-color: rgba(255,193,7,.85);
     }
     .nSkipBtn,
     .nGhostBtn{
@@ -1201,8 +1216,8 @@
       background: linear-gradient(180deg, rgba(94,207,255,.92), rgba(59,130,246,.85));
       box-shadow: 0 4px 16px rgba(37,99,235,.42);
     }
-    .nowCard.isLive .progress{ display: none; }
-    .nowCard.isLive .nTimeRow{ margin-top: 14px; }
+    .nowCard.isLive:not(.hasDvr) .progress{ display: none; }
+    .nowCard.isLive:not(.hasDvr) .nTimeRow{ margin-top: 14px; }
     .nowCard.isLive .nTimeRow #pos{
       display: inline-flex;
       align-items: center;
@@ -1216,6 +1231,13 @@
       border-radius: 999px;
       background: #ff5f6d;
       box-shadow: 0 0 8px rgba(255,95,109,.75);
+    }
+    .nowCard.isLive.isDvrRewound .nTimeRow #pos{
+      color: #ffe082;
+    }
+    .nowCard.isLive.isDvrRewound .nTimeRow #pos::before{
+      background: #ffb300;
+      box-shadow: 0 0 8px rgba(255,179,0,.85);
     }
     .nowCard .progress{
       margin-top: 14px;
