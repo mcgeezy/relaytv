@@ -40,6 +40,9 @@ _SERVER_METRICS: dict[str, dict[str, Any]] = {}
 # canonical_series_id (winning item_id) -> list of (server_id, raw_series_id, title, year)
 _SERIES_GROUPS: dict[str, list[tuple[str, str, str, str]]] = {}
 
+# canonical_item_id (winning item_id) -> merged deduplication overlay fields
+_DEDUPED_ITEMS: dict[str, dict[str, Any]] = {}
+
 # server_id -> {"access_token": str, "user_id": str, "authenticated_at": float}
 _CUSTOM_JF_SESSIONS: dict[str, dict[str, Any]] = {}
 
@@ -915,9 +918,61 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
         if str(winner.get("type") or "").lower() == "series":
             _register_series_group(winner["item_id"], sorted_cands)
+        _register_deduped_item(winner)
         deduped.append(winner)
 
     return deduped
+
+
+def _register_deduped_item(winner: dict[str, Any]) -> None:
+    winning_id = str(winner.get("item_id") or "").strip()
+    if not winning_id:
+        return
+    overlay = {
+        "resume_pos": winner.get("resume_pos"),
+        "progress_percent": winner.get("progress_percent"),
+        "source_count": winner.get("source_count", 1),
+        "duplicate_count": winner.get("duplicate_count", 1),
+        "alternate_sources": copy.deepcopy(winner.get("alternate_sources") or []),
+        "library_name": winner.get("library_name"),
+        "overview": winner.get("overview"),
+        "year": winner.get("year"),
+        "runtime_sec": winner.get("runtime_sec"),
+        "backdrop": winner.get("backdrop"),
+        "poster": winner.get("poster"),
+        "thumbnail": winner.get("thumbnail"),
+    }
+    with _SERIES_GROUP_LOCK:
+        _DEDUPED_ITEMS[winning_id] = overlay
+
+
+def _apply_deduped_item_overlay(item: dict[str, Any]) -> dict[str, Any]:
+    winning_id = str(item.get("item_id") or "").strip()
+    if not winning_id:
+        return item
+    with _SERIES_GROUP_LOCK:
+        overlay = _DEDUPED_ITEMS.get(winning_id)
+    if not isinstance(overlay, dict):
+        return item
+    out = dict(item)
+    cur_res = _safe_float(out.get("resume_pos")) or 0.0
+    ov_res = _safe_float(overlay.get("resume_pos")) or 0.0
+    if ov_res > cur_res:
+        out["resume_pos"] = ov_res
+    cur_prog = _safe_float(out.get("progress_percent")) or 0.0
+    ov_prog = _safe_float(overlay.get("progress_percent")) or 0.0
+    if ov_prog > cur_prog:
+        out["progress_percent"] = ov_prog
+    if int(overlay.get("duplicate_count") or 1) > 1:
+        out["source_count"] = int(overlay["source_count"])
+        out["duplicate_count"] = int(overlay["duplicate_count"])
+        out["alternate_sources"] = copy.deepcopy(overlay.get("alternate_sources") or [])
+        if overlay.get("library_name"):
+            out["library_name"] = overlay["library_name"]
+    for field in ("overview", "year", "runtime_sec", "backdrop", "poster", "thumbnail"):
+        if not out.get(field) and overlay.get(field):
+            out[field] = overlay[field]
+    return out
 
 
 def _register_series_group(winning_id: str, candidates: list[dict[str, Any]]) -> None:
@@ -1147,6 +1202,7 @@ def _custom_plex_raw_to_dict(
         "type": mtype,
         "title": str(raw.get("title") or "Untitled"),
         "subtitle": " · ".join(subtitle_parts),
+        "series_id": str(raw.get("grandparentKey") or "") if mtype == "episode" else "",
         "year": _safe_int(raw.get("year")),
         "duration_ms": duration or None,
         "view_offset_ms": offset,
@@ -1380,28 +1436,34 @@ def _fetch_server_catalog_items(
                 "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,"
                 "RunTimeTicks,UserData,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,ProviderIds"
             )
-            params: dict[str, str] = {
-                "IncludeItemTypes": "Movie" if kind == "movie" else "Series",
-                "Recursive": "true",
-                "SortBy": sort_by,
-                "SortOrder": sort_order,
-                "StartIndex": "0",
-                "Limit": str(fetch_count),
-                "Fields": fields,
-            }
-            if starts_with:
-                params["NameStartsWithOrGreater"] = starts_with[0].upper()
-            q = _urlparse.urlencode(params)
-            url = (
-                f"{base}/Users/{_urlparse.quote(uid)}/Items?{q}"
-                if uid
-                else f"{base}/Items?{q}"
-            )
-            payload = _custom_jf_get_json(url, token=token, timeout=5.0)
+            rows: list[dict[str, Any]] = []
+            total = 0
+            while len(rows) < fetch_count:
+                params: dict[str, str] = {
+                    "IncludeItemTypes": "Movie" if kind == "movie" else "Series",
+                    "Recursive": "true",
+                    "SortBy": sort_by,
+                    "SortOrder": sort_order,
+                    "StartIndex": str(len(rows)),
+                    "Limit": str(min(5000, fetch_count - len(rows))),
+                    "Fields": fields,
+                }
+                if starts_with:
+                    params["NameStartsWithOrGreater"] = starts_with[0].upper()
+                q = _urlparse.urlencode(params)
+                url = (
+                    f"{base}/Users/{_urlparse.quote(uid, safe='')}/Items?{q}"
+                    if uid
+                    else f"{base}/Items?{q}"
+                )
+                payload = _custom_jf_get_json(url, token=token, timeout=5.0)
+                page_rows = jellyfin_receiver._extract_items(payload)
+                total = jellyfin_receiver._extract_total_count(payload, len(rows) + len(page_rows))
+                rows.extend(page_rows)
+                if not page_rows or len(rows) >= total:
+                    break
             dt = (time.perf_counter() - t0) * 1000.0
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
-            rows = jellyfin_receiver._extract_items(payload)
-            total = jellyfin_receiver._extract_total_count(payload, len(rows))
             items = [
                 _tag_item_source(
                     jellyfin_receiver._normalize_catalog_item(r, base=base, token=token),
@@ -1413,6 +1475,8 @@ def _fetch_server_catalog_items(
             return items, total
 
         if stype == "plex":
+            if starts_with:
+                fetch_count = float("inf")
             client = _custom_plex_client(server)
             sec_payload = client.get("/library/sections")
             container = (
@@ -1434,7 +1498,7 @@ def _fetch_server_catalog_items(
                 offset = 0
                 while offset < fetch_count:
                     p = client.get(
-                        f"/library/sections/{_urlparse.quote(skey)}/all",
+                        f"/library/sections/{_urlparse.quote(skey, safe='')}/all",
                         query={
                             "sort": plex_sort,
                             "includeGuids": 1,
@@ -1458,7 +1522,14 @@ def _fetch_server_catalog_items(
             dt = (time.perf_counter() - t0) * 1000.0
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
             adapted = [_adapt_plex_item(it, server, latency_ms=dt) for it in raw_list]
-            return adapted, max(total_count, len(adapted))
+            if starts_with:
+                letter = starts_with[0].upper()
+                adapted = [
+                    it
+                    for it in adapted
+                    if str(it.get("title") or "").strip().upper().startswith(letter)
+                ]
+            return adapted, len(adapted) if starts_with else max(total_count, len(adapted))
     except Exception as exc:
         _record_latency(sid, None, connected=False, error=str(exc))
         logger.warning("browse_catalog_failed server=%s kind=%s err=%s", sid, kind, exc)
@@ -1595,8 +1666,10 @@ def _list_unified_catalog(
         "limit": lim,
         "next_start_index": next_start,
         "starts_with": letter,
-        "connected": st["connected"],
-        "active_server_count": st["active_server_count"],
+        "connected": bool(st.get("connected")),
+        "active_server_count": int(st.get("active_server_count") or 0),
+        "best_latency_ms": st.get("best_latency_ms"),
+        "servers": st.get("servers") or [],
     }
 
 
@@ -1996,7 +2069,10 @@ def search_unified_catalog(
         "query": q,
         "items": deduped,
         "count": len(deduped),
-        "connected": st["connected"],
+        "connected": bool(st.get("connected")),
+        "active_server_count": int(st.get("active_server_count") or 0),
+        "best_latency_ms": st.get("best_latency_ms"),
+        "servers": st.get("servers") or [],
     }
 
 
@@ -2007,32 +2083,31 @@ def get_unified_item_detail(item_id: str, *, refresh: bool = False) -> dict[str,
         return None
     stype = str(server.get("type") or "jellyfin").lower()
     lat = get_server_metrics(sid).get("latency_ms")
+    tagged: dict[str, Any] | None = None
 
     if sid == "jf_primary":
         item = jellyfin_receiver.get_item_detail(raw_id, refresh=refresh)
         if not item:
             return None
-        return _tag_item_source(item, server, latency_ms=lat)
-
-    if sid == "plex_primary":
+        tagged = _tag_item_source(item, server, latency_ms=lat)
+    elif sid == "plex_primary":
         res = plex_service.catalog_service.item_detail(raw_id)
         pitem = res.get("item") if isinstance(res, dict) else None
         if not isinstance(pitem, dict):
             return None
-        return _adapt_plex_item(pitem, server, latency_ms=lat)
-
-    if stype in {"jellyfin", "emby"}:
+        tagged = _adapt_plex_item(pitem, server, latency_ms=lat)
+    elif stype in {"jellyfin", "emby"}:
         base, token, uid = _resolve_custom_jf_auth(server)
         if not base:
             return None
-        quoted = _urlparse.quote(raw_id)
+        quoted = _urlparse.quote(raw_id, safe="")
         fields = (
             "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,"
             "UserData,SeriesId,SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,"
             "DefaultAudioStreamIndex,DefaultSubtitleStreamIndex,ProviderIds"
         )
         url = (
-            f"{base}/Users/{_urlparse.quote(uid)}/Items/{quoted}?Fields={fields}"
+            f"{base}/Users/{_urlparse.quote(uid, safe='')}/Items/{quoted}?Fields={fields}"
             if uid
             else f"{base}/Items/{quoted}?Fields={fields}"
         )
@@ -2040,19 +2115,23 @@ def get_unified_item_detail(item_id: str, *, refresh: bool = False) -> dict[str,
         if not isinstance(payload, dict) or not payload:
             return None
         norm = jellyfin_receiver._normalize_catalog_item(payload, base=base, token=token)
-        return _tag_item_source(norm, server, latency_ms=lat)
-
-    if stype == "plex":
+        tagged = _tag_item_source(norm, server, latency_ms=lat)
+    elif stype == "plex":
+        safe_path = plex_service._safe_upstream_path(raw_id)
+        if not safe_path or not safe_path.startswith("/library/metadata/"):
+            return None
         client = _custom_plex_client(server)
-        payload = client.get(raw_id, query={"includeGuids": 1, "includeExtras": 0})
+        payload = client.get(safe_path, query={"includeGuids": 1, "includeExtras": 0})
         c = payload.get("MediaContainer") if isinstance(payload, dict) else {}
         recs = (c.get("Metadata") or []) if isinstance(c, dict) else []
         if not recs or not isinstance(recs[0], dict):
             return None
         conv = _custom_plex_raw_to_dict(server, recs[0], detail=True)
-        return _adapt_plex_item(conv, server, latency_ms=lat) if conv else None
+        tagged = _adapt_plex_item(conv, server, latency_ms=lat) if conv else None
 
-    return None
+    if not tagged:
+        return None
+    return _apply_deduped_item_overlay(tagged)
 
 
 def get_unified_item_adjacent(item_id: str, *, refresh: bool = False) -> dict[str, Any]:
@@ -2065,11 +2144,49 @@ def get_unified_item_adjacent(item_id: str, *, refresh: bool = False) -> dict[st
         nav = jellyfin_receiver.get_adjacent_episodes(raw_id, refresh=refresh)
         prev = nav.get("prev") if isinstance(nav, dict) else None
         nxt = nav.get("next") if isinstance(nav, dict) else None
+        if isinstance(prev, dict) or isinstance(nxt, dict):
+            return {
+                "prev": _tag_item_source(prev, server, latency_ms=lat) if isinstance(prev, dict) else None,
+                "next": _tag_item_source(nxt, server, latency_ms=lat) if isinstance(nxt, dict) else None,
+            }
+    try:
+        detail = get_unified_item_detail(item_id, refresh=refresh)
+        if not isinstance(detail, dict) or str(detail.get("type") or "").lower() != "episode":
+            return {"prev": None, "next": None}
+        series_id = str(detail.get("series_id") or "").strip()
+        if not series_id:
+            return {"prev": None, "next": None}
+        ep_res = list_unified_series_episodes(series_id, refresh=refresh)
+        episodes = ep_res.get("episodes") if isinstance(ep_res, dict) else []
+        if not isinstance(episodes, list) or not episodes:
+            return {"prev": None, "next": None}
+        cur_s = _safe_int(detail.get("season_number"))
+        cur_e = _safe_int(detail.get("episode_number"))
+        idx = next(
+            (
+                i
+                for i, ep in enumerate(episodes)
+                if isinstance(ep, dict)
+                and (
+                    str(ep.get("item_id") or "") == str(detail.get("item_id") or item_id)
+                    or (
+                        cur_s is not None
+                        and cur_e is not None
+                        and _safe_int(ep.get("season_number")) == cur_s
+                        and _safe_int(ep.get("episode_number")) == cur_e
+                    )
+                )
+            ),
+            -1,
+        )
+        if idx < 0:
+            return {"prev": None, "next": None}
         return {
-            "prev": _tag_item_source(prev, server, latency_ms=lat) if isinstance(prev, dict) else None,
-            "next": _tag_item_source(nxt, server, latency_ms=lat) if isinstance(nxt, dict) else None,
+            "prev": episodes[idx - 1] if idx > 0 else None,
+            "next": episodes[idx + 1] if idx + 1 < len(episodes) else None,
         }
-    return {"prev": None, "next": None}
+    except Exception:
+        return {"prev": None, "next": None}
 
 
 def perform_unified_action(
@@ -2087,6 +2204,15 @@ def perform_unified_action(
         raise ValueError("Item or media server not found")
     stype = str(server.get("type") or "jellyfin").lower()
     cmd = str(command or "play_now").strip().lower()
+    if cmd not in {"play_now", "play_next", "play_last", "resume"}:
+        raise ValueError("unsupported command")
+
+    canonical_id = encode_item_id(sid, raw_id)
+    if cmd == "resume" and resume_pos is None:
+        with _SERIES_GROUP_LOCK:
+            overlay = _DEDUPED_ITEMS.get(canonical_id) or _DEDUPED_ITEMS.get(item_id)
+        if isinstance(overlay, dict) and (_safe_float(overlay.get("resume_pos")) or 0.0) > 0:
+            resume_pos = float(overlay["resume_pos"])
 
     if sid == "jf_primary":
         from ..routes import jellyfin as jf_routes
@@ -2137,9 +2263,9 @@ def perform_unified_action(
         base, token, _uid = _resolve_custom_jf_auth(server)
         if not base:
             raise ValueError("Server URL not configured")
-        stream_url = f"{base}/Videos/{_urlparse.quote(raw_id)}/stream?static=true"
+        stream_url = f"{base}/Videos/{_urlparse.quote(raw_id, safe='')}/stream?static=true"
         if token:
-            stream_url += f"&api_key={_urlparse.quote(token)}"
+            stream_url += f"&api_key={_urlparse.quote(token, safe='')}"
         queue_entry = {
             "url": stream_url,
             "title": display_title,
@@ -2148,8 +2274,11 @@ def perform_unified_action(
         }
     else:
         # Custom Plex server: resolve first media part path
+        safe_path = plex_service._safe_upstream_path(raw_id)
+        if not safe_path or not safe_path.startswith("/library/metadata/"):
+            raise ValueError("Invalid Plex item path")
         client = _custom_plex_client(server)
-        payload = client.get(raw_id, query={"includeGuids": 1, "includeExtras": 0})
+        payload = client.get(safe_path, query={"includeGuids": 1, "includeExtras": 0})
         c = payload.get("MediaContainer") if isinstance(payload, dict) else {}
         recs = (c.get("Metadata") or []) if isinstance(c, dict) else []
         if not recs or not isinstance(recs[0], dict):
@@ -2157,8 +2286,8 @@ def perform_unified_action(
         part, _media, _mi, _pi = plex_service.PlexCatalogService._select_playback_part(recs[0])
         part_key = str(part.get("key") or "").strip()
         stream_url = (
-            f"http://127.0.0.1:{config.server_port()}/browse/stream/{_urlparse.quote(sid)}"
-            f"?path={_urlparse.quote(part_key)}"
+            f"http://127.0.0.1:{config.server_port()}/browse/stream/{_urlparse.quote(sid, safe='')}"
+            f"?path={_urlparse.quote(part_key, safe='')}"
         )
         queue_entry = {
             "url": stream_url,

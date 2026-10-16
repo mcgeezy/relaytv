@@ -18,10 +18,12 @@ def _isolated_browse_state(tmp_path, monkeypatch):
     )
     browse_service._SERVER_METRICS.clear()
     browse_service._SERIES_GROUPS.clear()
+    browse_service._DEDUPED_ITEMS.clear()
     browse_service._CUSTOM_JF_SESSIONS.clear()
     yield
     browse_service._SERVER_METRICS.clear()
     browse_service._SERIES_GROUPS.clear()
+    browse_service._DEDUPED_ITEMS.clear()
     browse_service._CUSTOM_JF_SESSIONS.clear()
 
 
@@ -509,3 +511,107 @@ def test_primary_plex_resume_uses_merged_position(monkeypatch, resume_pos, expec
     })
     assert result.status_code == 200
     assert starts == [expected]
+
+
+def test_deduped_detail_overlay_and_adjacent_episode_navigation(monkeypatch) -> None:
+    browse_service._record_latency("srv_jf_slow", 40.0, connected=True, server_name="Slow JF")
+    browse_service._record_latency("plex_primary", 5.0, connected=True, server_name="Fast Plex")
+
+    deduped = browse_service.deduplicate_items(
+        [
+            {
+                "item_id": browse_service.encode_item_id("srv_jf_slow", "jf-dune"),
+                "raw_item_id": "jf-dune",
+                "server_id": "srv_jf_slow",
+                "server_name": "Slow JF",
+                "server_type": "jellyfin",
+                "type": "movie",
+                "title": "Dune: Part Two",
+                "year": "2024",
+                "resume_pos": 1950.0,
+                "progress_percent": 35.0,
+                "overview": "Merged overview from slower server.",
+            },
+            {
+                "item_id": browse_service.encode_item_id("plex_primary", "plex-dune"),
+                "raw_item_id": "plex-dune",
+                "server_id": "plex_primary",
+                "server_name": "Fast Plex",
+                "server_type": "plex",
+                "type": "movie",
+                "title": "Dune: Part Two",
+                "year": "2024",
+                "resume_pos": 300.0,
+                "progress_percent": 5.0,
+                "overview": "",
+            },
+        ]
+    )
+    assert len(deduped) == 1
+    win_id = deduped[0]["item_id"]
+
+    monkeypatch.setattr(
+        browse_service,
+        "_find_server_by_id",
+        lambda sid: {"id": sid, "type": "plex" if "plex" in sid else "jellyfin", "name": "Fast Plex"},
+    )
+    monkeypatch.setattr(
+        browse_service.plex_service.catalog_service,
+        "item_detail",
+        lambda _raw: {
+            "item": {
+                "id": "plex-dune",
+                "type": "movie",
+                "title": "Dune: Part Two",
+                "year": 2024,
+                "duration_ms": 6000000,
+                "view_offset_ms": 300000,
+                "progress": 5.0,
+                "summary": "",
+            }
+        },
+    )
+
+    from urllib.parse import quote
+
+    client = TestClient(create_app(testing=True))
+    detail_res = client.get(f"/browse/item/{quote(win_id, safe='')}")
+    assert detail_res.status_code == 200
+    detail_item = detail_res.json()["item"]
+    assert detail_item["resume_pos"] == 1950.0
+    assert detail_item["duplicate_count"] == 2
+    assert detail_item["overview"] == "Merged overview from slower server."
+
+    # Adjacent episode lookup for non-jf_primary episodes falls back to series episode list
+    ep1_id = browse_service.encode_item_id("plex_primary", "ep-1")
+    ep2_id = browse_service.encode_item_id("plex_primary", "ep-2")
+    ep3_id = browse_service.encode_item_id("plex_primary", "ep-3")
+    series_id = browse_service.encode_item_id("plex_primary", "show-1")
+
+    monkeypatch.setattr(
+        browse_service,
+        "get_unified_item_detail",
+        lambda iid, refresh=False: {
+            "item_id": ep2_id,
+            "type": "episode",
+            "series_id": series_id,
+            "season_number": 1,
+            "episode_number": 2,
+        },
+    )
+    monkeypatch.setattr(
+        browse_service,
+        "list_unified_series_episodes",
+        lambda sid, **kw: {
+            "episodes": [
+                {"item_id": ep1_id, "season_number": 1, "episode_number": 1, "title": "Ep 1"},
+                {"item_id": ep2_id, "season_number": 1, "episode_number": 2, "title": "Ep 2"},
+                {"item_id": ep3_id, "season_number": 1, "episode_number": 3, "title": "Ep 3"},
+            ]
+        },
+    )
+    adj_res = client.get(f"/browse/item/{quote(ep2_id, safe='')}/adjacent")
+    assert adj_res.status_code == 200
+    adj = adj_res.json()
+    assert adj["prev"]["item_id"] == ep1_id
+    assert adj["next"]["item_id"] == ep3_id
