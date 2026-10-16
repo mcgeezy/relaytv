@@ -50,6 +50,7 @@ function updatePlexStatus(status){
     launch.classList.toggle('show', __plexReady);
     launch.disabled = !__plexReady;
   }
+  if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
   const connection = document.getElementById('plexConnection');
   if (connection) {
     connection.classList.toggle('up', __plexReady);
@@ -654,6 +655,8 @@ async function openPlexDetail(itemId, fallbackTitle, source){
 
 async function openPlexShell(){
   if (!__plexReady || __plexVisible) return;
+  if (typeof _setPreferredBrowseProvider === 'function') _setPreferredBrowseProvider('plex');
+  if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
   __plexLastFocus = document.activeElement;
   __plexVisible = true;
   const shell = document.getElementById('plexShell');

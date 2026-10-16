@@ -190,6 +190,21 @@ def test_ui_smoke() -> None:
     assert "function openAbout" in js
     assert "async function loadAboutInfo" in js
     assert "fetch('/app/info'" in js
+    assert 'id="notifyBackdrop"' in response.text
+    assert 'id="notifyOpenBtn"' in response.text
+    assert 'id="notifyMenuBtn"' in response.text
+    assert 'id="notifyCloseBtn"' in response.text
+    assert 'id="jfSwitchToPlexBtn"' in response.text
+    assert 'id="plexSwitchToJfBtn"' in response.text
+    assert '<span class="hdrActionLabel">Browse</span>' in response.text
+    assert '<span class="hdrActionLabel">Add</span>' in response.text
+    assert '<span class="hdrActionLabel">TV</span>' in response.text
+    assert '<span class="hdrActionLabel">Link</span>' in response.text
+    assert response.text.index('id="addBackdrop"') < response.text.index('id="notifyBackdrop"')
+    assert response.text.index('id="notifyBackdrop"') < response.text.index('id="notifySection"')
+    assert "function openNotifyModal()" in js
+    assert "function closeNotifyModal(" in js
+    assert "function syncBrowseLaunchButtons()" in js
     assert 'id="notifySection"' in response.text
     assert 'id="notifyTextInput"' in response.text
     assert 'id="notifyImageInput"' in response.text

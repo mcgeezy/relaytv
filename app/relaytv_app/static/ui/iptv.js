@@ -67,7 +67,7 @@
       button.classList.toggle('show', state.enabled);
       button.disabled = !state.enabled;
       const count = Number(status && status.iptv_channel_count || 0);
-      button.title = count ? `Open IPTV · ${count} channels` : 'Open IPTV';
+      button.title = count ? `Watch live TV · ${count} channels` : 'Watch live TV';
     }
     if (!state.enabled && state.visible) closeShell();
   };

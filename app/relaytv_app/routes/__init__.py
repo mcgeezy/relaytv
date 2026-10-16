@@ -4266,28 +4266,36 @@ def ui():
         <h1 id="appBrandName">RelayTV</h1>
       </div>
       <div class="hdrRight">
-        <button id="iptvOpenBtn" class="iptvLaunch" title="Open IPTV" aria-label="Open IPTV"><span aria-hidden="true">▦</span><span>IPTV</span></button>
-        <button id="jellyfinOpenBtn" class="jfLaunch" title="Open Jellyfin" aria-label="Open Jellyfin"><span class="jfDot" aria-hidden="true"></span><span class="jfBrand">Jellyfin</span></button>
-        <button id="plexOpenBtn" class="plexLaunch" title="Open Plex" aria-label="Open Plex"><span class="plexLaunchMark" aria-hidden="true">›</span><span>Plex</span></button>
-        <button id="seerrOpenBtn" class="seerrLaunch" title="Open Seerr" aria-label="Open Seerr"><span aria-hidden="true">✦</span><span>Seerr</span></button>
-        <button id="addUrlBtn" class="hdrAddBtn" title="Add URL" aria-label="Add URL">＋</button>
-        <div id="hdrMenuWrap" class="hdrMenuWrap">
-          <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
-            <svg class="menuGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+        <div id="hdrActions" class="hdrActions" role="toolbar" aria-label="Quick actions">
+          <button id="jellyfinOpenBtn" class="hdrActionBtn jfLaunch" title="Browse library" aria-label="Browse library"><svg class="hdrActionIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="1.9" fill="none"/><path d="M10.2 9.3v5.4l4.6-2.7-4.6-2.7z" fill="currentColor"/></svg><span class="hdrActionLabel">Browse</span></button>
+          <button id="plexOpenBtn" class="hdrActionBtn plexLaunch" title="Browse library" aria-label="Browse library"><svg class="hdrActionIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="1.9" fill="none"/><path d="M10.2 9.3v5.4l4.6-2.7-4.6-2.7z" fill="currentColor"/></svg><span class="hdrActionLabel">Browse</span></button>
+          <button id="seerrOpenBtn" class="hdrActionBtn seerrLaunch" title="Add movies and shows" aria-label="Add movies and shows"><svg class="hdrActionIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.9" fill="none"/><path d="M12 8.2v7.6M8.2 12h7.6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg><span class="hdrActionLabel">Add</span></button>
+          <button id="iptvOpenBtn" class="hdrActionBtn iptvLaunch" title="Watch live TV" aria-label="Watch live TV"><svg class="hdrActionIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6.5" width="17" height="12" rx="2.6" stroke="currentColor" stroke-width="1.9" fill="none"/><path d="M8.5 3.2L12 6.5l3.5-3.3M8.5 21h7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span class="hdrActionLabel">TV</span></button>
+          <button id="addUrlBtn" class="hdrActionBtn hdrAddBtn" title="Play a link" aria-label="Play a link"><svg class="hdrActionIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.36 0l2.5-2.5a4.5 4.5 0 0 0-6.36-6.36l-1.25 1.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none"/><path d="M14 10a4.5 4.5 0 0 0-6.36 0l-2.5 2.5a4.5 4.5 0 0 0 6.36 6.36l1.25-1.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none"/></svg><span class="hdrActionLabel">Link</span></button>
+        </div>
+        <div class="hdrUtils">
+          <button id="notifyOpenBtn" class="hdrNotifyBtn" title="Send notification" aria-label="Send notification">
+            <svg class="notifyGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none"/></svg>
           </button>
-          <div id="hdrMenuPanel" class="hdrMenuPanel hidden" role="menu" aria-label="Header menu">
-            <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5v4H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5.2 9a8 8 0 1 1-1.1 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M12 8.5V12l2.6 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>History</button>
-            <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 11.2v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="12" cy="7.9" r="1.15" fill="currentColor"/></svg>About</button>
-            <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m6 0h2M4 12h2m6 0h8M4 17h10m6 0h0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="9" cy="12" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="17" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>Settings</button>
-            <div class="hdrMenuTheme" role="group" aria-label="Theme">
-              <span class="mtLabel">Theme</span>
-              <div class="mtSeg">
-                <button type="button" class="mtBtn" data-theme-mode="auto" role="menuitemradio" aria-checked="true">Auto</button>
-                <button type="button" class="mtBtn" data-theme-mode="dark" role="menuitemradio" aria-checked="false">Dark</button>
-                <button type="button" class="mtBtn" data-theme-mode="light" role="menuitemradio" aria-checked="false">Light</button>
+          <div id="hdrMenuWrap" class="hdrMenuWrap">
+            <button id="hdrMenuBtn" class="hdrMenuBtn" title="Menu" aria-label="Menu" aria-expanded="false" aria-haspopup="menu" aria-controls="hdrMenuPanel">
+              <svg class="menuGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            </button>
+            <div id="hdrMenuPanel" class="hdrMenuPanel hidden" role="menu" aria-label="Header menu">
+              <button id="notifyMenuBtn" class="hdrMenuItem" role="menuitem" title="Send notification"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>Notification</button>
+              <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5v4H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5.2 9a8 8 0 1 1-1.1 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M12 8.5V12l2.6 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>History</button>
+              <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 11.2v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="12" cy="7.9" r="1.15" fill="currentColor"/></svg>About</button>
+              <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m6 0h2M4 12h2m6 0h8M4 17h10m6 0h0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="9" cy="12" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="17" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>Settings</button>
+              <div class="hdrMenuTheme" role="group" aria-label="Theme">
+                <span class="mtLabel">Theme</span>
+                <div class="mtSeg">
+                  <button type="button" class="mtBtn" data-theme-mode="auto" role="menuitemradio" aria-checked="true">Auto</button>
+                  <button type="button" class="mtBtn" data-theme-mode="dark" role="menuitemradio" aria-checked="false">Dark</button>
+                  <button type="button" class="mtBtn" data-theme-mode="light" role="menuitemradio" aria-checked="false">Light</button>
+                </div>
               </div>
+              <div class="hdrMenuFoot"><span id="menuDeviceName">RelayTV</span><span id="menuAppVersion"></span></div>
             </div>
-            <div class="hdrMenuFoot"><span id="menuDeviceName">RelayTV</span><span id="menuAppVersion"></span></div>
           </div>
         </div>
       </div>
@@ -4295,18 +4303,17 @@ def ui():
 
     <div id="connBadge" class="connBadge hidden" role="status" aria-live="polite">Reconnecting…</div>
 
-    <!-- Hidden by default: manual URL modal (opened via ＋ button) -->
-    <div id="addBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
+    <!-- Hidden by default: manual URL modal (opened via Link button) -->
+    <div id="addBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
       <div class="modal addModal">
         <div class="modalTop">
-          <div class="modalTitle">Send to TV</div>
+          <div id="addModalTitle" class="modalTitle">Play a link</div>
           <div class="modalBtns">
             <button id="addCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
           </div>
         </div>
 
         <section class="amSection">
-          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 5.43" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M14 10a5 5 0 0 0-7.07 0L4.1 12.83a5 5 0 0 0 7.07 7.07l1.32-1.33" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Play a link</span></div>
           <div class="fieldRow">
             <input id="addUrlInput" class="urlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste a video URL…" />
             <button id="addPasteBtn" class="iconBtn sm" title="Paste from clipboard" aria-label="Paste">
@@ -4322,9 +4329,20 @@ def ui():
           </div>
           <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
         </section>
+      </div>
+    </div>
+
+    <!-- Hidden by default: toast notification modal (opened via Notify button) -->
+    <div id="notifyBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true" aria-labelledby="notifyModalTitle">
+      <div class="modal addModal notifyModal">
+        <div class="modalTop">
+          <div id="notifyModalTitle" class="modalTitle">Toast notification</div>
+          <div class="modalBtns">
+            <button id="notifyCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
+          </div>
+        </div>
 
         <section id="notifySection" class="amSection">
-          <div class="amHead"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg><span>Toast notification</span></div>
           <div class="notifyField">
             <label for="notifyTextInput">Text</label>
             <textarea id="notifyTextInput" class="notifyInput" maxlength="500" placeholder="Notification text…"></textarea>
@@ -4700,9 +4718,12 @@ def ui():
               <div class="jfShellTitle"><span class="jfBrand">Jellyfin</span></div>
             </div>
           </div>
-          <div id="jfConnection" class="jfConnection" role="status" aria-live="polite">
-            <span class="jfConnectionDot" aria-hidden="true"></span>
-            <span id="jfConnectionLabel">Checking…</span>
+          <div class="jfShellRight">
+            <button id="jfSwitchToPlexBtn" class="browseProviderSwitch hidden" type="button" title="Switch to Plex library">Plex ⇄</button>
+            <div id="jfConnection" class="jfConnection" role="status" aria-live="polite">
+              <span class="jfConnectionDot" aria-hidden="true"></span>
+              <span id="jfConnectionLabel">Checking…</span>
+            </div>
           </div>
         </header>
         <div class="jfWorkspace">
@@ -4791,6 +4812,7 @@ def ui():
             <nav class="plexTabs" role="tablist" aria-label="Plex sections">
               <button class="plexTab active" data-plex-view="home" role="tab" aria-selected="true">Home</button>
               <button class="plexTab" data-plex-view="libraries" role="tab" aria-selected="false">Libraries</button>
+              <button id="plexSwitchToJfBtn" class="browseProviderSwitch hidden" type="button" title="Switch library"><span class="jfBrand">Jellyfin</span> ⇄</button>
             </nav>
             <label class="plexSearch"><span aria-hidden="true">⌕</span><input id="plexSearchInput" type="search" maxlength="200" placeholder="Search your Plex library…" aria-label="Search Plex" /></label>
           </div>

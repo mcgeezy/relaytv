@@ -255,6 +255,28 @@ async function submitAddUrl(mode){
   }
 }
 
+function openNotifyModal(){
+  closeHeaderMenu();
+  const bd = document.getElementById('notifyBackdrop');
+  if (!bd || !bd.classList.contains('hidden')) return;
+  bd.classList.remove('hidden');
+  _uiPushLayer();
+  _setNotifyHelper('', '');
+  const txt = document.getElementById('notifyTextInput');
+  if (txt) txt.focus();
+}
+
+function closeNotifyModal(opts){
+  const bd = document.getElementById('notifyBackdrop');
+  if (!bd) return;
+  const fromNav = !!(opts && opts.fromNav);
+  if (!fromNav && !bd.classList.contains('hidden') && __uiNavDepth > 0) {
+    try { history.back(); } catch (_e) {}
+    return;
+  }
+  bd.classList.add('hidden');
+}
+
 function _setNotifyHelper(msg, kind){
   const el = document.getElementById('notifyHelperTxt');
   if (!el) return;
@@ -658,7 +680,7 @@ function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
   if (__queueMenuEl) return true;
   if (__pendingRemove) return true;
-  const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
+  const modalIds = ['addBackdrop', 'notifyBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
     if (!_isHiddenEl(el)) return true;
@@ -728,6 +750,11 @@ function _uiCloseTopLayerFromNav(){
   const histBd = document.getElementById('histBackdrop');
   if (!_isHiddenEl(histBd)) {
     closeHistory({fromNav:true});
+    return true;
+  }
+  const notifyBd = document.getElementById('notifyBackdrop');
+  if (!_isHiddenEl(notifyBd)) {
+    closeNotifyModal({fromNav:true});
     return true;
   }
   const addBd = document.getElementById('addBackdrop');
@@ -3964,6 +3991,38 @@ async function consumeShareParam(){
 }
 
 
+const __BROWSE_PROVIDER_KEY = 'relaytv_browse_provider';
+
+function _getPreferredBrowseProvider(){
+  try {
+    const v = localStorage.getItem(__BROWSE_PROVIDER_KEY);
+    return v === 'plex' ? 'plex' : 'jellyfin';
+  } catch (_e) {
+    return 'jellyfin';
+  }
+}
+
+function _setPreferredBrowseProvider(provider){
+  try {
+    localStorage.setItem(__BROWSE_PROVIDER_KEY, provider === 'plex' ? 'plex' : 'jellyfin');
+  } catch (_e) {}
+}
+
+function syncBrowseLaunchButtons(){
+  const jfBtn = document.getElementById('jellyfinOpenBtn');
+  const plexBtn = document.getElementById('plexOpenBtn');
+  const jfReady = !!(jfBtn && jfBtn.classList.contains('show'));
+  const plexReady = !!(plexBtn && plexBtn.classList.contains('show'));
+  const bothReady = jfReady && plexReady;
+  const preferred = _getPreferredBrowseProvider();
+  if (jfBtn) jfBtn.classList.toggle('browseAltHidden', bothReady && preferred === 'plex');
+  if (plexBtn) plexBtn.classList.toggle('browseAltHidden', bothReady && preferred !== 'plex');
+  const jfSwitch = document.getElementById('jfSwitchToPlexBtn');
+  const plexSwitch = document.getElementById('plexSwitchToJfBtn');
+  if (jfSwitch) jfSwitch.classList.toggle('hidden', !bothReady);
+  if (plexSwitch) plexSwitch.classList.toggle('hidden', !bothReady);
+}
+
 function bindAddUrlUi(){
   const btn = document.getElementById('addUrlBtn');
   const bd  = document.getElementById('addBackdrop');
@@ -3972,17 +4031,42 @@ function bindAddUrlUi(){
   const playBtn  = document.getElementById('addPlayBtn');
   const queueBtn = document.getElementById('addQueueBtn');
   const inp      = document.getElementById('addUrlInput');
+  const notifyOpenBtn = document.getElementById('notifyOpenBtn');
+  const notifyMenuBtn = document.getElementById('notifyMenuBtn');
+  const notifyBd = document.getElementById('notifyBackdrop');
+  const notifyCloseBtn = document.getElementById('notifyCloseBtn');
   const notifyBtn = document.getElementById('notifySendBtn');
+  const jfSwitchBtn = document.getElementById('jfSwitchToPlexBtn');
+  const plexSwitchBtn = document.getElementById('plexSwitchToJfBtn');
 
   if (btn) btn.onclick = openAddUrl;
   if (closeBtn) closeBtn.onclick = closeAddUrl;
   if (pasteBtn) pasteBtn.onclick = pasteIntoAddUrl;
   if (playBtn) playBtn.onclick = ()=>submitAddUrl('play');
   if (queueBtn) queueBtn.onclick = ()=>submitAddUrl('queue');
+  if (notifyOpenBtn) notifyOpenBtn.onclick = openNotifyModal;
+  if (notifyMenuBtn) notifyMenuBtn.onclick = openNotifyModal;
+  if (notifyCloseBtn) notifyCloseBtn.onclick = closeNotifyModal;
   if (notifyBtn) notifyBtn.onclick = submitNotificationToast;
+
+  if (jfSwitchBtn) jfSwitchBtn.onclick = () => {
+    _setPreferredBrowseProvider('plex');
+    syncBrowseLaunchButtons();
+    closeJellyfinShell({fromNav:true, force:true});
+    if (typeof openPlexShell === 'function') openPlexShell();
+  };
+  if (plexSwitchBtn) plexSwitchBtn.onclick = () => {
+    _setPreferredBrowseProvider('jellyfin');
+    syncBrowseLaunchButtons();
+    if (typeof closePlexShell === 'function') closePlexShell({fromNav:true, force:true});
+    openJellyfinShell();
+  };
 
   if (bd) bd.addEventListener('click', (e) => {
     if (e.target === bd) closeAddUrl();
+  });
+  if (notifyBd) notifyBd.addEventListener('click', (e) => {
+    if (e.target === notifyBd) closeNotifyModal();
   });
 
   // Some browsers only allow clipboard reads after a user gesture.
@@ -3993,7 +4077,10 @@ function bindAddUrlUi(){
   });
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeAddUrl();
+    if (e.key === 'Escape') {
+      closeAddUrl();
+      closeNotifyModal();
+    }
     // When the modal is open, Enter defaults to Play.
     const open = bd && !bd.classList.contains('hidden');
     if (!open || e.key !== 'Enter') return;

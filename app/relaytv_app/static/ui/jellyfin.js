@@ -68,8 +68,8 @@ function applyJfBranding(serverType, serverConfigured){
   if (headLabel) headLabel.textContent = brand.toUpperCase();
   const openBtn = document.getElementById('jellyfinOpenBtn');
   if (openBtn) {
-    openBtn.title = `Open ${brand}`;
-    openBtn.setAttribute('aria-label', `Open ${brand}`);
+    openBtn.title = `Browse ${brand}`;
+    openBtn.setAttribute('aria-label', `Browse ${brand}`);
   }
   const searchInput = document.getElementById('jfSearchInput');
   if (searchInput) {
@@ -93,6 +93,7 @@ function _jfSetLaunchVisible(visible){
     btn.classList.toggle('show', __jfLaunchVisible);
     btn.disabled = !__jfLaunchVisible;
   }
+  if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
   if (!__jfLaunchVisible) closeJellyfinShell({fromNav:true, force:true});
 }
 
@@ -115,6 +116,8 @@ function _jfSetShellVisible(visible){
 function openJellyfinShell(){
   if (!__jfLaunchVisible) return;
   if (__jfUiVisible) return;
+  if (typeof _setPreferredBrowseProvider === 'function') _setPreferredBrowseProvider('jellyfin');
+  if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
   __jfLastFocus = document.activeElement || null;
   _jfSetShellVisible(true);
   _uiPushLayer();
