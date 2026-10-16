@@ -780,6 +780,7 @@ class PlexCatalogService:
         version_id: str = "",
         audio_id: str = "",
         subtitle_id: str = "",
+        resume_pos: float | None = None,
     ) -> dict[str, object]:
         action = str(command or "play_now").strip().lower()
         if action not in {"play_now", "play_next", "play_last", "resume"}:
@@ -802,7 +803,7 @@ class PlexCatalogService:
             return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
         start_pos = None
         if action == "resume":
-            resume_pos = item.get("resume_pos")
+            resume_pos = resume_pos if resume_pos is not None else item.get("resume_pos")
             start_pos = float(resume_pos) if resume_pos is not None else None
         now = playback_service.play_now(
             item,

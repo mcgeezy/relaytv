@@ -365,3 +365,147 @@ def test_unified_home_and_combined_movies_tv_across_services(monkeypatch) -> Non
     assert mov_res["count"] == 2
     tv_res = client.get("/browse/tv/series").json()
     assert tv_res["count"] == 2
+
+
+def test_custom_plex_ids_reach_detail_and_series_routes(monkeypatch) -> None:
+    server = {"id": "srv_plex", "type": "plex", "name": "Custom Plex"}
+    monkeypatch.setattr(browse_service, "_find_server_by_id", lambda sid: server)
+    monkeypatch.setattr(
+        browse_service, "status_summary", lambda: {"connected": True, "active_server_count": 1}
+    )
+
+    class PlexClient:
+        def get(self, path, *, query=None):
+            if path == "/library/metadata/123":
+                return {"MediaContainer": {"Metadata": [
+                    {"key": path, "type": "show", "title": "Example"}
+                ]}}
+            if path == "/library/metadata/123/children":
+                return {"MediaContainer": {"Metadata": [
+                    {"key": "/library/metadata/124", "type": "season", "index": 1}
+                ]}}
+            if path == "/library/metadata/124/children":
+                return {"MediaContainer": {"Metadata": [
+                    {"key": "/library/metadata/125", "type": "episode", "title": "Pilot",
+                     "parentIndex": 1, "index": 1}
+                ]}}
+            pytest.fail(f"Unexpected Plex path: {path}")
+
+    monkeypatch.setattr(browse_service, "_custom_plex_client", lambda _: PlexClient())
+    item_id = browse_service.encode_item_id(server["id"], "/library/metadata/123")
+    assert browse_service.decode_item_id(item_id) == (server["id"], "/library/metadata/123")
+    assert browse_service.decode_item_id("ms~srv_plex~/library/metadata/123") == (
+        server["id"], "/library/metadata/123"
+    )
+    # Follow the same encoded path used by jellyfin.js; ASGI decodes it before routing.
+    from urllib.parse import quote
+
+    client = TestClient(create_app(testing=True))
+    detail = client.get(f"/browse/item/{quote(item_id, safe='')}")
+    assert detail.status_code == 200
+    assert detail.json()["item"]["title"] == "Example"
+    seasons = client.get(f"/browse/tv/series/{quote(item_id, safe='')}/seasons")
+    assert seasons.status_code == 200
+    assert seasons.json()["seasons"][0]["season_number"] == 1
+    episodes = client.get(f"/browse/tv/series/{quote(item_id, safe='')}/episodes?season_number=1")
+    assert episodes.status_code == 200
+    assert episodes.json()["episodes"][0]["episode_number"] == 1
+
+
+@pytest.mark.parametrize("source", ["jf_primary", "plex_primary", "srv_plex"])
+def test_catalog_scroll_reaches_all_upstream_pages(monkeypatch, source) -> None:
+    server = {"id": source, "type": "jellyfin" if source == "jf_primary" else "plex"}
+    monkeypatch.setattr(browse_service, "_active_servers", lambda: [server])
+    monkeypatch.setattr(
+        browse_service, "status_summary", lambda: {"connected": True, "active_server_count": 1}
+    )
+    calls = []
+
+    def jf_page(*, sort, limit, start_index, starts_with, refresh):
+        calls.append(start_index)
+        rows = [{"item_id": str(i), "title": f"Movie {i:03}", "type": "movie"}
+                for i in range(start_index, min(300, start_index + limit))]
+        return {"items": rows, "count": 300}
+
+    def plex_page(_library_id, *, start, limit, sort):
+        calls.append(start)
+        rows = [{"id": str(i), "title": f"Movie {i:03}", "type": "movie"}
+                for i in range(start, min(300, start + limit))]
+        return {"items": rows, "count": 300,
+                "next_start": start + len(rows) if start + len(rows) < 300 else None}
+
+    class PlexClient:
+        def get(self, path, *, query=None):
+            if path == "/library/sections":
+                return {"MediaContainer": {"Directory": [{"key": "1", "type": "movie"}]}}
+            assert path == "/library/sections/1/all"
+            start = query["X-Plex-Container-Start"]
+            limit = query["X-Plex-Container-Size"]
+            page = plex_page("1", start=start, limit=limit, sort="title")
+            return {"MediaContainer": {"totalSize": 300, "Metadata": [
+                {"key": f"/library/metadata/{row['id']}", "title": row["title"], "type": "movie"}
+                for row in page["items"]
+            ]}}
+
+    monkeypatch.setattr(browse_service.jellyfin_receiver, "list_movies", jf_page)
+    monkeypatch.setattr(browse_service.plex_service.catalog_service, "libraries",
+                        lambda: {"libraries": [{"id": "1", "type": "movie"}]})
+    monkeypatch.setattr(browse_service.plex_service.catalog_service, "library_items", plex_page)
+    monkeypatch.setattr(browse_service, "_custom_plex_client", lambda _: PlexClient())
+    client = TestClient(create_app(testing=True))
+    start = 0
+    titles = []
+    for _ in range(10):
+        response = client.get(f"/browse/movies?limit=60&start={start}&sort=title_asc")
+        assert response.status_code == 200
+        page = response.json()
+        assert page["count"] == 300
+        titles.extend(item["title"] for item in page["items"])
+        start = page["next_start_index"]
+        if start is None:
+            break
+    else:
+        pytest.fail("Catalog pagination never terminated")
+    assert titles == [f"Movie {i:03}" for i in range(300)]
+    if source != "jf_primary":
+        assert 100 in calls and 200 in calls
+
+
+def test_status_includes_custom_only_browse_connection(monkeypatch) -> None:
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    monkeypatch.setattr(browse_service.jellyfin_receiver, "status", lambda: {"enabled": False})
+    monkeypatch.setattr(browse_service.plex_auth.auth_manager, "status", lambda: {"linked": False})
+    browse_service.save_servers_store({"servers": [
+        {"id": "srv_custom", "type": "jellyfin", "server_url": "http://custom:8096",
+         "enabled": True}
+    ]})
+    browse_service._record_latency("srv_custom", 12.0, connected=True)
+    result = TestClient(create_app(testing=True)).get("/status")
+    assert result.status_code == 200
+    body = result.json()
+    assert body["browse_connected"] is True
+    assert body["browse_enabled"] is True
+    assert body["browse_server_count"] == 1
+    assert body["browse_connected_count"] == 1
+    assert body["browse_best_latency_ms"] == 12.0
+
+
+@pytest.mark.parametrize("resume_pos,expected", [(2400.0, 2400.0), (None, 600.0)])
+def test_primary_plex_resume_uses_merged_position(monkeypatch, resume_pos, expected) -> None:
+    monkeypatch.setattr(browse_service, "_find_server_by_id",
+                        lambda _: {"id": "plex_primary", "type": "plex"})
+    monkeypatch.setattr(browse_service.plex_service.catalog_service, "durable_item",
+                        lambda *args, **kwargs: {"resume_pos": 600.0})
+    starts = []
+
+    def play_now(item, **kwargs):
+        starts.append(kwargs["start_pos"])
+        return {"title": "Example"}
+
+    monkeypatch.setattr(browse_service.playback_service, "play_now", play_now)
+    result = TestClient(create_app(testing=True)).post("/browse/action", json={
+        "item_id": browse_service.encode_item_id("plex_primary", "opaque-reference"),
+        "command": "resume", "resume_pos": resume_pos,
+    })
+    assert result.status_code == 200
+    assert starts == [expected]

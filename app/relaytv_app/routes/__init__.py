@@ -3888,7 +3888,7 @@ def _status_payload() -> dict[str, object]:
             iptv_status.update({"source_count": 0, "channel_count": 0})
     browse_st: dict[str, object] = {}
     try:
-        browse_st = browse_service.status()
+        browse_st = browse_service.status_summary()
     except Exception:
         browse_st = {}
     # Durable-write health. A device whose disk stopped accepting writes used
@@ -3913,8 +3913,11 @@ def _status_payload() -> dict[str, object]:
         "iptv_channel_count": int(iptv_status.get("channel_count") or 0),
         "browse_enabled": bool(browse_st.get("enabled")),
         "browse_connected": bool(browse_st.get("connected")),
-        "browse_server_count": int(browse_st.get("server_count") or 0),
-        "browse_connected_count": int(browse_st.get("connected_count") or 0),
+        "browse_server_count": len(browse_st.get("servers") or []),
+        "browse_connected_count": sum(
+            1 for server in (browse_st.get("servers") or [])
+            if server.get("enabled") and server.get("connected")
+        ),
         "browse_best_latency_ms": browse_st.get("best_latency_ms"),
         "jellyfin_enabled": jf_enabled,
         "jellyfin_running": jf_running,

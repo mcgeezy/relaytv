@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import base64
 import copy
 import json
 import os
@@ -106,13 +107,24 @@ def encode_item_id(server_id: str, raw_id: str) -> str:
     rid = str(raw_id or "").strip()
     if not sid or not rid:
         return rid
-    if rid.startswith(ITEM_ID_PREFIX):
+    if rid.startswith((ITEM_ID_PREFIX, "ms2~")):
         return rid
-    return f"{ITEM_ID_PREFIX}{sid}~{rid}"
+    # Keep new IDs safe in a single URL path segment. Accept the original ms~
+    # format when decoding so existing browser selections remain usable.
+    payload = json.dumps([sid, rid], separators=(",", ":")).encode("utf-8")
+    return "ms2~" + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
 def decode_item_id(item_id: str) -> tuple[str, str]:
     raw = str(item_id or "").strip()
+    if raw.startswith("ms2~"):
+        try:
+            encoded = raw[4:]
+            sid, rid = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+            if isinstance(sid, str) and isinstance(rid, str) and sid and rid:
+                return sid, rid
+        except (ValueError, TypeError, UnicodeError):
+            pass
     if raw.startswith(ITEM_ID_PREFIX):
         rest = raw[len(ITEM_ID_PREFIX) :]
         parts = rest.split("~", 1)
@@ -655,7 +667,7 @@ def _tag_item_source(
         return out
     out["raw_item_id"] = raw_id
     out["item_id"] = encode_item_id(sid, raw_id)
-    if out.get("series_id") and not str(out["series_id"]).startswith(ITEM_ID_PREFIX):
+    if out.get("series_id") and not str(out["series_id"]).startswith((ITEM_ID_PREFIX, "ms2~")):
         out["raw_series_id"] = str(out["series_id"])
         out["series_id"] = encode_item_id(sid, str(out["series_id"]))
     lat = latency_ms if latency_ms is not None else get_server_metrics(sid).get("latency_ms")
@@ -768,7 +780,7 @@ def _dedupe_key_for_item(item: dict[str, Any]) -> str:
 def _resolve_item_latency_and_source(item: dict[str, Any]) -> dict[str, Any]:
     out = dict(item)
     sid = str(out.get("source_id") or out.get("server_id") or "").strip()
-    if not sid and str(out.get("item_id") or "").startswith(ITEM_ID_PREFIX):
+    if not sid and str(out.get("item_id") or "").startswith((ITEM_ID_PREFIX, "ms2~")):
         sid, _ = decode_item_id(str(out.get("item_id") or ""))
     stype = str(out.get("source_type") or out.get("server_type") or "").strip().lower()
     sname = str(out.get("source_name") or out.get("server_name") or "").strip()
@@ -1274,30 +1286,30 @@ def _fetch_server_catalog_items(
     sid = str(server.get("id") or "")
     stype = str(server.get("type") or "jellyfin").lower()
     t0 = time.perf_counter()
-    fetch_count = max(limit + start, 120)
+    fetch_count = max(limit + start + 1, 120)
 
     try:
         if sid == "jf_primary":
-            if kind == "movie":
-                payload = jellyfin_receiver.list_movies(
+            fetch_page = (
+                jellyfin_receiver.list_movies if kind == "movie" else jellyfin_receiver.list_series
+            )
+            raw_items: list[dict[str, Any]] = []
+            total = 0
+            while len(raw_items) < fetch_count:
+                payload = fetch_page(
                     sort=sort,
-                    limit=fetch_count,
-                    start_index=0,
+                    limit=min(5000, fetch_count - len(raw_items)),
+                    start_index=len(raw_items),
                     starts_with=starts_with,
                     refresh=refresh,
                 )
-            else:
-                payload = jellyfin_receiver.list_series(
-                    sort=sort,
-                    limit=fetch_count,
-                    start_index=0,
-                    starts_with=starts_with,
-                    refresh=refresh,
-                )
+                page = payload.get("items") or []
+                total = int(payload.get("count") or len(raw_items) + len(page))
+                raw_items.extend(page)
+                if not page or len(raw_items) >= total:
+                    break
             dt = (time.perf_counter() - t0) * 1000.0
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
-            raw_items = payload.get("items") if isinstance(payload, dict) else []
-            total = int(payload.get("count") or len(raw_items)) if isinstance(payload, dict) else 0
             tagged = [
                 _tag_item_source(it, server, latency_ms=dt)
                 for it in (raw_items if isinstance(raw_items, list) else [])
@@ -1306,6 +1318,8 @@ def _fetch_server_catalog_items(
             return tagged, total
 
         if sid == "plex_primary":
+            if starts_with:
+                fetch_count = float("inf")
             libs_payload = plex_service.catalog_service.libraries()
             libs = libs_payload.get("libraries") if isinstance(libs_payload, dict) else []
             wanted_section_type = "movie" if kind == "movie" else "show"
@@ -1320,17 +1334,24 @@ def _fetch_server_catalog_items(
                 lib_id = str(lib.get("id") or "").strip()
                 if not lib_id:
                     continue
-                sec_res = plex_service.catalog_service.library_items(
-                    lib_id,
-                    start=0,
-                    limit=min(100, fetch_count),
-                    sort=plex_sort,
-                )
-                sec_items = sec_res.get("items") if isinstance(sec_res, dict) else []
-                total_count += int(sec_res.get("count") or len(sec_items or []))
-                for pit in sec_items if isinstance(sec_items, list) else []:
-                    if isinstance(pit, dict):
-                        items_out.append(pit)
+                offset = 0
+                while offset < fetch_count:
+                    sec_res = plex_service.catalog_service.library_items(
+                        lib_id,
+                        start=offset,
+                        limit=min(100, fetch_count - offset),
+                        sort=plex_sort,
+                    )
+                    sec_items = sec_res.get("items") or []
+                    for pit in sec_items:
+                        if isinstance(pit, dict):
+                            items_out.append(pit)
+                    next_offset = sec_res.get("next_start")
+                    if offset == 0:
+                        total_count += int(sec_res.get("count") or len(sec_items))
+                    if next_offset is None or int(next_offset) <= offset:
+                        break
+                    offset = int(next_offset)
             dt = (time.perf_counter() - t0) * 1000.0
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
             adapted = [_adapt_plex_item(it, server, latency_ms=dt) for it in items_out]
@@ -1341,7 +1362,7 @@ def _fetch_server_catalog_items(
                     for it in adapted
                     if str(it.get("title") or "").strip().upper().startswith(letter)
                 ]
-            return adapted, max(total_count, len(adapted))
+            return adapted, len(adapted) if starts_with else max(total_count, len(adapted))
 
         if stype in {"jellyfin", "emby"}:
             base, token, uid = _resolve_custom_jf_auth(server)
@@ -1401,6 +1422,7 @@ def _fetch_server_catalog_items(
             wanted_type = "movie" if kind == "movie" else "show"
             plex_sort = plex_service.SORTS.get(_plex_sort_for_unified(sort), "titleSort:asc")
             raw_list: list[dict[str, Any]] = []
+            total_count = 0
             for d in dirs if isinstance(dirs, list) else []:
                 if not isinstance(d, dict):
                     continue
@@ -1409,26 +1431,34 @@ def _fetch_server_catalog_items(
                 skey = str(d.get("key") or "").strip()
                 if not skey:
                     continue
-                p = client.get(
-                    f"/library/sections/{_urlparse.quote(skey)}/all",
-                    query={
-                        "sort": plex_sort,
-                        "includeGuids": 1,
-                        "X-Plex-Container-Start": 0,
-                        "X-Plex-Container-Size": min(100, fetch_count),
-                    },
-                )
-                c = p.get("MediaContainer") if isinstance(p, dict) else {}
-                recs = c.get("Metadata") if isinstance(c, dict) else []
-                for r in recs if isinstance(recs, list) else []:
-                    if isinstance(r, dict):
-                        conv = _custom_plex_raw_to_dict(server, r)
-                        if conv:
-                            raw_list.append(conv)
+                offset = 0
+                while offset < fetch_count:
+                    p = client.get(
+                        f"/library/sections/{_urlparse.quote(skey)}/all",
+                        query={
+                            "sort": plex_sort,
+                            "includeGuids": 1,
+                            "X-Plex-Container-Start": offset,
+                            "X-Plex-Container-Size": min(100, fetch_count - offset),
+                        },
+                    )
+                    c = p.get("MediaContainer") or {}
+                    recs = c.get("Metadata") or []
+                    section_total = int(c.get("totalSize") or len(recs))
+                    if offset == 0:
+                        total_count += section_total
+                    for r in recs:
+                        if isinstance(r, dict):
+                            conv = _custom_plex_raw_to_dict(server, r)
+                            if conv:
+                                raw_list.append(conv)
+                    offset += len(recs)
+                    if not recs or offset >= section_total:
+                        break
             dt = (time.perf_counter() - t0) * 1000.0
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
             adapted = [_adapt_plex_item(it, server, latency_ms=dt) for it in raw_list]
-            return adapted, len(adapted)
+            return adapted, max(total_count, len(adapted))
     except Exception as exc:
         _record_latency(sid, None, connected=False, error=str(exc))
         logger.warning("browse_catalog_failed server=%s kind=%s err=%s", sid, kind, exc)
@@ -1511,8 +1541,9 @@ def _list_unified_catalog(
     start_idx = max(0, int(start))
     sort_key = str(sort or ("added" if kind == "movie" else "title_asc")).strip().lower()
     letter = str(starts_with or "").strip()[:1].upper()
-    servers = _active_servers()
+    servers = sorted(_active_servers(), key=lambda server: str(server.get("id") or ""))
     per_server_items: list[list[dict[str, Any]]] = []
+    unseen_count = 0
 
     if servers:
         with ThreadPoolExecutor(max_workers=min(8, len(servers))) as pool:
@@ -1529,9 +1560,11 @@ def _list_unified_catalog(
                 )
                 for s in servers
             ]
-            for fut in as_completed(futs):
+            # Preserve server order across pages, regardless of response timing.
+            for fut in futs:
                 try:
-                    items, _cnt = fut.result()
+                    items, count = fut.result()
+                    unseen_count += max(0, count - len(items))
                     if items:
                         per_server_items.append(items)
                 except Exception:
@@ -1547,7 +1580,9 @@ def _list_unified_catalog(
 
     deduped = deduplicate_items(combined)
     sorted_items = _sort_unified_items(deduped, sort_key)
-    total = len(sorted_items)
+    # Until every source is exhausted, count is an upper bound: unseen
+    # records may still duplicate another server's copy. Keep paging enabled.
+    total = len(sorted_items) + unseen_count
     sliced = sorted_items[start_idx : start_idx + lim]
     next_start = (start_idx + len(sliced)) if (start_idx + len(sliced)) < total else None
     st = status_summary()
@@ -2074,6 +2109,7 @@ def perform_unified_action(
             version_id=version_id,
             audio_id=audio_id,
             subtitle_id=subtitle_id,
+            resume_pos=resume_pos,
         )
         # Format response so jellyfin.js understands both queue and play actions cleanly
         if cmd in {"play_next", "play_last"}:
