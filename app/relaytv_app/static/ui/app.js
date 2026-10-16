@@ -377,6 +377,7 @@ function _mergePlaybackStateIntoStatus(base, fast){
     'queue_length',
     'playback_telemetry_source',
     'playback_telemetry_freshness',
+    'dvr',
   ].forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(src, key)) out[key] = src[key];
   });
@@ -1099,7 +1100,15 @@ function _updatePreviewTime(pct){
   // Show preview time while scrubbing
   const posEl = document.getElementById('pos');
   if (!posEl || !__lastStatus) return;
-  if (_isNowPlayingLive(__lastStatus.now_playing)) return;
+  const isLive = _isNowPlayingLive(__lastStatus.now_playing);
+  const dvr = __lastStatus.dvr;
+  if (isLive) {
+    if (!dvr || !dvr.seekable || dvr.live_edge == null || dvr.buffer_start == null) return;
+    const target = dvr.buffer_start + pct * (dvr.live_edge - dvr.buffer_start);
+    const delay = Math.max(0, dvr.live_edge - target);
+    posEl.textContent = (delay < 3 || pct >= 0.98) ? 'LIVE' : ('-' + fmtTime(delay));
+    return;
+  }
   const dur = __lastStatus.duration;
   if (dur == null || isNaN(dur) || dur <= 0) return;
   const sec = pct * dur;
@@ -1116,7 +1125,18 @@ function _pctFromClientX(clientX){
 
 async function _commitSeekFromPct(pct){
   if (!__lastStatus || !__lastStatus.playing) return;
-  if (_isNowPlayingLive(__lastStatus.now_playing)) return;
+  const isLive = _isNowPlayingLive(__lastStatus.now_playing);
+  const dvr = __lastStatus.dvr;
+  if (isLive) {
+    if (!dvr || !dvr.seekable || dvr.live_edge == null || dvr.buffer_start == null) return;
+    if (pct >= 0.98) {
+      await post('/playback/live', {}, {idempotent: true});
+    } else {
+      const target = dvr.buffer_start + pct * (dvr.live_edge - dvr.buffer_start);
+      await post('/seek_abs', {sec: target}, {idempotent: true});
+    }
+    return;
+  }
   const dur = __lastStatus.duration;
   if (dur == null || isNaN(dur) || dur <= 0) return;
   const sec = pct * dur;
@@ -1133,9 +1153,13 @@ function initScrubber(){
 
   bar.addEventListener('pointerdown', (e) => {
     if (!__lastStatus || !__lastStatus.playing) return;
-    if (_isNowPlayingLive(__lastStatus.now_playing)) return;
-    const dur = __lastStatus.duration;
-    if (dur == null || isNaN(dur) || dur <= 0) return;
+    const isLive = _isNowPlayingLive(__lastStatus.now_playing);
+    const dvr = __lastStatus.dvr;
+    if (isLive && (!dvr || !dvr.seekable)) return;
+    if (!isLive) {
+      const dur = __lastStatus.duration;
+      if (dur == null || isNaN(dur) || dur <= 0) return;
+    }
     if (typeof e.preventDefault === 'function') e.preventDefault();
 
     __scrubbing = true;
@@ -1413,6 +1437,17 @@ let __nowLastShownNp = null;
 const __UI_EVENT_RECONNECT_MS = 5000;
 const __UI_TRANSPORT_UPGRADE_MS = 300000;
 
+function _updateNowCardClasses(card, opts){
+  if (!card || !opts) return;
+  const {hasNow, paused, liveNow, dvr, dvrAtLive, ended} = opts;
+  card.classList.toggle('isIdle', !hasNow);
+  card.classList.toggle('isPaused', !!paused);
+  card.classList.toggle('isLive', !!liveNow);
+  card.classList.toggle('hasDvr', !!(liveNow && dvr && dvr.seekable));
+  card.classList.toggle('isDvrRewound', !!(liveNow && dvr && !dvrAtLive));
+  card.classList.toggle('isEnded', !!ended);
+}
+
 function renderStatus(st) {
   if (!st) return;
   if (_uiRefreshInteractionLockActive()) return;
@@ -1485,6 +1520,9 @@ function renderStatus(st) {
   const paused = !!st.paused && hasNow;
   const activelyPlaying = !!st.playing && !st.paused && hasNow;
   const liveNow = !!hasNow && _isNowPlayingLive(np);
+  const dvr = (st && st.dvr && typeof st.dvr === 'object') ? st.dvr : null;
+  const dvrAtLive = (!dvr || dvr.is_at_live !== false);
+  const dvrDelay = (dvr && typeof dvr.delay_sec === 'number') ? dvr.delay_sec : 0;
   // Ended/closed: an item is still on the card but playback is down and no
   // transition is in flight. This is the state that used to render as a live
   // card with dead "--:--" times.
@@ -1495,33 +1533,62 @@ function renderStatus(st) {
   const npDuration = (np && typeof np.duration_sec === 'number' && Number.isFinite(np.duration_sec) && np.duration_sec > 0) ? np.duration_sec : null;
   const effDuration = st.duration != null ? st.duration : (ended ? npDuration : null);
   if (nowCardEl){
-    nowCardEl.classList.toggle('isIdle', !hasNow);
-    nowCardEl.classList.toggle('isPaused', paused);
-    nowCardEl.classList.toggle('isLive', liveNow);
-    nowCardEl.classList.toggle('isEnded', ended);
+    _updateNowCardClasses(nowCardEl, {hasNow, paused, liveNow, dvr, dvrAtLive, ended});
   }
   const stateTag = document.getElementById('nowStateTag');
   if (stateTag) {
-    stateTag.textContent = paused ? 'Paused' : (ended ? 'Ended' : 'Live');
+    let tagText = paused ? 'Paused' : (ended ? 'Ended' : 'Live');
+    if (liveNow && !paused && dvr && !dvrAtLive) {
+      tagText = 'DVR -' + fmtTime(dvrDelay);
+      stateTag.title = 'Rewound from live — click to return to live';
+      stateTag.onclick = async (e) => {
+        try { if (e) e.preventDefault(); } catch(_){}
+        await post('/playback/live');
+      };
+    } else {
+      stateTag.title = '';
+      stateTag.onclick = null;
+    }
+    stateTag.textContent = tagText;
     stateTag.classList.toggle('hidden', !paused && !liveNow && !ended);
-    stateTag.classList.toggle('live', liveNow && !paused);
+    stateTag.classList.toggle('live', liveNow && !paused && dvrAtLive);
+    stateTag.classList.toggle('dvr', liveNow && !paused && !dvrAtLive);
   }
   const stateDot = document.getElementById('nowStateDot');
   if (stateDot) {
     stateDot.classList.toggle('playing', activelyPlaying);
-    stateDot.classList.toggle('live', liveNow && activelyPlaying);
+    stateDot.classList.toggle('live', liveNow && activelyPlaying && dvrAtLive);
+    stateDot.classList.toggle('dvr', liveNow && activelyPlaying && !dvrAtLive);
   }
 
-  const posTxt = liveNow ? 'LIVE' : fmtTime((ended && st.position == null && resumePos != null) ? resumePos : st.position);
-  const durTxt = liveNow ? (paused ? 'Paused' : 'Streaming') : fmtTime(effDuration);
+  let posTxt;
+  let durTxt;
+  if (liveNow) {
+    if (dvr && !dvrAtLive) {
+      posTxt = '-' + fmtTime(dvrDelay);
+      durTxt = 'Live -' + fmtTime(dvrDelay);
+    } else {
+      posTxt = 'LIVE';
+      durTxt = paused ? 'Paused' : 'Streaming';
+    }
+  } else {
+    posTxt = fmtTime((ended && st.position == null && resumePos != null) ? resumePos : st.position);
+    durTxt = fmtTime(effDuration);
+  }
 
   // Only overwrite the pos readout if not scrubbing
   if (!__scrubbing) document.getElementById('pos').textContent = posTxt;
   document.getElementById('dur').textContent = durTxt;
   const progressEl = document.getElementById('progress');
   if (progressEl) {
-    progressEl.title = liveNow ? 'Live stream' : 'Drag to seek (or tap)';
-    progressEl.setAttribute('aria-disabled', liveNow ? 'true' : 'false');
+    if (liveNow) {
+      const seekable = !!(dvr && dvr.seekable);
+      progressEl.title = seekable ? (dvrAtLive ? 'Live stream (Drag to rewind DVR)' : 'DVR rewound (Drag to seek or tap to return)') : 'Live stream';
+      progressEl.setAttribute('aria-disabled', seekable ? 'false' : 'true');
+    } else {
+      progressEl.title = 'Drag to seek (or tap)';
+      progressEl.setAttribute('aria-disabled', 'false');
+    }
   }
 
   _renderRemoteVolume(st.volume);
@@ -1554,7 +1621,13 @@ function renderStatus(st) {
 
   // progress bar fill
   if (!__scrubbing && liveNow) {
-    _setProgressFill(0);
+    if (dvr && dvr.seekable && dvr.live_edge != null && dvr.buffer_start != null && dvr.live_edge > dvr.buffer_start) {
+      const curPos = (st.position != null && !isNaN(st.position)) ? Number(st.position) : dvr.live_edge;
+      const dvrPct = Math.max(0, Math.min(1, (curPos - dvr.buffer_start) / (dvr.live_edge - dvr.buffer_start)));
+      _setProgressFill(dvrPct);
+    } else {
+      _setProgressFill(1.0);
+    }
   } else if (!__scrubbing && ended && resumePos != null && effDuration != null && effDuration > 0) {
     // Show where a resume would pick up, not an empty bar.
     _setProgressFill(resumePos / effDuration);
