@@ -44,7 +44,11 @@ def _isolated_playback(monkeypatch):
     monkeypatch.setattr(state, "update_session", _update_session)
     monkeypatch.setattr(state, "persist_queue", lambda: True)
     monkeypatch.setattr(state, "update_history_progress", lambda *a, **k: None, raising=False)
+    routes.playback_service._PRESERVE_CLAIMS.clear()
+    routes.playback_service._PRESERVE_COMMITTED.clear()
     yield
+    routes.playback_service._PRESERVE_CLAIMS.clear()
+    routes.playback_service._PRESERVE_COMMITTED.clear()
 
 
 @pytest.fixture
@@ -883,3 +887,218 @@ def test_jellyfin_startup_tracks_receive_the_owning_playback_intent(harness, mon
             "playback_intent": player.current_playback_intent(),
         }
     ]
+
+
+def test_superseded_play_now_rolls_back_preserved_current_when_closed(
+    harness,
+    monkeypatch,
+) -> None:
+    queued = {"url": "https://youtu.be/queued", "title": "Queued"}
+    current = {"url": "https://youtu.be/current", "title": "Current", "provider": "youtube"}
+    toasts: list[dict] = []
+
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(current), raising=False)
+    monkeypatch.setattr(state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([dict(queued)]), raising=False)
+    monkeypatch.setattr(state, "persist_queue_payload", lambda payload: True)
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 42.0 if prop == "time-pos" else 300.0)
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    monkeypatch.setattr(routes, "_ensure_notification_surface", lambda **kw: None)
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kw: toasts.append(dict(kw)))
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        player,
+        "make_item",
+        lambda url, lightweight=False: {"url": url, "title": url, "provider": "youtube"},
+    )
+
+    client = TestClient(create_app(testing=True))
+    responses = []
+    worker = threading.Thread(
+        target=lambda: responses.append(
+            client.post("/play_now", json={"url": "https://youtu.be/incoming"})
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        assert harness["resolving"].wait(5.0)
+        assert state.QUEUE[0]["url"] == "https://youtu.be/current"
+        assert state.QUEUE[0]["_relaytv_interrupt_preserved"] is True
+        assert client.post("/close").status_code == 200
+    finally:
+        harness["gate"].set()
+        worker.join(5.0)
+
+    assert not worker.is_alive()
+    assert [item["url"] for item in state.QUEUE] == ["https://youtu.be/queued"]
+    assert responses and responses[0].status_code == 200
+    body = responses[0].json()
+    assert body["action"] == "superseded"
+    assert body["preserved"] is None
+    assert not any("Playing now:" in str(t.get("text") or "") for t in toasts)
+
+
+def test_overlapping_play_now_requests_do_not_leave_current_item_queued_to_repeat_on_skip(
+    harness,
+    monkeypatch,
+) -> None:
+    queued = {"url": "https://youtu.be/upnext", "title": "Actual Next"}
+    current = {
+        "url": "https://www.youtube.com/watch?v=feiF4mTzfsU",
+        "title": "Neil deGrasse Tyson | Hot Ones Game Night",
+        "provider": "youtube",
+    }
+    first_resolving = threading.Event()
+    second_resolving = threading.Event()
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    class _Result:
+        stream = "https://cdn.test/stream.m3u8"
+        audio = None
+        live_status = ""
+        ytdl_format = ""
+        ytdlp_args = ()
+
+    def _resolve_by_url(url: str):
+        if "other" in url:
+            first_resolving.set()
+            assert release_first.wait(5.0)
+        else:
+            second_resolving.set()
+            assert release_second.wait(5.0)
+        return _Result()
+
+    monkeypatch.setattr(player, "resolve_streams", _resolve_by_url)
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(current), raising=False)
+    monkeypatch.setattr(state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([dict(queued)]), raising=False)
+    monkeypatch.setattr(state, "persist_queue_payload", lambda payload: True)
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 126.6 if prop == "time-pos" else 1421.0)
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kw: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        player,
+        "make_item",
+        lambda url, lightweight=False: {"url": url, "title": url, "provider": "youtube"},
+    )
+
+    client = TestClient(create_app(testing=True))
+    first_resp = []
+    second_resp = []
+    t1 = threading.Thread(
+        target=lambda: first_resp.append(
+            client.post("/play_now", json={"url": "https://youtu.be/other"})
+        ),
+        daemon=True,
+    )
+    t2 = threading.Thread(
+        target=lambda: second_resp.append(
+            client.post("/play_now", json={"url": "https://youtu.be/feiF4mTzfsU"})
+        ),
+        daemon=True,
+    )
+    t1.start()
+    try:
+        assert first_resolving.wait(5.0)
+        assert state.QUEUE[0]["url"] == current["url"]
+        t2.start()
+        assert second_resolving.wait(5.0)
+    finally:
+        release_first.set()
+        release_second.set()
+        t1.join(5.0)
+        if t2.ident is not None:
+            t2.join(5.0)
+
+    assert not t1.is_alive() and not t2.is_alive()
+    assert state.NOW_PLAYING["url"] == "https://youtu.be/feiF4mTzfsU"
+    assert [item["url"] for item in state.QUEUE] == ["https://youtu.be/upnext"]
+    assert first_resp[0].status_code == 200
+    assert first_resp[0].json()["action"] == "superseded"
+    assert second_resp[0].status_code == 200
+    assert second_resp[0].json()["action"] == "played"
+
+
+def test_overlapping_play_now_for_different_items_retains_preserved_original(
+    harness,
+    monkeypatch,
+) -> None:
+    queued = {"url": "https://youtu.be/queued", "title": "Queued"}
+    current = {"url": "https://youtu.be/original", "title": "Original", "provider": "youtube"}
+    first_resolving = threading.Event()
+    second_resolving = threading.Event()
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    class _Result:
+        stream = "https://cdn.test/stream.m3u8"
+        audio = None
+        live_status = ""
+        ytdl_format = ""
+        ytdlp_args = ()
+
+    def _resolve_by_url(url: str):
+        if "first_choice" in url:
+            first_resolving.set()
+            assert release_first.wait(5.0)
+        else:
+            second_resolving.set()
+            assert release_second.wait(5.0)
+        return _Result()
+
+    monkeypatch.setattr(player, "resolve_streams", _resolve_by_url)
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(current), raising=False)
+    monkeypatch.setattr(state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue([dict(queued)]), raising=False)
+    monkeypatch.setattr(state, "persist_queue_payload", lambda payload: True)
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 55.0 if prop == "time-pos" else 600.0)
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kw: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        player,
+        "make_item",
+        lambda url, lightweight=False: {"url": url, "title": url, "provider": "youtube"},
+    )
+
+    client = TestClient(create_app(testing=True))
+    first_resp = []
+    second_resp = []
+    t1 = threading.Thread(
+        target=lambda: first_resp.append(
+            client.post("/play_now", json={"url": "https://youtu.be/first_choice"})
+        ),
+        daemon=True,
+    )
+    t2 = threading.Thread(
+        target=lambda: second_resp.append(
+            client.post("/play_now", json={"url": "https://youtu.be/second_choice"})
+        ),
+        daemon=True,
+    )
+    t1.start()
+    try:
+        assert first_resolving.wait(5.0)
+        t2.start()
+        assert second_resolving.wait(5.0)
+    finally:
+        release_first.set()
+        release_second.set()
+        t1.join(5.0)
+        if t2.ident is not None:
+            t2.join(5.0)
+
+    assert not t1.is_alive() and not t2.is_alive()
+    assert state.NOW_PLAYING["url"] == "https://youtu.be/second_choice"
+    assert [item["url"] for item in state.QUEUE] == [
+        "https://youtu.be/original",
+        "https://youtu.be/queued",
+    ]
+    assert state.QUEUE[0]["_relaytv_interrupt_preserved"] is True
+    assert state.QUEUE[0]["resume_pos"] == 55.0
+    assert first_resp[0].json()["action"] == "superseded"
+    assert second_resp[0].json()["action"] == "played"
