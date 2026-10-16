@@ -5711,6 +5711,19 @@ def _runtime_gap_completion_plausible(now: dict | None) -> bool:
     return elapsed >= required_elapsed
 
 
+_PLAY_ITEM_LOCAL = threading.local()
+
+
+def clear_last_play_superseded() -> None:
+    """Reset the current thread's superseded-play marker before a new attempt."""
+    _PLAY_ITEM_LOCAL.superseded = False
+
+
+def last_play_superseded() -> bool:
+    """Return True when the current thread's most recent play_item call was superseded."""
+    return bool(getattr(_PLAY_ITEM_LOCAL, "superseded", False))
+
+
 def play_item(
     item_or_text,
     use_resolver: bool,
@@ -5725,6 +5738,7 @@ def play_item(
     # Claim before any resolving, IPTV lookup, relay preparation, or
     # availability wait, so this play both supersedes older ones and can be
     # superseded itself.
+    clear_last_play_superseded()
     intent = claim_playback_intent()
     try:
         if (
@@ -5757,6 +5771,7 @@ def play_item(
         # A newer Play, or a Stop/Close, took over while this one was still
         # resolving. Report whatever actually owns playback now rather than
         # this call's stale intention.
+        _PLAY_ITEM_LOCAL.superseded = True
         logger.info("play_item_superseded stage=%s intent=%d mode=%s", exc, intent, mode)
         if raise_on_superseded:
             raise

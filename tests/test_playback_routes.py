@@ -1111,6 +1111,140 @@ def test_postlive_route_rejects_unknown_or_consumed_tokens(monkeypatch) -> None:
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "replay_url",
+    [
+        "https://www.youtube.com/watch?v=feiF4mTzfsU",
+        "https://youtu.be/feiF4mTzfsU",
+    ],
+)
+def test_play_now_route_does_not_preserve_duplicate_when_replaying_current_item(
+    monkeypatch,
+    replay_url: str,
+) -> None:
+    persisted: list[dict] = []
+    queued = {"url": "https://www.youtube.com/watch?v=next123", "title": "Next Up"}
+    current = {
+        "url": "https://www.youtube.com/watch?v=feiF4mTzfsU",
+        "title": "Neil deGrasse Tyson | Hot Ones Game Night",
+        "provider": "youtube",
+    }
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes.player, "mpv_get", lambda prop: 126.6 if prop == "time-pos" else 1421.0
+    )
+    monkeypatch.setattr(routes.player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", dict(current), raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [dict(queued)], raising=False)
+    monkeypatch.setattr(
+        routes.state, "persist_queue_payload", lambda payload: persisted.append(dict(payload))
+    )
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        routes.player,
+        "play_item",
+        lambda item, **kwargs: {
+            "url": item["url"] if isinstance(item, dict) else item,
+            "title": current["title"],
+            "provider": "youtube",
+        },
+    )
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play_now", json={"url": replay_url, "preserve_current": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["preserved"] is None
+    assert [item["url"] for item in routes.state.QUEUE] == [queued["url"]]
+    assert persisted == []
+
+
+@pytest.mark.parametrize(
+    ("current", "payload"),
+    [
+        (
+            {
+                "url": "http://jellyfin.local:8096/Videos/abc123/stream.mkv",
+                "title": "Jellyfin Movie",
+                "provider": "jellyfin",
+                "jellyfin_item_id": "abc-123",
+                "history_id": "hist-jf-1",
+            },
+            {
+                "url": "http://jellyfin.local:8096/Videos/abc123/stream.mkv",
+                "title": "Jellyfin Movie",
+                "preserve_current": True,
+            },
+        ),
+        (
+            {
+                "url": "https://plex.invalid/item",
+                "title": "Plex Episode",
+                "provider": "plex",
+                "plex_item_id": "9988",
+                "history_id": "hist-plex-1",
+            },
+            {
+                "url": "https://plex.invalid/item",
+                "title": "Plex Episode",
+                "history_id": "hist-plex-1",
+                "preserve_current": True,
+            },
+        ),
+        (
+            {
+                "url": "https://iptv.invalid/src1/ch1",
+                "title": "Live Channel",
+                "provider": "iptv",
+                "iptv_source_id": "src1",
+                "iptv_channel_id": "ch1",
+                "history_id": "hist-iptv-1",
+            },
+            {
+                "url": "https://iptv.invalid/src1/ch1",
+                "title": "Live Channel",
+                "preserve_current": True,
+            },
+        ),
+    ],
+)
+def test_play_now_route_does_not_preserve_provider_item_when_request_omits_provider_ids(
+    monkeypatch,
+    current: dict,
+    payload: dict,
+) -> None:
+    persisted: list[dict] = []
+    queued = {"url": "https://www.youtube.com/watch?v=next123", "title": "Next Up"}
+
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes.player, "mpv_get", lambda prop: 120.0 if prop == "time-pos" else 600.0
+    )
+    monkeypatch.setattr(routes.player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.state, "NOW_PLAYING", dict(current), raising=False)
+    monkeypatch.setattr(routes.state, "QUEUE", [dict(queued)], raising=False)
+    monkeypatch.setattr(
+        routes.state, "persist_queue_payload", lambda snap: persisted.append(dict(snap))
+    )
+    monkeypatch.setattr(routes, "_push_overlay_toast", lambda **kwargs: None)
+    monkeypatch.setattr(routes, "_ui_event_push_queue", lambda *args, **kwargs: None)
+    monkeypatch.setattr(routes.player, "play_item", lambda item, **kwargs: dict(current))
+
+    client = TestClient(create_app(testing=True))
+    response = client.post("/play_now", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["preserved"] is None
+    assert [item["url"] for item in routes.state.QUEUE] == [queued["url"]]
+    assert persisted == []
+
+
 def test_extract_dvr_status_non_live_and_live_boundaries() -> None:
     # Non-live returns None
     assert routes.player.extract_dvr_status({}, is_live=False) is None

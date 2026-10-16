@@ -34,7 +34,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from . import player, state
+from . import player, resolver, state
 from .debug import get_logger
 
 logger = get_logger("playback")
@@ -70,6 +70,7 @@ def play_now(
         kwargs["start_pos"] = start_pos
     if raise_on_superseded:
         kwargs["raise_on_superseded"] = True
+    player.clear_last_play_superseded()
     return player.play_item(item_or_text, **kwargs)
 
 
@@ -360,17 +361,102 @@ def can_preserve_closed_session() -> bool:
         return False
 
 
-def preserve_current_to_queue_front() -> dict | None:
+_PRESERVE_CLAIMS: dict[int, int] = {}
+_PRESERVE_COMMITTED: set[int] = set()
+
+
+def _extract_item_url(item: object, fallback_url: str | None = None) -> str:
+    raw = ""
+    if isinstance(item, dict):
+        raw = str(item.get("url") or fallback_url or "").strip()
+    elif isinstance(item, str):
+        raw = item.strip()
+    elif fallback_url:
+        raw = str(fallback_url).strip()
+    if not raw:
+        return ""
+    return resolver.normalize_shared_url(resolver.extract_first_url(raw))
+
+
+def same_playback_item(
+    left: object,
+    right: object,
+    *,
+    left_url: str | None = None,
+    right_url: str | None = None,
+) -> bool:
+    """Return True when two playback items or requests refer to the same media target."""
+    if left is None or right is None:
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        left_hist = str(left.get("history_id") or "").strip()
+        right_hist = str(right.get("history_id") or "").strip()
+        if left_hist and right_hist and left_hist == right_hist:
+            return True
+
+        left_iptv = (
+            str(left.get("iptv_source_id") or "").strip(),
+            str(left.get("iptv_channel_id") or "").strip(),
+        )
+        right_iptv = (
+            str(right.get("iptv_source_id") or "").strip(),
+            str(right.get("iptv_channel_id") or "").strip(),
+        )
+        if (any(left_iptv) and not all(left_iptv)) or (any(right_iptv) and not all(right_iptv)):
+            return False
+        if all(left_iptv) and all(right_iptv):
+            return left_iptv == right_iptv
+
+        left_plex = str(left.get("plex_item_id") or "").strip()
+        right_plex = str(right.get("plex_item_id") or "").strip()
+        if left_plex and right_plex:
+            return left_plex == right_plex
+
+        left_jf = str(left.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
+        right_jf = str(right.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
+        if left_jf and right_jf:
+            return left_jf == right_jf
+
+    u_left = _extract_item_url(left, left_url)
+    u_right = _extract_item_url(right, right_url)
+    if not u_left or not u_right:
+        return False
+    placeholder_urls = {
+        "https://plex.invalid/item",
+        "https://iptv.invalid/channel",
+        "https://jellyfin.invalid/item",
+    }
+    if u_left in placeholder_urls or u_right in placeholder_urls:
+        return False
+    if resolver.is_youtube_url(u_left) and resolver.is_youtube_url(u_right):
+        vid_left = resolver.youtube_id_from_url(u_left)
+        vid_right = resolver.youtube_id_from_url(u_right)
+        if vid_left and vid_right:
+            return vid_left == vid_right
+    return u_left == u_right
+
+
+def preserve_current_to_queue_front(replacement: object = None) -> dict | None:
     """If something is playing, capture it and insert at front of queue with resume_pos."""
     if not player.is_playing():
         return None
     now = state.NOW_PLAYING
     if not isinstance(now, dict):
         return None
+    if replacement is not None and same_playback_item(now, replacement):
+        return None
     with state.QUEUE_LOCK:
         queue_head = state.QUEUE[0] if state.QUEUE else None
-    if isinstance(queue_head, dict) and queue_head.get("_relaytv_interrupt_preserved") is True:
-        return None
+        if isinstance(queue_head, dict) and queue_head.get("_relaytv_interrupt_preserved") is True:
+            head_id = id(queue_head)
+            if (
+                _PRESERVE_CLAIMS.get(head_id, 0) > 0
+                and head_id not in _PRESERVE_COMMITTED
+                and same_playback_item(now, queue_head)
+            ):
+                _PRESERVE_CLAIMS[head_id] = _PRESERVE_CLAIMS[head_id] + 1
+                return queue_head
+            return None
 
     pos = None
     dur = None
@@ -469,7 +555,20 @@ def preserve_current_to_queue_front() -> dict | None:
     player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
 
     with state.QUEUE_LOCK:
+        queue_head = state.QUEUE[0] if state.QUEUE else None
+        if isinstance(queue_head, dict) and queue_head.get("_relaytv_interrupt_preserved") is True:
+            head_id = id(queue_head)
+            if (
+                _PRESERVE_CLAIMS.get(head_id, 0) > 0
+                and head_id not in _PRESERVE_COMMITTED
+                and same_playback_item(now, queue_head)
+            ):
+                _PRESERVE_CLAIMS[head_id] = _PRESERVE_CLAIMS[head_id] + 1
+                return queue_head
+            return None
         state.QUEUE.insert(0, preserved)
+        _PRESERVE_CLAIMS[id(preserved)] = 1
+        _PRESERVE_COMMITTED.discard(id(preserved))
         snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
     try:
         state.persist_queue_payload(snapshot)
@@ -552,7 +651,7 @@ def complete_peer_handoff(snapshot: dict, *, idle_surface_enabled: bool) -> bool
 
 
 def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:
-    """Remove a preserved queue-front item after a failed play-now.
+    """Remove a preserved queue-front item after a failed or superseded play-now.
 
     Returns the post-rollback queue snapshot when something was removed (the
     caller pushes the UI event), else None.
@@ -560,11 +659,17 @@ def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:
     if preserved is None:
         return None
     removed = False
+    pid = id(preserved)
     with state.QUEUE_LOCK:
-        if state.QUEUE and state.QUEUE[0] is preserved:
-            state.QUEUE.pop(0)
-            removed = True
-        elif state.QUEUE and state.QUEUE[0] == preserved:
+        remaining = max(0, _PRESERVE_CLAIMS.get(pid, 0) - 1)
+        if remaining > 0:
+            _PRESERVE_CLAIMS[pid] = remaining
+            return None
+        _PRESERVE_CLAIMS.pop(pid, None)
+        if pid in _PRESERVE_COMMITTED:
+            _PRESERVE_COMMITTED.discard(pid)
+            return None
+        if state.QUEUE and (state.QUEUE[0] is preserved or state.QUEUE[0] == preserved):
             state.QUEUE.pop(0)
             removed = True
         if not removed:
@@ -575,6 +680,45 @@ def rollback_play_now_preserve(preserved: dict | None) -> list[dict] | None:
     except Exception:
         logger.warning("queue_persist_failed route=play_now_preserve_rollback")
     return list(snapshot["queue"])
+
+
+def settle_play_now_preserve(
+    preserved: dict | None,
+    now_playing: object = None,
+) -> bool:
+    """Finalize a play-now preserve claim and drop a redundant self-preserved head.
+
+    Returns True when a redundant interrupt-preserved queue head matching
+    ``now_playing`` was removed from the front of the queue.
+    """
+    snapshot = None
+    with state.QUEUE_LOCK:
+        if preserved is not None:
+            pid = id(preserved)
+            remaining = max(0, _PRESERVE_CLAIMS.get(pid, 0) - 1)
+            if remaining > 0:
+                _PRESERVE_CLAIMS[pid] = remaining
+                _PRESERVE_COMMITTED.add(pid)
+            else:
+                _PRESERVE_CLAIMS.pop(pid, None)
+                _PRESERVE_COMMITTED.discard(pid)
+        queue_head = state.QUEUE[0] if state.QUEUE else None
+        if (
+            isinstance(queue_head, dict)
+            and queue_head.get("_relaytv_interrupt_preserved") is True
+            and same_playback_item(queue_head, now_playing)
+        ):
+            removed_head = state.QUEUE.pop(0)
+            _PRESERVE_CLAIMS.pop(id(removed_head), None)
+            _PRESERVE_COMMITTED.discard(id(removed_head))
+            snapshot = {"queue": list(state.QUEUE), "saved_at": int(time.time())}
+    if snapshot is None:
+        return False
+    try:
+        state.persist_queue_payload(snapshot)
+    except Exception:
+        logger.warning("queue_persist_failed route=play_now_preserve_settle")
+    return True
 
 
 def resume_paused_in_place() -> dict[str, Any] | None:
