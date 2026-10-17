@@ -2,13 +2,13 @@
   <img src="docs/images/readme/relaytv-banner.png" alt="RelayTV" width="620">
 </p>
 
-<h1 align="center">Scan the TV. Pick something to watch.</h1>
+<h1 align="center">Your media, on your TV.</h1>
 
 <p align="center">
   Turn a Linux box connected to your TV into a self-hosted, local-first media
-  hub. Family and guests scan the QR code on the TV to browse your connected
-  libraries, play videos, and add to the queue from their phone's browser.
-  You connect the services; they choose what to watch.
+  hub. Browse your libraries, send videos to the TV, and control playback from
+  your phone or desktop browser. When you're watching with family or friends,
+  they can scan the TV's QR code to browse and add their picks to the queue too.
 </p>
 
 <p align="center">
@@ -33,26 +33,29 @@
   cloud dependency for core playback
 </p>
 
-## Your media setup, easy for everyone to use
+## Your libraries, links, and live TV in one place
 
-You know where everything lives. Your guests shouldn't have to. RelayTV brings
-Plex, Jellyfin, Emby, Seerr, web videos, and live channels into one web interface,
-so people can find something to watch without learning each service or
-installing its app.
+RelayTV brings Plex, Jellyfin, Emby, Seerr, web videos, and live channels into
+one web interface. Pick up a series, queue videos for the evening, or tune in
+to a favorite channel from the same remote. Whether you're watching on your
+own or choosing something together, your connected media is easy to browse
+from a phone or desktop.
 
 1. **Connect your services once.** Set up the libraries, live sources, and
-   optional Seerr requests you want to make available in RelayTV.
-2. **Scan the TV's QR code.** On the same local network, family and guests open
-   the phone remote directly in their browser. No RelayTV account or companion
-   app is needed.
+   optional Seerr requests you want to use in RelayTV.
+2. **Open your remote.** Scan the TV's QR code or open the Web UI in a browser
+   on the same local network. No RelayTV account or companion app is needed.
 3. **Choose what happens next.** Browse a library, play something on the TV,
    add a pick to the shared queue, or request a movie or series through Seerr
    when requests are enabled.
 
+For a shared viewing session, family and friends can open the same remote on
+their phones to browse, control playback, and add to the queue.
+
 The QR code opens this TV's RelayTV interface. Available media comes from your
 configured services and accounts. Seerr can use shared requests or require
 individual sign-in, depending on your setup; if you enable RelayTV's optional
-API token, guests also need that token to control playback.
+API token, anyone using the remote needs that token to control playback.
 
 ## Play. Browse. Control. Automate.
 
@@ -125,7 +128,7 @@ all keep the playback engine beside the TV.
       send something new without taking over the television UI.
     </td>
     <td valign="top">
-      <h3>Browse together, without learning the media server</h3>
+      <h3>Your library, ready to browse</h3>
       Search your connected library, explore series and seasons, and play or
       queue a pick from the phone. Shown here: the Jellyfin/Emby browser.
     </td>
@@ -172,8 +175,9 @@ curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | b
 
 Then scan the QR code on the TV's idle screen, or open
 `http://YOUR_RELAYTV_HOST:8787/ui` from a phone or desktop browser on the same
-network. Open **Settings** to connect your media services. Once configured,
-family and guests use that same QR code to browse and control this TV.
+network. Open **Settings** to connect your media services, then browse your
+libraries or send a video to the TV. The same QR code lets family and friends
+join in when you're watching together.
 
 Need runtime choices, hardware notes, or an existing source checkout? See the
 [complete installation guide](docs/INSTALL.md), or follow the public
