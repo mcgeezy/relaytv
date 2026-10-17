@@ -3114,15 +3114,6 @@ function _renderBrowseServersSettings(data){
     host.appendChild(empty);
     return;
   }
-  let bestServerId = '';
-  let bestLat = Infinity;
-  servers.forEach(s => {
-    const lat = Number(s && s.latency_ms);
-    if (s && s.enabled && s.connected && Number.isFinite(lat) && lat < bestLat) {
-      bestLat = lat;
-      bestServerId = String(s.id || '');
-    }
-  });
   servers.forEach(server => {
     const row = document.createElement('div');
     row.className = 'browseServerRow';
@@ -3143,14 +3134,6 @@ function _renderBrowseServersSettings(data){
     top.appendChild(name);
     top.appendChild(typeBadge);
     top.appendChild(stateBadge);
-    const latNum = Number(server.latency_ms);
-    if (server.latency_ms !== null && server.latency_ms !== undefined && Number.isFinite(latNum)) {
-      const latBadge = document.createElement('span');
-      const isBest = bestServerId && String(server.id) === bestServerId && servers.filter(s => s.enabled && s.connected).length > 1;
-      latBadge.className = `browseServerBadge latency${isBest ? ' fastest' : ''}`;
-      latBadge.textContent = isBest ? `${Math.round(latNum)} ms · Fastest` : `${Math.round(latNum)} ms`;
-      top.appendChild(latBadge);
-    }
     const meta = document.createElement('div');
     meta.className = 'browseServerMeta hint';
     const metaParts = [];
@@ -3181,9 +3164,8 @@ function _renderBrowseServersSettings(data){
         if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
         await _refreshBrowseServersSettings();
         const res = j.result || {};
-        const latTxt = Number.isFinite(Number(res.latency_ms)) ? ` (${Math.round(Number(res.latency_ms))} ms)` : '';
         _setBrowseActionMsg(
-          res.connected ? `${server.name}: reachable${latTxt}` : `${server.name}: ${res.last_error || 'unreachable'}`,
+          res.connected ? `${server.name}: reachable` : `${server.name}: ${res.last_error || 'unreachable'}`,
           res.connected ? 'ok' : 'err'
         );
       } catch (err) {
@@ -3629,7 +3611,7 @@ function bindSettingsUi(){
   if (browseFormCancelBtn) browseFormCancelBtn.onclick = _closeBrowseServerForm;
   if (browseProbeBtn) browseProbeBtn.onclick = async () => {
     browseProbeBtn.disabled = true;
-    _setBrowseActionMsg('Probing server latencies…', '');
+    _setBrowseActionMsg('Probing servers…', '');
     try {
       const r = await fetch('/browse/servers/probe', {
         method: 'POST',
@@ -3686,8 +3668,7 @@ function bindSettingsUi(){
       _closeBrowseServerForm();
       await _refreshBrowseServersSettings();
       const srv = j.server || {};
-      const latTxt = Number.isFinite(Number(srv.latency_ms)) ? ` (${Math.round(Number(srv.latency_ms))} ms)` : '';
-      _setBrowseActionMsg(`Saved ${srv.name || 'server'}${latTxt}.`, 'ok');
+      _setBrowseActionMsg(`Saved ${srv.name || 'server'}.`, 'ok');
     } catch (err) {
       _setBrowseActionMsg(err && err.message ? err.message : 'Failed to save server.', 'err');
     } finally {

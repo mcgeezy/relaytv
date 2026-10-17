@@ -5109,9 +5109,9 @@ def ui():
     <details class="settingsGroup" id="setBrowseServersGroup">
       <summary>Media Servers &amp; Unified Browse <span id="setBrowseStatus" class="sectionStatus unknown">0 connected</span></summary>
       <div class="settingsBody">
-        <div class="hint">Combine multiple Jellyfin, Emby, and Plex servers into a single unified Browse library. Duplicate movies and shows are deduplicated automatically using the lowest-latency server.</div>
+        <div class="hint">Combine multiple Jellyfin, Emby, and Plex servers into a single unified Browse library. Duplicate movies and shows are deduplicated automatically across servers.</div>
         <div class="inlineApplyRow">
-          <button type="button" id="setBrowseProbeBtn" class="btn electricBlue">Probe latencies</button>
+          <button type="button" id="setBrowseProbeBtn" class="btn electricBlue">Probe servers</button>
           <button type="button" id="setBrowseAddServerBtn" class="btn">+ Add server</button>
           <div id="setBrowseActionMsg" class="inlineApplyMsg" aria-live="polite"></div>
         </div>

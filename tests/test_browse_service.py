@@ -339,10 +339,10 @@ def test_unified_home_and_combined_movies_tv_across_services(monkeypatch) -> Non
     assert body["connected"] is True
     rows_by_id = {r["id"]: r for r in body["rows"]}
     assert list(rows_by_id.keys()) == [
-        "continue_watching_movies",
-        "continue_watching_tv",
         "recently_added_movies",
         "recently_added_tv",
+        "continue_watching_movies",
+        "continue_watching_tv",
     ]
     assert rows_by_id["continue_watching_movies"]["title"] == "Continue Watching Movies"
     assert rows_by_id["continue_watching_tv"]["title"] == "Continue Watching TV"
@@ -1030,3 +1030,44 @@ def test_custom_plex_action_survives_player_lifecycle_and_reports_to_source(monk
     assert reports[-1]['time'] == 125000
     assert reports[-1]['duration'] == 6000000
     assert reports[-1]['state'] == 'stopped'
+
+
+def test_disabled_jellyfin_integration_never_reports_connected_in_browse_servers(
+    monkeypatch,
+) -> None:
+    browse_service._record_latency(
+        "jf_primary", 3.5, connected=True, server_name="Jellyfin Server"
+    )
+    monkeypatch.setattr(
+        state,
+        "get_settings",
+        lambda: {
+            "jellyfin_enabled": False,
+            "jellyfin_server_url": "http://10.55.55.2:8096",
+        },
+    )
+    monkeypatch.setattr(
+        browse_service.jellyfin_receiver,
+        "status",
+        lambda: {
+            "enabled": True,
+            "running": False,
+            "connected": False,
+            "authenticated": False,
+            "catalog_ready": False,
+            "server_url": "http://10.55.55.2:8096",
+            "server_product_name": "Jellyfin Server",
+        },
+    )
+    monkeypatch.setattr(
+        browse_service.plex_auth.auth_manager,
+        "status",
+        lambda: {"linked": False},
+    )
+
+    listed = browse_service.list_servers_public()
+    assert listed["enabled_count"] == 0
+    assert listed["connected_count"] == 0
+    jf = next(s for s in listed["servers"] if s["id"] == "jf_primary")
+    assert jf["enabled"] is False
+    assert jf["connected"] is False
