@@ -4864,7 +4864,7 @@ def ui():
 </html>
 <!-- Settings modal -->
 <div id="settingsBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-  <div class="modal">
+  <div class="modal settingsModal">
     <div class="modalTop">
       <div class="modalTitle">Settings</div>
       <div class="modalBtns">
@@ -4872,8 +4872,15 @@ def ui():
       </div>
     </div>
 
-    <details class="settingsGroup">
-      <summary>Playback</summary>
+    <nav id="settingsTabs" class="settingsTabs" role="tablist" aria-label="Settings categories">
+      <button type="button" class="settingsTabBtn active" data-settings-tab="device" role="tab" aria-selected="true">Device &amp; TV</button>
+      <button type="button" class="settingsTabBtn" data-settings-tab="media" role="tab" aria-selected="false">Media Servers</button>
+      <button type="button" class="settingsTabBtn" data-settings-tab="sources" role="tab" aria-selected="false">Sources &amp; Add-ons</button>
+      <button type="button" class="settingsTabBtn" data-settings-tab="all" role="tab" aria-selected="false">All</button>
+    </nav>
+
+    <details class="settingsGroup" id="setPlaybackGroup" data-settings-cat="device" open>
+      <summary>Playback &amp; Device</summary>
       <div class="settingsBody">
         <div class="fieldRow">
           <label class="fieldLbl">Device name</label>
@@ -4910,7 +4917,7 @@ def ui():
       </div>
     </details>
 
-    <details class="settingsGroup">
+    <details class="settingsGroup" id="setTvControlGroup" data-settings-cat="device">
       <summary>TV Control <span id="setCecStatus" class="sectionStatus unknown">Unknown</span></summary>
       <div class="settingsBody">
         <div id="setCecAvailabilityHint" class="hint">Checking HDMI-CEC adapter availability.</div>
@@ -4957,49 +4964,8 @@ def ui():
       </div>
     </details>
 
-    <details class="settingsGroup">
-      <summary>YouTube</summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Keep yt-dlp up to date</div>
-            <div class="toggleHint">Check for yt-dlp updates daily (and right away when enabled). Recommended: stale yt-dlp is the most common cause of YouTube playback failures.</div>
-          </div>
-          <label class="toggleSwitch" for="setYtdlpAutoUpdate" title="Keep yt-dlp up to date">
-            <input type="checkbox" id="setYtdlpAutoUpdate" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Use Invidious server for YouTube playback</div>
-            <div class="toggleHint">Resolve YouTube playback through the configured Invidious base URL.</div>
-          </div>
-          <label class="toggleSwitch" for="setYtUseInvidious" title="Use Invidious server for YouTube playback">
-            <input type="checkbox" id="setYtUseInvidious" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Invidious server</label>
-          <input id="setYtInvidiousBase" class="input" placeholder="https://invidious.example.org" />
-          <div class="hint">Used when Invidious mode is enabled. Enter base URL only.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Direct-play cookies.txt</label>
-          <input id="setYtCookiesFile" class="input" type="file" accept=".txt,text/plain" />
-          <div class="hint">Upload Netscape-format cookies.txt for yt-dlp (node/deno challenge flow).</div>
-        </div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setYtCookiesUploadBtn" class="btn electricBlue">Upload cookies.txt</button>
-          <button type="button" id="setYtCookiesClearBtn" class="btn electricBlue">Clear cookies.txt</button>
-          <div id="setYtCookiesState" class="inlineApplyMsg"></div>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup">
-      <summary>Idle Dashboard</summary>
+    <details class="settingsGroup" id="setIdleGroup" data-settings-cat="device">
+      <summary>Idle Dashboard &amp; Weather</summary>
       <div class="settingsBody">
         <div class="toggleRow">
           <div class="toggleCopy">
@@ -5021,7 +4987,7 @@ def ui():
             <span class="toggleTrack" aria-hidden="true"></span>
           </label>
         </div>
-        <details class="settingsGroup">
+        <details class="settingsGroup settingsSubGroup" open>
           <summary>Show QR in Idle</summary>
           <div class="settingsBody">
             <div class="toggleRow">
@@ -5041,7 +5007,7 @@ def ui():
             </div>
           </div>
         </details>
-        <details class="settingsGroup">
+        <details class="settingsGroup settingsSubGroup" open>
           <summary>Weather</summary>
           <div class="settingsBody">
             <div class="hint">Powered by Open-Meteo. Pick a city so the idle card stays local.</div>
@@ -5070,43 +5036,7 @@ def ui():
       </div>
     </details>
 
-    <details class="settingsGroup">
-      <summary>Uploads</summary>
-      <div class="settingsBody">
-        <div class="hint">Uploaded videos are cleaned up when either limit is reached first.</div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Storage max size (GB)</label>
-          <input id="setUploadMaxSize" class="input" type="number" min="0.25" max="500" step="0.25" value="5" />
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Retention max hours</label>
-          <input id="setUploadRetentionHours" class="input" type="number" min="1" max="2160" step="1" value="24" />
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup">
-      <summary>IPTV Integration <span id="setIptvStatus" class="sectionStatus unknown">Disabled</span></summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Enable IPTV</div>
-            <div class="toggleHint">Show searchable live-channel browsing, favorites, visibility controls, and source discovery.</div>
-          </div>
-          <label class="toggleSwitch" for="setIptvEnabled" title="Enable IPTV integration">
-            <input type="checkbox" id="setIptvEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="hint">Playlists and stream credentials are stored owner-only in <code>/data/iptv.sqlite3</code>, but are not encrypted at rest. Free directory providers are opt-in.</div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
-          <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup" id="setBrowseServersGroup">
+    <details class="settingsGroup hidden" id="setBrowseServersGroup" data-settings-cat="media" open>
       <summary>Media Servers &amp; Unified Browse <span id="setBrowseStatus" class="sectionStatus unknown">0 connected</span></summary>
       <div class="settingsBody">
         <div class="hint">Combine multiple Jellyfin, Emby, and Plex servers into a single unified Browse library. Duplicate movies and shows are deduplicated automatically across servers.</div>
@@ -5167,7 +5097,7 @@ def ui():
       </div>
     </details>
 
-    <details class="settingsGroup">
+    <details class="settingsGroup hidden" id="setJfGroup" data-settings-cat="media">
       <summary><span class="jfBrand">Jellyfin / Emby</span> Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
         <div class="toggleRow">
@@ -5281,7 +5211,7 @@ def ui():
       </div>
     </details>
 
-    <details class="settingsGroup">
+    <details class="settingsGroup hidden" id="setPlexGroup" data-settings-cat="media">
       <summary>Plex Integration <span id="setPlexStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
         <div class="toggleRow">
@@ -5344,7 +5274,84 @@ def ui():
       </div>
     </details>
 
-    <details class="settingsGroup">
+    <details class="settingsGroup hidden" id="setYoutubeGroup" data-settings-cat="sources" open>
+      <summary>YouTube</summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Keep yt-dlp up to date</div>
+            <div class="toggleHint">Check for yt-dlp updates daily (and right away when enabled). Recommended: stale yt-dlp is the most common cause of YouTube playback failures.</div>
+          </div>
+          <label class="toggleSwitch" for="setYtdlpAutoUpdate" title="Keep yt-dlp up to date">
+            <input type="checkbox" id="setYtdlpAutoUpdate" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Use Invidious server for YouTube playback</div>
+            <div class="toggleHint">Resolve YouTube playback through the configured Invidious base URL.</div>
+          </div>
+          <label class="toggleSwitch" for="setYtUseInvidious" title="Use Invidious server for YouTube playback">
+            <input type="checkbox" id="setYtUseInvidious" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl">Invidious server</label>
+          <input id="setYtInvidiousBase" class="input" placeholder="https://invidious.example.org" />
+          <div class="hint">Used when Invidious mode is enabled. Enter base URL only.</div>
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl">Direct-play cookies.txt</label>
+          <input id="setYtCookiesFile" class="input" type="file" accept=".txt,text/plain" />
+          <div class="hint">Upload Netscape-format cookies.txt for yt-dlp (node/deno challenge flow).</div>
+        </div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setYtCookiesUploadBtn" class="btn electricBlue">Upload cookies.txt</button>
+          <button type="button" id="setYtCookiesClearBtn" class="btn electricBlue">Clear cookies.txt</button>
+          <div id="setYtCookiesState" class="inlineApplyMsg"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup hidden" id="setUploadsGroup" data-settings-cat="sources">
+      <summary>Uploads</summary>
+      <div class="settingsBody">
+        <div class="hint">Uploaded videos are cleaned up when either limit is reached first.</div>
+        <div class="fieldRow">
+          <label class="fieldLbl">Storage max size (GB)</label>
+          <input id="setUploadMaxSize" class="input" type="number" min="0.25" max="500" step="0.25" value="5" />
+        </div>
+        <div class="fieldRow">
+          <label class="fieldLbl">Retention max hours</label>
+          <input id="setUploadRetentionHours" class="input" type="number" min="1" max="2160" step="1" value="24" />
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup hidden" id="setIptvGroup" data-settings-cat="sources">
+      <summary>IPTV Integration <span id="setIptvStatus" class="sectionStatus unknown">Disabled</span></summary>
+      <div class="settingsBody">
+        <div class="toggleRow">
+          <div class="toggleCopy">
+            <div class="toggleTitle">Enable IPTV</div>
+            <div class="toggleHint">Show searchable live-channel browsing, favorites, visibility controls, and source discovery.</div>
+          </div>
+          <label class="toggleSwitch" for="setIptvEnabled" title="Enable IPTV integration">
+            <input type="checkbox" id="setIptvEnabled" />
+            <span class="toggleTrack" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="hint">Playlists and stream credentials are stored owner-only in <code>/data/iptv.sqlite3</code>, but are not encrypted at rest. Free directory providers are opt-in.</div>
+        <div class="inlineApplyRow">
+          <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
+          <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="settingsGroup hidden" id="setSeerrGroup" data-settings-cat="sources">
       <summary>Seerr Integration <span id="setSeerrStatus" class="sectionStatus unknown">Disabled</span></summary>
       <div class="settingsBody">
         <div class="toggleRow">

@@ -3030,6 +3030,47 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
 }
 
 let __browseServersCache = [];
+let __activeSettingsTab = 'device';
+
+function _selectSettingsTab(tabName){
+  const tab = String(tabName || 'device').trim().toLowerCase();
+  __activeSettingsTab = ['device', 'media', 'sources', 'all'].includes(tab) ? tab : 'device';
+  if (typeof document.querySelectorAll !== 'function') return;
+  document.querySelectorAll('.settingsTabBtn').forEach((btn) => {
+    const active = String(btn.getAttribute('data-settings-tab') || '') === __activeSettingsTab;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  let anyOpenInTab = false;
+  let firstInTab = null;
+  document.querySelectorAll('.settingsGroup[data-settings-cat]').forEach((group) => {
+    const cat = String(group.getAttribute('data-settings-cat') || '');
+    const visible = __activeSettingsTab === 'all' || cat === __activeSettingsTab;
+    group.classList.toggle('hidden', !visible);
+    if (visible) {
+      if (!firstInTab) firstInTab = group;
+      if (group.hasAttribute('open') || group.open) anyOpenInTab = true;
+    }
+  });
+  if (!anyOpenInTab && firstInTab) {
+    firstInTab.open = true;
+    firstInTab.setAttribute('open', '');
+  }
+}
+
+function _focusSettingsGroup(groupId){
+  const group = document.getElementById(groupId);
+  if (!group) return;
+  const cat = String(group.getAttribute('data-settings-cat') || '');
+  if (cat && __activeSettingsTab !== 'all' && __activeSettingsTab !== cat) {
+    _selectSettingsTab(cat);
+  }
+  group.open = true;
+  if (typeof group.setAttribute === 'function') group.setAttribute('open', '');
+  if (typeof group.scrollIntoView === 'function') {
+    try { group.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (_e) {}
+  }
+}
 
 function _setBrowseActionMsg(text, cls){
   const el = document.getElementById('setBrowseActionMsg');
@@ -3182,7 +3223,16 @@ function _renderBrowseServersSettings(data){
     };
     actions.appendChild(probeBtn);
 
-    if (server.origin === 'custom') {
+    if (server.origin === 'primary') {
+      const cfgBtn = document.createElement('button');
+      cfgBtn.type = 'button';
+      cfgBtn.className = 'btn sm';
+      cfgBtn.textContent = 'Configure';
+      cfgBtn.onclick = () => {
+        _focusSettingsGroup(server.id === 'plex_primary' ? 'setPlexGroup' : 'setJfGroup');
+      };
+      actions.appendChild(cfgBtn);
+    } else if (server.origin === 'custom') {
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'btn sm';
@@ -3577,6 +3627,25 @@ function bindSettingsUi(){
       if (open) closeSettings();
     }
   });
+
+  if (typeof document.querySelectorAll === 'function') {
+    const tabBtns = Array.from(document.querySelectorAll('.settingsTabBtn'));
+    tabBtns.forEach((tabBtn, idx) => {
+      tabBtn.onclick = () => _selectSettingsTab(tabBtn.getAttribute('data-settings-tab'));
+      tabBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          const delta = e.key === 'ArrowRight' ? 1 : -1;
+          const next = tabBtns[(idx + delta + tabBtns.length) % tabBtns.length];
+          if (next) {
+            next.focus();
+            next.click();
+            e.preventDefault();
+          }
+        }
+      });
+    });
+    _selectSettingsTab(__activeSettingsTab);
+  }
 
   const weatherCityInput = document.getElementById('setWeatherCity');
   const weatherFindBtn = document.getElementById('setWeatherFindBtn');

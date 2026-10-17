@@ -2807,3 +2807,83 @@
     border-color: rgba(37, 99, 235, .24);
   }
 }
+
+/* --- Settings category navigation & hierarchy --- */
+.settingsTabs{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 5px;
+  border-radius: 13px;
+  border: 1px solid var(--stroke);
+  background: rgba(15, 23, 42, .45);
+}
+.settingsTabBtn{
+  flex: 1 1 auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.settingsTabBtn:hover{
+  color: var(--txt);
+  background: rgba(255, 255, 255, .06);
+}
+.settingsTabBtn.active{
+  color: #eef6ff;
+  border-color: rgba(56, 189, 248, .65);
+  background: linear-gradient(180deg, rgba(56, 189, 248, .92), rgba(37, 99, 235, .90));
+  box-shadow: 0 6px 18px rgba(30, 64, 175, .36), inset 0 1px 0 rgba(255, 255, 255, .25);
+}
+.settingsGroup.hidden{
+  display: none;
+}
+.settingsSubGroup{
+  margin-top: 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, .32);
+}
+.settingsModal .modalBottom{
+  position: sticky;
+  bottom: -4px;
+  padding-top: 10px;
+  padding-bottom: 4px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  background: linear-gradient(180deg, rgba(8, 15, 32, .75), rgba(8, 15, 32, .96));
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+@media (prefers-color-scheme: light){
+  .settingsTabs{
+    background: rgba(255, 255, 255, .72);
+    border-color: rgba(37, 99, 235, .18);
+  }
+  .settingsTabBtn{
+    color: rgba(12, 19, 36, .62);
+  }
+  .settingsTabBtn:hover{
+    color: #0c1324;
+    background: rgba(56, 140, 248, .10);
+  }
+  .settingsTabBtn.active{
+    color: #f0f9ff;
+    background: linear-gradient(180deg, rgb(56, 152, 248), rgb(29, 78, 216));
+  }
+  .settingsSubGroup{
+    background: rgba(255, 255, 255, .64);
+  }
+  .settingsModal .modalBottom{
+    border-top-color: rgba(37, 99, 235, .14);
+    background: linear-gradient(180deg, rgba(235, 243, 255, .82), rgba(235, 243, 255, .97));
+  }
+}
