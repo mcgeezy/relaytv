@@ -218,19 +218,21 @@ def _public_server_entry(entry: dict[str, Any]) -> dict[str, Any]:
         lat = entry.get("latency_ms")
     if not enabled:
         connected = False
+        lat = None
+        last_error = ""
     elif sid in {"jf_primary", "plex_primary"}:
-        # Primary servers have authoritative runtime status in entry["connected"];
-        # only override with metrics if a probe explicitly recorded a failure while enabled.
         if not bool(entry.get("connected", False)):
             connected = False
         elif metrics.get("connected") is False:
             connected = False
         else:
             connected = True
+        last_error = str(metrics.get("last_error") or entry.get("last_error") or "") if not connected else ""
     else:
         connected = metrics.get("connected")
         if connected is None:
             connected = bool(entry.get("connected", False))
+        last_error = str(metrics.get("last_error") or entry.get("last_error") or "") if not connected else ""
     return {
         "id": sid,
         "name": str(entry.get("name") or metrics.get("server_name") or sid),
@@ -240,8 +242,8 @@ def _public_server_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "enabled": enabled,
         "connected": bool(connected),
         "latency_ms": round(float(lat), 1) if isinstance(lat, (int, float)) else None,
-        "last_checked_ts": metrics.get("last_checked_ts"),
-        "last_error": str(metrics.get("last_error") or entry.get("last_error") or ""),
+        "last_checked_ts": metrics.get("last_checked_ts") if enabled else None,
+        "last_error": last_error,
         "username": str(entry.get("username") or ""),
         "user_id": str(entry.get("user_id") or ""),
         "machine_id": str(entry.get("machine_id") or ""),
@@ -280,6 +282,20 @@ def _collect_configured_servers(*, include_disabled: bool = True) -> list[dict[s
             and jf_st.get("running")
             and (jf_st.get("connected") or jf_st.get("authenticated") or jf_st.get("catalog_ready"))
         )
+        jf_latest_ok_ts = max(
+            int(jf_st.get("last_heartbeat_ts") or 0),
+            int(jf_st.get("last_auth_ts") or 0),
+            int(jf_st.get("last_register_ts") or 0),
+            int(jf_st.get("catalog_last_ok_ts") or 0),
+        )
+        if not jf_connected:
+            with _LATENCY_LOCK:
+                _SERVER_METRICS.pop("jf_primary", None)
+        elif not jf_st.get("last_error"):
+            with _LATENCY_LOCK:
+                prev_m = _SERVER_METRICS.get("jf_primary") or {}
+                if prev_m.get("connected") is False and jf_latest_ok_ts >= int(prev_m.get("last_checked_ts") or 0):
+                    _SERVER_METRICS.pop("jf_primary", None)
         brand = "Emby" if jf_type == "emby" else "Jellyfin"
         product_name = str(jf_st.get("server_product_name") or "").strip()
         entry = {
@@ -309,6 +325,10 @@ def _collect_configured_servers(*, include_disabled: bool = True) -> list[dict[s
     selected_server = plex_st.get("server") if isinstance(plex_st.get("server"), dict) else {}
     primary_machine_id = str(selected_server.get("machine_id") or "").strip()
     if plex_linked and primary_machine_id:
+        plex_connected = bool(plex_enabled and plex_st.get("server_selected"))
+        if not plex_connected:
+            with _LATENCY_LOCK:
+                _SERVER_METRICS.pop("plex_primary", None)
         entry = {
             "id": "plex_primary",
             "name": f"{selected_server.get('name') or 'Plex'} (Primary)",
@@ -544,7 +564,8 @@ def probe_single_server(server: dict[str, Any]) -> dict[str, Any]:
     stype = str(server.get("type") or "jellyfin").strip().lower()
     base = str(server.get("server_url") or "").strip().rstrip("/")
     if not server.get("enabled", True):
-        _record_latency(sid, None, connected=False, error="disabled")
+        with _LATENCY_LOCK:
+            _SERVER_METRICS.pop(sid, None)
         return _public_server_entry(server)
 
     t0 = time.perf_counter()
@@ -622,10 +643,16 @@ def probe_all_servers(server_id: str = "") -> dict[str, Any]:
     summary = list_servers_public()
     target_ids = {str(server.get("id") or "") for server in targets}
     results = [server for server in summary["servers"] if server["id"] in target_ids]
+    matched_result = next((server for server in results if server["id"] == server_id), None)
+    if matched_result is None and server_id:
+        matched_result = next(
+            (server for server in summary["servers"] if server["id"] == server_id),
+            None,
+        )
     return {
         **summary,
         "results": results,
-        "result": next((server for server in results if server["id"] == server_id), None),
+        "result": matched_result,
     }
 
 
@@ -694,7 +721,7 @@ def _tag_item_source(
     sid = str(server.get("id") or "jf_primary").strip()
     stype = str(server.get("type") or "jellyfin").strip().lower()
     sname = str(server.get("name") or stype.title()).strip()
-    raw_id = str(out.get("item_id") or out.get("id") or "").strip()
+    raw_id = str(out.get("raw_item_id") or out.get("item_id") or out.get("id") or "").strip()
     if not raw_id:
         return out
     out["raw_item_id"] = raw_id
@@ -713,7 +740,12 @@ def _tag_item_source(
     out["source_latency_ms"] = rounded_lat
     out["latency_ms"] = rounded_lat
     base_lib = str(out.get("library_name") or "").strip()
-    out["library_name"] = f"{sname} · {base_lib}" if base_lib else sname
+    if not base_lib or base_lib == sname:
+        out["library_name"] = sname
+    elif base_lib.startswith((f"{sname} · ", f"{sname} (+")):
+        out["library_name"] = base_lib
+    else:
+        out["library_name"] = f"{sname} · {base_lib}"
     return out
 
 

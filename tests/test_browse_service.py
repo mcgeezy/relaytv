@@ -1071,3 +1071,118 @@ def test_disabled_jellyfin_integration_never_reports_connected_in_browse_servers
     jf = next(s for s in listed["servers"] if s["id"] == "jf_primary")
     assert jf["enabled"] is False
     assert jf["connected"] is False
+    assert jf["latency_ms"] is None
+    assert jf["last_error"] == ""
+
+
+def test_disabled_custom_server_clears_metrics_and_probe_returns_clean_entry(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(state, "get_settings", lambda: {"jellyfin_enabled": False})
+    monkeypatch.setattr(
+        browse_service.jellyfin_receiver, "status", lambda: {"enabled": False}
+    )
+    monkeypatch.setattr(
+        browse_service.plex_auth.auth_manager, "status", lambda: {"linked": False}
+    )
+    saved = browse_service.upsert_custom_server(
+        {
+            "id": "srv_disabled_test",
+            "type": "jellyfin",
+            "name": "Lab Jellyfin",
+            "server_url": "http://lab.lan:8096",
+            "api_key": "secret",
+            "enabled": False,
+        }
+    )
+    assert saved["id"] == "srv_disabled_test"
+    assert saved["enabled"] is False
+    assert saved["connected"] is False
+    assert saved["last_error"] == ""
+    browse_service._record_latency(
+        "srv_disabled_test", 9.2, connected=True, server_name="Lab Jellyfin"
+    )
+
+    probed = browse_service.probe_all_servers(server_id="srv_disabled_test")
+    assert probed["ok"] is True
+    assert probed["result"] is not None
+    assert probed["result"]["id"] == "srv_disabled_test"
+    assert probed["result"]["enabled"] is False
+    assert probed["result"]["connected"] is False
+    assert probed["result"]["latency_ms"] is None
+    assert probed["result"]["last_error"] == ""
+
+
+def test_reconnected_primary_jellyfin_clears_stale_failed_probe_metric(
+    monkeypatch,
+) -> None:
+    with browse_service._LATENCY_LOCK:
+        browse_service._SERVER_METRICS["jf_primary"] = {
+            "latency_ms": None,
+            "connected": False,
+            "last_checked_ts": 100,
+            "last_error": "HTTP 502",
+            "server_name": "Jellyfin",
+        }
+    monkeypatch.setattr(
+        state,
+        "get_settings",
+        lambda: {
+            "jellyfin_enabled": True,
+            "jellyfin_server_url": "http://10.55.55.2:8096",
+        },
+    )
+    monkeypatch.setattr(
+        browse_service.jellyfin_receiver,
+        "status",
+        lambda: {
+            "enabled": True,
+            "running": True,
+            "connected": True,
+            "authenticated": True,
+            "catalog_ready": True,
+            "last_heartbeat_ts": 200,
+            "last_error": None,
+            "server_url": "http://10.55.55.2:8096",
+            "server_product_name": "Jellyfin",
+        },
+    )
+    monkeypatch.setattr(
+        browse_service.plex_auth.auth_manager, "status", lambda: {"linked": False}
+    )
+
+    listed = browse_service.list_servers_public()
+    jf = next(s for s in listed["servers"] if s["id"] == "jf_primary")
+    assert jf["enabled"] is True
+    assert jf["connected"] is True
+    assert jf["last_error"] == ""
+
+
+def test_tag_item_source_is_idempotent_on_library_name_and_raw_item_id() -> None:
+    server = {
+        "id": "jf_primary",
+        "name": "Jellyfin",
+        "type": "jellyfin",
+    }
+    raw = {
+        "item_id": "item-42",
+        "title": "Interstellar",
+        "library_name": "Movies",
+    }
+    expected_id = browse_service.encode_item_id("jf_primary", "item-42")
+    tagged_once = browse_service._tag_item_source(raw, server, latency_ms=11.0)
+    assert tagged_once["item_id"] == expected_id
+    assert tagged_once["raw_item_id"] == "item-42"
+    assert tagged_once["library_name"] == "Jellyfin · Movies"
+
+    tagged_twice = browse_service._tag_item_source(tagged_once, server, latency_ms=11.0)
+    assert tagged_twice["item_id"] == expected_id
+    assert tagged_twice["raw_item_id"] == "item-42"
+    assert tagged_twice["library_name"] == "Jellyfin · Movies"
+
+    same_lib = browse_service._tag_item_source(
+        {"item_id": "item-99", "title": "Arrival", "library_name": "Jellyfin"},
+        server,
+        latency_ms=11.0,
+    )
+    assert same_lib["library_name"] == "Jellyfin"

@@ -3151,7 +3151,9 @@ function _renderBrowseServersSettings(data){
     probeBtn.type = 'button';
     probeBtn.className = 'btn sm';
     probeBtn.textContent = 'Probe';
+    probeBtn.disabled = !server.enabled;
     probeBtn.onclick = async () => {
+      if (!server.enabled) return;
       probeBtn.disabled = true;
       _setBrowseActionMsg(`Probing ${server.name || 'server'}…`, '');
       try {
@@ -3164,14 +3166,18 @@ function _renderBrowseServersSettings(data){
         if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
         await _refreshBrowseServersSettings();
         const res = j.result || {};
-        _setBrowseActionMsg(
-          res.connected ? `${server.name}: reachable` : `${server.name}: ${res.last_error || 'unreachable'}`,
-          res.connected ? 'ok' : 'err'
-        );
+        if (res.enabled === false) {
+          _setBrowseActionMsg(`${server.name}: disabled`, '');
+        } else {
+          _setBrowseActionMsg(
+            res.connected ? `${server.name}: reachable` : `${server.name}: ${res.last_error || 'unreachable'}`,
+            res.connected ? 'ok' : 'err'
+          );
+        }
       } catch (err) {
         _setBrowseActionMsg(err && err.message ? err.message : 'Probe failed.', 'err');
       } finally {
-        probeBtn.disabled = false;
+        probeBtn.disabled = !server.enabled;
       }
     };
     actions.appendChild(probeBtn);

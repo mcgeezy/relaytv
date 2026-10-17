@@ -4745,7 +4745,7 @@ def ui():
           </div>
           <div class="jfShellRight">
             <button id="jfSwitchToPlexBtn" class="browseProviderSwitch hidden" type="button" title="Switch to Plex library">Plex ⇄</button>
-            <div id="jfConnection" class="jfConnection" role="status" aria-live="polite">
+            <div id="jfConnection" class="jfConnection hidden" role="status" aria-live="polite">
               <span class="jfConnectionDot" aria-hidden="true"></span>
               <span id="jfConnectionLabel">Checking…</span>
             </div>

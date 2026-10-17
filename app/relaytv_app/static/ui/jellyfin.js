@@ -427,17 +427,21 @@ function _jfSetStatus(text, kind){
 }
 
 function _jfSetConn(up, text){
-  __jfConnected = !!up;
+  const isChecking = !up && String(text || '').trim() === 'Checking…';
+  if (!isChecking) {
+    __jfConnected = !!up;
+  }
   const card = document.getElementById('jellyfinCard');
   const shell = document.getElementById('jellyfinShell');
   const conn = document.getElementById('jfConnection');
   const label = document.getElementById('jfConnectionLabel');
-  if (card) card.classList.toggle('jfOffline', !__jfConnected);
-  if (shell) shell.classList.toggle('jfOffline', !__jfConnected);
+  if (card) card.classList.toggle('jfOffline', !__jfConnected && !isChecking);
+  if (shell) shell.classList.toggle('jfOffline', !__jfConnected && !isChecking);
   const hasExplicitText = text !== undefined && text !== null;
   const display = hasExplicitText ? String(text).trim() : (__jfConnected ? '' : 'Unavailable');
-  if (conn) conn.classList.toggle('hidden', __jfConnected && !display);
-  if (label) label.textContent = display;
+  const hideBadge = isChecking || (__jfConnected && !display);
+  if (conn) conn.classList.toggle('hidden', hideBadge);
+  if (label) label.textContent = display || (__jfConnected ? 'Connected' : 'Unavailable');
 }
 
 function _jfSetActionStatus(text, kind, holdMs){
