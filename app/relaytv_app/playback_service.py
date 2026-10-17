@@ -53,6 +53,7 @@ def play_now(
     mode: str,
     start_pos: float | None = None,
     raise_on_superseded: bool = False,
+    playback_intent: int | None = None,
 ):
     """Start playing an item or raw URL immediately.
 
@@ -70,6 +71,8 @@ def play_now(
         kwargs["start_pos"] = start_pos
     if raise_on_superseded:
         kwargs["raise_on_superseded"] = True
+    if playback_intent is not None:
+        kwargs["playback_intent"] = playback_intent
     player.clear_last_play_superseded()
     return player.play_item(item_or_text, **kwargs)
 
@@ -216,6 +219,117 @@ def queue_items(items: list[dict]) -> tuple[int, list[dict]]:
     except Exception:
         pass
     return qlen, snapshot
+
+
+def reserve_playlist_action(action: str) -> tuple[str, int | None]:
+    """Choose Smart's behavior once, before extraction, and reserve its intent."""
+    if action == "smart":
+        busy = state.SESSION_STATE in {"playing", "paused"} or player.is_playing()
+        action = "append" if busy else "play_now"
+    return action, player.claim_playback_intent() if action == "play_now" else None
+
+
+def retire_playlist_action(intent: int | None, *, before_load_only: bool = False) -> bool:
+    return intent is None or player.retire_playback_intent_if_current(
+        intent, before_load_only=before_load_only
+    )
+
+
+def stage_playlist(
+    items: list[dict], *, intent: int | None, preserved: dict | None = None
+) -> dict | None:
+    """Short queue commit, called under the import manager's cancellation lock.
+
+    No disk or stream work belongs here. A playing import stages its tail while
+    its first item resolves, and records the revision for conservative rollback.
+    """
+    result = {}
+
+    def stage():
+        with state.QUEUE_LOCK:
+            if intent is None:
+                state.QUEUE.extend(items)
+            else:
+                state.QUEUE[0:0] = items[1:] + ([preserved] if preserved else [])
+            result["revision"] = state.queue_revision()
+            result["snapshot"] = list(state.QUEUE)
+        if intent is not None:
+            suppress_auto_next(120.0)
+
+    if intent is None:
+        stage()
+    elif not player.apply_playback_intent(intent, stage):
+        return None
+    return result
+
+
+def refresh_playlist_result(items: list[dict], result: dict) -> dict:
+    """Count live queue instances, including edits after playback completed."""
+    with state.QUEUE_LOCK:
+        snapshot = list(state.QUEUE)
+        ids = {state.queue_item_id(entry) for entry in snapshot}
+        queued = sum(
+            bool(state.queue_item_id(entry)) and state.queue_item_id(entry) in ids
+            for entry in items
+        )
+    return {**result, "added": queued, "queue_length": len(snapshot), "snapshot": snapshot}
+
+
+def finish_playlist(
+    items: list[dict], staged: dict, *, intent: int | None,
+    preserved: dict | None, use_resolver: bool, cec: bool,
+    commit_lock, still_current: Callable[[], bool],
+) -> dict:
+    """Resolve/play outside import locks and publish only the owned result."""
+    state.persist_queue()
+    outcome = "queued"
+    playing_url = None
+    if intent is not None:
+        try:
+            play_now(
+                items[0], use_resolver=use_resolver, cec=cec,
+                clear_queue=False, mode="playlist_start", playback_intent=intent,
+                raise_on_superseded=True,
+            )
+            if player.playback_intent_current(intent):
+                outcome = "playing"
+                playing_url = items[0]["url"]
+            else:
+                outcome = "superseded"
+        except Exception as exc:
+            outcome = (
+                "superseded" if isinstance(exc, player.PlaybackSupersededError)
+                else "playback_failed"
+            )
+            # A Clear/reorder/new queue decision wins over a stale rollback.
+            # Remove only our own interrupted copy; never replace a snapshot.
+            with commit_lock:
+                with state.QUEUE_LOCK:
+                    unchanged = state.queue_revision() == staged["revision"]
+                    if preserved is not None:
+                        state.QUEUE[:] = [entry for entry in state.QUEUE if entry is not preserved]
+                    if unchanged and still_current():
+                        state.QUEUE.insert(0, items[0])
+            logger.info("playlist_start_failed category=%s", type(exc).__name__)
+
+        player.apply_playback_intent(intent, clear_auto_next_suppression)
+    if intent is not None:
+        state.persist_queue()
+    result = refresh_playlist_result(items, {"outcome": outcome, "playing_url": playing_url})
+    snapshot = result["snapshot"]
+    try:
+        if snapshot:
+            player.prefetch_queue_item_stream(snapshot[0])
+        player.prime_mpv_up_next_from_queue(force=True)
+    except Exception:
+        pass
+    return result
+
+
+def clear_queue() -> None:
+    """Clear pending media; the import manager retires pending playlist starts."""
+    with state.QUEUE_LOCK:
+        state.QUEUE.clear()
 
 
 def queue_item_next(item: dict) -> tuple[int, list[dict]]:
@@ -436,8 +550,10 @@ def same_playback_item(
     return u_left == u_right
 
 
-def preserve_current_to_queue_front(replacement: object = None) -> dict | None:
-    """If something is playing, capture it and insert at front of queue with resume_pos."""
+def preserve_current_to_queue_front(
+    replacement: object = None, *, capture_only: bool = False
+) -> dict | None:
+    """Capture active playback with resume metadata; optionally defer insertion."""
     if not player.is_playing():
         return None
     now = state.NOW_PLAYING
@@ -447,7 +563,10 @@ def preserve_current_to_queue_front(replacement: object = None) -> dict | None:
         return None
     with state.QUEUE_LOCK:
         queue_head = state.QUEUE[0] if state.QUEUE else None
-        if isinstance(queue_head, dict) and queue_head.get("_relaytv_interrupt_preserved") is True:
+        if (
+            not capture_only and isinstance(queue_head, dict)
+            and queue_head.get("_relaytv_interrupt_preserved") is True
+        ):
             head_id = id(queue_head)
             if (
                 _PRESERVE_CLAIMS.get(head_id, 0) > 0
@@ -553,6 +672,9 @@ def preserve_current_to_queue_front(replacement: object = None) -> dict | None:
     if pos_f is not None:
         preserved["resume_pos"] = pos_f
     player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
+
+    if capture_only:
+        return preserved
 
     with state.QUEUE_LOCK:
         queue_head = state.QUEUE[0] if state.QUEUE else None

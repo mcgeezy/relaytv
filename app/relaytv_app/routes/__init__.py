@@ -4341,6 +4341,16 @@ def ui():
           <div class="modalBtns amActions">
             <button id="addQueueBtn" title="Add to queue">Queue</button>
             <button id="addPlayBtn" class="good" title="Play now">Play</button>
+            <button id="addPlaylistBtn" class="hidden" type="button">Add entire playlist</button>
+          </div>
+          <div id="playlistLinkHint" class="helperTxt hidden"></div>
+          <div id="playlistImportPanel" class="amSection hidden">
+            <div id="playlistImportStatus" class="helperTxt" role="status" aria-live="polite"></div>
+            <div class="modalBtns amActions">
+              <button id="playlistImportCancel" class="hidden" type="button">Cancel import</button>
+              <button id="playlistImportCheck" class="hidden" type="button">Check status</button>
+              <button id="playlistImportDismiss" class="hidden" type="button">Dismiss</button>
+            </div>
           </div>
           <div id="addHelperTxt" class="helperTxt" data-default="Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.">Tip: Clipboard paste works automatically on modern browsers (https/PWA/localhost only). “Queue” keeps the current playback.</div>
         </section>
@@ -4843,6 +4853,7 @@ def ui():
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
   <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__" defer></script>
+  <script src="/static/ui/playlist_queue.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/app.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/seerr.js?v=__UI_ASSET_V__" defer></script>
   <script src="/static/ui/jellyfin.js?v=__UI_ASSET_V__" defer></script>
@@ -5405,6 +5416,7 @@ def _ui_asset_version() -> str:
         "seerr.css",
         "peers.css",
         "realtime_transport.js",
+        "playlist_queue.js",
         "app.js",
         "jellyfin.js",
         "plex.js",

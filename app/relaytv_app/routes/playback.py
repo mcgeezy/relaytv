@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import time
 import uuid
+from typing import Literal
+from uuid import UUID
 
 from urllib.parse import quote
 
@@ -9,6 +11,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from .. import player, playback_service, state
+from .queue import maybe_queue_playlist
 
 
 router = APIRouter()
@@ -38,6 +41,12 @@ class PlayReq(BaseModel):
     cec: bool = False
 
 
+class SmartPlayReq(PlayReq):
+    playlist_mode: Literal["auto", "video", "playlist"] = "auto"
+    request_id: UUID | None = None
+
+
+
 class PlayNowReq(BaseModel):
     """Play immediately, optionally preserving current playback."""
 
@@ -54,6 +63,8 @@ class PlayNowReq(BaseModel):
     resolved_stream: str | None = None
     resolved_audio: str | None = None
     resolved_at: float | None = None
+    playlist_mode: Literal["auto", "video", "playlist"] = "auto"
+    request_id: UUID | None = None
 
 
 class ShareReq(BaseModel):
@@ -472,6 +483,9 @@ def _play_now_item(
 @router.post("/play_now")
 def play_now(req: PlayNowReq):
     """Play immediately, optionally preserving the currently playing item."""
+    playlist = maybe_queue_playlist(req, action="play_now")
+    if playlist is not None:
+        return playlist
     item_or_text: dict[str, object] | str = req.url
     if (
         req.title
@@ -697,7 +711,10 @@ def share_target(url: str | None = None, link: str | None = None, cec: bool = Tr
 
 
 @router.post("/smart")
-def smart(req: PlayReq):
+def smart(req: SmartPlayReq):
+    playlist = maybe_queue_playlist(req, action="smart")
+    if playlist is not None:
+        return playlist
     playback_service.suppress_auto_next(2.0)
     if player.is_playing():
         item = _smart_item_from_url(req.url or "", lightweight=True)

@@ -128,7 +128,7 @@ must not control the WebSocket origin check.
 - `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
 - `GET /share`
   - query: `url` or `link`, optional `cec`
-  - share-target compatible immediate play helper
+  - PWA share-target entrypoint; redirects (`303`) to `/ui?share=…` so the Link dialog opens prefilled without side effects on an unauthenticated GET
 
 Selected SVG/asset helpers also exist for the UI:
 
@@ -169,10 +169,11 @@ Current UI realtime event types:
   - full server-authoritative snapshot equivalent to `/status`
 - `queue`
   - queue mutation hint with current queue snapshot and `queue_length`
-  - currently emitted for add, remove, move, dedupe, clear, and Jellyfin queue mutations
+  - currently emitted for add, remove, move, dedupe, clear, play-now, YouTube playlist imports, and media-server queue mutations
 - `jellyfin`
   - Jellyfin browse/runtime refresh hint
   - currently emitted for connect, disconnect, register, catalog cache clear, play, and queue-only Jellyfin actions
+
 
 Clients should treat `status` as the authoritative full-state refresh, use `playback` for fast-path UI updates, and treat `queue` / `jellyfin` as immediate refresh hints rather than a standalone source of truth.
 
@@ -245,16 +246,26 @@ Primary play-family endpoints:
   - body: `{"url", "use_ytdlp"?, "cec"?}`
   - immediate play, clears queue
 - `POST /smart`
-  - body: same as `/play`
-  - if already playing, enqueues; otherwise plays immediately
+  - body: `{"url", "use_ytdlp"?, "cec"?, "playlist_mode"?, "request_id"?}`
+  - individual videos: if already playing, enqueues; otherwise plays immediately
+  - YouTube playlist links: returns `202` with an import job. During playing or
+    paused playback it appends the entire playlist; when idle it starts the first
+    video and queues the rest before existing queued items
 - `POST /play_now`
-  - body: `{"url", "preserve_current"?, "preserve_to"?, "resume_current"?, "reason"?, "title"?, "thumbnail"?}`
+  - body: `{"url", "preserve_current"?, "preserve_to"?, "resume_current"?, "reason"?, "title"?, "thumbnail"?, "playlist_mode"?, "request_id"?}`
   - immediate play with optional preserve-current semantics
+  - YouTube playlist links return `202`: start the first video, queue the
+    remaining videos before the interrupted video's resume entry and existing
+    queued items. Preserve-current options apply to that interrupted entry
+- `POST /share`
+  - body: `{"url"?, "link"?, "cec"?}`
+  - immediate play, clears queue
 - `POST /play_temporary`
   - body: `{"url", "resume"?, "resume_mode"?, "timeout_sec"?, "volume_override"?}`
 - `POST /play_temporary/cancel`
 - `POST /play_at`
   - body: `{"url", "start_at": epoch_seconds}`
+
 
 ## Uploaded media ingest
 
@@ -410,7 +421,77 @@ Queue endpoints:
 - `POST /queue/add`
 - `POST /api/queue/add`
 - `POST /v1/queue/add`
-  - body: `{"url"}`
+  - body: `{"url", "playlist_mode"?, "request_id"?}`
+  - individual videos return the existing single-item response. Finite YouTube
+    playlist links automatically return `202` with an append-only import job
+- `POST /queue/playlists`
+  - body: `{"url": "https://www.youtube.com/playlist?list=…", "request_id": "<UUID>"}`
+  - returns `202` immediately with a background job. YouTube video/list links
+    are accepted too; their selected video, timestamp, and index are ignored
+  - reads a finite playlist once with the device's configured YouTube cookies,
+    then appends ordinary video entries in playlist order without interrupting
+    playback. Repeated videos remain separate queue entries. Stream resolution
+    happens near playback; flat playlist metadata cannot establish playability
+  - reusing a request ID for the same playlist returns the existing job without
+    adding again; using it for a different playlist returns `409`
+  - up to two extraction workers and 64 retained jobs; capacity exhaustion
+    returns `429`. Extraction has a 120-second deadline. Playlists over 1,000
+    entries or 16 MiB of metadata fail explicitly and add nothing. Dynamic
+    YouTube mixes (`RD…`) require a saved finite playlist instead
+- `GET /queue/playlists/{job_id}`
+  - returns `job_id`, canonical `url`, `status`, `title`, `added`, `skipped`,
+    `queue_length`, `detail`, `expires_at` (Unix seconds), `action`,
+    `effective_action`, `outcome`, and `playing_url`
+  - statuses: `loading`, `adding`, `completed`, `failed`, `cancelled`.
+    `skipped` counts known private/deleted placeholders and invalid entries;
+    restrictions discovered only during playback use normal queue error handling
+  - `added` is the number of imported entries still queued, excluding a video
+    started immediately and any preserved interruption. Outcomes are `queued`,
+    `playing`, `playback_failed`, or `superseded`. A failed first-video start
+    retains all imported videos if no newer queue edit intervened; otherwise
+    that newer edit wins and the job reports the actual remaining count
+  - jobs and idempotency records remain in memory for one hour from creation;
+    restart/expiry returns `404`. After an uncertain result or `404`, check the
+    queue before intentionally starting a new import; never silently create a
+    fresh request ID to retry an uncertain write
+- `DELETE /queue/playlists/{job_id}`
+  - cancels a loading import before it appends anything. Once `adding` starts,
+    cancellation returns `409`; a completed import is not undone
+  - shutdown retires loading imports and pending first-video resolution; old
+    work cannot publish into a restarted service. Cancelling does not free the extraction slot until the
+    bounded subprocess exits
+  - playlist start/cancel use the normal optional bearer-token write guard;
+    status remains an ordinary read
+
+Automatic playlist detection for `/smart`, `/play_now`, and the enqueue aliases:
+
+- `playlist_mode` defaults to `auto`. A real YouTube URL carrying a finite `list=`
+  imports the entire playlist, including `watch?v=…&list=…` links. Mobile, music,
+  short, embedded, and pasted `www` links are supported. Selected video, index,
+  and timestamp do not change the playlist's starting point. Video URLs carrying
+  a dynamic mix (`list=RD…`) fall back to the individual video in `auto` mode,
+  while playlist-only mix links (`playlist?list=RD…`) or `playlist_mode: "playlist"`
+  return `400`.
+- Use `playlist_mode: "video"` to act on only the shared video; a playlist-only
+  link cannot use that override. `"playlist"` explicitly requires a playlist.
+  The web UI's individual-video buttons send `"video"` automatically.
+
+- Optional UUID `request_id` binds the canonical playlist, requested action,
+  and playback/preservation options. Reusing it with changed options returns
+  `409`; an unchanged retry returns the existing job without starting playback
+  or importing again. Smart's append/play decision is made once on acceptance.
+- Existing phone clients that send only `{"url"}` work without an app update.
+  Identical requests without IDs coalesce while in flight. After completion a
+  new URL-only request is treated as an intentional re-share; reliable retries
+  across a lost completed response require a persistent client-generated ID.
+- Extraction failure leaves playback and queue untouched. Stop, Close, and newer
+  Play commands supersede an older pending playlist start. Clear cancels pending
+  additions/starts and empties the queue; if the first video has already begun
+  loading, it finishes starting and its remaining queue is cleared.
+- Completion and failure produce TV notifications. Existing phone builds may
+  display `Sent` upon `202`; job status/TV notifications describe the eventual
+  outcome. Native phone progress polling is a separate client feature.
+
 - `GET /queue`
   - queue items include an opaque `queue_id` that remains stable while the
     item is reordered; use it for delayed or interactive mutations. IDs are
@@ -435,7 +516,7 @@ Queue endpoints:
     `{"from_index": int, "to_index": int}` remains supported
 - `POST /queue/dedupe`
 - `POST /clear`
-  - clears the queue
+  - clears the queue and cancels pending playlist additions/starts
 
 History endpoints:
 
@@ -777,7 +858,33 @@ YouTube cookie helpers:
 When YouTube cookies are configured, RelayTV passes them to yt-dlp and avoids
 yt-dlp client fallbacks that do not support cookie auth.
 
+## Unified multi-server browse API
+
+Aggregates all connected Jellyfin, Emby, and Plex servers into a single browse
+experience with latency-based cross-server deduplication (selecting the lowest
+measured `latency_ms` copy while merging `resume_pos` and metadata across
+duplicates).
+
+- `GET /browse/status`: summary of configured/active servers and best latency
+- `GET /browse/servers`: list configured primary and custom servers (sorted by latency)
+- `POST /browse/servers`: add or update a custom Jellyfin, Emby, or Plex server
+- `DELETE /browse/servers/{server_id}`: remove a custom server
+- `POST /browse/servers/probe`: probe one (`{"server_id"?}`) or all enabled servers and record `latency_ms`
+- `GET /browse/home`: unified dashboard rows (`continue_watching_movies`, `continue_watching_tv`, `recently_added_movies`, `recently_added_tv`)
+- `GET /browse/search`: cross-server deduplicated search (`q`, optional `limit`, `refresh`)
+- `GET /browse/movies`: merged and deduplicated movies catalog (`sort`, `limit`, `start`, `starts_with`, `refresh`)
+- `GET /browse/tv/series`: merged and deduplicated TV series catalog
+- `GET /browse/tv/series/{series_id}/seasons`: merged seasons across servers carrying the series
+- `GET /browse/tv/series/{series_id}/episodes`: deduplicated episodes (`season_number` or `season_id`)
+- `POST /browse/tv/series/{series_id}/play_all`: start the first episode and queue the rest
+- `GET /browse/item/{item_id}`: normalized detail view with merged duplicate resume/metadata overlay
+- `GET /browse/item/{item_id}/adjacent`: previous/next episode lookup
+- `GET /browse/artwork/{server_id}/{raw_item_id}`: credential-safe artwork proxy for custom servers
+- `GET /browse/stream/{server_id}/{raw_item_id}`: loopback media stream proxy for custom servers
+- `POST /browse/action`: execute `play_now`, `resume`, `play_next`, or `play_last` on a unified `item_id`
+
 ## Plex integration and browse API
+
 
 The current implementation exposes Plex account linking, server setup,
 personal-library browsing, direct playback, and server transcoding. See
