@@ -42,4 +42,12 @@ rebuild are part of this server milestone.
   conservative rollback, shutdown retirement, pending-import Clear, player's
   load boundary, and completion-count refresh guards; all guards restored.
 - Transition inventory regenerated with its test's `--write` mode.
-- Host deployment and phone-shaped request verification pending.
+- Host deployment passed using the existing released image and branch bind mount.
+  Real URL-only Smart imported all four test videos while busy; video/list Play
+  and idle Smart each started the first and queued/persisted the remaining three.
+  Real Qt telemetry advanced for both playback flows; in-flight legacy retries
+  and completed UUID retries did not duplicate their batch.
+- Desktop/mobile browser smoke passed. Original queue IDs, the playing session,
+  and device configuration were restored/preserved; matching private cached
+  stream data was used when the original provider page could not re-resolve.
+- Detailed results: [verification report](../YOUTUBE_PLAYLIST_VERIFICATION.md).

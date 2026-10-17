@@ -1,6 +1,6 @@
 # YouTube playlist queue verification
 
-Verified on 2026-10-17 on the development host, branch
+Initial web import milestone verified on 2026-10-17 on the development host, branch
 `feat/youtube-playlist-queue`. Application milestones: `f2e1d74`, `03a378c`,
 and `73a29ad`.
 
@@ -78,6 +78,39 @@ queue and stable IDs were preserved, and test entries were removed. After the
 final link-variant fix, the container was recreated again, embedded playlist
 rejection was checked through all four single-video enqueue aliases, and the
 original queue/session were restored again. The deployed container is healthy.
+
+## Automatic server share extension
+
+Implemented in `9ef3f1a`, also verified on the development host on 2026-10-17.
+This extension replaces the initial milestone's playlist-only rejection on the
+enqueue aliases with automatic background import. `/smart` and `/play_now`
+also recognize playlist-only and video/list links sent by existing phone builds.
+
+- **1,470 Python tests and 72 JavaScript tests passed**, with all required Ruff,
+  whitespace, JavaScript, and embedded-overlay syntax gates. The final focused
+  HTTP UI/import run passed 74 tests.
+- Additional revert proofs covered reserved playback intent, ownership at queue
+  commit, conservative failure rollback, shutdown during first-video resolution,
+  pending-import Clear, the player's load boundary, and fresh completion counts.
+  Each relevant test failed when its production guard was removed.
+- Desktop dark and mobile light Chromium smoke passed on the updated host. Web
+  individual-video buttons send an explicit override to retain their behavior.
+- An existing-phone-shaped `POST /smart` with only a mobile playlist URL returned
+  `202` in **0.016 seconds**, appended all four videos in order, and preserved
+  current playback. An identical in-flight request returned the same job ID.
+- `POST /play_now` with a video/list/index/timestamp link started playlist video 1,
+  queued the remaining three in order, and preserved the interrupted video with
+  its resume position after the playlist. A same-UUID retry added zero entries.
+  Actual Qt runtime playback advanced from **0.04 to 1.28 seconds**.
+- Smart on a closed/idle player started the first video and queued/persisted the
+  remaining three before existing queue items. Actual Qt runtime playback
+  advanced from **0.44 to 1.32 seconds**.
+- Test-created queue entries were removed; the original queue IDs and playing
+  session were restored. The original provider's page reported unavailable on
+  re-resolution, so restoration used its matching cached stream from the private
+  local session backup. Subsequent HTTP runtime checks confirmed advancing
+  original playback. Device config and the user's compose healthcheck edit were
+  preserved. No Android files or published images were changed.
 
 ## Product limits
 
