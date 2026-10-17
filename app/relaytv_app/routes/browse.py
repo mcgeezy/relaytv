@@ -3,12 +3,26 @@
 
 from __future__ import annotations
 
+from functools import wraps
+
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..integrations import browse_service
 from ..integrations.plex_client import PlexError
+
+def _public_browse_response(endpoint):
+    @wraps(endpoint)
+    def wrapped(*args, **kwargs):
+        content = endpoint(*args, **kwargs)
+        # Stay in the synchronous endpoint worker: server lookup can read the
+        # configuration store or wait on an integration's lock.
+        if isinstance(content, (dict, list)):
+            return browse_service.public_browse_payload(content)
+        return content
+    return wrapped
+
 
 router = APIRouter()
 
@@ -44,16 +58,19 @@ class BrowseItemActionReq(BaseModel):
 
 
 @router.get("/browse/status")
+@_public_browse_response
 def browse_status():
     return browse_service.status_summary()
 
 
 @router.get("/browse/servers")
+@_public_browse_response
 def browse_servers_list():
     return browse_service.list_servers_public()
 
 
 @router.post("/browse/servers")
+@_public_browse_response
 def browse_servers_upsert(req: BrowseServerUpsertReq):
     try:
         server = browse_service.upsert_custom_server(req.model_dump(exclude_unset=True))
@@ -67,6 +84,7 @@ def browse_servers_upsert(req: BrowseServerUpsertReq):
 
 
 @router.delete("/browse/servers/{server_id}")
+@_public_browse_response
 def browse_servers_delete(server_id: str):
     removed = browse_service.delete_custom_server(server_id)
     if not removed:
@@ -79,18 +97,21 @@ def browse_servers_delete(server_id: str):
 
 
 @router.post("/browse/servers/probe")
+@_public_browse_response
 def browse_servers_probe(req: BrowseProbeReq | None = None):
     sid = str((req.server_id if req else "") or "").strip()
     return browse_service.probe_all_servers(server_id=sid)
 
 
 @router.get("/browse/home")
+@_public_browse_response
 def browse_home(limit: int = 24, refresh: bool = False):
     lim = max(1, min(60, int(limit)))
     return browse_service.get_unified_home(limit=lim, refresh=bool(refresh))
 
 
 @router.get("/browse/movies")
+@_public_browse_response
 def browse_movies(
     sort: str = "added",
     limit: int = 60,
@@ -108,6 +129,7 @@ def browse_movies(
 
 
 @router.get("/browse/tv/series")
+@_public_browse_response
 def browse_tv_series(
     sort: str = "title_asc",
     limit: int = 60,
@@ -125,6 +147,7 @@ def browse_tv_series(
 
 
 @router.get("/browse/tv/series/{series_id}/seasons")
+@_public_browse_response
 def browse_tv_series_seasons(series_id: str, refresh: bool = False):
     sid = str(series_id or "").strip()
     if not sid:
@@ -133,6 +156,7 @@ def browse_tv_series_seasons(series_id: str, refresh: bool = False):
 
 
 @router.get("/browse/tv/series/{series_id}/episodes")
+@_public_browse_response
 def browse_tv_series_episodes(
     series_id: str,
     season_id: str = "",
@@ -151,6 +175,7 @@ def browse_tv_series_episodes(
 
 
 @router.post("/browse/tv/series/{series_id}/play_all")
+@_public_browse_response
 def browse_tv_series_play_all(series_id: str, refresh: bool = False):
     sid = str(series_id or "").strip()
     if not sid:
@@ -162,6 +187,7 @@ def browse_tv_series_play_all(series_id: str, refresh: bool = False):
 
 
 @router.get("/browse/search")
+@_public_browse_response
 def browse_search(q: str = "", limit: int = 30, refresh: bool = False):
     query = str(q or "").strip()
     if not query:
@@ -170,6 +196,7 @@ def browse_search(q: str = "", limit: int = 30, refresh: bool = False):
 
 
 @router.get("/browse/item/{item_id}")
+@_public_browse_response
 def browse_item_detail(item_id: str, refresh: bool = False):
     iid = str(item_id or "").strip()
     if not iid:
@@ -199,6 +226,7 @@ def browse_item_detail(item_id: str, refresh: bool = False):
 
 
 @router.get("/browse/item/{item_id}/adjacent")
+@_public_browse_response
 def browse_item_adjacent(item_id: str, refresh: bool = False):
     iid = str(item_id or "").strip()
     if not iid:
@@ -215,6 +243,7 @@ def browse_item_adjacent(item_id: str, refresh: bool = False):
 
 
 @router.post("/browse/action")
+@_public_browse_response
 def browse_item_action(req: BrowseItemActionReq):
     iid = str(req.item_id or "").strip()
     if not iid:
@@ -241,7 +270,7 @@ def browse_item_action(req: BrowseItemActionReq):
 @router.get("/browse/artwork/{server_id}")
 def browse_artwork(server_id: str, path: str = ""):
     try:
-        artwork = browse_service.fetch_custom_plex_artwork(server_id, path)
+        artwork = browse_service.fetch_server_artwork(server_id, path)
     except PlexError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
     return Response(

@@ -3440,7 +3440,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     )
                     return {"ok": False, "action": "queue_only", "reason": "session_retired"}
                 if queued:
-                    with state.QUEUE_LOCK:
+                    with playback_service.queue_commit():
                         if play_mode == "playnext":
                             state.QUEUE[:0] = queued
                         else:
@@ -3720,7 +3720,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 if queued and not still_owned():
                     queued = []
                 if queued:
-                    with state.QUEUE_LOCK:
+                    with playback_service.queue_commit():
                         state.QUEUE.extend(queued)
                         queue_snapshot = list(state.QUEUE)
                     try:

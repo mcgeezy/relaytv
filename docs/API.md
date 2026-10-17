@@ -876,11 +876,19 @@ duplicates).
 - `GET /browse/tv/series`: merged and deduplicated TV series catalog
 - `GET /browse/tv/series/{series_id}/seasons`: merged seasons across servers carrying the series
 - `GET /browse/tv/series/{series_id}/episodes`: deduplicated episodes (`season_number` or `season_id`)
-- `POST /browse/tv/series/{series_id}/play_all`: start the first episode and queue the rest
+- `POST /browse/tv/series/{series_id}/play_all`: start the first episode and queue the rest.
+  Clear cancels remaining additions, including an episode lookup already in flight;
+  a completed partial import reports `cancelled: true` and its `queued_count`.
+  Cancellation before the initial playback action returns `409`.
 - `GET /browse/item/{item_id}`: normalized detail view with merged duplicate resume/metadata overlay
 - `GET /browse/item/{item_id}/adjacent`: previous/next episode lookup
-- `GET /browse/artwork/{server_id}/{raw_item_id}`: credential-safe artwork proxy for custom servers
-- `GET /browse/stream/{server_id}/{raw_item_id}`: loopback media stream proxy for custom servers
+- `GET /browse/artwork/{server_id}?path=...`: credential-safe artwork proxy for
+  Jellyfin, Emby, and custom Plex servers. Browse JSON uses these local artwork
+  references and strips private playback fields and URL credentials. Jellyfin/Emby
+  proxy paths are limited to item Primary/Backdrop images and optional image tags;
+  credentials are sent only in upstream headers. Redirects, non-image responses,
+  and images larger than 16 MiB are rejected.
+- `GET /browse/stream/{server_id}?path=...`: media stream proxy for custom Plex servers
 - `POST /browse/action`: execute `play_now`, `resume`, `play_next`, or `play_last` on a unified `item_id`
 
 ## Plex integration and browse API
