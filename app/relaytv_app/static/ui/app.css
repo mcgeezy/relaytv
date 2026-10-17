@@ -413,7 +413,7 @@
     }
     .addModal .fieldRow{ margin-top: 0; }
     .addModal .helperTxt{ margin-top: 0; }
-    .amActions{ justify-content: flex-end; }
+    .amActions{ justify-content: flex-end; flex-wrap: wrap; }
     .addModal .iconBtn,
     .histModal .iconBtn{
       background: linear-gradient(180deg, rgba(148,178,255,.14), rgba(96,130,255,.06));

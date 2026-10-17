@@ -55,4 +55,13 @@ Existing single-video enqueue aliases and playback resolution remain compatible.
 - Milestone 1 full gates: 1,434 Python tests passed using an isolated editable
   `.[dev]` install (Python 3.13, FastAPI 0.143.3); Ruff, whitespace, both required
   JavaScript syntax checks, embedded overlay syntax, and 61 JavaScript tests passed.
-- Browser implementation and host deployment verification pending.
+- Milestone 2: 71 JavaScript tests passed. Desktop dark (1440px) and mobile light
+  (390px) Chromium smoke passed against an isolated HTTP server, covering double
+  taps, reload recovery, lost-response recovery, cancellation, video/list choices,
+  dynamic mixes, lookalike hosts, and modal bounds. The smoke caught a missing
+  static-asset allowlist entry, fixed before deployment and covered by the existing
+  HTTP UI smoke. A focused final run passed 43 Python tests.
+- Milestone 2 full Python gate passed all 1,434 tests; all required syntax,
+  lint, and whitespace gates passed. Live extraction of the public JODA15
+  playlist returned all four videos in order without per-video metadata calls.
+- Host deployment verification pending.

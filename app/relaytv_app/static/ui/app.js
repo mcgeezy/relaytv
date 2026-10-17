@@ -179,6 +179,7 @@ async function openAddUrl(){
   _setAddHelper('', '');
   const clip = await clipboardText();
   if (looksLikeUrl(clip) && !inp.value.trim()) inp.value = normalizeUrl(clip);
+  window.RelayTVPlaylistQueue?.update();
   inp.focus();
   inp.select();
 }
@@ -212,6 +213,7 @@ async function pasteIntoAddUrl(){
   }
   if (clip) {
     inp.value = normalizeUrl(clip);
+    window.RelayTVPlaylistQueue?.update();
     _setAddHelper('Pasted from clipboard.', 'ok');
   } else if (blockedReason) {
     _setAddHelper(blockedReason, 'err');
@@ -232,6 +234,11 @@ async function submitAddUrl(mode){
   const inp = document.getElementById('addUrlInput');
   if (!inp) return;
   const url = normalizeUrl(inp.value);
+  const playlist = window.RelayTVPlaylistQueue?.linkInfo(url);
+  if (playlist && !playlist.hasVideo){
+    if (!playlist.dynamic) await window.RelayTVPlaylistQueue.submit();
+    return;
+  }
   if (!looksLikeUrl(url)) {
     alert('Please enter a valid URL (starting with http(s):// or www.)');
     inp.focus();
@@ -4326,6 +4333,7 @@ function syncBrowseLaunchButtons(){
 }
 
 function bindAddUrlUi(){
+  window.RelayTVPlaylistQueue?.bind();
   const btn = document.getElementById('addUrlBtn');
   const bd  = document.getElementById('addBackdrop');
   const closeBtn = document.getElementById('addCloseBtn');
@@ -4376,6 +4384,7 @@ function bindAddUrlUi(){
     if (inp.value.trim()) return;
     const clip = await clipboardText();
     if (looksLikeUrl(clip)) inp.value = normalizeUrl(clip);
+    window.RelayTVPlaylistQueue?.update();
   });
 
   window.addEventListener('keydown', (e) => {

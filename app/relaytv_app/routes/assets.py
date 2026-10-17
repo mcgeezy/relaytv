@@ -392,6 +392,7 @@ def ui_static_asset(asset_name: str):
         "app.css",
         "app.js",
         "realtime_transport.js",
+        "playlist_queue.js",
         "jellyfin.css",
         "jellyfin.js",
         "plex.css",

@@ -83,6 +83,14 @@ and Queue share targets, native media controls, mDNS discovery, and profiles for
 multiple RelayTV screens. RelayTV devices can also send a queue or active
 playback to one another on the local network.
 
+To queue a YouTube playlist, open **Link**, paste its URL, and choose
+**Add entire playlist**. Videos are added in playlist order while current
+playback continues. A video link with playlist context also offers the usual
+**Play** and **Queue** actions for that individual video. Import status and
+cancellation stay available in the Link dialog, including after a reload.
+Finite playlists support up to 1,000 videos; private lists need configured
+YouTube cookies, and unavailable entries are reported when they can be detected.
+
 ### 🏠 Automate
 
 Make every screen a Home Assistant `media_player`, or use the local HTTP API
