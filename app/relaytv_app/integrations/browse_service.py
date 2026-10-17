@@ -16,11 +16,14 @@ from urllib import parse as _urlparse
 from urllib import request as _urlrequest
 import uuid
 
-from .. import config, playback_service, state
+from .. import config, playback_service, public_media, state, url_boundary
 from ..debug import get_logger
 from ..thumb_cache import attach_local_thumbnail
 from . import jellyfin_receiver, plex_auth, plex_service
-from .plex_client import PlexBinaryResponse, PlexClient, PlexError, PlexStreamResponse
+from .plex_client import (
+    MAX_BINARY_RESPONSE_BYTES, SAFE_IMAGE_TYPES,
+    PlexBinaryResponse, PlexClient, PlexError, PlexStreamResponse,
+)
 
 logger = get_logger("browse_service")
 
@@ -2381,21 +2384,34 @@ def perform_unified_action(
 
 
 def play_all_unified_series(series_id: str, *, refresh: bool = False) -> dict[str, Any]:
+    with playback_service.queue_import():
+        return _play_all_unified_series(series_id, refresh=refresh)
+
+
+def _play_all_unified_series(series_id: str, *, refresh: bool = False) -> dict[str, Any]:
     ep_res = list_unified_series_episodes(series_id, refresh=refresh)
     episodes = ep_res.get("episodes") if isinstance(ep_res, dict) else []
     if not isinstance(episodes, list) or not episodes:
         raise ValueError("No playable episodes found for series")
     first = episodes[0]
     first_id = str(first.get("item_id") or "").strip()
+    with playback_service.queue_commit():
+        pass
     play_res = perform_unified_action(first_id, "play_now")
     queued = 0
+    cancelled = False
     for ep in episodes[1:]:
         ep_id = str(ep.get("item_id") or "").strip()
         if not ep_id:
             continue
         try:
+            with playback_service.queue_commit():
+                pass
             perform_unified_action(ep_id, "play_last")
             queued += 1
+        except playback_service.QueueImportCancelled:
+            cancelled = True
+            break
         except Exception:
             continue
     return {
@@ -2403,6 +2419,7 @@ def play_all_unified_series(series_id: str, *, refresh: bool = False) -> dict[st
         "series_id": series_id,
         "series_title": str(first.get("series_name") or first.get("title") or "Series"),
         "queued_count": queued,
+        "cancelled": cancelled,
         "now_playing": play_res.get("now_playing"),
     }
 
@@ -2457,6 +2474,79 @@ def report_custom_plex_timeline(
         "time": max(0, int(position * 1000)), "duration": max(0, int(duration * 1000)),
     })
     return True
+
+
+_JF_IMAGE_PATH = re.compile(r"/Items/[A-Za-z0-9_-]+/Images/(?:Primary|Backdrop/[0-9]+)\Z")
+_ARTWORK_FIELDS = {"thumbnail", "poster", "backdrop", "image", "art"}
+
+
+def public_browse_payload(payload: Any) -> Any:
+    """Keep credentials internal while preserving browser access to artwork."""
+    servers = _collect_configured_servers(include_disabled=True)
+
+    def artwork_url(raw: str) -> str:
+        for server in servers:
+            if server.get("type") not in {"jellyfin", "emby"}:
+                continue
+            base = str(server.get("server_url") or "").rstrip("/")
+            if not base or not raw.startswith(base + "/Items/"):
+                continue
+            parts = _urlparse.urlsplit(raw[len(base):])
+            if not _JF_IMAGE_PATH.fullmatch(parts.path):
+                break
+            query = [(key, value) for key, value in _urlparse.parse_qsl(parts.query) if key == "tag"]
+            path = parts.path + ("?" + _urlparse.urlencode(query) if query else "")
+            return f"/browse/artwork/{_urlparse.quote(str(server['id']), safe='')}?path={_urlparse.quote(path, safe='')}"
+        return public_media.sanitize_public_url(raw)
+
+    def visit(value):
+        if isinstance(value, list):
+            return [visit(entry) for entry in value]
+        if not isinstance(value, dict):
+            return value
+        safe = public_media.public_media_item(value)
+        for key in safe:
+            raw = value.get(key)
+            safe[key] = artwork_url(raw) if key in _ARTWORK_FIELDS and isinstance(raw, str) else visit(safe[key])
+        return safe
+
+    return visit(payload)
+
+
+class _NoArtworkRedirect(_urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fetch_server_artwork(server_id: str, path: str) -> PlexBinaryResponse:
+    server = _find_server_by_id(server_id)
+    if not server:
+        raise PlexError("browse_not_found", "Media server not found", status_code=404)
+    if server.get("type") == "plex":
+        return fetch_custom_plex_artwork(server_id, path)
+    parts = url_boundary.parse_url(path)
+    if (
+        parts is None or server.get("type") not in {"jellyfin", "emby"}
+        or parts.scheme or parts.raw_netloc or parts.fragment
+        or not _JF_IMAGE_PATH.fullmatch(parts.path)
+        or any(key != "tag" for key, _ in _urlparse.parse_qsl(parts.query, keep_blank_values=True))
+    ):
+        raise PlexError("browse_invalid_artwork", "Invalid artwork path", status_code=400)
+    try:
+        if server_id == "jf_primary":
+            base, token, _uid = jellyfin_receiver._catalog_base_token_user()
+        else:
+            base, token, _uid = _resolve_custom_jf_auth(server)
+        req = _urlrequest.Request(base.rstrip("/") + path, headers=_custom_jf_headers(token))
+        opener = _urlrequest.build_opener(_NoArtworkRedirect())
+        with opener.open(req, timeout=5.0) as response:
+            body = response.read(MAX_BINARY_RESPONSE_BYTES + 1)
+            media_type = str(response.headers.get("Content-Type") or "").partition(";")[0].strip().lower()
+        if not body or len(body) > MAX_BINARY_RESPONSE_BYTES or media_type not in SAFE_IMAGE_TYPES:
+            raise ValueError("Invalid image response")
+    except Exception:
+        raise PlexError("browse_artwork_unavailable", "Media artwork is unavailable", status_code=502) from None
+    return PlexBinaryResponse(body=body, content_type=media_type)
 
 
 def fetch_custom_plex_artwork(server_id: str, path: str) -> PlexBinaryResponse:

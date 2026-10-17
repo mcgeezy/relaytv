@@ -32,7 +32,10 @@ from __future__ import annotations
 import math
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Callable
+
+from fastapi import HTTPException
 
 from . import player, resolver, state
 from .debug import get_logger
@@ -43,6 +46,37 @@ logger = get_logger("playback")
 # advance mechanics, re-exported so callers need only the service.
 QueueAdvanceEmptyError = player.QueueAdvanceEmptyError
 QueueAdvanceSuppressedError = player.QueueAdvanceSuppressedError
+
+_QUEUE_IMPORT_GENERATION = 0
+_QUEUE_IMPORT_LOCAL = threading.local()
+
+
+class QueueImportCancelled(HTTPException):
+    def __init__(self):
+        super().__init__(409, "Series import cancelled by queue Clear")
+
+
+@contextmanager
+def queue_import():
+    """Bind this synchronous batch to the queue's current Clear generation."""
+    previous = getattr(_QUEUE_IMPORT_LOCAL, "generation", None)
+    with state.QUEUE_LOCK:
+        generation = _QUEUE_IMPORT_GENERATION
+    _QUEUE_IMPORT_LOCAL.generation = generation
+    try:
+        yield
+    finally:
+        _QUEUE_IMPORT_LOCAL.generation = previous
+
+
+@contextmanager
+def queue_commit():
+    """Serialize a queue mutation with Clear and reject retired batch work."""
+    with state.QUEUE_LOCK:
+        generation = getattr(_QUEUE_IMPORT_LOCAL, "generation", None)
+        if generation is not None and generation != _QUEUE_IMPORT_GENERATION:
+            raise QueueImportCancelled()
+        yield
 
 
 def play_now(
@@ -61,6 +95,9 @@ def play_now(
     default, and existing test doubles for ``player.play_item`` don't all
     accept the parameter.
     """
+    if getattr(_QUEUE_IMPORT_LOCAL, "generation", None) is not None:
+        with queue_commit():
+            pass
     kwargs: dict[str, Any] = {
         "use_resolver": use_resolver,
         "cec": cec,
@@ -156,7 +193,7 @@ def queue_item(item: dict) -> tuple[int, list[dict]]:
     Returns ``(queue_length, queue_snapshot)`` for the caller's response and
     UI events; presentation (toasts, UI event push) stays with the caller.
     """
-    with state.QUEUE_LOCK:
+    with queue_commit():
         state.QUEUE.append(item)
         qlen = len(state.QUEUE)
         snapshot = list(state.QUEUE)
@@ -203,7 +240,7 @@ def queue_items(items: list[dict]) -> tuple[int, list[dict]]:
     if not items:
         with state.QUEUE_LOCK:
             return len(state.QUEUE), list(state.QUEUE)
-    with state.QUEUE_LOCK:
+    with queue_commit():
         state.QUEUE.extend(items)
         qlen = len(state.QUEUE)
         snapshot = list(state.QUEUE)
@@ -328,13 +365,15 @@ def finish_playlist(
 
 def clear_queue() -> None:
     """Clear pending media; the import manager retires pending playlist starts."""
+    global _QUEUE_IMPORT_GENERATION
     with state.QUEUE_LOCK:
+        _QUEUE_IMPORT_GENERATION += 1
         state.QUEUE.clear()
 
 
 def queue_item_next(item: dict) -> tuple[int, list[dict]]:
     """Insert an item at the front of the queue and warm the handoff caches."""
-    with state.QUEUE_LOCK:
+    with queue_commit():
         state.QUEUE.insert(0, item)
         qlen = len(state.QUEUE)
         snapshot = list(state.QUEUE)
