@@ -411,6 +411,41 @@ Queue endpoints:
 - `POST /api/queue/add`
 - `POST /v1/queue/add`
   - body: `{"url"}`
+  - these aliases add one video. A YouTube playlist-only link returns `400`
+    directing the caller to playlist import; a video link with playlist context
+    continues to add only that video
+- `POST /queue/playlists`
+  - body: `{"url": "https://www.youtube.com/playlist?list=…", "request_id": "<UUID>"}`
+  - returns `202` immediately with a background job. YouTube video/list links
+    are accepted too; their selected video, timestamp, and index are ignored
+  - reads a finite playlist once with the device's configured YouTube cookies,
+    then appends ordinary video entries in playlist order without interrupting
+    playback. Repeated videos remain separate queue entries. Stream resolution
+    happens near playback; flat playlist metadata cannot establish playability
+  - reusing a request ID for the same playlist returns the existing job without
+    adding again; using it for a different playlist returns `409`
+  - up to two extraction workers and 64 retained jobs; capacity exhaustion
+    returns `429`. Extraction has a 120-second deadline. Playlists over 1,000
+    entries or 16 MiB of metadata fail explicitly and add nothing. Dynamic
+    YouTube mixes (`RD…`) require a saved finite playlist instead
+- `GET /queue/playlists/{job_id}`
+  - returns `job_id`, canonical `url`, `status`, `title`, `added`, `skipped`,
+    `queue_length`, `detail`, and `expires_at` (Unix seconds)
+  - statuses: `loading`, `adding`, `completed`, `failed`, `cancelled`.
+    `skipped` counts known private/deleted placeholders and invalid entries;
+    restrictions discovered only during playback use normal queue error handling
+  - jobs and idempotency records remain in memory for one hour from creation;
+    restart/expiry returns `404`. After an uncertain result or `404`, check the
+    queue before intentionally starting a new import; never silently create a
+    fresh request ID to retry an uncertain write
+- `DELETE /queue/playlists/{job_id}`
+  - cancels a loading import before it appends anything. Once `adding` starts,
+    cancellation returns `409`; a completed import is not undone
+  - shutdown retires loading imports; an old extraction cannot publish into a
+    restarted service. Cancelling does not free the extraction slot until the
+    bounded subprocess exits
+  - playlist start/cancel use the normal optional bearer-token write guard;
+    status remains an ordinary read
 - `GET /queue`
   - queue items include an opaque `queue_id` that remains stable while the
     item is reordered; use it for delayed or interactive mutations. IDs are

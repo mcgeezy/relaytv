@@ -54,6 +54,7 @@ def test_ui_smoke() -> None:
     jellyfin_css_response = client.get("/static/ui/jellyfin.css")
     plex_css_response = client.get("/static/ui/plex.css")
     realtime_policy_response = client.get("/static/ui/realtime_transport.js")
+    playlist_js_response = client.get("/static/ui/playlist_queue.js")
     js_response = client.get("/static/ui/app.js")
     jellyfin_js_response = client.get("/static/ui/jellyfin.js")
     plex_js_response = client.get("/static/ui/plex.js")
@@ -82,6 +83,10 @@ def test_ui_smoke() -> None:
     assert realtime_policy_tag
     assert re.search(r'<script src="/static/ui/app\.js\?v=\d+" defer></script>', response.text)
     assert realtime_policy_tag.start() < response.text.index('<script src="/static/ui/app.js')
+    assert re.search(r'<script src="/static/ui/playlist_queue\.js\?v=\d+" defer></script>', response.text)
+    assert playlist_js_response.status_code == 200
+    assert "javascript" in playlist_js_response.headers["content-type"]
+    assert 'id="addPlaylistBtn"' in response.text
     assert re.search(r'<script src="/static/ui/jellyfin\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<script src="/static/ui/plex\.js\?v=\d+" defer></script>', response.text)
     assert re.search(r'<link rel="stylesheet" href="/static/ui/iptv\.css\?v=\d+" />', response.text)

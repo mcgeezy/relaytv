@@ -31,6 +31,7 @@ from . import postlive_relay
 from . import video_profile
 from . import upload_store
 from . import ytdlp_update
+from . import youtube_playlist
 from .debug import (
     configure_logging,
     get_logger,
@@ -147,6 +148,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         if not testing:
             video_profile.warm_profile()
         await start_realtime_runtime()
+        youtube_playlist.imports.start()
         workers_enabled = not (
             testing
             or os.getenv("RELAYTV_DISABLE_WORKERS", "0").strip() in ("1", "true", "yes", "on")
@@ -172,6 +174,7 @@ def create_app(*, testing: bool = False) -> FastAPI:
         try:
             yield
         finally:
+            youtube_playlist.imports.stop()
             seerr_sessions.retire_all()
             await stop_realtime_runtime()
             jellyfin_receiver.stop()
