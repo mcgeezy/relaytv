@@ -29,3 +29,17 @@ rebuild are part of this server milestone.
 3. Deploy to this host using the existing branch bind mount, exercise phone-shaped
    requests through real extraction/playback, preserve the user's queue/session,
    commit verification, and update PR #158 while it remains open.
+
+## Implementation verification
+
+- Automatic routing and playback-service commands implemented. Individual-video
+  web actions explicitly request `playlist_mode=video`.
+- All 1,470 Python tests and 72 JavaScript tests passed, with all required lint,
+  whitespace, app/realtime/playlist JavaScript and embedded-overlay syntax gates.
+- Focused playback/queue/import tests passed (170 tests). New tests use real
+  `player.play_item` resolution and publication paths with controlled I/O.
+- Revert proofs failed as expected for the reserved intent, queue commit owner,
+  conservative rollback, shutdown retirement, pending-import Clear, player's
+  load boundary, and completion-count refresh guards; all guards restored.
+- Transition inventory regenerated with its test's `--write` mode.
+- Host deployment and phone-shaped request verification pending.

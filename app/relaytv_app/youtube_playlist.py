@@ -10,11 +10,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable
+from uuid import uuid4
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import HTTPException
 
-from . import playback_service, resolver, url_boundary
+from . import playback_service, player, resolver, url_boundary
 from .debug import get_logger
 
 logger = get_logger("youtube_playlist")
@@ -27,6 +28,23 @@ MAX_JOBS = 64
 MAX_WORKERS = 2
 _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 _PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{2,160}\Z")
+
+
+def shared_playlist_url(raw: str, mode: str = "auto") -> str | None:
+    """Classify shared text without losing a playlist embedded in a video URL."""
+    text = resolver.normalize_shared_url(resolver.extract_first_url(raw or ""))
+    if text.lower().startswith("www."):
+        text = "https://" + text
+    if mode == "video":
+        if resolver.is_youtube_url(text) and "list" in parse_qs(urlsplit(text).query, keep_blank_values=True) and resolver.youtube_id_from_url(text) in (None, "videoseries"):
+            raise HTTPException(400, "This link is a playlist; use auto or playlist mode")
+        return None
+    if mode == "playlist" or (
+        resolver.is_youtube_url(text)
+        and "list" in parse_qs(urlsplit(text).query, keep_blank_values=True)
+    ):
+        return playlist_url(text)
+    return None
 
 
 def playlist_url(raw: str) -> str:
@@ -139,6 +157,15 @@ class _Job:
     queue_length: int | None = None
     detail: str = "Reading playlist…"
     created_at: float = field(default_factory=time.time)
+    action: str = "append"
+    effective_action: str = "append"
+    intent: int | None = None
+    use_resolver: bool = True
+    cec: bool = False
+    preserve_current: bool = True
+    legacy: bool = False
+    outcome: str | None = None
+    playing_url: str | None = None
 
     def public(self) -> dict:
         return {
@@ -146,6 +173,8 @@ class _Job:
             "title": self.title, "added": self.added, "skipped": self.skipped,
             "queue_length": self.queue_length, "detail": self.detail,
             "expires_at": self.created_at + JOB_TTL,
+            "action": self.action, "effective_action": self.effective_action,
+            "outcome": self.outcome, "playing_url": self.playing_url,
         }
 
 
@@ -167,12 +196,18 @@ class PlaylistImports:
         with self._lock:
             self._stop.set()
             for job in self._jobs.values():
-                if job.status == "loading":
+                if job.status in {"loading", "adding"}:
+                    playback_service.retire_playlist_action(job.intent)
                     job.status = "cancelled"
                     job.detail = "Import cancelled during server shutdown; nothing was added"
 
-    def submit(self, raw: str, request_id: str, on_complete: Callable) -> dict:
+    def submit(
+        self, raw: str, request_id: str | None, on_complete: Callable, *,
+        action: str = "append", use_resolver: bool = True, cec: bool = False,
+        preserve_current: bool = True,
+    ) -> dict:
         url = playlist_url(raw)
+        options = (action, use_resolver, cec, preserve_current)
         with self._lock:
             now = time.time()
             self._jobs = {
@@ -181,14 +216,30 @@ class PlaylistImports:
             }
             existing = self._jobs.get(request_id)
             if existing is not None:
-                if existing.url != url:
-                    raise HTTPException(409, "This request ID belongs to a different playlist")
+                if existing.url != url or (
+                    existing.action, existing.use_resolver, existing.cec, existing.preserve_current
+                ) != options:
+                    raise HTTPException(409, "This request ID belongs to a different playlist or action")
                 return existing.public()
+            if request_id is None:
+                # Old phone builds send only a URL. Coalesce while in flight;
+                # completed re-shares remain intentional new requests.
+                for existing in self._jobs.values():
+                    if existing.legacy and existing.status in {"loading", "adding"} and existing.url == url and (
+                        existing.action, existing.use_resolver, existing.cec, existing.preserve_current
+                    ) == options:
+                        return existing.public()
             if self._stop.is_set():
                 raise HTTPException(503, "Playlist imports are stopping")
             if len(self._jobs) >= MAX_JOBS or len(self._workers) >= MAX_WORKERS:
                 raise HTTPException(429, "Playlist imports are busy; try again later")
-            job = _Job(request_id, url)
+            legacy = request_id is None
+            request_id = request_id or uuid4().hex
+            effective, intent = playback_service.reserve_playlist_action(action)
+            job = _Job(
+                request_id, url, action=action, effective_action=effective, intent=intent,
+                use_resolver=use_resolver, cec=cec, preserve_current=preserve_current, legacy=legacy,
+            )
             generation = self._stop
             worker = threading.Thread(
                 target=self._run, args=(job, generation, on_complete),
@@ -203,6 +254,21 @@ class PlaylistImports:
                 self._jobs.pop(request_id, None)
                 raise
             return job.public()
+
+    def clear_queue(self) -> None:
+        # Serialize Clear with both the loading -> committing boundary and
+        # failure rollback. Slow resolution never holds this lock.
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status in {"loading", "adding"}:
+                    retired = playback_service.retire_playlist_action(job.intent, before_load_only=True)
+                    if not retired and job.intent is not None and player.playback_intent_loading(job.intent):
+                        # Loading the first video is already committed. Clear
+                        # empties its tail, without orphaning its session publish.
+                        continue
+                    job.status = "cancelled"
+                    job.detail = "Import cancelled by queue Clear"
+            playback_service.clear_queue()
 
     def get(self, request_id: str) -> dict:
         with self._lock:
@@ -221,6 +287,7 @@ class PlaylistImports:
             if job.status == "adding":
                 raise HTTPException(409, "The playlist is already being added; check its status")
             if job.status == "loading":
+                playback_service.retire_playlist_action(job.intent)
                 job.status = "cancelled"
                 job.detail = "Import cancelled; nothing was added"
             return job.public()
@@ -228,21 +295,47 @@ class PlaylistImports:
     def _run(self, job: _Job, generation: threading.Event, on_complete: Callable) -> None:
         try:
             playlist = extract_playlist(job.url)
+            preserved = None
+            if job.intent is not None and job.preserve_current:
+                preserved = playback_service.preserve_current_to_queue_front(
+                    playlist.items[0], capture_only=True
+                )
             with self._lock:
                 # The commit boundary: cancellation and retired generations
                 # cannot append after slow extraction returns.
                 if generation.is_set() or job.status != "loading":
                     return
+                staged = playback_service.stage_playlist(
+                    playlist.items, intent=job.intent, preserved=preserved
+                )
+                if staged is None:
+                    job.status = "cancelled"
+                    job.detail = "Playlist start superseded by a newer playback command; nothing was added"
+                    return
                 job.status = "adding"
                 job.title = playlist.title
                 job.skipped = playlist.skipped
                 job.detail = "Adding videos to queue…"
-            qlen, snapshot = playback_service.queue_items(playlist.items)
+            result = playback_service.finish_playlist(
+                playlist.items, staged, intent=job.intent, preserved=preserved,
+                use_resolver=job.use_resolver, cec=job.cec, commit_lock=self._lock,
+                still_current=lambda: not generation.is_set() and job.status == "adding",
+            )
             with self._lock:
+                if job.status == "cancelled":
+                    return
+                result = playback_service.refresh_playlist_result(playlist.items, result)
                 job.status = "completed"
-                job.added = len(playlist.items)
-                job.queue_length = qlen
-                job.detail = f"Added {job.added} videos to queue"
+                job.added = result["added"]
+                job.queue_length = result["queue_length"]
+                job.outcome = result["outcome"]
+                job.playing_url = result["playing_url"]
+                job.detail = (
+                    f"Playing first video; queued {job.added} remaining videos"
+                    if job.outcome == "playing" else f"Added {job.added} videos to queue"
+                )
+                if job.outcome in {"playback_failed", "superseded"}:
+                    job.detail += "; first video could not start" if job.outcome == "playback_failed" else "; playback superseded by a newer command"
                 if job.skipped:
                     job.detail += f"; skipped {job.skipped} unavailable entries"
                 if generation.is_set():
@@ -250,7 +343,7 @@ class PlaylistImports:
                 # Serialize final publication with stop(), so retiring the
                 # generation cannot race the ownership check above.
                 try:
-                    on_complete(job.public(), snapshot)
+                    on_complete(job.public(), result["snapshot"])
                 except Exception:
                     logger.warning("playlist_import_notification_failed")
         except Exception as exc:
@@ -259,6 +352,10 @@ class PlaylistImports:
                     return
                 job.status = "failed"
                 job.detail = str(exc.detail) if isinstance(exc, HTTPException) else "Playlist import failed; check the queue before trying again"
+                try:
+                    on_complete(job.public(), [])
+                except Exception:
+                    logger.warning("playlist_import_notification_failed")
             logger.info("playlist_import_failed category=%s", type(exc).__name__)
         finally:
             with self._lock:

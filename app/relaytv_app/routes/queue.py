@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import time
 from uuid import UUID
-from urllib.parse import parse_qs, urlsplit
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import player, playback_service, public_media, resolver, state, upload_store, youtube_playlist
@@ -27,6 +28,8 @@ PEER_FILL_HINTS = ("thumbnail", "duration")
 
 class EnqueueReq(BaseModel):
     url: str
+    playlist_mode: Literal["auto", "video", "playlist"] = "auto"
+    request_id: UUID | None = None
 
 
 class PlaylistEnqueueReq(BaseModel):
@@ -170,16 +173,9 @@ def _queue_index_locked(index: int | None, queue_id: str | None, *, label: str =
 @router.post("/api/queue/add")
 @router.post("/v1/queue/add")
 def enqueue(req: EnqueueReq):
-    url = resolver.validate_user_url(req.url or "")
-    if (
-        resolver.is_youtube_url(url)
-        and resolver.youtube_id_from_url(url) in (None, "videoseries")
-        and "list" in parse_qs(urlsplit(url).query)
-    ):
-        # A playlist-only URL cannot be represented by the single-video
-        # resolver's video/audio pair. Keep mixed video/list links compatible.
-        youtube_playlist.playlist_url(url)
-        raise HTTPException(400, "Use Add entire playlist to queue this playlist's videos")
+    playlist = maybe_queue_playlist(req, action="append")
+    if playlist is not None:
+        return playlist
     try:
         item = _smart_item_from_url(req.url or "", lightweight=True)
     except TypeError:
@@ -202,10 +198,29 @@ def enqueue(req: EnqueueReq):
 
 
 def _playlist_import_completed(job: dict, snapshot: list[dict]) -> None:
-    _ui_event_push_queue(
-        "add", queue=snapshot, queue_length=job["queue_length"], source="youtube_playlist"
+    if job["status"] == "completed":
+        _ui_event_push_queue(
+            "add", queue=snapshot, queue_length=job["queue_length"], source="youtube_playlist"
+        )
+    failed = job["status"] == "failed" or job.get("outcome") == "playback_failed"
+    _push_overlay_toast(text=job["detail"], level="warn" if failed else "info", icon="share")
+
+
+def maybe_queue_playlist(req, *, action: str):
+    url = youtube_playlist.shared_playlist_url(req.url, req.playlist_mode)
+    if url is None:
+        return None
+    job = youtube_playlist.imports.submit(
+        url, req.request_id.hex if req.request_id else None, _playlist_import_completed,
+        action=action, use_resolver=getattr(req, "use_ytdlp", True),
+        cec=getattr(req, "cec", False),
+        preserve_current=(
+            getattr(req, "preserve_current", True)
+            and getattr(req, "preserve_to", "queue_front") == "queue_front"
+            and getattr(req, "resume_current", True)
+        ),
     )
-    _push_overlay_toast(text=job["detail"], level="info", icon="share")
+    return JSONResponse(job, status_code=202)
 
 
 @router.post("/queue/playlists", status_code=202)
@@ -494,9 +509,8 @@ def queue_handoff(req: QueueHandoffReq):
 
 @router.post("/clear")
 def clear():
-    with state.QUEUE_LOCK:
-        state.QUEUE.clear()
-        queue_snapshot: list[object] = []
+    youtube_playlist.imports.clear_queue()
+    queue_snapshot: list[object] = []
     state.persist_queue()
     try:
         player.prime_mpv_up_next_from_queue(force=True)

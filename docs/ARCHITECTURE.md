@@ -67,6 +67,10 @@ milestone logs live in git history.
   Request IDs prevent duplicate retries, and cancellation/generation ownership
   is checked after extraction before committing. Route adapters own endpoints
   and completion notifications; playlist extraction never imports routes.
+  Smart/Play share routes reuse these jobs with a playback intent reserved at
+  acceptance. Queue commits, interruption capture, and first-video playback stay
+  in the playback service. Clear is serialized with import commits/rollback;
+  cancellation before the player's load boundary prevents a delayed start.
 - `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin/Emby
   product behavior — command ingress, stream selection and transcode
   policy, track preferences, metadata enrichment, stopped/progress

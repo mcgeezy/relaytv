@@ -91,6 +91,13 @@ cancellation stay available in the Link dialog, including after a reload.
 Finite playlists support up to 1,000 videos; private lists need configured
 YouTube cookies, and unavailable entries are reported when they can be detected.
 
+Sharing a YouTube playlist through Android's **Queue** or **Play** target also
+imports it automatically, including video links containing a playlist ID.
+Queue appends during playback or paused playback; when idle it starts the first
+video and queues the rest. Play starts the first video and puts the rest ahead
+of the interrupted video's resume entry and existing queue. Existing phone
+builds can use this server behavior without an app update.
+
 ### 🏠 Automate
 
 Make every screen a Home Assistant `media_player`, or use the local HTTP API

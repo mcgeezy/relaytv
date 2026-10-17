@@ -177,3 +177,25 @@ test('cancel sends DELETE for the current job and shows the terminal result', as
   assert.equal(state.hidden('playlistImportCancel'), true);
   assert.equal(state.hidden('playlistImportDismiss'), false);
 });
+
+test('web individual-video actions explicitly bypass automatic playlist expansion', async() => {
+  const source = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'), 'utf8');
+  const start = source.indexOf('async function submitAddUrl(');
+  const end = source.indexOf('\nfunction openNotifyModal(', start);
+  assert.ok(start >= 0 && end > start);
+  const calls = [];
+  const context = vm.createContext({
+    addUrlSubmitting:false,
+    document:{getElementById:() => ({value:URL_MIXED})},
+    window:{RelayTVPlaylistQueue:{linkInfo:() => ({hasVideo:true})}},
+    normalizeUrl:value => value, looksLikeUrl:() => true,
+    post:async(url, body) => {calls.push({url, body}); return {ok:true};},
+    closeAddUrl(){},
+  });
+  vm.runInContext(source.slice(start, end), context);
+  await vm.runInContext("submitAddUrl('queue')", context);
+  await vm.runInContext("submitAddUrl('play')", context);
+  assert.equal(calls[0].url, '/enqueue');
+  assert.equal(calls[1].url, '/play_now');
+  assert.ok(calls.every(call => call.body.playlist_mode === 'video'));
+});

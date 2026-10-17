@@ -733,6 +733,7 @@ MPV_LOCK = threading.Lock()
 # relay, inserting history, and writing session state.
 _INTENT_LOCK = threading.Lock()
 _PLAYBACK_INTENT = 0
+_PLAYBACK_LOAD_STARTED_INTENT: int | None = None
 
 
 def claim_playback_intent() -> int:
@@ -747,6 +748,32 @@ def playback_intent_current(intent: int) -> bool:
     """Return True while ``intent`` is still the newest claimed play."""
     with _INTENT_LOCK:
         return intent == _PLAYBACK_INTENT
+
+
+def retire_playback_intent_if_current(intent: int, *, before_load_only: bool = False) -> bool:
+    """Cancel one asynchronous owner without retiring an unrelated newer play."""
+    global _PLAYBACK_INTENT
+    with _INTENT_LOCK:
+        if intent != _PLAYBACK_INTENT or (
+            before_load_only and _PLAYBACK_LOAD_STARTED_INTENT == intent
+        ):
+            return False
+        _PLAYBACK_INTENT += 1
+        return True
+
+
+def playback_intent_loading(intent: int) -> bool:
+    with _INTENT_LOCK:
+        return intent == _PLAYBACK_INTENT and _PLAYBACK_LOAD_STARTED_INTENT == intent
+
+
+def _begin_playback_load(intent: int) -> bool:
+    global _PLAYBACK_LOAD_STARTED_INTENT
+    with _INTENT_LOCK:
+        if intent != _PLAYBACK_INTENT:
+            return False
+        _PLAYBACK_LOAD_STARTED_INTENT = intent
+        return True
 
 
 def current_playback_intent() -> int:
@@ -5733,13 +5760,14 @@ def play_item(
     start_pos: float | None = None,
     *,
     raise_on_superseded: bool = False,
+    playback_intent: int | None = None,
 ):
     """Play a queue item dict or a raw shared URL/text."""
     # Claim before any resolving, IPTV lookup, relay preparation, or
     # availability wait, so this play both supersedes older ones and can be
     # superseded itself.
     clear_last_play_superseded()
-    intent = claim_playback_intent()
+    intent = claim_playback_intent() if playback_intent is None else playback_intent
     try:
         if (
             isinstance(item_or_text, dict)
@@ -6069,6 +6097,11 @@ def _play_item_owned(
             relay_stream=stream if relay_playback else "",
             plex_stream=stream if plex_playback else "",
         )
+        if not _begin_playback_load(intent):
+            _require_owned(
+                "pre_load", relay_stream=stream if relay_playback else "",
+                plex_stream=stream if plex_playback else "",
+            )
         note_playback_started(start_pos)
         t_mpv = time.monotonic()
         # Resolver work can outlast the initial transition window. Refresh it

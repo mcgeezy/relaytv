@@ -351,7 +351,7 @@ def test_ui_smoke() -> None:
     assert "livePanel.position === 'LIVE'" in iptv_playwright
     assert "_applyQueueSnapshot(payload);" in js
     assert (
-        "await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});"
+        "await post('/play_now', {url, playlist_mode:'video', preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});"
         in js
     )
     assert "play.disabled = !available;" in js

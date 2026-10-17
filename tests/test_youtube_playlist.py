@@ -11,9 +11,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from relaytv_app import player, resolver, state, youtube_playlist as playlists
+from relaytv_app import playback_service, player, resolver, state, youtube_playlist as playlists
 from relaytv_app.config import runtime_config
 from relaytv_app.main import create_app
+from test_playback_intent import harness as harness
 
 queue_routes = importlib.import_module("relaytv_app.routes.queue")
 URL = "https://www.youtube.com/playlist?list=PLreview123"
@@ -141,6 +142,12 @@ def imports(monkeypatch):
     runtime_config.refresh_from_env()
     monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue())
     monkeypatch.setattr(state, "NOW_PLAYING", None)
+    monkeypatch.setattr(state, "SESSION_STATE", "idle")
+    monkeypatch.setattr(state, "SESSION_POSITION", None)
+    monkeypatch.setattr(state, "SESSION_PAUSE_REASON", None)
+    monkeypatch.setattr(state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0)
+    monkeypatch.setattr(state, "_persist_session_payload", lambda *a, **kw: True)
+    monkeypatch.setattr(player, "is_playing", lambda: False)
     persisted, warmed, events = [], [], []
     monkeypatch.setattr(state, "persist_queue", lambda: persisted.append(list(state.QUEUE)))
     monkeypatch.setattr(player, "prefetch_queue_item_stream", lambda item: warmed.append(item))
@@ -212,13 +219,15 @@ def test_api_auth_protects_start_and_cancel_but_leaves_status_readable(imports, 
 
 @pytest.mark.parametrize("path", ["/enqueue", "/queue/add", "/api/queue/add", "/v1/queue/add"])
 @pytest.mark.parametrize("url", [URL, URL.replace("/playlist?", "/embed/videoseries?")])
-def test_single_enqueue_rejects_playlist_only_without_inserting_an_unplayable_item(imports, monkeypatch, path, url):
-    _, client, *_ = imports
+def test_enqueue_aliases_automatically_expand_playlist_links(imports, monkeypatch, path, url):
+    service, client, *_ = imports
     monkeypatch.setattr(queue_routes, "_smart_item_from_url", lambda url, **kw: {"url": url})
     monkeypatch.setattr(queue_routes, "_push_queue_added_toast_async", lambda *a: None)
     response = client.post(path, json={"url": url})
-    assert response.status_code == 400 and "entire playlist" in response.json()["detail"]
-    assert state.QUEUE == []
+    assert response.status_code == 202
+    job = wait_done(service, response.json()["job_id"])
+    assert job["added"] == 3 and job["action"] == "append"
+    assert len(state.QUEUE) == 3
 
 
 def test_existing_mixed_video_link_still_queues_one_video(imports, monkeypatch):
@@ -226,7 +235,7 @@ def test_existing_mixed_video_link_still_queues_one_video(imports, monkeypatch):
     monkeypatch.setattr(queue_routes, "_smart_item_from_url", lambda url, **kw: {"url": url})
     monkeypatch.setattr(queue_routes, "_push_queue_added_toast_async", lambda *a: None)
     url = f"https://www.youtube.com/watch?v={VIDEO_A}&list=PLreview123"
-    assert client.post("/enqueue", json={"url": url}).status_code == 200
+    assert client.post("/enqueue", json={"url": url, "playlist_mode": "video"}).status_code == 200
     assert [item["url"] for item in state.QUEUE] == [url]
 
 
@@ -326,3 +335,336 @@ def test_failed_import_and_expired_status_are_explicit(imports, monkeypatch):
     with service._lock:
         service._jobs[key].created_at -= playlists.JOB_TTL + 1
     assert client.get(f"/queue/playlists/{key}").status_code == 404
+
+
+@pytest.mark.parametrize("raw", [
+    URL, URL.replace("https://www.", "https://m."),
+    "www.youtube.com/playlist?list=PLreview123",
+    f"https://youtu.be/{VIDEO_A}?list=PLreview123&index=8&t=99",
+    f"Shared playlist: <https://youtube.com/watch?v={VIDEO_B}&list=PLreview123>",
+])
+def test_shared_playlist_detection_canonicalizes_phone_inputs(raw):
+    assert playlists.shared_playlist_url(raw) == URL
+    assert playlists.shared_playlist_url(f"https://youtu.be/{VIDEO_A}") is None
+
+
+def test_video_only_override_requires_an_individual_video():
+    assert playlists.shared_playlist_url(f"https://youtu.be/{VIDEO_A}?list=PLreview123", "video") is None
+    with pytest.raises(HTTPException):
+        playlists.shared_playlist_url(URL, "video")
+
+
+@pytest.mark.parametrize("status", ["playing", "paused"])
+def test_smart_busy_or_paused_appends_without_touching_playback(imports, monkeypatch, status):
+    service, client, *_ = imports
+    current = {"url": "https://example.com/current.mp4", "title": "Current"}
+    monkeypatch.setattr(state, "NOW_PLAYING", current)
+    monkeypatch.setattr(state, "SESSION_STATE", status)
+    monkeypatch.setattr(player, "is_playing", lambda: status == "playing")
+    monkeypatch.setattr(player, "play_item", lambda *a, **kw: pytest.fail("Smart interrupted playback"))
+    state.QUEUE.append({"url": "https://example.com/queued.mp4"})
+    response = client.post("/smart", json={"url": URL})
+    assert response.status_code == 202
+    job = wait_done(service, response.json()["job_id"])
+    assert job["effective_action"] == "append" and job["added"] == 3
+    assert state.NOW_PLAYING is current and state.SESSION_STATE == status
+    assert state.QUEUE[0]["url"] == "https://example.com/queued.mp4"
+
+
+@pytest.mark.parametrize("path", ["/smart", "/play_now"])
+def test_phone_idle_starts_first_and_preserves_remaining_order(imports, harness, path):
+    service, client, *_ = imports
+    old = {"url": "https://example.com/already-queued.mp4"}
+    state.QUEUE.append(old)
+    harness["gate"].set()
+    response = client.post(path, json={"url": URL, "request_id": uuid4().hex})
+    assert response.status_code == 202
+    job = wait_done(service, response.json()["job_id"])
+    assert job["status"] == "completed" and job["outcome"] == "playing", job
+    assert job["added"] == 2 and job["playing_url"].endswith(VIDEO_A)
+    assert [item["url"].split("=")[-1] for item in state.QUEUE[:2]] == [VIDEO_B, VIDEO_A]
+    assert state.QUEUE[2] is old
+    assert state.NOW_PLAYING["url"].endswith(VIDEO_A)
+    assert len(harness["loaded"]) == 1 and len(harness["history"]) == 1
+
+
+def test_phone_play_preserves_interrupted_video_after_playlist(imports, harness, monkeypatch):
+    service, client, *_ = imports
+    current = {"url": "https://example.com/current.mp4", "title": "Current", "provider": "other"}
+    monkeypatch.setattr(state, "NOW_PLAYING", current)
+    monkeypatch.setattr(state, "SESSION_STATE", "playing")
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 42 if prop == "time-pos" else 300)
+    state.QUEUE.append({"url": "https://example.com/old-queue.mp4"})
+    harness["gate"].set()
+    response = client.post("/play_now", json={"url": URL})
+    job = wait_done(service, response.json()["job_id"])
+    assert job["outcome"] == "playing", job
+    assert [item["url"] for item in state.QUEUE] == [
+        f"https://www.youtube.com/watch?v={VIDEO_B}",
+        f"https://www.youtube.com/watch?v={VIDEO_A}",
+        current["url"], "https://example.com/old-queue.mp4",
+    ]
+    assert state.QUEUE[2]["resume_pos"] == 42
+
+
+def test_failed_start_keeps_all_videos_and_drops_redundant_preserved_copy(imports, monkeypatch):
+    service, client, *_ = imports
+    original = {"url": "https://example.com/current.mp4", "title": "Current"}
+    monkeypatch.setattr(state, "NOW_PLAYING", original)
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    monkeypatch.setattr(player, "mpv_get", lambda prop: 42)
+    monkeypatch.setattr(player, "update_history_progress", lambda *a, **kw: None)
+
+    def fail(*a, **kw):
+        raise HTTPException(400, "upstream secret must not be returned")
+
+    monkeypatch.setattr(player, "play_item", fail)
+    response = client.post("/play_now", json={"url": URL})
+    job = wait_done(service, response.json()["job_id"])
+    assert job["outcome"] == "playback_failed" and job["added"] == 3, job
+    assert "secret" not in job["detail"]
+    assert [item["url"].split("=")[-1] for item in state.QUEUE] == [VIDEO_A, VIDEO_B, VIDEO_A]
+    assert state.NOW_PLAYING is original
+
+
+@pytest.mark.parametrize("operation", ["/stop", "/close", "/clear", "new_play"])
+def test_newer_command_wins_while_phone_playlist_extracts(imports, harness, monkeypatch, operation):
+    service, client, *_ = imports
+    entered, release = blocked_extraction(monkeypatch)
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    monkeypatch.setattr("relaytv_app.routes._ensure_notification_surface", lambda **kw: None)
+    try:
+        response = client.post("/play_now", json={"url": URL})
+        assert response.status_code == 202
+        assert entered.wait(2)
+        if operation == "new_play":
+            harness["gate"].set()
+            response2 = client.post("/play_now", json={"url": "https://example.com/new.mp4", "title": "New", "preserve_current": False})
+            assert response2.status_code == 200
+        else:
+            assert client.post(operation).status_code == 200
+    finally:
+        release.set()
+        harness["gate"].set()
+    job = wait_done(service, response.json()["job_id"])
+    assert job["status"] == "cancelled", job
+    assert state.QUEUE == []
+    assert len(harness["loaded"]) == (1 if operation == "new_play" else 0)
+
+
+@pytest.mark.parametrize("operation", ["/stop", "/close", "/clear", "restart_service"])
+def test_newer_command_wins_during_first_video_resolution(imports, harness, monkeypatch, operation):
+    service, client, *_ = imports
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    monkeypatch.setattr("relaytv_app.routes._ensure_notification_surface", lambda **kw: None)
+    response = client.post("/play_now", json={"url": URL})
+    try:
+        assert harness["resolving"].wait(2), "first video never began resolving"
+        assert client.get("/health").status_code == 200
+        if operation == "restart_service":
+            service.stop()
+            service.start()
+        else:
+            assert client.post(operation).status_code == 200
+        workers = list(service._workers)
+    finally:
+        harness["gate"].set()
+    for worker in workers:
+        worker.join(3)
+        assert not worker.is_alive()
+    assert harness["loaded"] == [], "an old playlist restarted playback"
+    assert harness["history"] == []
+    job = service.get(response.json()["job_id"])
+    if operation in {"/clear", "restart_service"}:
+        assert job["status"] == "cancelled"
+    else:
+        assert job["outcome"] == "superseded"
+    if operation == "/clear":
+        assert state.QUEUE == [], "failed first-video rollback undid Clear"
+
+
+def test_legacy_phone_requests_coalesce_inflight_and_uuid_binds_action(imports, monkeypatch):
+    service, client, *_ = imports
+    entered, release = blocked_extraction(monkeypatch)
+    monkeypatch.setattr(player, "is_playing", lambda: True)
+    try:
+        first = client.post("/smart", json={"url": URL}).json()
+        assert entered.wait(2)
+        duplicate = client.post("/smart", json={"url": URL.replace("playlist?", f"watch?v={VIDEO_A}&index=9&")}).json()
+        assert duplicate["job_id"] == first["job_id"]
+        assert len(service._workers) == 1
+        key = uuid4().hex
+        assert client.post("/smart", json={"url": URL, "request_id": key}).status_code == 202
+        # Even if Smart selected append, it is a distinct requested action.
+        assert client.post("/enqueue", json={"url": URL, "request_id": key}).status_code == 409
+    finally:
+        release.set()
+    wait_done(service, first["job_id"])
+    wait_done(service, key)
+    again = client.post("/smart", json={"url": URL})
+    assert again.json()["job_id"] != first["job_id"]
+
+
+@pytest.mark.parametrize("path", ["/enqueue", "/smart", "/play_now"])
+def test_phone_playlist_writes_require_auth_and_reject_dynamic_mixes(imports, monkeypatch, path):
+    _, client, *_ = imports
+    monkeypatch.setenv("RELAYTV_API_TOKEN", "phone-secret")
+    runtime_config.refresh_from_env()
+    assert client.post(path, json={"url": URL}).status_code == 401
+    response = client.post(path, json={"url": URL.replace("PLreview123", "RDreview123")}, headers={"Authorization": "Bearer phone-secret"})
+    assert response.status_code == 400 and "dynamic" in response.json()["detail"]
+    assert state.QUEUE == []
+
+
+def test_phone_start_cannot_claim_a_late_intent_after_stop(imports, harness, monkeypatch):
+    service, client, *_ = imports
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def blocked_persist():
+        if threading.current_thread().name == "youtube-playlist-import" and not calls:
+            calls.append(True)
+            entered.set()
+            assert release.wait(3)
+
+    monkeypatch.setattr(state, "persist_queue", blocked_persist)
+    monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
+    harness["gate"].set()
+    response = client.post("/play_now", json={"url": URL})
+    try:
+        assert entered.wait(2), "playlist never staged its tail"
+        assert client.post("/stop").status_code == 200
+    finally:
+        release.set()
+    job = wait_done(service, response.json()["job_id"])
+    assert job["outcome"] == "superseded", job
+    assert harness["loaded"] == [], "the player claimed a new intent after Stop"
+    assert harness["history"] == []
+
+
+@pytest.mark.parametrize("path", ["/enqueue", "/smart"])
+def test_clear_cancels_pending_append_imports(imports, monkeypatch, path):
+    service, client, *_ = imports
+    monkeypatch.setattr(state, "SESSION_STATE", "playing")
+    entered, release = blocked_extraction(monkeypatch)
+    try:
+        response = client.post(path, json={"url": URL})
+        assert entered.wait(2)
+        assert client.post("/clear").status_code == 200
+        workers = list(service._workers)
+    finally:
+        release.set()
+    for worker in workers:
+        worker.join(3)
+        assert not worker.is_alive()
+    assert service.get(response.json()["job_id"])["status"] == "cancelled"
+    assert state.QUEUE == []
+
+
+def test_failed_start_never_restores_an_old_queue_snapshot(imports, harness, monkeypatch):
+    service, client, *_ = imports
+
+    def fail_resolve(url):
+        harness["resolving"].set()
+        assert harness["gate"].wait(3)
+        raise HTTPException(400, "temporary resolver failure")
+
+    monkeypatch.setattr(player, "resolve_streams", fail_resolve)
+    response = client.post("/play_now", json={"url": URL})
+    try:
+        assert harness["resolving"].wait(2)
+        assert client.post("/queue/import", json={"items": [{"url": "https://example.com/newer.mp4", "title": "Newer"}]}).status_code == 200
+        before = [(state.queue_item_id(item), item["url"]) for item in state.QUEUE]
+    finally:
+        harness["gate"].set()
+    job = wait_done(service, response.json()["job_id"])
+    assert job["outcome"] == "playback_failed" and job["added"] == 2
+    assert [(state.queue_item_id(item), item["url"]) for item in state.QUEUE] == before
+
+
+def test_retiring_an_old_import_does_not_retire_a_newer_play(imports, harness, monkeypatch):
+    service, client, *_ = imports
+    entered, release = blocked_extraction(monkeypatch)
+    try:
+        client.post("/play_now", json={"url": URL})
+        assert entered.wait(2)
+        harness["gate"].set()
+        assert client.post("/play_now", json={"url": "https://example.com/winner.mp4", "title": "Winner", "preserve_current": False}).status_code == 200
+        winner = player.current_playback_intent()
+        service.stop()
+        assert player.playback_intent_current(winner)
+    finally:
+        release.set()
+    assert state.NOW_PLAYING["url"] == "https://example.com/winner.mp4"
+
+
+def test_failed_phone_extraction_notifies_the_tv_without_a_false_queue_event(imports, monkeypatch):
+    service, client, _, _, events = imports
+    toasts = []
+    monkeypatch.setattr(queue_routes, "_push_overlay_toast", lambda **kw: toasts.append(kw))
+
+    def fail(url):
+        raise HTTPException(400, "Playlist is private; configure YouTube cookies")
+
+    monkeypatch.setattr(playlists, "extract_playlist", fail)
+    response = client.post("/smart", json={"url": URL})
+    job = wait_done(service, response.json()["job_id"])
+    assert job["status"] == "failed"
+    assert events == [] and state.QUEUE == []
+    assert len(toasts) == 1 and toasts[0]["level"] == "warn"
+    assert "private" in toasts[0]["text"]
+
+
+def test_clear_after_load_begins_keeps_first_video_and_clears_tail(imports, harness, monkeypatch):
+    service, client, *_ = imports
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked_load(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        harness["loaded"].append(args[0])
+        return True
+
+    monkeypatch.setattr(player, "_load_stream_in_existing_mpv", blocked_load)
+    harness["gate"].set()
+    response = client.post("/play_now", json={"url": URL})
+    try:
+        assert entered.wait(2)
+        assert client.post("/clear").status_code == 200
+        assert state.QUEUE == []
+    finally:
+        release.set()
+    job = wait_done(service, response.json()["job_id"])
+    assert job["status"] == "completed" and job["outcome"] == "playing", job
+    assert job["added"] == 0
+    assert len(harness["loaded"]) == len(harness["history"]) == 1
+    assert state.NOW_PLAYING["url"].endswith(VIDEO_A)
+    assert state.QUEUE == []
+
+
+def test_clear_between_playback_and_completion_keeps_job_counts_current(imports, harness, monkeypatch):
+    service, client, _, _, events = imports
+    entered, release = threading.Event(), threading.Event()
+    real_finish = playback_service.finish_playlist
+
+    def blocked_finish(*a, **kw):
+        result = real_finish(*a, **kw)
+        entered.set()
+        assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(playback_service, "finish_playlist", blocked_finish)
+    harness["gate"].set()
+    response = client.post("/play_now", json={"url": URL})
+    try:
+        assert entered.wait(2)
+        assert client.post("/clear").status_code == 200
+    finally:
+        release.set()
+    job = wait_done(service, response.json()["job_id"])
+    assert job["outcome"] == "playing" and job["added"] == 0, job
+    assert job["queue_length"] == 0
+    for worker in list(service._workers):
+        worker.join(3)
+    assert events[-1]["queue_length"] == 0 and events[-1]["queue"] == []

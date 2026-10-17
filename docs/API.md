@@ -245,11 +245,17 @@ Primary play-family endpoints:
   - body: `{"url", "use_ytdlp"?, "cec"?}`
   - immediate play, clears queue
 - `POST /smart`
-  - body: same as `/play`
-  - if already playing, enqueues; otherwise plays immediately
+  - body: `{"url", "use_ytdlp"?, "cec"?, "playlist_mode"?, "request_id"?}`
+  - individual videos: if already playing, enqueues; otherwise plays immediately
+  - YouTube playlist links: returns `202` with an import job. During playing or
+    paused playback it appends the entire playlist; when idle it starts the first
+    video and queues the rest before existing queued items
 - `POST /play_now`
-  - body: `{"url", "preserve_current"?, "preserve_to"?, "resume_current"?, "reason"?, "title"?, "thumbnail"?}`
+  - body: `{"url", "preserve_current"?, "preserve_to"?, "resume_current"?, "reason"?, "title"?, "thumbnail"?, "playlist_mode"?, "request_id"?}`
   - immediate play with optional preserve-current semantics
+  - YouTube playlist links return `202`: start the first video, queue the
+    remaining videos before the interrupted video's resume entry and existing
+    queued items. Preserve-current options apply to that interrupted entry
 - `POST /play_temporary`
   - body: `{"url", "resume"?, "resume_mode"?, "timeout_sec"?, "volume_override"?}`
 - `POST /play_temporary/cancel`
@@ -410,10 +416,9 @@ Queue endpoints:
 - `POST /queue/add`
 - `POST /api/queue/add`
 - `POST /v1/queue/add`
-  - body: `{"url"}`
-  - these aliases add one video. A YouTube playlist-only link returns `400`
-    directing the caller to playlist import; a video link with playlist context
-    continues to add only that video
+  - body: `{"url", "playlist_mode"?, "request_id"?}`
+  - individual videos return the existing single-item response. Finite YouTube
+    playlist links automatically return `202` with an append-only import job
 - `POST /queue/playlists`
   - body: `{"url": "https://www.youtube.com/playlist?list=…", "request_id": "<UUID>"}`
   - returns `202` immediately with a background job. YouTube video/list links
@@ -430,10 +435,16 @@ Queue endpoints:
     YouTube mixes (`RD…`) require a saved finite playlist instead
 - `GET /queue/playlists/{job_id}`
   - returns `job_id`, canonical `url`, `status`, `title`, `added`, `skipped`,
-    `queue_length`, `detail`, and `expires_at` (Unix seconds)
+    `queue_length`, `detail`, `expires_at` (Unix seconds), `action`,
+    `effective_action`, `outcome`, and `playing_url`
   - statuses: `loading`, `adding`, `completed`, `failed`, `cancelled`.
     `skipped` counts known private/deleted placeholders and invalid entries;
     restrictions discovered only during playback use normal queue error handling
+  - `added` is the number of imported entries still queued, excluding a video
+    started immediately and any preserved interruption. Outcomes are `queued`,
+    `playing`, `playback_failed`, or `superseded`. A failed first-video start
+    retains all imported videos if no newer queue edit intervened; otherwise
+    that newer edit wins and the job reports the actual remaining count
   - jobs and idempotency records remain in memory for one hour from creation;
     restart/expiry returns `404`. After an uncertain result or `404`, check the
     queue before intentionally starting a new import; never silently create a
@@ -441,11 +452,37 @@ Queue endpoints:
 - `DELETE /queue/playlists/{job_id}`
   - cancels a loading import before it appends anything. Once `adding` starts,
     cancellation returns `409`; a completed import is not undone
-  - shutdown retires loading imports; an old extraction cannot publish into a
-    restarted service. Cancelling does not free the extraction slot until the
+  - shutdown retires loading imports and pending first-video resolution; old
+    work cannot publish into a restarted service. Cancelling does not free the extraction slot until the
     bounded subprocess exits
   - playlist start/cancel use the normal optional bearer-token write guard;
     status remains an ordinary read
+
+Automatic playlist detection for `/smart`, `/play_now`, and the enqueue aliases:
+
+- `playlist_mode` defaults to `auto`. A real YouTube URL carrying `list=` imports
+  the entire finite playlist, including `watch?v=…&list=…` links. Mobile, music,
+  short, embedded, and pasted `www` links are supported. Selected video, index,
+  and timestamp do not change the playlist's starting point.
+- Use `playlist_mode: "video"` to act on only the shared video; a playlist-only
+  link cannot use that override. `"playlist"` explicitly requires a playlist.
+  The web UI's individual-video buttons send `"video"` automatically.
+- Optional UUID `request_id` binds the canonical playlist, requested action,
+  and playback/preservation options. Reusing it with changed options returns
+  `409`; an unchanged retry returns the existing job without starting playback
+  or importing again. Smart's append/play decision is made once on acceptance.
+- Existing phone clients that send only `{"url"}` work without an app update.
+  Identical requests without IDs coalesce while in flight. After completion a
+  new URL-only request is treated as an intentional re-share; reliable retries
+  across a lost completed response require a persistent client-generated ID.
+- Extraction failure leaves playback and queue untouched. Stop, Close, and newer
+  Play commands supersede an older pending playlist start. Clear cancels pending
+  additions/starts and empties the queue; if the first video has already begun
+  loading, it finishes starting and its remaining queue is cleared.
+- Completion and failure produce TV notifications. Existing phone builds may
+  display `Sent` upon `202`; job status/TV notifications describe the eventual
+  outcome. Native phone progress polling is a separate client feature.
+
 - `GET /queue`
   - queue items include an opaque `queue_id` that remains stable while the
     item is reordered; use it for delayed or interactive mutations. IDs are
@@ -470,7 +507,7 @@ Queue endpoints:
     `{"from_index": int, "to_index": int}` remains supported
 - `POST /queue/dedupe`
 - `POST /clear`
-  - clears the queue
+  - clears the queue and cancels pending playlist additions/starts
 
 History endpoints:
 

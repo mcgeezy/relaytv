@@ -248,8 +248,8 @@ async function submitAddUrl(mode){
   addUrlSubmitting = true;
   try {
     const result = (mode === 'queue')
-      ? await post('/enqueue', {url})
-      : await post('/play_now', {url, preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
+      ? await post('/enqueue', {url, playlist_mode:'video'})
+      : await post('/play_now', {url, playlist_mode:'video', preserve_current:true, preserve_to:'queue_front', resume_current:true, reason:'add_menu'});
     // Keep the modal open when the server refused, so the link is still there
     // to retry or correct. Closing it used to look exactly like success.
     if (result && result.ok === false){
