@@ -350,6 +350,38 @@ def test_shared_playlist_detection_canonicalizes_phone_inputs(raw):
     assert playlists.shared_playlist_url(f"https://youtu.be/{VIDEO_A}") is None
 
 
+@pytest.mark.parametrize("path", [
+    "/enqueue", "/queue/add", "/api/queue/add", "/v1/queue/add", "/smart", "/play_now",
+])
+@pytest.mark.parametrize("mode", ["auto", "video", "playlist"])
+@pytest.mark.parametrize("url", [
+    "https://[",
+    "https://youtube.com\uff0f.evil.test/playlist?list=PLreview123",
+])
+def test_malformed_shared_links_return_400_without_side_effects(imports, monkeypatch, path, mode, url):
+    service, _, persisted, warmed, events = imports
+    client = TestClient(create_app(testing=True), raise_server_exceptions=False)
+    current = {"url": "https://example.com/current.mp4", "title": "Current"}
+    queued = {"url": "https://example.com/queued.mp4"}
+    monkeypatch.setattr(state, "NOW_PLAYING", current)
+    monkeypatch.setattr(state, "SESSION_STATE", "playing")
+    state.QUEUE.append(queued)
+    intent = player.current_playback_intent()
+    body = {"url": url}
+    if mode != "auto":
+        body["playlist_mode"] = mode
+
+    response = client.post(path, json=body)
+
+    assert response.status_code == 400, response.text
+    assert response.json() == {"detail": "Invalid url"}
+    assert state.NOW_PLAYING is current and state.SESSION_STATE == "playing"
+    assert state.QUEUE == [queued]
+    assert player.current_playback_intent() == intent
+    assert service._jobs == {} and not service._workers
+    assert persisted == warmed == events == []
+
+
 def test_video_only_override_requires_an_individual_video():
     assert playlists.shared_playlist_url(f"https://youtu.be/{VIDEO_A}?list=PLreview123", "video") is None
     with pytest.raises(HTTPException):

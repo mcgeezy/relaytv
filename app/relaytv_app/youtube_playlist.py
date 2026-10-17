@@ -40,7 +40,10 @@ def _normalize_playlist_input(raw: str) -> str:
 def shared_playlist_url(raw: str, mode: str = "auto") -> str | None:
     """Classify shared text without losing a playlist embedded in a video URL."""
     text = _normalize_playlist_input(raw)
-    query = parse_qs(urlsplit(text).query, keep_blank_values=True)
+    parsed = url_boundary.parse_url(text)
+    if parsed is None:
+        raise HTTPException(400, "Invalid url")
+    query = parse_qs(parsed.query, keep_blank_values=True)
     has_list = resolver.is_youtube_url(text) and "list" in query
     has_video = resolver.youtube_id_from_url(text) not in (None, "videoseries")
     if mode == "video":
