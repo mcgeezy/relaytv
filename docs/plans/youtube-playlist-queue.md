@@ -48,4 +48,11 @@ Existing single-video enqueue aliases and playback resolution remain compatible.
 
 ## Validation results
 
-Pending implementation and deployment.
+- Milestone 1: 37 focused playlist tests plus existing queue and route-inventory
+  checks passed (58 tests total). Revert proofs removed the commit guard, hostname
+  boundary, and playlist-size boundary independently; each produced the expected
+  failures, then the production guards were restored.
+- Milestone 1 full gates: 1,434 Python tests passed using an isolated editable
+  `.[dev]` install (Python 3.13, FastAPI 0.143.3); Ruff, whitespace, both required
+  JavaScript syntax checks, embedded overlay syntax, and 61 JavaScript tests passed.
+- Browser implementation and host deployment verification pending.

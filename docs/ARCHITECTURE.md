@@ -61,6 +61,12 @@ milestone logs live in git history.
   mode-0600 peer file, never returned by an endpoint, and never logged.
 - `app/relaytv_app/resolver.py`: URL validation, provider
   classification, and stream resolution.
+- `app/relaytv_app/youtube_playlist.py`: finite YouTube playlist enumeration
+  and bounded, process-local queue import jobs. Flat metadata creates ordinary
+  video entries; imports append through the playback service in one batch.
+  Request IDs prevent duplicate retries, and cancellation/generation ownership
+  is checked after extraction before committing. Route adapters own endpoints
+  and completion notifications; playlist extraction never imports routes.
 - `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin/Emby
   product behavior — command ingress, stream selection and transcode
   policy, track preferences, metadata enrichment, stopped/progress
