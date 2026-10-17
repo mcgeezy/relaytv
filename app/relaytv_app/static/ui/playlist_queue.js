@@ -16,7 +16,8 @@
 
   function linkInfo(raw){
     try {
-      const url = new URL(String(raw || '').trim());
+      const text = String(raw || '').trim();
+      const url = new URL(/^www\./i.test(text) ? 'https://' + text : text);
       if (!['http:', 'https:'].includes(url.protocol)) return null;
       const host = url.hostname.toLowerCase().replace(/\.$/, '');
       const matches = domain => host === domain || host.endsWith('.' + domain);
@@ -27,7 +28,7 @@
         : (url.searchParams.get('v') || (/^\/(shorts|embed|live)\//.test(url.pathname) ? url.pathname.split('/')[2] : ''));
       return {
         url: 'https://www.youtube.com/playlist?list=' + encodeURIComponent(ids[0]),
-        hasVideo: !!video,
+        hasVideo: video !== 'videoseries' && /^[A-Za-z0-9_-]{11}$/.test(video || ''),
         dynamic: ids[0].startsWith('RD'),
       };
     } catch (_e) { return null; }

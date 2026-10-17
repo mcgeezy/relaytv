@@ -173,7 +173,7 @@ def enqueue(req: EnqueueReq):
     url = resolver.validate_user_url(req.url or "")
     if (
         resolver.is_youtube_url(url)
-        and not resolver.youtube_id_from_url(url)
+        and resolver.youtube_id_from_url(url) in (None, "videoseries")
         and "list" in parse_qs(urlsplit(url).query)
     ):
         # A playlist-only URL cannot be represented by the single-video

@@ -211,11 +211,12 @@ def test_api_auth_protects_start_and_cancel_but_leaves_status_readable(imports, 
 
 
 @pytest.mark.parametrize("path", ["/enqueue", "/queue/add", "/api/queue/add", "/v1/queue/add"])
-def test_single_enqueue_rejects_playlist_only_without_inserting_an_unplayable_item(imports, monkeypatch, path):
+@pytest.mark.parametrize("url", [URL, URL.replace("/playlist?", "/embed/videoseries?")])
+def test_single_enqueue_rejects_playlist_only_without_inserting_an_unplayable_item(imports, monkeypatch, path, url):
     _, client, *_ = imports
     monkeypatch.setattr(queue_routes, "_smart_item_from_url", lambda url, **kw: {"url": url})
     monkeypatch.setattr(queue_routes, "_push_queue_added_toast_async", lambda *a: None)
-    response = client.post(path, json={"url": URL})
+    response = client.post(path, json={"url": url})
     assert response.status_code == 400 and "entire playlist" in response.json()["detail"]
     assert state.QUEUE == []
 

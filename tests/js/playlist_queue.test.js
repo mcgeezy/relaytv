@@ -53,6 +53,8 @@ test('playlist detection accepts real YouTube hosts and removes selected-video c
   assert.equal(state.api.linkInfo(URL_ONLY).hasVideo, false);
   assert.equal(state.api.linkInfo('https://youtu.be/jNQXAC9IVRw?list=PLreview123').hasVideo, true);
   assert.equal(state.api.linkInfo('https://music.youtube.com/playlist?list=PLreview123').url, URL_ONLY);
+  assert.equal(state.api.linkInfo('www.youtube.com/playlist?list=PLreview123').url, URL_ONLY);
+  assert.equal(state.api.linkInfo('https://www.youtube.com/embed/videoseries?list=PLreview123').hasVideo, false);
   for (const url of ['https://youtube.com.evil.test/playlist?list=PLreview123', 'https://evil-youtube.com/playlist?list=PLreview123', 'file://youtube.com/playlist?list=PLreview123', 'https://youtube.com/watch?v=jNQXAC9IVRw', URL_ONLY + '&list=PLother']){
     assert.equal(state.api.linkInfo(url), null, url);
   }

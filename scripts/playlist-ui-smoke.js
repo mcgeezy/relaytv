@@ -79,6 +79,11 @@ async function scenario(browser, base, viewport, colorScheme, screenshotDir){
     check(deletes === 1, 'cancel did not use DELETE');
     await page.locator('#playlistImportDismiss').click();
 
+    for (const link of ['www.youtube.com/playlist?list=PLreview123', 'https://youtube.com/embed/videoseries?list=PLreview123']){
+      await page.locator('#addUrlInput').fill(link);
+      check(await page.locator('#addPlaylistBtn').isVisible(), 'pasted or embedded playlist lost its action');
+      check(await page.locator('#addPlayBtn').isDisabled(), 'embedded playlist offers individual Play');
+    }
     await page.locator('#addUrlInput').fill('https://youtube.com/watch?v=jNQXAC9IVRw&list=RDjNQXAC9IVRw');
     check(await page.locator('#addPlaylistBtn').isDisabled(), 'mix permits unbounded import');
     check(await page.locator('#addPlayBtn').isEnabled(), 'mix lost individual Play');
