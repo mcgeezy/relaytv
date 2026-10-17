@@ -22,7 +22,7 @@ Existing single-video enqueue aliases and playback resolution remain compatible.
    - Show import status and added/skipped counts, support cancel, and retain the
      request ID through ambiguous network failures and browser reloads.
    - Add browser logic tests and a browser smoke; document API and release impact.
-3. **Host verification** (`test: verify YouTube playlist queue deployment`)
+3. **Host verification** (`docs: record YouTube playlist deployment verification`)
    - Run every AGENTS.md quality gate with project-compatible dependencies.
    - Preserve the device compose override, local healthcheck change, settings,
      queue, and session; deploy through the existing released-image bind mount.
@@ -64,4 +64,19 @@ Existing single-video enqueue aliases and playback resolution remain compatible.
 - Milestone 2 full Python gate passed all 1,434 tests; all required syntax,
   lint, and whitespace gates passed. Live extraction of the public JODA15
   playlist returned all four videos in order without per-video metadata calls.
-- Host deployment verification pending.
+- Final link review added pasted `www` and embedded `videoseries` cases. Browser
+  and API revert proofs failed as expected when their guards were removed; the
+  restored code passed 63 focused Python tests and 71 JavaScript tests.
+- Milestone 3: deployed through the released image's existing read-only branch
+  bind mount. Real API import added all four JODA15 videos in order, persisted
+  them, and added zero on a same-ID retry. Two imported videos played with
+  advancing Qt/mpv runtime telemetry. A real mobile browser import also added
+  all four without interrupting current playback. Test entries were removed;
+  original queue IDs and the playing session were restored.
+- Complete results and reproduction commands:
+  [YouTube playlist verification](../YOUTUBE_PLAYLIST_VERIFICATION.md).
+- Final gates after the link-variant fix: all 1,438 Python tests and 71 JavaScript
+  tests passed, as did Ruff, whitespace, required JavaScript/overlay syntax, and
+  the additional playlist/smoke syntax checks. Final host API checks confirmed
+  the embedded-playlist boundary through all four aliases; configuration files,
+  original queue IDs, and the resumed playing session were preserved.
