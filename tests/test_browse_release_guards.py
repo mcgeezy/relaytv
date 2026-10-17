@@ -15,6 +15,7 @@ from relaytv_app import playback_service, player, state
 from relaytv_app.config import runtime_config
 from relaytv_app.integrations import browse_service as browse
 from relaytv_app.main import create_app
+from test_playback_intent import harness as harness
 
 
 @pytest.fixture(params=["jellyfin", "emby"])
@@ -286,3 +287,45 @@ def test_primary_server_queue_commit_obeys_import_clear(monkeypatch, source):
     assert not worker.is_alive()
     assert len(errors) == 1 and isinstance(errors[0], playback_service.QueueImportCancelled), errors
     assert state.QUEUE == []
+
+
+def test_clear_during_player_item_preparation_preserves_newer_queue(harness, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+
+    def prepare(url, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return {"url": url, "provider": "other"}
+
+    monkeypatch.setattr(player, "make_item", prepare)
+    monkeypatch.setattr(state, "QUEUE", state._RevisionedQueue())
+    monkeypatch.setattr(state, "NOW_PLAYING", None)
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    monkeypatch.setattr(state, "persist_queue", lambda: True)
+    monkeypatch.setattr(state, "update_session", lambda **kw: True)
+    monkeypatch.setattr(player, "prefetch_queue_item_stream", lambda *a, **kw: None)
+    monkeypatch.setattr(player, "prime_mpv_up_next_from_queue", lambda **kw: None)
+
+    def run():
+        try:
+            with playback_service.queue_import():
+                playback_service.play_now("https://example.test/first.mp4", use_resolver=False,
+                                          cec=False, clear_queue=True, mode="test_series_import")
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5), "Real player item preparation never began"
+        playback_service.clear_queue()
+        newer = {"url": "https://example.test/newer.mp4"}
+        playback_service.queue_item(newer)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], playback_service.QueueImportCancelled), errors
+    assert state.QUEUE == [newer]
+    assert harness["loaded"] == []

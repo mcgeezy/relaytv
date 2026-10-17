@@ -5919,7 +5919,9 @@ def _play_item_owned(
     if clear_queue:
 
         def _clear_queue() -> None:
-            with state.QUEUE_LOCK:
+            from . import playback_service
+
+            with playback_service.queue_commit():
                 state.QUEUE.clear()
 
         _run_owned("pre_queue_clear", _clear_queue)
