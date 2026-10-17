@@ -1,8 +1,8 @@
 /* RelayTV IPTV browse and source-management shell (glass system). */
 body.iptvNoScroll{overflow:hidden}
 
-/* Launcher chip — mirrors the Jellyfin launcher so both read as siblings. */
-.iptvLaunch{display:none;align-items:center;gap:7px;min-height:36px;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.03em}
+/* Launcher chip — styled by .hdrActionBtn in app.css. */
+.iptvLaunch{display:none;align-items:center;gap:7px}
 .iptvLaunch.show{display:inline-flex}
 
 /* Shell — a glass overlay tinted with the brand sky/blue, not green. */

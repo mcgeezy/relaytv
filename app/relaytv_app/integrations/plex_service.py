@@ -32,8 +32,10 @@ VIDEO_TYPES = {"movie", "show", "season", "episode"}
 SECTION_TYPES = {"movie", "show"}
 SORTS = {
     "title": "titleSort:asc",
+    "title_desc": "titleSort:desc",
     "added": "addedAt:desc",
     "year": "year:desc",
+    "year_asc": "year:asc",
     "rating": "rating:desc",
 }
 TIMELINE_STATES = {"buffering", "playing", "paused", "stopped"}
@@ -429,6 +431,10 @@ class PlexCatalogService:
         start_pos: float | None = None,
     ) -> dict[str, object]:
         item_id = str(item.get("plex_item_id") or "").strip()
+        if item_id.startswith(("ms2~", "ms~")):
+            from .browse_service import resolve_custom_plex_playback_item
+
+            return resolve_custom_plex_playback_item(item)
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         raw = self._fetch_item_record(session, reference["path"])
@@ -780,6 +786,7 @@ class PlexCatalogService:
         version_id: str = "",
         audio_id: str = "",
         subtitle_id: str = "",
+        resume_pos: float | None = None,
     ) -> dict[str, object]:
         action = str(command or "play_now").strip().lower()
         if action not in {"play_now", "play_next", "play_last", "resume"}:
@@ -802,7 +809,7 @@ class PlexCatalogService:
             return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
         start_pos = None
         if action == "resume":
-            resume_pos = item.get("resume_pos")
+            resume_pos = resume_pos if resume_pos is not None else item.get("resume_pos")
             start_pos = float(resume_pos) if resume_pos is not None else None
         now = playback_service.play_now(
             item,
@@ -830,6 +837,13 @@ class PlexCatalogService:
         item_id = str(now.get("plex_item_id") or "").strip()
         if not item_id:
             return False
+        if item_id.startswith(("ms2~", "ms~")):
+            from .browse_service import report_custom_plex_timeline
+
+            return report_custom_plex_timeline(
+                now, playback_state=state_name,
+                position_sec=position_sec, duration_sec=duration_sec,
+            )
         session = self.auth_manager.selected_server_session()
         reference = self._resolve(session, item_id, expected_kind="item")
         path = str(reference["path"]).partition("?")[0]
@@ -945,6 +959,8 @@ class PlexCatalogService:
         path = _safe_upstream_path(raw.get("key"))
         if media_type not in VIDEO_TYPES or not path:
             return None
+        if media_type in {"show", "season"}:
+            path = path.removesuffix("/children")
         duration = max(0, _integer(raw.get("duration")))
         view_offset = max(0, _integer(raw.get("viewOffset")))
         progress = round(min(100.0, (view_offset / duration) * 100.0), 1) if duration else 0.0
@@ -971,14 +987,18 @@ class PlexCatalogService:
             "view_offset_ms": view_offset,
             "progress": progress,
             "watched": _integer(raw.get("viewCount")) > 0,
-            "index": _integer(raw.get("index")) or None,
-            "parent_index": _integer(raw.get("parentIndex")) or None,
+            "index": _integer(raw["index"]) if raw.get("index") is not None else None,
+            "parent_index": _integer(raw["parentIndex"]) if raw.get("parentIndex") is not None else None,
             "leaf_count": _integer(raw.get("leafCount")) or None,
             "viewed_leaf_count": _integer(raw.get("viewedLeafCount")),
             "poster_url": self._asset_url(session, raw.get("thumb")),
             "backdrop_url": self._asset_url(session, raw.get("art")),
             "children_available": media_type in {"show", "season"},
         }
+        if media_type == "episode":
+            series_path = _safe_upstream_path(raw.get("grandparentKey"))
+            if series_path and re.fullmatch(r"/library/metadata/[^/?]+", series_path):
+                item["series_id"] = self._reference(session, "item", series_path, "show")
         if detail:
             genres = [
                 str(value.get("tag") or "").strip()

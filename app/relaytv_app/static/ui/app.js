@@ -255,6 +255,28 @@ async function submitAddUrl(mode){
   }
 }
 
+function openNotifyModal(){
+  closeHeaderMenu();
+  const bd = document.getElementById('notifyBackdrop');
+  if (!bd || !bd.classList.contains('hidden')) return;
+  bd.classList.remove('hidden');
+  _uiPushLayer();
+  _setNotifyHelper('', '');
+  const txt = document.getElementById('notifyTextInput');
+  if (txt) txt.focus();
+}
+
+function closeNotifyModal(opts){
+  const bd = document.getElementById('notifyBackdrop');
+  if (!bd) return;
+  const fromNav = !!(opts && opts.fromNav);
+  if (!fromNav && !bd.classList.contains('hidden') && __uiNavDepth > 0) {
+    try { history.back(); } catch (_e) {}
+    return;
+  }
+  bd.classList.add('hidden');
+}
+
 function _setNotifyHelper(msg, kind){
   const el = document.getElementById('notifyHelperTxt');
   if (!el) return;
@@ -658,7 +680,7 @@ function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
   if (__queueMenuEl) return true;
   if (__pendingRemove) return true;
-  const modalIds = ['addBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
+  const modalIds = ['addBackdrop', 'notifyBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
     if (!_isHiddenEl(el)) return true;
@@ -728,6 +750,11 @@ function _uiCloseTopLayerFromNav(){
   const histBd = document.getElementById('histBackdrop');
   if (!_isHiddenEl(histBd)) {
     closeHistory({fromNav:true});
+    return true;
+  }
+  const notifyBd = document.getElementById('notifyBackdrop');
+  if (!_isHiddenEl(notifyBd)) {
+    closeNotifyModal({fromNav:true});
     return true;
   }
   const addBd = document.getElementById('addBackdrop');
@@ -2995,6 +3022,225 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
   if (window.relaytvPlex) window.relaytvPlex.updateStatus({...status, enabled});
 }
 
+let __browseServersCache = [];
+
+function _setBrowseActionMsg(text, cls){
+  const el = document.getElementById('setBrowseActionMsg');
+  if (!el) return;
+  el.classList.remove('ok', 'err');
+  if (cls) el.classList.add(cls);
+  el.textContent = String(text || '');
+}
+
+function _syncBrowseServerFormFields(){
+  const typeEl = document.getElementById('setBrowseFormType');
+  const jfFields = document.getElementById('setBrowseFormJfFields');
+  const plexFields = document.getElementById('setBrowseFormPlexFields');
+  const stype = String((typeEl && typeEl.value) || 'jellyfin').toLowerCase();
+  if (jfFields) jfFields.classList.toggle('hidden', stype === 'plex');
+  if (plexFields) plexFields.classList.toggle('hidden', stype !== 'plex');
+}
+
+function _openBrowseServerForm(server){
+  const form = document.getElementById('setBrowseServerForm');
+  if (!form) return;
+  const s = server && typeof server === 'object' ? server : null;
+  const titleEl = document.getElementById('setBrowseFormTitle');
+  const idEl = document.getElementById('setBrowseFormId');
+  const typeEl = document.getElementById('setBrowseFormType');
+  const nameEl = document.getElementById('setBrowseFormName');
+  const urlEl = document.getElementById('setBrowseFormUrl');
+  const userEl = document.getElementById('setBrowseFormUsername');
+  const passEl = document.getElementById('setBrowseFormPassword');
+  const keyEl = document.getElementById('setBrowseFormApiKey');
+  const uidEl = document.getElementById('setBrowseFormUserId');
+  const tokEl = document.getElementById('setBrowseFormToken');
+  if (titleEl) titleEl.textContent = s ? `Edit ${s.name || 'server'}` : 'Add media server';
+  if (idEl) idEl.value = s ? String(s.id || '') : '';
+  if (typeEl) typeEl.value = s ? String(s.type || 'jellyfin') : 'jellyfin';
+  if (nameEl) nameEl.value = s ? String(s.name || '') : '';
+  if (urlEl) urlEl.value = s ? String(s.server_url || '') : '';
+  if (userEl) userEl.value = s ? String(s.username || '') : '';
+  if (passEl) passEl.value = '';
+  if (keyEl) keyEl.value = '';
+  if (uidEl) uidEl.value = s ? String(s.user_id || '') : '';
+  if (tokEl) tokEl.value = '';
+  _syncBrowseServerFormFields();
+  form.classList.remove('hidden');
+}
+
+function _closeBrowseServerForm(){
+  const form = document.getElementById('setBrowseServerForm');
+  if (form) form.classList.add('hidden');
+}
+
+async function _refreshBrowseServersSettings(){
+  try {
+    const res = await fetch('/browse/servers');
+    if (res && res.ok) {
+      const data = await res.json();
+      _renderBrowseServersSettings(data);
+    }
+  } catch (_e) {}
+}
+
+function _renderBrowseServersSettings(data){
+  const servers = data && Array.isArray(data.servers) ? data.servers : [];
+  __browseServersCache = servers;
+  const connectedCount = servers.filter(s => s && s.enabled && s.connected).length;
+  const enabledCount = servers.filter(s => s && s.enabled).length;
+  const badge = document.getElementById('setBrowseStatus');
+  if (badge) {
+    badge.textContent = connectedCount > 0
+      ? `${connectedCount} connected`
+      : (enabledCount > 0 ? `${enabledCount} configured` : 'None');
+    badge.classList.remove('up', 'down', 'warn', 'unknown');
+    badge.classList.add(connectedCount > 0 ? 'up' : (enabledCount > 0 ? 'warn' : 'unknown'));
+  }
+  const host = document.getElementById('setBrowseServerList');
+  if (!host || typeof host.replaceChildren !== 'function' || typeof document.createElement !== 'function') return;
+  host.replaceChildren();
+  if (!servers.length) {
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'No media servers configured yet. Enable a primary server below or click "+ Add server".';
+    host.appendChild(empty);
+    return;
+  }
+  let bestServerId = '';
+  let bestLat = Infinity;
+  servers.forEach(s => {
+    const lat = Number(s && s.latency_ms);
+    if (s && s.enabled && s.connected && Number.isFinite(lat) && lat < bestLat) {
+      bestLat = lat;
+      bestServerId = String(s.id || '');
+    }
+  });
+  servers.forEach(server => {
+    const row = document.createElement('div');
+    row.className = 'browseServerRow';
+    const info = document.createElement('div');
+    info.className = 'browseServerInfo';
+    const top = document.createElement('div');
+    top.className = 'browseServerTop';
+    const name = document.createElement('strong');
+    name.className = 'browseServerName';
+    name.textContent = String(server.name || server.id || 'Server');
+    const typeBadge = document.createElement('span');
+    typeBadge.className = 'browseServerBadge type';
+    typeBadge.textContent = String(server.type || 'jellyfin').toUpperCase();
+    const stateBadge = document.createElement('span');
+    const isUp = !!(server.enabled && server.connected);
+    stateBadge.className = `browseServerBadge ${!server.enabled ? 'muted' : (isUp ? 'up' : 'down')}`;
+    stateBadge.textContent = !server.enabled ? 'Disabled' : (isUp ? 'Connected' : 'Unavailable');
+    top.appendChild(name);
+    top.appendChild(typeBadge);
+    top.appendChild(stateBadge);
+    const latNum = Number(server.latency_ms);
+    if (server.latency_ms !== null && server.latency_ms !== undefined && Number.isFinite(latNum)) {
+      const latBadge = document.createElement('span');
+      const isBest = bestServerId && String(server.id) === bestServerId && servers.filter(s => s.enabled && s.connected).length > 1;
+      latBadge.className = `browseServerBadge latency${isBest ? ' fastest' : ''}`;
+      latBadge.textContent = isBest ? `${Math.round(latNum)} ms · Fastest` : `${Math.round(latNum)} ms`;
+      top.appendChild(latBadge);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'browseServerMeta hint';
+    const metaParts = [];
+    if (server.server_url) metaParts.push(String(server.server_url));
+    if (server.username) metaParts.push(`user: ${server.username}`);
+    if (server.last_error && !isUp) metaParts.push(`error: ${server.last_error}`);
+    meta.textContent = metaParts.join(' · ') || 'Configured via primary integration';
+    info.appendChild(top);
+    info.appendChild(meta);
+    row.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'browseServerActions';
+    const probeBtn = document.createElement('button');
+    probeBtn.type = 'button';
+    probeBtn.className = 'btn sm';
+    probeBtn.textContent = 'Probe';
+    probeBtn.onclick = async () => {
+      probeBtn.disabled = true;
+      _setBrowseActionMsg(`Probing ${server.name || 'server'}…`, '');
+      try {
+        const r = await fetch('/browse/servers/probe', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({server_id: server.id}),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+        await _refreshBrowseServersSettings();
+        const res = j.result || {};
+        const latTxt = Number.isFinite(Number(res.latency_ms)) ? ` (${Math.round(Number(res.latency_ms))} ms)` : '';
+        _setBrowseActionMsg(
+          res.connected ? `${server.name}: reachable${latTxt}` : `${server.name}: ${res.last_error || 'unreachable'}`,
+          res.connected ? 'ok' : 'err'
+        );
+      } catch (err) {
+        _setBrowseActionMsg(err && err.message ? err.message : 'Probe failed.', 'err');
+      } finally {
+        probeBtn.disabled = false;
+      }
+    };
+    actions.appendChild(probeBtn);
+
+    if (server.origin === 'custom') {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn sm';
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = () => _openBrowseServerForm(server);
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'btn sm';
+      toggleBtn.textContent = server.enabled ? 'Disable' : 'Enable';
+      toggleBtn.onclick = async () => {
+        toggleBtn.disabled = true;
+        try {
+          await fetch('/browse/servers', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              id: server.id,
+              type: server.type,
+              name: server.name,
+              server_url: server.server_url,
+              enabled: !server.enabled,
+              username: server.username,
+              user_id: server.user_id,
+            }),
+          });
+          await _refreshBrowseServersSettings();
+        } finally {
+          toggleBtn.disabled = false;
+        }
+      };
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn sm danger';
+      delBtn.textContent = 'Remove';
+      delBtn.onclick = async () => {
+        delBtn.disabled = true;
+        try {
+          await fetch(`/browse/servers/${encodeURIComponent(server.id)}`, {method: 'DELETE'});
+          await _refreshBrowseServersSettings();
+          _setBrowseActionMsg(`Removed ${server.name}.`, 'ok');
+        } finally {
+          delBtn.disabled = false;
+        }
+      };
+      actions.appendChild(editBtn);
+      actions.appendChild(toggleBtn);
+      actions.appendChild(delBtn);
+    }
+    row.appendChild(actions);
+    host.appendChild(row);
+  });
+}
+
 async function loadSettingsUi(){
   const [devRes, setRes, tvRes, jfRes, plexRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
@@ -3005,6 +3251,7 @@ async function loadSettingsUi(){
     fetch('/integrations/seerr/status').catch(() => null),
     fetch('/integrations/seerr/users').catch(() => null)
   ]);
+  _refreshBrowseServersSettings();
   const dev = await devRes.json();
   const cur = await setRes.json();
   const tvStatus = (tvRes && tvRes.ok) ? await tvRes.json() : null;
@@ -3363,8 +3610,83 @@ function bindSettingsUi(){
   const ytClearBtn = document.getElementById('setYtCookiesClearBtn');
   const ytCookiesFile = document.getElementById('setYtCookiesFile');
   const ytCookiesState = document.getElementById('setYtCookiesState');
+  const browseProbeBtn = document.getElementById('setBrowseProbeBtn');
+  const browseAddServerBtn = document.getElementById('setBrowseAddServerBtn');
+  const browseFormType = document.getElementById('setBrowseFormType');
+  const browseFormSaveBtn = document.getElementById('setBrowseFormSaveBtn');
+  const browseFormCancelBtn = document.getElementById('setBrowseFormCancelBtn');
 
   if (seerrRequestMode) seerrRequestMode.onchange = syncSeerrRequestModeUi;
+  if (browseFormType) browseFormType.onchange = _syncBrowseServerFormFields;
+  if (browseAddServerBtn) browseAddServerBtn.onclick = () => _openBrowseServerForm(null);
+  if (browseFormCancelBtn) browseFormCancelBtn.onclick = _closeBrowseServerForm;
+  if (browseProbeBtn) browseProbeBtn.onclick = async () => {
+    browseProbeBtn.disabled = true;
+    _setBrowseActionMsg('Probing server latencies…', '');
+    try {
+      const r = await fetch('/browse/servers/probe', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      await _refreshBrowseServersSettings();
+      const results = Array.isArray(j.results) ? j.results : [];
+      const upCount = results.filter(x => x && x.connected).length;
+      _setBrowseActionMsg(`Probed ${results.length} server(s) · ${upCount} reachable.`, upCount > 0 ? 'ok' : 'err');
+    } catch (err) {
+      _setBrowseActionMsg(err && err.message ? err.message : 'Probe failed.', 'err');
+    } finally {
+      browseProbeBtn.disabled = false;
+    }
+  };
+  if (browseFormSaveBtn) browseFormSaveBtn.onclick = async () => {
+    const idVal = String(document.getElementById('setBrowseFormId')?.value || '').trim();
+    const typeVal = String(document.getElementById('setBrowseFormType')?.value || 'jellyfin').trim().toLowerCase();
+    const nameVal = String(document.getElementById('setBrowseFormName')?.value || '').trim();
+    const urlVal = String(document.getElementById('setBrowseFormUrl')?.value || '').trim();
+    const userVal = String(document.getElementById('setBrowseFormUsername')?.value || '').trim();
+    const passVal = String(document.getElementById('setBrowseFormPassword')?.value || '');
+    const keyVal = String(document.getElementById('setBrowseFormApiKey')?.value || '').trim();
+    const uidVal = String(document.getElementById('setBrowseFormUserId')?.value || '').trim();
+    const tokVal = String(document.getElementById('setBrowseFormToken')?.value || '').trim();
+    if (!urlVal) {
+      _setBrowseActionMsg('Server URL is required.', 'err');
+      return;
+    }
+    const body = {
+      type: typeVal,
+      name: nameVal,
+      server_url: urlVal,
+      enabled: true,
+      username: userVal,
+      user_id: uidVal,
+    };
+    if (idVal) body.id = idVal;
+    if (passVal) body.password = passVal;
+    if (keyVal) body.api_key = keyVal;
+    if (tokVal) body.token = tokVal;
+    browseFormSaveBtn.disabled = true;
+    try {
+      const r = await fetch('/browse/servers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      _closeBrowseServerForm();
+      await _refreshBrowseServersSettings();
+      const srv = j.server || {};
+      const latTxt = Number.isFinite(Number(srv.latency_ms)) ? ` (${Math.round(Number(srv.latency_ms))} ms)` : '';
+      _setBrowseActionMsg(`Saved ${srv.name || 'server'}${latTxt}.`, 'ok');
+    } catch (err) {
+      _setBrowseActionMsg(err && err.message ? err.message : 'Failed to save server.', 'err');
+    } finally {
+      browseFormSaveBtn.disabled = false;
+    }
+  };
 
   function setYtCookiesStatus(text, cls){
     if (!ytCookiesState) return;
@@ -3964,6 +4286,45 @@ async function consumeShareParam(){
 }
 
 
+const __BROWSE_PROVIDER_KEY = 'relaytv_browse_provider';
+
+function _getPreferredBrowseProvider(){
+  try {
+    const v = localStorage.getItem(__BROWSE_PROVIDER_KEY);
+    return v === 'plex' ? 'plex' : 'jellyfin';
+  } catch (_e) {
+    return 'jellyfin';
+  }
+}
+
+function _setPreferredBrowseProvider(provider){
+  try {
+    localStorage.setItem(__BROWSE_PROVIDER_KEY, provider === 'plex' ? 'plex' : 'jellyfin');
+  } catch (_e) {}
+}
+
+function syncBrowseLaunchButtons(){
+  const jfBtn = document.getElementById('jellyfinOpenBtn');
+  const plexBtn = document.getElementById('plexOpenBtn');
+  const jfReady = (typeof __jfLaunchVisible !== 'undefined' && !!__jfLaunchVisible) || !!(jfBtn && jfBtn.classList.contains('show'));
+  const plexReady = (typeof __plexReady !== 'undefined' && !!__plexReady) || !!(plexBtn && plexBtn.classList.contains('show'));
+  const anyReady = jfReady || plexReady;
+  if (jfBtn) {
+    jfBtn.classList.toggle('show', anyReady);
+    jfBtn.classList.remove('browseAltHidden');
+    jfBtn.disabled = !anyReady;
+    jfBtn.title = 'Browse media libraries';
+    jfBtn.setAttribute('aria-label', 'Browse media libraries');
+  }
+  if (plexBtn) {
+    plexBtn.classList.add('browseAltHidden');
+  }
+  const jfSwitch = document.getElementById('jfSwitchToPlexBtn');
+  const plexSwitch = document.getElementById('plexSwitchToJfBtn');
+  if (jfSwitch) jfSwitch.classList.add('hidden');
+  if (plexSwitch) plexSwitch.classList.add('hidden');
+}
+
 function bindAddUrlUi(){
   const btn = document.getElementById('addUrlBtn');
   const bd  = document.getElementById('addBackdrop');
@@ -3972,17 +4333,42 @@ function bindAddUrlUi(){
   const playBtn  = document.getElementById('addPlayBtn');
   const queueBtn = document.getElementById('addQueueBtn');
   const inp      = document.getElementById('addUrlInput');
+  const notifyOpenBtn = document.getElementById('notifyOpenBtn');
+  const notifyMenuBtn = document.getElementById('notifyMenuBtn');
+  const notifyBd = document.getElementById('notifyBackdrop');
+  const notifyCloseBtn = document.getElementById('notifyCloseBtn');
   const notifyBtn = document.getElementById('notifySendBtn');
+  const jfSwitchBtn = document.getElementById('jfSwitchToPlexBtn');
+  const plexSwitchBtn = document.getElementById('plexSwitchToJfBtn');
 
   if (btn) btn.onclick = openAddUrl;
   if (closeBtn) closeBtn.onclick = closeAddUrl;
   if (pasteBtn) pasteBtn.onclick = pasteIntoAddUrl;
   if (playBtn) playBtn.onclick = ()=>submitAddUrl('play');
   if (queueBtn) queueBtn.onclick = ()=>submitAddUrl('queue');
+  if (notifyOpenBtn) notifyOpenBtn.onclick = openNotifyModal;
+  if (notifyMenuBtn) notifyMenuBtn.onclick = openNotifyModal;
+  if (notifyCloseBtn) notifyCloseBtn.onclick = closeNotifyModal;
   if (notifyBtn) notifyBtn.onclick = submitNotificationToast;
+
+  if (jfSwitchBtn) jfSwitchBtn.onclick = () => {
+    _setPreferredBrowseProvider('plex');
+    syncBrowseLaunchButtons();
+    closeJellyfinShell({fromNav:true, force:true});
+    if (typeof openPlexShell === 'function') openPlexShell();
+  };
+  if (plexSwitchBtn) plexSwitchBtn.onclick = () => {
+    _setPreferredBrowseProvider('jellyfin');
+    syncBrowseLaunchButtons();
+    if (typeof closePlexShell === 'function') closePlexShell({fromNav:true, force:true});
+    openJellyfinShell();
+  };
 
   if (bd) bd.addEventListener('click', (e) => {
     if (e.target === bd) closeAddUrl();
+  });
+  if (notifyBd) notifyBd.addEventListener('click', (e) => {
+    if (e.target === notifyBd) closeNotifyModal();
   });
 
   // Some browsers only allow clipboard reads after a user gesture.
@@ -3993,7 +4379,10 @@ function bindAddUrlUi(){
   });
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeAddUrl();
+    if (e.key === 'Escape') {
+      closeAddUrl();
+      closeNotifyModal();
+    }
     // When the modal is open, Enter defaults to Play.
     const open = bd && !bd.classList.contains('hidden');
     if (!open || e.key !== 'Enter') return;
