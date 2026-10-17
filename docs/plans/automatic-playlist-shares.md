@@ -33,14 +33,16 @@ rebuild are part of this server milestone.
 ## Implementation verification
 
 - Automatic routing and playback-service commands implemented. Individual-video
-  web actions explicitly request `playlist_mode=video`.
-- All 1,470 Python tests and 72 JavaScript tests passed, with all required lint,
+  web actions explicitly request `playlist_mode=video`, and watch URLs carrying
+  a dynamic YouTube Mix (`list=RD…`) fall back to the shared video in `auto` mode.
+- All 1,507 Python tests and 72 JavaScript tests passed, with all required lint,
   whitespace, app/realtime/playlist JavaScript and embedded-overlay syntax gates.
-- Focused playback/queue/import tests passed (170 tests). New tests use real
+- Focused playback/queue/import tests passed (206 tests). New tests use real
   `player.play_item` resolution and publication paths with controlled I/O.
 - Revert proofs failed as expected for the reserved intent, queue commit owner,
   conservative rollback, shutdown retirement, pending-import Clear, player's
-  load boundary, and completion-count refresh guards; all guards restored.
+  load boundary, completion-count refresh, superseded `preserve_current` capture,
+  and malformed-URL boundary rejection guards; all guards restored.
 - Transition inventory regenerated with its test's `--write` mode.
 - Host deployment passed using the existing released image and branch bind mount.
   Real URL-only Smart imported all four test videos while busy; video/list Play

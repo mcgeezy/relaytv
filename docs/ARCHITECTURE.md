@@ -13,12 +13,14 @@ milestone logs live in git history.
   aggregate package (`routes/__init__.py`) still owns shared route
   helpers and cross-domain glue.
 - `app/relaytv_app/static/ui/`: browser UI assets loaded by `/ui`.
-  `app.js`/`app.css` own the shared remote, `jellyfin.js`/`jellyfin.css` own
-  the Jellyfin/Emby browse shell, `plex.js`/`plex.css` own the Plex browse
-  shell, `seerr.js`/`seerr.css` own the Seerr discovery and request shell, and
-  `peers.js`/`peers.css` own the send-to-device sheet. These controllers consume
-  public route payloads and do not own catalog, request-policy, or playback
-  product behavior.
+  `app.js`/`app.css` own the shared remote, `playlist_queue.js` owns the
+  YouTube playlist Link dialog controller, `jellyfin.js`/`jellyfin.css` own
+  the unified multi-server and Jellyfin/Emby browse shell, `plex.js`/`plex.css`
+  own the standalone Plex browse shell, `iptv.js`/`iptv.css` own the IPTV live
+  TV browser, `seerr.js`/`seerr.css` own the Seerr discovery and request shell,
+  and `peers.js`/`peers.css` own the send-to-device sheet. These controllers
+  consume public route payloads and do not own catalog, request-policy, or
+  playback product behavior.
 - `app/relaytv_app/config.py`: runtime config service — typed env
   parsing, the settings bus, and the explicit subprocess env-mirroring
   boundary. Runtime code reads configuration through it instead of
@@ -71,6 +73,10 @@ milestone logs live in git history.
   acceptance. Queue commits, interruption capture, and first-video playback stay
   in the playback service. Clear is serialized with import commits/rollback;
   cancellation before the player's load boundary prevents a delayed start.
+- `app/relaytv_app/integrations/browse_service.py` and `app/relaytv_app/routes/browse.py`:
+  unified multi-server browse registry (`/data/media_servers.json`), latency
+  probing, cross-server catalog aggregation and deduplication across Jellyfin,
+  Emby, and Plex, and unified playback/queue dispatch via `playback_service.py`.
 - `app/relaytv_app/integrations/jellyfin_service.py`: Jellyfin/Emby
   product behavior — command ingress, stream selection and transcode
   policy, track preferences, metadata enrichment, stopped/progress

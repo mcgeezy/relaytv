@@ -128,7 +128,7 @@ must not control the WebSocket origin check.
 - `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
 - `GET /share`
   - query: `url` or `link`, optional `cec`
-  - share-target compatible immediate play helper
+  - PWA share-target entrypoint; redirects (`303`) to `/ui?share=…` so the Link dialog opens prefilled without side effects on an unauthenticated GET
 
 Selected SVG/asset helpers also exist for the UI:
 
@@ -169,10 +169,11 @@ Current UI realtime event types:
   - full server-authoritative snapshot equivalent to `/status`
 - `queue`
   - queue mutation hint with current queue snapshot and `queue_length`
-  - currently emitted for add, remove, move, dedupe, clear, and Jellyfin queue mutations
+  - currently emitted for add, remove, move, dedupe, clear, play-now, YouTube playlist imports, and media-server queue mutations
 - `jellyfin`
   - Jellyfin browse/runtime refresh hint
   - currently emitted for connect, disconnect, register, catalog cache clear, play, and queue-only Jellyfin actions
+
 
 Clients should treat `status` as the authoritative full-state refresh, use `playback` for fast-path UI updates, and treat `queue` / `jellyfin` as immediate refresh hints rather than a standalone source of truth.
 
@@ -256,11 +257,15 @@ Primary play-family endpoints:
   - YouTube playlist links return `202`: start the first video, queue the
     remaining videos before the interrupted video's resume entry and existing
     queued items. Preserve-current options apply to that interrupted entry
+- `POST /share`
+  - body: `{"url"?, "link"?, "cec"?}`
+  - immediate play, clears queue
 - `POST /play_temporary`
   - body: `{"url", "resume"?, "resume_mode"?, "timeout_sec"?, "volume_override"?}`
 - `POST /play_temporary/cancel`
 - `POST /play_at`
   - body: `{"url", "start_at": epoch_seconds}`
+
 
 ## Uploaded media ingest
 
@@ -853,7 +858,33 @@ YouTube cookie helpers:
 When YouTube cookies are configured, RelayTV passes them to yt-dlp and avoids
 yt-dlp client fallbacks that do not support cookie auth.
 
+## Unified multi-server browse API
+
+Aggregates all connected Jellyfin, Emby, and Plex servers into a single browse
+experience with latency-based cross-server deduplication (selecting the lowest
+measured `latency_ms` copy while merging `resume_pos` and metadata across
+duplicates).
+
+- `GET /browse/status`: summary of configured/active servers and best latency
+- `GET /browse/servers`: list configured primary and custom servers (sorted by latency)
+- `POST /browse/servers`: add or update a custom Jellyfin, Emby, or Plex server
+- `DELETE /browse/servers/{server_id}`: remove a custom server
+- `POST /browse/servers/probe`: probe one (`{"server_id"?}`) or all enabled servers and record `latency_ms`
+- `GET /browse/home`: unified dashboard rows (`continue_watching_movies`, `continue_watching_tv`, `recently_added_movies`, `recently_added_tv`)
+- `GET /browse/search`: cross-server deduplicated search (`q`, optional `limit`, `refresh`)
+- `GET /browse/movies`: merged and deduplicated movies catalog (`sort`, `limit`, `start`, `starts_with`, `refresh`)
+- `GET /browse/tv/series`: merged and deduplicated TV series catalog
+- `GET /browse/tv/series/{series_id}/seasons`: merged seasons across servers carrying the series
+- `GET /browse/tv/series/{series_id}/episodes`: deduplicated episodes (`season_number` or `season_id`)
+- `POST /browse/tv/series/{series_id}/play_all`: start the first episode and queue the rest
+- `GET /browse/item/{item_id}`: normalized detail view with merged duplicate resume/metadata overlay
+- `GET /browse/item/{item_id}/adjacent`: previous/next episode lookup
+- `GET /browse/artwork/{server_id}/{raw_item_id}`: credential-safe artwork proxy for custom servers
+- `GET /browse/stream/{server_id}/{raw_item_id}`: loopback media stream proxy for custom servers
+- `POST /browse/action`: execute `play_now`, `resume`, `play_next`, or `play_last` on a unified `item_id`
+
 ## Plex integration and browse API
+
 
 The current implementation exposes Plex account linking, server setup,
 personal-library browsing, direct playback, and server transcoding. See

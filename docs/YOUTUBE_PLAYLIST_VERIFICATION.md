@@ -81,18 +81,21 @@ original queue/session were restored again. The deployed container is healthy.
 
 ## Automatic server share extension
 
-Implemented in `9ef3f1a`, also verified on the development host on 2026-10-17.
-This extension replaces the initial milestone's playlist-only rejection on the
-enqueue aliases with automatic background import. `/smart` and `/play_now`
-also recognize playlist-only and video/list links sent by existing phone builds.
+Implemented in `9ef3f1a` (with review hardening in `f129055` and `ae2d6fe`),
+also verified on the development host on 2026-10-17. This extension replaces the
+initial milestone's playlist-only rejection on the enqueue aliases with automatic
+background import. `/smart` and `/play_now` also recognize playlist-only and
+video/list links sent by existing phone builds.
 
-- **1,470 Python tests and 72 JavaScript tests passed**, with all required Ruff,
+- **1,507 Python tests and 72 JavaScript tests passed**, with all required Ruff,
   whitespace, JavaScript, and embedded-overlay syntax gates. The final focused
-  HTTP UI/import run passed 74 tests.
+  HTTP UI/import run passed 110 tests (`test_youtube_playlist.py`).
 - Additional revert proofs covered reserved playback intent, ownership at queue
   commit, conservative failure rollback, shutdown during first-video resolution,
-  pending-import Clear, the player's load boundary, and fresh completion counts.
-  Each relevant test failed when its production guard was removed.
+  pending-import Clear, the player's load boundary, fresh completion counts,
+  superseded `preserve_current` capture, `RD…` watch-URL fallback in `auto` mode,
+  and malformed-URL boundary rejection (`400` instead of `500`). Each relevant
+  test failed when its production guard was removed.
 - Desktop dark and mobile light Chromium smoke passed on the updated host. Web
   individual-video buttons send an explicit override to retain their behavior.
 - An existing-phone-shaped `POST /smart` with only a mobile playlist URL returned
