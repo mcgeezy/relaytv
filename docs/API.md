@@ -460,13 +460,17 @@ Queue endpoints:
 
 Automatic playlist detection for `/smart`, `/play_now`, and the enqueue aliases:
 
-- `playlist_mode` defaults to `auto`. A real YouTube URL carrying `list=` imports
-  the entire finite playlist, including `watch?v=…&list=…` links. Mobile, music,
+- `playlist_mode` defaults to `auto`. A real YouTube URL carrying a finite `list=`
+  imports the entire playlist, including `watch?v=…&list=…` links. Mobile, music,
   short, embedded, and pasted `www` links are supported. Selected video, index,
-  and timestamp do not change the playlist's starting point.
+  and timestamp do not change the playlist's starting point. Video URLs carrying
+  a dynamic mix (`list=RD…`) fall back to the individual video in `auto` mode,
+  while playlist-only mix links (`playlist?list=RD…`) or `playlist_mode: "playlist"`
+  return `400`.
 - Use `playlist_mode: "video"` to act on only the shared video; a playlist-only
   link cannot use that override. `"playlist"` explicitly requires a playlist.
   The web UI's individual-video buttons send `"video"` automatically.
+
 - Optional UUID `request_id` binds the canonical playlist, requested action,
   and playback/preservation options. Reusing it with changed options returns
   `409`; an unchanged retry returns the existing job without starting playback

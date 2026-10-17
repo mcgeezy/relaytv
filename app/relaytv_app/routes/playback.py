@@ -39,8 +39,12 @@ class PlayReq(BaseModel):
     url: str
     use_ytdlp: bool = True
     cec: bool = False
+
+
+class SmartPlayReq(PlayReq):
     playlist_mode: Literal["auto", "video", "playlist"] = "auto"
     request_id: UUID | None = None
+
 
 
 class PlayNowReq(BaseModel):
@@ -707,7 +711,7 @@ def share_target(url: str | None = None, link: str | None = None, cec: bool = Tr
 
 
 @router.post("/smart")
-def smart(req: PlayReq):
+def smart(req: SmartPlayReq):
     playlist = maybe_queue_playlist(req, action="smart")
     if playlist is not None:
         return playlist

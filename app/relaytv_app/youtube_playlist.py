@@ -30,26 +30,35 @@ _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 _PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{2,160}\Z")
 
 
-def shared_playlist_url(raw: str, mode: str = "auto") -> str | None:
-    """Classify shared text without losing a playlist embedded in a video URL."""
+def _normalize_playlist_input(raw: str) -> str:
     text = resolver.normalize_shared_url(resolver.extract_first_url(raw or ""))
     if text.lower().startswith("www."):
         text = "https://" + text
+    return text
+
+
+def shared_playlist_url(raw: str, mode: str = "auto") -> str | None:
+    """Classify shared text without losing a playlist embedded in a video URL."""
+    text = _normalize_playlist_input(raw)
+    query = parse_qs(urlsplit(text).query, keep_blank_values=True)
+    has_list = resolver.is_youtube_url(text) and "list" in query
+    has_video = resolver.youtube_id_from_url(text) not in (None, "videoseries")
     if mode == "video":
-        if resolver.is_youtube_url(text) and "list" in parse_qs(urlsplit(text).query, keep_blank_values=True) and resolver.youtube_id_from_url(text) in (None, "videoseries"):
+        if has_list and not has_video:
             raise HTTPException(400, "This link is a playlist; use auto or playlist mode")
         return None
-    if mode == "playlist" or (
-        resolver.is_youtube_url(text)
-        and "list" in parse_qs(urlsplit(text).query, keep_blank_values=True)
-    ):
+    if mode == "auto" and has_list and has_video:
+        list_ids = query.get("list", [])
+        if len(list_ids) == 1 and list_ids[0].startswith("RD"):
+            return None
+    if mode == "playlist" or has_list:
         return playlist_url(text)
     return None
 
 
 def playlist_url(raw: str) -> str:
     """Accept real YouTube list links; ignore the selected video and index."""
-    url = resolver.validate_user_url(raw)
+    url = resolver.validate_user_url(_normalize_playlist_input(raw))
     if not url_boundary.host_matches_any(
         resolver.url_hostname(url), ("youtube.com", "youtu.be", "youtube-nocookie.com")
     ):
@@ -61,6 +70,7 @@ def playlist_url(raw: str) -> str:
     if ids[0].startswith("RD"):
         raise HTTPException(400, "YouTube mixes are dynamic; use a saved, finite playlist")
     return "https://www.youtube.com/playlist?" + urlencode({"list": ids[0]})
+
 
 
 @dataclass
@@ -296,7 +306,13 @@ class PlaylistImports:
         try:
             playlist = extract_playlist(job.url)
             preserved = None
-            if job.intent is not None and job.preserve_current:
+            if (
+                job.intent is not None
+                and job.preserve_current
+                and not generation.is_set()
+                and job.status == "loading"
+                and player.playback_intent_current(job.intent)
+            ):
                 preserved = playback_service.preserve_current_to_queue_front(
                     playlist.items[0], capture_only=True
                 )

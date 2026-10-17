@@ -36,6 +36,7 @@ def metadata():
 
 @pytest.mark.parametrize("url", [
     URL,
+    "www.youtube.com/playlist?list=PLreview123",
     "https://m.youtube.com/watch?v=jNQXAC9IVRw&list=PLreview123&index=3&t=12",
     "https://youtu.be/jNQXAC9IVRw?list=PLreview123&index=8",
     "https://music.youtube.com/playlist?list=PLreview123",
@@ -43,6 +44,7 @@ def metadata():
 ])
 def test_playlist_url_removes_video_and_index_context(url):
     assert playlists.playlist_url(url) == URL
+
 
 
 @pytest.mark.parametrize("url", [
@@ -434,6 +436,13 @@ def test_newer_command_wins_while_phone_playlist_extracts(imports, harness, monk
     entered, release = blocked_extraction(monkeypatch)
     monkeypatch.setattr(player, "stop_mpv", lambda **kw: None)
     monkeypatch.setattr("relaytv_app.routes._ensure_notification_surface", lambda **kw: None)
+    preserve_calls = []
+    real_preserve = playback_service.preserve_current_to_queue_front
+    monkeypatch.setattr(
+        playback_service,
+        "preserve_current_to_queue_front",
+        lambda *a, **kw: preserve_calls.append((a, kw)) or real_preserve(*a, **kw),
+    )
     try:
         response = client.post("/play_now", json={"url": URL})
         assert response.status_code == 202
@@ -449,6 +458,7 @@ def test_newer_command_wins_while_phone_playlist_extracts(imports, harness, monk
         harness["gate"].set()
     job = wait_done(service, response.json()["job_id"])
     assert job["status"] == "cancelled", job
+    assert preserve_calls == [], "superseded playlist import captured preserved state from newer session"
     assert state.QUEUE == []
     assert len(harness["loaded"]) == (1 if operation == "new_play" else 0)
 
@@ -508,6 +518,10 @@ def test_legacy_phone_requests_coalesce_inflight_and_uuid_binds_action(imports, 
 
 @pytest.mark.parametrize("path", ["/enqueue", "/smart", "/play_now"])
 def test_phone_playlist_writes_require_auth_and_reject_dynamic_mixes(imports, monkeypatch, path):
+    from relaytv_app.routes.playback import PlayReq, SmartPlayReq
+
+    assert "playlist_mode" not in PlayReq.model_fields
+    assert "playlist_mode" in SmartPlayReq.model_fields
     _, client, *_ = imports
     monkeypatch.setenv("RELAYTV_API_TOKEN", "phone-secret")
     runtime_config.refresh_from_env()
@@ -515,6 +529,12 @@ def test_phone_playlist_writes_require_auth_and_reject_dynamic_mixes(imports, mo
     response = client.post(path, json={"url": URL.replace("PLreview123", "RDreview123")}, headers={"Authorization": "Bearer phone-secret"})
     assert response.status_code == 400 and "dynamic" in response.json()["detail"]
     assert state.QUEUE == []
+    mix_video = f"https://www.youtube.com/watch?v={VIDEO_A}&list=RD{VIDEO_A}&start_radio=1"
+    assert playlists.shared_playlist_url(mix_video, "auto") is None
+    with pytest.raises(HTTPException) as exc:
+        playlists.shared_playlist_url(mix_video, "playlist")
+    assert exc.value.status_code == 400 and "dynamic" in str(exc.value.detail)
+
 
 
 def test_phone_start_cannot_claim_a_late_intent_after_stop(imports, harness, monkeypatch):
