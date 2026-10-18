@@ -1104,6 +1104,7 @@ def _disconnect_locked() -> dict[str, object]:
     global _LAST_STOPPED_SIGNATURE, _LAST_STOPPED_TS
     _stop_worker()
     with _LOCK:
+        _STATUS["enabled"] = False
         _STATUS["running"] = False
         _STATUS["connected"] = False
         _STATUS["last_command"] = None

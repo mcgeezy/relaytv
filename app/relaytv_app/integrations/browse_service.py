@@ -211,24 +211,39 @@ def _extract_year(val: object) -> str:
 
 def _public_server_entry(entry: dict[str, Any]) -> dict[str, Any]:
     sid = str(entry.get("id") or "").strip()
+    enabled = bool(entry.get("enabled", True))
     metrics = get_server_metrics(sid)
     lat = metrics.get("latency_ms")
     if lat is None and entry.get("latency_ms") is not None:
         lat = entry.get("latency_ms")
-    connected = metrics.get("connected")
-    if connected is None:
-        connected = bool(entry.get("connected", False))
+    if not enabled:
+        connected = False
+        lat = None
+        last_error = ""
+    elif sid in {"jf_primary", "plex_primary"}:
+        if not bool(entry.get("connected", False)):
+            connected = False
+        elif metrics.get("connected") is False:
+            connected = False
+        else:
+            connected = True
+        last_error = str(metrics.get("last_error") or entry.get("last_error") or "") if not connected else ""
+    else:
+        connected = metrics.get("connected")
+        if connected is None:
+            connected = bool(entry.get("connected", False))
+        last_error = str(metrics.get("last_error") or entry.get("last_error") or "") if not connected else ""
     return {
         "id": sid,
         "name": str(entry.get("name") or metrics.get("server_name") or sid),
         "type": str(entry.get("type") or "jellyfin").lower(),
         "origin": str(entry.get("origin") or "custom"),
         "server_url": str(entry.get("server_url") or ""),
-        "enabled": bool(entry.get("enabled", True)),
+        "enabled": enabled,
         "connected": bool(connected),
         "latency_ms": round(float(lat), 1) if isinstance(lat, (int, float)) else None,
-        "last_checked_ts": metrics.get("last_checked_ts"),
-        "last_error": str(metrics.get("last_error") or entry.get("last_error") or ""),
+        "last_checked_ts": metrics.get("last_checked_ts") if enabled else None,
+        "last_error": last_error,
         "username": str(entry.get("username") or ""),
         "user_id": str(entry.get("user_id") or ""),
         "machine_id": str(entry.get("machine_id") or ""),
@@ -252,7 +267,10 @@ def _collect_configured_servers(*, include_disabled: bool = True) -> list[dict[s
     jf_url = str(
         jf_st.get("server_url") or settings.get("jellyfin_server_url") or ""
     ).strip()
-    jf_enabled = bool(jf_st.get("enabled") or settings.get("jellyfin_enabled"))
+    if "jellyfin_enabled" in settings:
+        jf_enabled = bool(settings.get("jellyfin_enabled")) and bool(jf_st.get("enabled", True))
+    else:
+        jf_enabled = bool(jf_st.get("enabled"))
     jf_type = str(
         jf_st.get("server_type") or settings.get("jellyfin_server_type") or "jellyfin"
     ).strip().lower()
@@ -264,6 +282,20 @@ def _collect_configured_servers(*, include_disabled: bool = True) -> list[dict[s
             and jf_st.get("running")
             and (jf_st.get("connected") or jf_st.get("authenticated") or jf_st.get("catalog_ready"))
         )
+        jf_latest_ok_ts = max(
+            int(jf_st.get("last_heartbeat_ts") or 0),
+            int(jf_st.get("last_auth_ts") or 0),
+            int(jf_st.get("last_register_ts") or 0),
+            int(jf_st.get("catalog_last_ok_ts") or 0),
+        )
+        if not jf_connected:
+            with _LATENCY_LOCK:
+                _SERVER_METRICS.pop("jf_primary", None)
+        elif not jf_st.get("last_error"):
+            with _LATENCY_LOCK:
+                prev_m = _SERVER_METRICS.get("jf_primary") or {}
+                if prev_m.get("connected") is False and jf_latest_ok_ts >= int(prev_m.get("last_checked_ts") or 0):
+                    _SERVER_METRICS.pop("jf_primary", None)
         brand = "Emby" if jf_type == "emby" else "Jellyfin"
         product_name = str(jf_st.get("server_product_name") or "").strip()
         entry = {
@@ -293,6 +325,10 @@ def _collect_configured_servers(*, include_disabled: bool = True) -> list[dict[s
     selected_server = plex_st.get("server") if isinstance(plex_st.get("server"), dict) else {}
     primary_machine_id = str(selected_server.get("machine_id") or "").strip()
     if plex_linked and primary_machine_id:
+        plex_connected = bool(plex_enabled and plex_st.get("server_selected"))
+        if not plex_connected:
+            with _LATENCY_LOCK:
+                _SERVER_METRICS.pop("plex_primary", None)
         entry = {
             "id": "plex_primary",
             "name": f"{selected_server.get('name') or 'Plex'} (Primary)",
@@ -528,7 +564,8 @@ def probe_single_server(server: dict[str, Any]) -> dict[str, Any]:
     stype = str(server.get("type") or "jellyfin").strip().lower()
     base = str(server.get("server_url") or "").strip().rstrip("/")
     if not server.get("enabled", True):
-        _record_latency(sid, None, connected=False, error="disabled")
+        with _LATENCY_LOCK:
+            _SERVER_METRICS.pop(sid, None)
         return _public_server_entry(server)
 
     t0 = time.perf_counter()
@@ -606,10 +643,16 @@ def probe_all_servers(server_id: str = "") -> dict[str, Any]:
     summary = list_servers_public()
     target_ids = {str(server.get("id") or "") for server in targets}
     results = [server for server in summary["servers"] if server["id"] in target_ids]
+    matched_result = next((server for server in results if server["id"] == server_id), None)
+    if matched_result is None and server_id:
+        matched_result = next(
+            (server for server in summary["servers"] if server["id"] == server_id),
+            None,
+        )
     return {
         **summary,
         "results": results,
-        "result": next((server for server in results if server["id"] == server_id), None),
+        "result": matched_result,
     }
 
 
@@ -678,7 +721,7 @@ def _tag_item_source(
     sid = str(server.get("id") or "jf_primary").strip()
     stype = str(server.get("type") or "jellyfin").strip().lower()
     sname = str(server.get("name") or stype.title()).strip()
-    raw_id = str(out.get("item_id") or out.get("id") or "").strip()
+    raw_id = str(out.get("raw_item_id") or out.get("item_id") or out.get("id") or "").strip()
     if not raw_id:
         return out
     out["raw_item_id"] = raw_id
@@ -696,10 +739,13 @@ def _tag_item_source(
     out["server_name"] = sname
     out["source_latency_ms"] = rounded_lat
     out["latency_ms"] = rounded_lat
-    lat_label = f" · {round(float(lat))}ms" if isinstance(lat, (int, float)) else ""
     base_lib = str(out.get("library_name") or "").strip()
-    badge = f"{sname}{lat_label}"
-    out["library_name"] = f"{ badge } · { base_lib }" if base_lib else badge
+    if not base_lib or base_lib == sname:
+        out["library_name"] = sname
+    elif base_lib.startswith((f"{sname} · ", f"{sname} (+")):
+        out["library_name"] = base_lib
+    else:
+        out["library_name"] = f"{sname} · {base_lib}"
     return out
 
 
@@ -929,10 +975,8 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         winner["duplicate_count"] = len(unique_sources)
         winner["alternate_sources"] = unique_sources
         if len(unique_sources) > 1:
-            lat = winner.get("source_latency_ms")
-            lat_txt = f" · {round(float(lat))}ms" if isinstance(lat, (int, float)) else ""
             winner["library_name"] = (
-                f"{winner.get('source_name')}{lat_txt} (+{len(unique_sources) - 1} more)"
+                f"{winner.get('source_name')} (+{len(unique_sources) - 1} more)"
             )
         if str(winner.get("type") or "").lower() == "series":
             _register_series_group(winner["item_id"], sorted_cands)
@@ -1323,10 +1367,10 @@ def get_unified_home(*, limit: int = 24, refresh: bool = False) -> dict[str, Any
             pass
 
     row_defs = [
-        ("continue_watching_movies", "Continue Watching Movies"),
-        ("continue_watching_tv", "Continue Watching TV"),
         ("recently_added_movies", "Recently Added Movies"),
         ("recently_added_tv", "Recently Added TV"),
+        ("continue_watching_movies", "Continue Watching Movies"),
+        ("continue_watching_tv", "Continue Watching TV"),
     ]
     rows: list[dict[str, Any]] = []
     for row_id, row_title in row_defs:
@@ -1334,11 +1378,6 @@ def get_unified_home(*, limit: int = 24, refresh: bool = False) -> dict[str, Any
         if row_id.startswith("continue_watching") and not deduped:
             continue
         rows.append({"id": row_id, "title": row_title, "items": deduped})
-
-    # Always ensure Recently Added Movies & Recently Added TV are present so Dashboard is never blank
-    if not rows:
-        for row_id, row_title in row_defs[2:]:
-            rows.append({"id": row_id, "title": row_title, "items": []})
 
     st = status_summary()
     return {

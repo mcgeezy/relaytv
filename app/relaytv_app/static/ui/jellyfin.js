@@ -427,13 +427,21 @@ function _jfSetStatus(text, kind){
 }
 
 function _jfSetConn(up, text){
-  __jfConnected = !!up;
+  const isChecking = !up && String(text || '').trim() === 'Checking…';
+  if (!isChecking) {
+    __jfConnected = !!up;
+  }
   const card = document.getElementById('jellyfinCard');
   const shell = document.getElementById('jellyfinShell');
+  const conn = document.getElementById('jfConnection');
   const label = document.getElementById('jfConnectionLabel');
-  if (card) card.classList.toggle('jfOffline', !__jfConnected);
-  if (shell) shell.classList.toggle('jfOffline', !__jfConnected);
-  if (label) label.textContent = String(text || (__jfConnected ? 'Connected' : 'Unavailable'));
+  if (card) card.classList.toggle('jfOffline', !__jfConnected && !isChecking);
+  if (shell) shell.classList.toggle('jfOffline', !__jfConnected && !isChecking);
+  const hasExplicitText = text !== undefined && text !== null;
+  const display = hasExplicitText ? String(text).trim() : (__jfConnected ? '' : 'Unavailable');
+  const hideBadge = isChecking || (__jfConnected && !display);
+  if (conn) conn.classList.toggle('hidden', hideBadge);
+  if (label) label.textContent = display || (__jfConnected ? 'Connected' : 'Unavailable');
 }
 
 function _jfSetActionStatus(text, kind, holdMs){
@@ -740,11 +748,9 @@ function _jfRenderDetail(item){
   const chips = [];
   if (item.type) chips.push(String(item.type));
   if (item.server_name) {
-    const latNum = Number(item.latency_ms);
-    const latTxt = Number.isFinite(latNum) ? ` (${Math.round(latNum)}ms)` : '';
     const dupCount = Number(item.duplicate_count || 1);
     const dupTxt = dupCount > 1 ? ` · Best of ${dupCount} sources` : '';
-    chips.push(`${item.server_name}${latTxt}${dupTxt}`);
+    chips.push(`${item.server_name}${dupTxt}`);
   }
   if (item.season_number != null && item.episode_number != null) chips.push(`S${String(item.season_number).padStart(2,'0')}E${String(item.episode_number).padStart(2,'0')}`);
   if (item.resume_pos && Number(item.resume_pos) > 0) chips.push(`Resume ${_jfFmtSec(item.resume_pos)}`);
@@ -1475,20 +1481,11 @@ function _jfConnLabelFromResponse(j){
     return reason ? `Unavailable · ${reason}` : 'Unavailable';
   }
   const servers = Array.isArray(j && j.servers) ? j.servers.filter((s) => s && s.enabled && s.connected) : [];
-  if (servers.length > 1) {
-    const best = servers.reduce((acc, s) => {
-      const lat = Number(s.latency_ms);
-      return (Number.isFinite(lat) && (acc === null || lat < acc)) ? lat : acc;
-    }, null);
-    return best !== null ? `${servers.length} servers · ${Math.round(best)}ms` : `${servers.length} servers`;
+  const count = servers.length || Number(j && j.active_server_count || 0);
+  if (count > 1) {
+    return `${count} servers`;
   }
-  if (servers.length === 1) {
-    const s = servers[0];
-    const lat = Number(s.latency_ms);
-    const name = String(s.name || s.type || 'Connected').replace(/\s*\(Primary\)$/i, '');
-    return Number.isFinite(lat) ? `${name} · ${Math.round(lat)}ms` : `${name} · Connected`;
-  }
-  return 'Connected';
+  return '';
 }
 
 function _jfSyncUnifiedHeaderFromResponse(j){

@@ -3030,6 +3030,47 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
 }
 
 let __browseServersCache = [];
+let __activeSettingsTab = 'device';
+
+function _selectSettingsTab(tabName){
+  const tab = String(tabName || 'device').trim().toLowerCase();
+  __activeSettingsTab = ['device', 'media', 'sources', 'all'].includes(tab) ? tab : 'device';
+  if (typeof document.querySelectorAll !== 'function') return;
+  document.querySelectorAll('.settingsTabBtn').forEach((btn) => {
+    const active = String(btn.getAttribute('data-settings-tab') || '') === __activeSettingsTab;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  let anyOpenInTab = false;
+  let firstInTab = null;
+  document.querySelectorAll('.settingsGroup[data-settings-cat]').forEach((group) => {
+    const cat = String(group.getAttribute('data-settings-cat') || '');
+    const visible = __activeSettingsTab === 'all' || cat === __activeSettingsTab;
+    group.classList.toggle('hidden', !visible);
+    if (visible) {
+      if (!firstInTab) firstInTab = group;
+      if (group.hasAttribute('open') || group.open) anyOpenInTab = true;
+    }
+  });
+  if (!anyOpenInTab && firstInTab) {
+    firstInTab.open = true;
+    firstInTab.setAttribute('open', '');
+  }
+}
+
+function _focusSettingsGroup(groupId){
+  const group = document.getElementById(groupId);
+  if (!group) return;
+  const cat = String(group.getAttribute('data-settings-cat') || '');
+  if (cat && __activeSettingsTab !== 'all' && __activeSettingsTab !== cat) {
+    _selectSettingsTab(cat);
+  }
+  group.open = true;
+  if (typeof group.setAttribute === 'function') group.setAttribute('open', '');
+  if (typeof group.scrollIntoView === 'function') {
+    try { group.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (_e) {}
+  }
+}
 
 function _setBrowseActionMsg(text, cls){
   const el = document.getElementById('setBrowseActionMsg');
@@ -3114,15 +3155,6 @@ function _renderBrowseServersSettings(data){
     host.appendChild(empty);
     return;
   }
-  let bestServerId = '';
-  let bestLat = Infinity;
-  servers.forEach(s => {
-    const lat = Number(s && s.latency_ms);
-    if (s && s.enabled && s.connected && Number.isFinite(lat) && lat < bestLat) {
-      bestLat = lat;
-      bestServerId = String(s.id || '');
-    }
-  });
   servers.forEach(server => {
     const row = document.createElement('div');
     row.className = 'browseServerRow';
@@ -3143,14 +3175,6 @@ function _renderBrowseServersSettings(data){
     top.appendChild(name);
     top.appendChild(typeBadge);
     top.appendChild(stateBadge);
-    const latNum = Number(server.latency_ms);
-    if (server.latency_ms !== null && server.latency_ms !== undefined && Number.isFinite(latNum)) {
-      const latBadge = document.createElement('span');
-      const isBest = bestServerId && String(server.id) === bestServerId && servers.filter(s => s.enabled && s.connected).length > 1;
-      latBadge.className = `browseServerBadge latency${isBest ? ' fastest' : ''}`;
-      latBadge.textContent = isBest ? `${Math.round(latNum)} ms · Fastest` : `${Math.round(latNum)} ms`;
-      top.appendChild(latBadge);
-    }
     const meta = document.createElement('div');
     meta.className = 'browseServerMeta hint';
     const metaParts = [];
@@ -3168,7 +3192,9 @@ function _renderBrowseServersSettings(data){
     probeBtn.type = 'button';
     probeBtn.className = 'btn sm';
     probeBtn.textContent = 'Probe';
+    probeBtn.disabled = !server.enabled;
     probeBtn.onclick = async () => {
+      if (!server.enabled) return;
       probeBtn.disabled = true;
       _setBrowseActionMsg(`Probing ${server.name || 'server'}…`, '');
       try {
@@ -3181,20 +3207,32 @@ function _renderBrowseServersSettings(data){
         if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
         await _refreshBrowseServersSettings();
         const res = j.result || {};
-        const latTxt = Number.isFinite(Number(res.latency_ms)) ? ` (${Math.round(Number(res.latency_ms))} ms)` : '';
-        _setBrowseActionMsg(
-          res.connected ? `${server.name}: reachable${latTxt}` : `${server.name}: ${res.last_error || 'unreachable'}`,
-          res.connected ? 'ok' : 'err'
-        );
+        if (res.enabled === false) {
+          _setBrowseActionMsg(`${server.name}: disabled`, '');
+        } else {
+          _setBrowseActionMsg(
+            res.connected ? `${server.name}: reachable` : `${server.name}: ${res.last_error || 'unreachable'}`,
+            res.connected ? 'ok' : 'err'
+          );
+        }
       } catch (err) {
         _setBrowseActionMsg(err && err.message ? err.message : 'Probe failed.', 'err');
       } finally {
-        probeBtn.disabled = false;
+        probeBtn.disabled = !server.enabled;
       }
     };
     actions.appendChild(probeBtn);
 
-    if (server.origin === 'custom') {
+    if (server.origin === 'primary') {
+      const cfgBtn = document.createElement('button');
+      cfgBtn.type = 'button';
+      cfgBtn.className = 'btn sm';
+      cfgBtn.textContent = 'Configure';
+      cfgBtn.onclick = () => {
+        _focusSettingsGroup(server.id === 'plex_primary' ? 'setPlexGroup' : 'setJfGroup');
+      };
+      actions.appendChild(cfgBtn);
+    } else if (server.origin === 'custom') {
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'btn sm';
@@ -3590,6 +3628,25 @@ function bindSettingsUi(){
     }
   });
 
+  if (typeof document.querySelectorAll === 'function') {
+    const tabBtns = Array.from(document.querySelectorAll('.settingsTabBtn'));
+    tabBtns.forEach((tabBtn, idx) => {
+      tabBtn.onclick = () => _selectSettingsTab(tabBtn.getAttribute('data-settings-tab'));
+      tabBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          const delta = e.key === 'ArrowRight' ? 1 : -1;
+          const next = tabBtns[(idx + delta + tabBtns.length) % tabBtns.length];
+          if (next) {
+            next.focus();
+            next.click();
+            e.preventDefault();
+          }
+        }
+      });
+    });
+    _selectSettingsTab(__activeSettingsTab);
+  }
+
   const weatherCityInput = document.getElementById('setWeatherCity');
   const weatherFindBtn = document.getElementById('setWeatherFindBtn');
   const idleQrSize = document.getElementById('setIdleQrSize');
@@ -3629,7 +3686,7 @@ function bindSettingsUi(){
   if (browseFormCancelBtn) browseFormCancelBtn.onclick = _closeBrowseServerForm;
   if (browseProbeBtn) browseProbeBtn.onclick = async () => {
     browseProbeBtn.disabled = true;
-    _setBrowseActionMsg('Probing server latencies…', '');
+    _setBrowseActionMsg('Probing servers…', '');
     try {
       const r = await fetch('/browse/servers/probe', {
         method: 'POST',
@@ -3686,8 +3743,7 @@ function bindSettingsUi(){
       _closeBrowseServerForm();
       await _refreshBrowseServersSettings();
       const srv = j.server || {};
-      const latTxt = Number.isFinite(Number(srv.latency_ms)) ? ` (${Math.round(Number(srv.latency_ms))} ms)` : '';
-      _setBrowseActionMsg(`Saved ${srv.name || 'server'}${latTxt}.`, 'ok');
+      _setBrowseActionMsg(`Saved ${srv.name || 'server'}.`, 'ok');
     } catch (err) {
       _setBrowseActionMsg(err && err.message ? err.message : 'Failed to save server.', 'err');
     } finally {

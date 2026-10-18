@@ -870,7 +870,7 @@ duplicates).
 - `POST /browse/servers`: add or update a custom Jellyfin, Emby, or Plex server
 - `DELETE /browse/servers/{server_id}`: remove a custom server
 - `POST /browse/servers/probe`: probe one (`{"server_id"?}`) or all enabled servers and record `latency_ms`
-- `GET /browse/home`: unified dashboard rows (`continue_watching_movies`, `continue_watching_tv`, `recently_added_movies`, `recently_added_tv`)
+- `GET /browse/home`: unified dashboard rows (`recently_added_movies`, `recently_added_tv`, `continue_watching_movies`, `continue_watching_tv`)
 - `GET /browse/search`: cross-server deduplicated search (`q`, optional `limit`, `refresh`)
 - `GET /browse/movies`: merged and deduplicated movies catalog (`sort`, `limit`, `start`, `starts_with`, `refresh`)
 - `GET /browse/tv/series`: merged and deduplicated TV series catalog
