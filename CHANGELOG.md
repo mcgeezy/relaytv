@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.12.0](https://github.com/mcgeezy/relaytv/compare/v0.11.2...v0.12.0) (2026-10-18)
+
+
+### Features
+
+* add unified multi-server browse and friendly header actions ([#157](https://github.com/mcgeezy/relaytv/issues/157)) ([e1351c5](https://github.com/mcgeezy/relaytv/commit/e1351c501f17aa38dc831c93862f2b354a2cea45))
+* automatically import shared YouTube playlists ([#158](https://github.com/mcgeezy/relaytv/issues/158)) ([dcc79c8](https://github.com/mcgeezy/relaytv/commit/dcc79c8e56cc135a8e8e20364fec15d97c9f2ef7))
+* enable live stream DVR rewind within cache window ([#147](https://github.com/mcgeezy/relaytv/issues/147)) ([a00b78b](https://github.com/mcgeezy/relaytv/commit/a00b78b632e3717f88db77b44884d51dd238a716))
+
+
+### Bug Fixes
+
+* preserve TV series browse position and enrich Now Playing thumbnails ([#162](https://github.com/mcgeezy/relaytv/issues/162)) ([6eebf22](https://github.com/mcgeezy/relaytv/commit/6eebf221643bcd7a7fd395624d2370684ef25a7c))
+* prevent play-now from preserving current item to repeat on skip ([#154](https://github.com/mcgeezy/relaytv/issues/154)) ([a9a19ae](https://github.com/mcgeezy/relaytv/commit/a9a19ae06b37935c1df1df19606634f69d1c8081))
+* protect Browse credentials and cancel cleared series imports ([#159](https://github.com/mcgeezy/relaytv/issues/159)) ([bf750c5](https://github.com/mcgeezy/relaytv/commit/bf750c50b4b9f4acd3121acd1345eb12d7fed001))
+* recover stalled Qt libmpv VOD playback after audio underrun ([#155](https://github.com/mcgeezy/relaytv/issues/155)) ([a40486b](https://github.com/mcgeezy/relaytv/commit/a40486bbaa291787c33c97cf8e1ec26591352f0e))
+* refine browse dashboard order, remove UI latency badges, and honor disabled server state ([#161](https://github.com/mcgeezy/relaytv/issues/161)) ([f80c747](https://github.com/mcgeezy/relaytv/commit/f80c7474089739b7c26cd12a1623e57a5e04d61b))
+
+
+### Documentation
+
+* balance README personal and shared viewing ([#160](https://github.com/mcgeezy/relaytv/issues/160)) ([30dd14a](https://github.com/mcgeezy/relaytv/commit/30dd14ac852bff68bf554fb7bae1413682db85a6))
+* highlight QR access and shared media browsing ([#156](https://github.com/mcgeezy/relaytv/issues/156)) ([568c55e](https://github.com/mcgeezy/relaytv/commit/568c55e729bab20102e0ee145b83d099c9eb2c97))
+* update README with web video, Pi hardware profiles, and API token ([#152](https://github.com/mcgeezy/relaytv/issues/152)) ([74546df](https://github.com/mcgeezy/relaytv/commit/74546df15385de6a7518e06f02ef62f598766564))
+
 ## [0.11.2](https://github.com/mcgeezy/relaytv/compare/v0.11.1...v0.11.2) (2026-10-10)
 
 
