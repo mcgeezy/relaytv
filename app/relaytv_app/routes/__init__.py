@@ -1239,7 +1239,14 @@ def _ui_event_push_queue(
 
 
 def _annotate_upload_item(item: object) -> object:
-    return public_media.public_media_item(upload_store.annotate_item(item))
+    annotated = upload_store.annotate_item(item)
+    if isinstance(annotated, dict):
+        from ..thumb_cache import sync_local_thumbnail
+
+        annotated = sync_local_thumbnail(dict(annotated))
+        if isinstance(item, dict) and annotated.get("thumbnail_local"):
+            item["thumbnail_local"] = annotated["thumbnail_local"]
+    return public_media.public_media_item(annotated)
 
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:

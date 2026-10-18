@@ -57,6 +57,8 @@ class PlayNowReq(BaseModel):
     reason: str | None = None
     title: str | None = None
     thumbnail: str | None = None
+    thumbnail_local: str | None = None
+    channel: str | None = None
     resume_pos: float | None = None
     history_id: str | None = None
     resolved_source_url: str | None = None
@@ -490,6 +492,8 @@ def play_now(req: PlayNowReq):
     if (
         req.title
         or req.thumbnail
+        or req.thumbnail_local
+        or req.channel
         or req.resume_pos is not None
         or req.history_id
         or req.resolved_stream
@@ -499,6 +503,10 @@ def play_now(req: PlayNowReq):
             item["title"] = req.title
         if req.thumbnail:
             item["thumbnail"] = req.thumbnail
+        if req.thumbnail_local:
+            item["thumbnail_local"] = req.thumbnail_local
+        if req.channel:
+            item["channel"] = req.channel
         if req.history_id:
             item["history_id"] = req.history_id
         if req.resolved_stream:

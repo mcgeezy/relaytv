@@ -41,6 +41,8 @@ let __jfCatalogObserver = null;
 const __JF_CATALOG_PAGE_SIZE = 48;
 const __JF_REQ_TIMEOUT_MS = 12000;
 const __JF_DASHBOARD_REFRESH_MS = 45000;
+const __JF_LAST_SEASON_STORAGE_KEY = 'relaytv_jf_last_season_by_series_v1';
+const __jfLastSeasonBySeries = {};
 const __jfCatalogState = {
   movies: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
   tv: {items: [], itemIds: new Set(), nextStart: null, count: 0, sort: ''},
@@ -155,7 +157,10 @@ function closeJellyfinShell(opts){
 function _jfSetActiveTab(tab, opts){
   const next = String(tab || 'dashboard').toLowerCase();
   const activeTab = (next === 'movies' || next === 'tv') ? next : 'dashboard';
-  if (activeTab !== __jfActiveTab) _jfAbortBrowseRequest();
+  if (activeTab !== __jfActiveTab) {
+    _jfAbortBrowseRequest();
+    _jfResetBrowseScroll();
+  }
   __jfActiveTab = activeTab;
   document.querySelectorAll('.jfTabBtn').forEach((b) => {
     const isActive = String(b.getAttribute('data-jf-tab') || '') === __jfActiveTab;
@@ -352,38 +357,138 @@ function _jfSeriesItemFromNode(node){
   return item;
 }
 
+function _jfResetBrowseScroll(){
+  const reset = () => {
+    const shell = document.getElementById('jellyfinShell');
+    if (shell) {
+      try { shell.scrollTo({top: 0, left: 0, behavior: 'auto'}); } catch (_e) {}
+      shell.scrollTop = 0;
+      shell.scrollLeft = 0;
+    }
+    const card = document.getElementById('jellyfinCard');
+    if (card) card.scrollTop = 0;
+    const grid = document.getElementById('jfGrid');
+    if (grid) grid.scrollTop = 0;
+    const rows = document.getElementById('jfRows');
+    if (rows) rows.scrollTop = 0;
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('#jfRows .jfCatalogScroller, #jfRows .jfScroller').forEach((el) => {
+        el.scrollTop = 0;
+        el.scrollLeft = 0;
+      });
+    }
+    if (typeof document !== 'undefined') {
+      if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+      if (document.documentElement) document.documentElement.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+    }
+  };
+  reset();
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(reset);
+  }
+}
+
+function _jfNormalizeSeriesSeasonKeys(seriesId, title){
+  const keys = [];
+  const sid = String(seriesId || '').trim();
+  if (sid) keys.push(`id:${sid}`);
+  const normTitle = String(title || '').trim().toLowerCase();
+  if (normTitle && normTitle !== 'series') keys.push(`title:${normTitle}`);
+  return keys;
+}
+
+function _jfReadSavedSeasonMap(){
+  const merged = Object.assign({}, __jfLastSeasonBySeries);
+  try {
+    const raw = (typeof localStorage !== 'undefined' && localStorage)
+      ? localStorage.getItem(__JF_LAST_SEASON_STORAGE_KEY)
+      : '';
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([k, v]) => {
+          if (_jfHasFiniteNumber(v)) merged[k] = Number(v);
+        });
+      }
+    }
+  } catch (_e) {}
+  return merged;
+}
+
+function _jfGetSavedSeason(seriesId, title){
+  const keys = _jfNormalizeSeriesSeasonKeys(seriesId, title);
+  if (!keys.length) return null;
+  const map = _jfReadSavedSeasonMap();
+  for (const key of keys) {
+    if (_jfHasFiniteNumber(map[key])) return Number(map[key]);
+  }
+  return null;
+}
+
+function _jfSaveSeason(seriesId, title, seasonNumber){
+  if (!_jfHasFiniteNumber(seasonNumber)) return;
+  const keys = _jfNormalizeSeriesSeasonKeys(seriesId, title);
+  if (!keys.length) return;
+  const num = Number(seasonNumber);
+  const map = _jfReadSavedSeasonMap();
+  keys.forEach((key) => {
+    __jfLastSeasonBySeries[key] = num;
+    map[key] = num;
+  });
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      localStorage.setItem(__JF_LAST_SEASON_STORAGE_KEY, JSON.stringify(map));
+    }
+  } catch (_e) {}
+}
+
 function _jfOpenSeriesDetailFromRich(rich){
-  if (!rich) return;
+  if (!rich) return Promise.resolve();
   const rType = String(rich.type || '').trim().toLowerCase();
   if (rType === 'nav_back') {
+    _jfCloseDetailPanel({fromNav: true});
     __jfTvSeasonChooserExpanded = false;
-    loadJellyfinTvSeries(false);
-    return;
+    _jfResetBrowseScroll();
+    return loadJellyfinTvSeries(false);
   }
   if (rType === 'season') {
-    __jfTvSeasonNumber = Number.isFinite(Number(rich.season_number)) ? Number(rich.season_number) : null;
+    const seasonNumber = _jfHasFiniteNumber(rich.season_number) ? Number(rich.season_number) : null;
+    const targetSeriesId = rich.series_id || __jfTvSeriesId;
+    _jfCloseDetailPanel({fromNav: true});
+    __jfTvSeasonNumber = seasonNumber;
     __jfTvSeasonChooserExpanded = false;
-    loadJellyfinTvSeriesDetail(rich.series_id || __jfTvSeriesId, {
+    if (seasonNumber !== null) {
+      _jfSaveSeason(targetSeriesId, __jfTvSeriesTitle, seasonNumber);
+    }
+    _jfResetBrowseScroll();
+    return loadJellyfinTvSeriesDetail(targetSeriesId, {
       title: __jfTvSeriesTitle,
       thumbnail: __jfTvSeriesThumb || rich.thumbnail_local || rich.thumbnail || '',
       thumbnail_local: __jfTvSeriesThumb || rich.thumbnail_local || '',
+      seasonNumber,
+      resetScroll: true,
     });
-    return;
   }
   if (rType === 'series') {
+    const savedSeason = _jfGetSavedSeason(rich.item_id, rich.title);
+    _jfCloseDetailPanel({fromNav: true});
+    __jfTvSeasonNumber = savedSeason;
     __jfTvSeasonChooserExpanded = false;
-    loadJellyfinTvSeriesDetail(rich.item_id, {
+    _jfResetBrowseScroll();
+    return loadJellyfinTvSeriesDetail(rich.item_id, {
       title: rich.title,
       thumbnail: rich.thumbnail_local || rich.thumbnail || '',
       thumbnail_local: rich.thumbnail_local || '',
       backdrop: rich.backdrop || '',
       overview: rich.overview || '',
       year: rich.year || '',
+      seasonNumber: savedSeason,
+      resetScroll: true,
     });
-    return;
   }
   // Episodes (and any future non-series entries) should open item detail panel.
-  loadJellyfinDetail(rich.item_id);
+  return loadJellyfinDetail(rich.item_id);
 }
 
 function _jfToggleTvSeasonChooser(){
@@ -1731,30 +1836,50 @@ function _jfLoadActiveTabDefault(force){
 async function loadJellyfinTvSeriesDetail(seriesId, opts){
   const sid = String(seriesId || '').trim();
   if (!sid) return;
-  const title = String((opts && opts.title) || __jfTvSeriesTitle || 'Series').trim();
+  const sameSeries = (sid === __jfTvSeriesId);
+  const title = String((opts && opts.title) || (sameSeries ? __jfTvSeriesTitle : '') || 'Series').trim();
   const thumb = String(
     (opts && (opts.thumbnail_local || opts.thumbnail)) ||
-    __jfTvSeriesThumb ||
+    (sameSeries ? __jfTvSeriesThumb : '') ||
     ''
   ).trim();
-  const backdrop = String((opts && opts.backdrop) || __jfTvSeriesBackdrop || '').trim();
-  const overview = String((opts && opts.overview) || __jfTvSeriesOverview || '').trim();
-  const year = String((opts && opts.year) || __jfTvSeriesYear || '').trim();
+  const backdrop = String((opts && opts.backdrop) || (sameSeries ? __jfTvSeriesBackdrop : '') || '').trim();
+  const overview = String((opts && opts.overview) || (sameSeries ? __jfTvSeriesOverview : '') || '').trim();
+  const year = String((opts && opts.year) || (sameSeries ? __jfTvSeriesYear : '') || '').trim();
   const refresh = !!(opts && opts.refresh);
   const chooserExpanded = (opts && typeof opts.chooserExpanded === 'boolean')
     ? opts.chooserExpanded
-    : __jfTvSeasonChooserExpanded;
+    : (sameSeries ? __jfTvSeasonChooserExpanded : false);
   const focusChooser = !!(opts && opts.focusChooser);
+  const resetScroll = (opts && typeof opts.resetScroll === 'boolean')
+    ? opts.resetScroll
+    : (!chooserExpanded && !focusChooser && !(refresh && sameSeries && __jfTvViewMode === 'detail'));
+  const explicitSeason = (opts && _jfHasFiniteNumber(opts.seasonNumber))
+    ? Number(opts.seasonNumber)
+    : null;
   if (__jfBusy) return;
+  _jfCancelCatalogPagination();
   __jfBusy = true;
   try {
     _jfSetStatus('Loading seasons…');
     const seasonRes = await _jfFetchJson(`/browse/tv/series/${encodeURIComponent(sid)}/seasons${refresh ? '?refresh=1' : ''}`);
     const seasons = Array.isArray(seasonRes.seasons) ? seasonRes.seasons : [];
-    let seasonNum = __jfTvSeasonNumber;
+    const candidateSeason = _jfHasFiniteNumber(explicitSeason)
+      ? explicitSeason
+      : ((sameSeries && _jfHasFiniteNumber(__jfTvSeasonNumber))
+        ? Number(__jfTvSeasonNumber)
+        : _jfGetSavedSeason(sid, title));
+    const hasCandidateInSeasons = _jfHasFiniteNumber(candidateSeason) && (
+      !seasons.length ||
+      seasons.some((s) => _jfHasFiniteNumber(s && s.season_number) && Number(s.season_number) === Number(candidateSeason))
+    );
+    let seasonNum = hasCandidateInSeasons ? Number(candidateSeason) : null;
     if (!_jfHasFiniteNumber(seasonNum)) {
       const first = seasons.find((s) => _jfHasFiniteNumber(s && s.season_number));
       seasonNum = first ? Number(first.season_number) : null;
+    }
+    if (_jfHasFiniteNumber(seasonNum)) {
+      _jfSaveSeason(sid, title, seasonNum);
     }
 
     let epUrl = `/browse/tv/series/${encodeURIComponent(sid)}/episodes`;
@@ -1813,6 +1938,9 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
     _jfRenderRows(rows);
     document.getElementById('jellyfinShell')?.classList.toggle('jfSeasonChooserOpen', chooserExpanded);
     _jfApplySelectionUi();
+    if (resetScroll) {
+      _jfResetBrowseScroll();
+    }
     if (focusChooser) {
       requestAnimationFrame(() => {
         const chooser = document.querySelector('#jfRows .jfSeasonOption.active, #jfRows .jfSeasonModalClose');
@@ -2269,7 +2397,9 @@ function bindJellyfinUi(){
       }
       const backToSeries = e.target && e.target.closest ? e.target.closest('[data-jf-action="back_to_series"]') : null;
       if (backToSeries) {
+        _jfCloseDetailPanel({fromNav: true});
         __jfTvSeasonChooserExpanded = false;
+        _jfResetBrowseScroll();
         loadJellyfinTvSeries(false);
         e.preventDefault();
         e.stopPropagation();
@@ -2289,11 +2419,13 @@ function bindJellyfinUi(){
       if (seasonOption) {
         const seasonNumber = Number(seasonOption.getAttribute('data-season-number'));
         if (_jfHasFiniteNumber(seasonNumber)) {
+          const targetSeriesId = String(seasonOption.getAttribute('data-series-id') || __jfTvSeriesId).trim();
           __jfTvSeasonNumber = seasonNumber;
           __jfTvSeasonChooserExpanded = false;
+          _jfSaveSeason(targetSeriesId, __jfTvSeriesTitle, seasonNumber);
           loadJellyfinTvSeriesDetail(
-            String(seasonOption.getAttribute('data-series-id') || __jfTvSeriesId),
-            {title: __jfTvSeriesTitle},
+            targetSeriesId,
+            {title: __jfTvSeriesTitle, seasonNumber, resetScroll: true},
           );
         }
         e.preventDefault();
@@ -2311,12 +2443,6 @@ function bindJellyfinUi(){
       const target = e.target && e.target.closest ? e.target.closest('.jfItem') : null;
       if (!target) return;
       const rich = _jfSeriesItemFromNode(target);
-      if (__jfActiveTab === 'tv' && _jfIsSeriesNavType(rich)) {
-        _jfOpenSeriesDetailFromRich(rich);
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
       if (quick) {
         const action = String(quick.getAttribute('data-jf-action') || '').trim();
         if (__jfActiveTab === 'tv' && rich) {
@@ -2335,6 +2461,12 @@ function bindJellyfinUi(){
         }
         const item = _jfLightItemFromNode(target);
         if (item && action) _jfPerformItemAction(item, action, 'status');
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (__jfActiveTab === 'tv' && _jfIsSeriesNavType(rich)) {
+        _jfOpenSeriesDetailFromRich(rich);
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -2408,11 +2540,6 @@ function bindJellyfinUi(){
         }
       }
       if (key === 'Enter') {
-        if (__jfActiveTab === 'tv' && _jfIsSeriesNavType(rich)) {
-          _jfOpenSeriesDetailFromRich(rich);
-          e.preventDefault();
-          return;
-        }
         if (quick) {
           const action = String(quick.getAttribute('data-jf-action') || '').trim();
           if (__jfActiveTab === 'tv' && rich) {
@@ -2428,6 +2555,11 @@ function bindJellyfinUi(){
             }
           }
           if (item && action) _jfPerformItemAction(item, action, 'status');
+          e.preventDefault();
+          return;
+        }
+        if (__jfActiveTab === 'tv' && _jfIsSeriesNavType(rich)) {
+          _jfOpenSeriesDetailFromRich(rich);
           e.preventDefault();
           return;
         }

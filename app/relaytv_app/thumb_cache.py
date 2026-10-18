@@ -99,6 +99,7 @@ def reset_thumb_tracking_for_tests() -> None:
     with _INFLIGHT_LOCK:
         _INFLIGHT.clear()
         _FAILED_AT.clear()
+        _SRC_BY_ID.clear()
 
 
 def _ensure_dir() -> None:
@@ -347,6 +348,7 @@ def attach_local_thumbnail(item: dict) -> dict:
 
         # Enqueue generation if missing, once.
         if not (os.path.exists(dst) and os.path.getsize(dst) > 0):
+            item.pop("thumbnail_local", None)
             if _claim_thumb(tid):
                 try:
                     _Q.put_nowait((thumb.strip(), tid))
@@ -360,6 +362,32 @@ def attach_local_thumbnail(item: dict) -> dict:
 
         _touch(dst)
         item["thumbnail_local"] = local_rel_path(tid)
+    except Exception:
+        pass
+    return item
+
+
+def sync_local_thumbnail(item: dict) -> dict:
+    """Synchronize `thumbnail_local` with known source URLs and on-disk cache state.
+
+    - Registers `thumbnail` in `_SRC_BY_ID` so `/thumbs/<id>.jpg` can materialize
+      evicted or persisted thumbnails on demand via `ensure_cached_sync`.
+    - Populates `thumbnail_local` as soon as the normalized file exists on disk.
+    """
+    if not isinstance(item, dict):
+        return item
+    try:
+        thumb = item.get("thumbnail")
+        if isinstance(thumb, str) and thumb.strip():
+            clean_thumb = thumb.strip()
+            tid = thumb_id(clean_thumb)
+            _remember_src(tid, clean_thumb)
+            expected_rel = local_rel_path(tid)
+            dst = local_abs_path(tid)
+            if os.path.exists(dst) and os.path.getsize(dst) > 0:
+                item["thumbnail_local"] = expected_rel
+            elif item.get("thumbnail_local") and item.get("thumbnail_local") != expected_rel:
+                item.pop("thumbnail_local", None)
     except Exception:
         pass
     return item

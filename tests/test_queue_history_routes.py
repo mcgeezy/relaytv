@@ -254,6 +254,8 @@ def test_history_clear_and_play_delegate_to_play_now(monkeypatch) -> None:
             "url": "https://example.com/history.mp4",
             "title": "History Item",
             "thumbnail": "https://example.com/history.jpg",
+            "thumbnail_local": "/thumbs/history.jpg",
+            "channel": "History Channel",
             "resume_pos": 12.5,
             "history_id": "hist-1",
             "_resolved_source_url": "https://example.com/watch",
@@ -286,6 +288,8 @@ def test_history_clear_and_play_delegate_to_play_now(monkeypatch) -> None:
     assert req.reason == "history"
     assert req.title == "History Item"
     assert req.thumbnail == "https://example.com/history.jpg"
+    assert req.thumbnail_local == "/thumbs/history.jpg"
+    assert req.channel == "History Channel"
     assert req.resume_pos == 12.5
     assert req.history_id == "hist-1"
     assert req.resolved_source_url == "https://example.com/watch"

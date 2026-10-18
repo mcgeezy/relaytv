@@ -297,3 +297,127 @@ def test_a_failed_lookup_releases_its_inflight_slot(monkeypatch) -> None:
     assert "https://x.test/boom" not in resolver._YTDLP_INFO_INFLIGHT
     # A second attempt runs rather than blocking on a phantom fetch.
     assert resolver.ytdlp_info("https://x.test/boom") is None
+
+
+def test_ytdlp_metadata_lookups_pass_no_check_formats(monkeypatch) -> None:
+    """Metadata lookups must skip stream format HEAD probes (--no-check-formats)."""
+    seen_extra: list[list[str]] = []
+
+    class _Proc:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+
+    def _fake_run(url, base_args, extra, timeout):
+        seen_extra.append(list(extra))
+        if "-J" in extra:
+            return (
+                _Proc(
+                    '{"title": "BitChute Clip", "thumbnail": "https://static-3.bitchute.com/cover.jpg", "channel": "Channel"}'
+                ),
+                (),
+                False,
+            )
+        return _Proc("BitChute Clip\n"), (), False
+
+    monkeypatch.setattr(resolver, "_run_ytdlp_provider_command", _fake_run)
+    monkeypatch.setattr(resolver, "build_ytdlp_base_args", lambda: ())
+
+    info = resolver.ytdlp_info("https://www.bitchute.com/video/wPdrOYMYZsnn/")
+    title = resolver.title_from_ytdlp("https://www.bitchute.com/video/wPdrOYMYZsnn/")
+
+    assert info is not None
+    assert info["thumbnail"] == "https://static-3.bitchute.com/cover.jpg"
+    assert title == "BitChute Clip"
+    assert len(seen_extra) == 2
+    assert "--no-check-formats" in seen_extra[0]
+    assert "--no-check-formats" in seen_extra[1]
+
+
+def test_sync_local_thumbnail_registers_src_and_attaches_when_cached(thumb_env) -> None:
+    url = "https://static-3.bitchute.com/live/cover_images/rzUd1ovwJXug/wPdrOYMYZsnn_640x360.jpg"
+    tid = thumb_cache.thumb_id(url)
+    expected_rel = thumb_cache.local_rel_path(tid)
+
+    # Stale/mismatched local path is cleared while the file is not on disk yet.
+    item = {"thumbnail": url, "thumbnail_local": "/thumbs/stale.jpg"}
+    thumb_cache.attach_local_thumbnail(item)
+    assert "thumbnail_local" not in item
+
+    # After a restart (tracking cleared), sync_local_thumbnail re-registers the
+    # source URL without enqueuing work, and attaches thumbnail_local once the
+    # file lands on disk.
+    thumb_cache.reset_thumb_tracking_for_tests()
+    assert thumb_cache.get_thumb_src(tid) is None
+
+    synced = thumb_cache.sync_local_thumbnail({"thumbnail": url, "thumbnail_local": "/thumbs/wrong.jpg"})
+    assert thumb_cache.get_thumb_src(tid) == url
+    assert "thumbnail_local" not in synced
+    assert thumb_env.qsize() == 1  # No new queue entry was added by sync_local_thumbnail.
+
+    dst = thumb_cache.local_abs_path(tid)
+    with open(dst, "wb") as f:
+        f.write(b"\xff\xd8\xff\xd9")
+
+    ready = thumb_cache.sync_local_thumbnail({"thumbnail": url})
+    assert ready["thumbnail_local"] == expected_rel
+
+
+def test_now_playing_metadata_prefetch_enriches_active_playback_and_history(
+    thumb_env, monkeypatch
+) -> None:
+    from relaytv_app import player, state
+
+    url = "https://www.bitchute.com/video/wPdrOYMYZsnn/"
+    thumb_url = "https://static-3.bitchute.com/live/cover_images/rzUd1ovwJXug/wPdrOYMYZsnn_640x360.jpg"
+    tid = thumb_cache.thumb_id(thumb_url)
+    dst = thumb_cache.local_abs_path(tid)
+    with open(dst, "wb") as f:
+        f.write(b"\xff\xd8\xff\xd9")
+
+    now = {
+        "url": url,
+        "title": "IT'S UNSTOPPABLE",
+        "provider": "bitchute",
+        "thumbnail": None,
+        "thumbnail_local": None,
+        "channel": None,
+        "history_id": "hist-bitchute-1",
+    }
+    history_entry = {
+        "history_id": "hist-bitchute-1",
+        "ts": 1000,
+        "mode": "startup_resume",
+        "url": url,
+        "title": "IT'S UNSTOPPABLE",
+        "provider": "bitchute",
+        "resume_pos": 12.0,
+    }
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(now), raising=False)
+    monkeypatch.setattr(state, "HISTORY", [dict(history_entry)], raising=False)
+    monkeypatch.setattr(state, "persist_session", lambda: True)
+    monkeypatch.setattr(state, "_persist_history", lambda: True)
+    monkeypatch.setattr(
+        state,
+        "set_now_playing",
+        lambda updated: setattr(state, "NOW_PLAYING", updated),
+    )
+    monkeypatch.setattr(
+        resolver,
+        "ytdlp_info",
+        lambda requested_url: {
+            "title": "IT'S UNSTOPPABLE: FULL TITLE",
+            "thumbnail": thumb_url,
+            "channel": "The Reese Report",
+        },
+    )
+
+    player._prefetch_queue_item_metadata_worker(dict(now), url, False)
+
+    assert state.NOW_PLAYING is not None
+    assert state.NOW_PLAYING["thumbnail"] == thumb_url
+    assert state.NOW_PLAYING["thumbnail_local"] == thumb_cache.local_rel_path(tid)
+    assert state.NOW_PLAYING["channel"] == "The Reese Report"
+    assert state.HISTORY[0]["thumbnail"] == thumb_url
+    assert state.HISTORY[0]["thumbnail_local"] == thumb_cache.local_rel_path(tid)
+    assert state.HISTORY[0]["channel"] == "The Reese Report"
