@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import player, playback_service, public_media, resolver, state, upload_store, youtube_playlist
+from .. import player, playback_service, resolver, state, youtube_playlist
 from ..debug import get_logger
 
 
@@ -133,7 +133,9 @@ def _play_now_queue_item(item: dict[str, object], *, resume_pos: float | None) -
 
 
 def _annotate_upload_item(item: object) -> object:
-    return public_media.public_media_item(upload_store.annotate_item(item))
+    from . import _annotate_upload_item as annotate_upload_item
+
+    return annotate_upload_item(item)
 
 
 def _annotate_upload_items(items: list[object] | None) -> list[object]:
@@ -617,6 +619,8 @@ def history_play(req: HistoryPlayReq):
             "reason": "history",
             "title": str(it.get("title") or "").strip() or None,
             "thumbnail": str(it.get("thumbnail") or "").strip() or None,
+            "thumbnail_local": str(it.get("thumbnail_local") or "").strip() or None,
+            "channel": str(it.get("channel") or "").strip() or None,
             "resume_pos": resume_pos,
             "history_id": str(it.get("history_id") or "").strip() or None,
             "resolved_source_url": str(it.get("_resolved_source_url") or "").strip() or None,

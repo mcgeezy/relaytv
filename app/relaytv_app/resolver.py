@@ -1077,7 +1077,7 @@ def title_from_ytdlp(url: str) -> str | None:
     p, _selected_args, _challenged = _run_ytdlp_provider_command(
         u,
         build_ytdlp_base_args(),
-        ["--print", "%(title)s"],
+        ["--no-check-formats", "--print", "%(title)s"],
         timeout=20,
     )
     if p.returncode != 0:
@@ -1202,7 +1202,7 @@ def ytdlp_info(url: str) -> dict | None:
         p, _selected_args, _challenged = _run_ytdlp_provider_command(
             u,
             build_ytdlp_base_args(),
-            ["--skip-download", "-J"],
+            ["--no-check-formats", "--skip-download", "-J"],
             timeout=20,
         )
         if p.returncode != 0:

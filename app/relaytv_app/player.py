@@ -4385,8 +4385,34 @@ def _item_should_prefetch_stream(item: object) -> bool:
     )
 
 
-def _item_needs_metadata_prefetch(item: object) -> bool:
+def _item_supports_metadata_prefetch(item: object) -> bool:
     if not isinstance(item, dict):
+        return False
+    if bool(item.get("peer_hosted")):
+        return False
+    if (
+        item.get("jellyfin_item_id")
+        or item.get("plex_item_id")
+        or item.get("iptv_source_id")
+        or item.get("iptv_channel_id")
+        or item.get("upload_id")
+    ):
+        return False
+    url = str(item.get("url") or "").strip()
+    if not url or url in {
+        "https://plex.invalid/item",
+        "https://iptv.invalid/channel",
+        "https://jellyfin.invalid/item",
+    }:
+        return False
+    provider = str(item.get("provider") or provider_from_url(url) or "").strip().lower()
+    if provider in {"jellyfin", "plex", "iptv", "upload"}:
+        return False
+    return True
+
+
+def _item_needs_metadata_prefetch(item: object) -> bool:
+    if not _item_supports_metadata_prefetch(item):
         return False
     if bool(item.get("_metadata_lightweight")):
         return True
@@ -4514,6 +4540,104 @@ def _prefetch_queue_item_worker(item: dict[str, Any], url: str) -> None:
             _QUEUE_PREFETCH_INFLIGHT.discard(url)
 
 
+def _apply_enriched_metadata_to_active_playback(item: dict[str, Any], url: str) -> None:
+    if not isinstance(item, dict):
+        return
+    from . import playback_service
+
+    updated_now: dict[str, Any] | None = None
+    with state.SESSION_LOCK:
+        current_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        matched_now = bool(
+            isinstance(current_now, dict)
+            and playback_service.same_playback_item(
+                current_now,
+                item,
+                left_url=str(current_now.get("url") or ""),
+                right_url=url,
+            )
+        )
+        candidate_now = (
+            dict(current_now) if matched_now and isinstance(current_now, dict) else None
+        )
+        now_changed = False
+        if isinstance(candidate_now, dict):
+            new_title = str(item.get("title") or "").strip()
+            cur_title = str(candidate_now.get("title") or "").strip()
+            cur_url = str(candidate_now.get("url") or url or "").strip()
+            if (
+                new_title
+                and new_title != cur_url
+                and (
+                    not cur_title
+                    or cur_title == cur_url
+                    or bool(current_now.get("_metadata_lightweight"))
+                    or _is_generic_runtime_title(cur_title, cur_url)
+                )
+                and candidate_now.get("title") != new_title
+            ):
+                candidate_now["title"] = new_title
+                now_changed = True
+            for key in ("thumbnail", "thumbnail_local", "channel", "live_status"):
+                val = str(item.get(key) or "").strip()
+                if val and candidate_now.get(key) != val:
+                    candidate_now[key] = val
+                    now_changed = True
+            if bool(item.get("is_live")) and not bool(candidate_now.get("is_live")):
+                candidate_now["is_live"] = True
+                now_changed = True
+            if "_metadata_lightweight" in candidate_now:
+                candidate_now.pop("_metadata_lightweight", None)
+                now_changed = True
+            latest_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+            if (
+                latest_now is current_now
+                and isinstance(latest_now, dict)
+                and playback_service.same_playback_item(
+                    latest_now,
+                    item,
+                    left_url=str(latest_now.get("url") or ""),
+                    right_url=url,
+                )
+            ):
+                updated_now = candidate_now
+                if now_changed:
+                    playback_service.update_now_playing(updated_now)
+
+    history_targets: list[tuple[str, dict[str, Any]]] = []
+    item_history_id = str(item.get("history_id") or "").strip()
+    now_history_id = (
+        str(updated_now.get("history_id") or "").strip()
+        if isinstance(updated_now, dict)
+        else ""
+    )
+    if item_history_id:
+        item_source = (
+            updated_now
+            if isinstance(updated_now, dict) and now_history_id == item_history_id
+            else item
+        )
+        history_targets.append((item_history_id, item_source))
+    if (
+        isinstance(updated_now, dict)
+        and now_history_id
+        and now_history_id != item_history_id
+    ):
+        history_targets.append((now_history_id, updated_now))
+
+    for history_id, source in history_targets:
+        history_updates: dict[str, Any] = {}
+        for key in ("title", "thumbnail", "thumbnail_local", "channel"):
+            val = str(source.get(key) or "").strip()
+            if val:
+                history_updates[key] = val
+        if history_updates:
+            try:
+                state.history_update(history_id, history_updates)
+            except Exception:
+                pass
+
+
 def _prefetch_queue_item_metadata_worker(
     item: dict[str, Any], url: str, persist_queue: bool
 ) -> None:
@@ -4524,6 +4648,7 @@ def _prefetch_queue_item_metadata_worker(
                 state.persist_queue()
             except Exception:
                 pass
+        _apply_enriched_metadata_to_active_playback(item, url)
         debug_log(
             "player", f"queue metadata prefetch {'updated' if changed else 'skipped'} url={url!r}"
         )
@@ -4532,6 +4657,34 @@ def _prefetch_queue_item_metadata_worker(
     finally:
         with _QUEUE_METADATA_PREFETCH_LOCK:
             _QUEUE_METADATA_PREFETCH_INFLIGHT.discard(url)
+
+
+def prefetch_now_playing_metadata(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if not str(item.get("history_id") or "").strip():
+        return False
+    if not isinstance(state.NOW_PLAYING, dict):
+        return False
+    if not _item_needs_metadata_prefetch(item):
+        return False
+    url = str(item.get("url") or "").strip()
+    if not url:
+        return False
+    metadata_thread = None
+    with _QUEUE_METADATA_PREFETCH_LOCK:
+        if url not in _QUEUE_METADATA_PREFETCH_INFLIGHT:
+            _QUEUE_METADATA_PREFETCH_INFLIGHT.add(url)
+            metadata_thread = threading.Thread(
+                target=_prefetch_queue_item_metadata_worker,
+                args=(item, url, False),
+                daemon=True,
+                name="relaytv-now-playing-metadata-prefetch",
+            )
+    if metadata_thread is not None:
+        metadata_thread.start()
+        return True
+    return False
 
 
 def prefetch_queue_item_stream(item: object) -> bool:
@@ -6327,6 +6480,11 @@ def _play_item_owned(
 
     _require_owned("pre_watchdog")
     _arm_playback_start_watchdog(now)
+    if isinstance(item_or_text, dict):
+        try:
+            prefetch_now_playing_metadata(now)
+        except Exception:
+            pass
 
     debug_log(
         "player",

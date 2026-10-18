@@ -507,6 +507,9 @@ def _load_persisted_queue_item(item: dict) -> dict | None:
     out = _persistable_queue_item(item)
     if not isinstance(out, dict):
         return None
+    from .thumb_cache import sync_local_thumbnail
+
+    sync_local_thumbnail(out)
     queue_item_id(out, create=True)
     return out
 
@@ -553,6 +556,9 @@ def _load_persisted_history_item(item: dict) -> dict | None:
     out = _persistable_history_item(item)
     if not isinstance(out, dict):
         return None
+    from .thumb_cache import sync_local_thumbnail
+
+    sync_local_thumbnail(out)
     return out
 
 
@@ -999,7 +1005,13 @@ def _load_persisted_session() -> None:
         sp = sdata.get("session_position")
         SESSION_POSITION = float(sp) if sp is not None else None
         np = sdata.get("now_playing")
-        NOW_PLAYING = np if isinstance(np, dict) else None
+        if isinstance(np, dict):
+            from .thumb_cache import sync_local_thumbnail
+
+            sync_local_thumbnail(np)
+            NOW_PLAYING = np
+        else:
+            NOW_PLAYING = None
         pr = sdata.get("playback_runtime")
         if isinstance(pr, dict):
             state_val = pr.get("state")
