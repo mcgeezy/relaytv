@@ -4545,57 +4545,88 @@ def _apply_enriched_metadata_to_active_playback(item: dict[str, Any], url: str) 
         return
     from . import playback_service
 
-    current_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
-    matched_now = bool(
-        isinstance(current_now, dict)
-        and playback_service.same_playback_item(
-            current_now,
-            item,
-            left_url=str(current_now.get("url") or ""),
-            right_url=url,
-        )
-    )
-    updated_now = dict(current_now) if matched_now and isinstance(current_now, dict) else None
-    now_changed = False
-    if isinstance(updated_now, dict):
-        new_title = str(item.get("title") or "").strip()
-        cur_title = str(updated_now.get("title") or "").strip()
-        cur_url = str(updated_now.get("url") or url or "").strip()
-        if (
-            new_title
-            and new_title != cur_url
-            and (
-                not cur_title
-                or cur_title == cur_url
-                or bool(current_now.get("_metadata_lightweight"))
-                or _is_generic_runtime_title(cur_title, cur_url)
+    updated_now: dict[str, Any] | None = None
+    with state.SESSION_LOCK:
+        current_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+        matched_now = bool(
+            isinstance(current_now, dict)
+            and playback_service.same_playback_item(
+                current_now,
+                item,
+                left_url=str(current_now.get("url") or ""),
+                right_url=url,
             )
-            and updated_now.get("title") != new_title
-        ):
-            updated_now["title"] = new_title
-            now_changed = True
-        for key in ("thumbnail", "thumbnail_local", "channel", "live_status"):
-            val = str(item.get(key) or "").strip()
-            if val and updated_now.get(key) != val:
-                updated_now[key] = val
+        )
+        candidate_now = (
+            dict(current_now) if matched_now and isinstance(current_now, dict) else None
+        )
+        now_changed = False
+        if isinstance(candidate_now, dict):
+            new_title = str(item.get("title") or "").strip()
+            cur_title = str(candidate_now.get("title") or "").strip()
+            cur_url = str(candidate_now.get("url") or url or "").strip()
+            if (
+                new_title
+                and new_title != cur_url
+                and (
+                    not cur_title
+                    or cur_title == cur_url
+                    or bool(current_now.get("_metadata_lightweight"))
+                    or _is_generic_runtime_title(cur_title, cur_url)
+                )
+                and candidate_now.get("title") != new_title
+            ):
+                candidate_now["title"] = new_title
                 now_changed = True
-        if bool(item.get("is_live")) and not bool(updated_now.get("is_live")):
-            updated_now["is_live"] = True
-            now_changed = True
-        if "_metadata_lightweight" in updated_now:
-            updated_now.pop("_metadata_lightweight", None)
-            now_changed = True
-        if now_changed:
-            playback_service.update_now_playing(updated_now)
+            for key in ("thumbnail", "thumbnail_local", "channel", "live_status"):
+                val = str(item.get(key) or "").strip()
+                if val and candidate_now.get(key) != val:
+                    candidate_now[key] = val
+                    now_changed = True
+            if bool(item.get("is_live")) and not bool(candidate_now.get("is_live")):
+                candidate_now["is_live"] = True
+                now_changed = True
+            if "_metadata_lightweight" in candidate_now:
+                candidate_now.pop("_metadata_lightweight", None)
+                now_changed = True
+            latest_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
+            if (
+                latest_now is current_now
+                and isinstance(latest_now, dict)
+                and playback_service.same_playback_item(
+                    latest_now,
+                    item,
+                    left_url=str(latest_now.get("url") or ""),
+                    right_url=url,
+                )
+            ):
+                updated_now = candidate_now
+                if now_changed:
+                    playback_service.update_now_playing(updated_now)
 
-    history_id = str(
-        item.get("history_id")
-        or (updated_now.get("history_id") if isinstance(updated_now, dict) else "")
-        or ""
-    ).strip()
-    if history_id:
+    history_targets: list[tuple[str, dict[str, Any]]] = []
+    item_history_id = str(item.get("history_id") or "").strip()
+    now_history_id = (
+        str(updated_now.get("history_id") or "").strip()
+        if isinstance(updated_now, dict)
+        else ""
+    )
+    if item_history_id:
+        item_source = (
+            updated_now
+            if isinstance(updated_now, dict) and now_history_id == item_history_id
+            else item
+        )
+        history_targets.append((item_history_id, item_source))
+    if (
+        isinstance(updated_now, dict)
+        and now_history_id
+        and now_history_id != item_history_id
+    ):
+        history_targets.append((now_history_id, updated_now))
+
+    for history_id, source in history_targets:
         history_updates: dict[str, Any] = {}
-        source = updated_now if isinstance(updated_now, dict) else item
         for key in ("title", "thumbnail", "thumbnail_local", "channel"):
             val = str(source.get(key) or "").strip()
             if val:

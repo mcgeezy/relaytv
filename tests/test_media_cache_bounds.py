@@ -421,3 +421,200 @@ def test_now_playing_metadata_prefetch_enriches_active_playback_and_history(
     assert state.HISTORY[0]["thumbnail"] == thumb_url
     assert state.HISTORY[0]["thumbnail_local"] == thumb_cache.local_rel_path(tid)
     assert state.HISTORY[0]["channel"] == "The Reese Report"
+
+
+def test_now_playing_metadata_prefetch_does_not_overwrite_switched_playback(
+    thumb_env, monkeypatch
+) -> None:
+    from relaytv_app import player, state
+
+    url_a = "https://www.bitchute.com/video/wPdrOYMYZsnn/"
+    url_b = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    thumb_url = "https://static-3.bitchute.com/live/cover_images/rzUd1ovwJXug/wPdrOYMYZsnn_640x360.jpg"
+    tid = thumb_cache.thumb_id(thumb_url)
+    dst = thumb_cache.local_abs_path(tid)
+    with open(dst, "wb") as f:
+        f.write(b"\xff\xd8\xff\xd9")
+
+    now_a = {
+        "url": url_a,
+        "title": "Clip A",
+        "provider": "bitchute",
+        "thumbnail": None,
+        "thumbnail_local": None,
+        "channel": None,
+        "history_id": "hist-a",
+    }
+    now_b = {
+        "url": url_b,
+        "title": "Clip B",
+        "provider": "youtube",
+        "thumbnail": "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        "channel": "Channel B",
+        "history_id": "hist-b",
+    }
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(now_a), raising=False)
+    monkeypatch.setattr(
+        state,
+        "HISTORY",
+        [
+            {"history_id": "hist-b", "url": url_b, "title": "Clip B", "provider": "youtube"},
+            {"history_id": "hist-a", "url": url_a, "title": "Clip A", "provider": "bitchute"},
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(state, "persist_session", lambda: True)
+    monkeypatch.setattr(state, "_persist_history", lambda: True)
+    monkeypatch.setattr(
+        state,
+        "set_now_playing",
+        lambda updated: setattr(state, "NOW_PLAYING", updated),
+    )
+    monkeypatch.setattr(
+        resolver,
+        "ytdlp_info",
+        lambda requested_url: {
+            "title": "Clip A Full",
+            "thumbnail": thumb_url,
+            "channel": "Channel A",
+        },
+    )
+
+    entered_patch_window = threading.Event()
+    release_patch_window = threading.Event()
+    orig_generic = player._is_generic_runtime_title
+
+    def _blocking_generic_title(title: str | None, u: str | None) -> bool:
+        entered_patch_window.set()
+        assert release_patch_window.wait(timeout=2.0)
+        return orig_generic(title, u)
+
+    monkeypatch.setattr(player, "_is_generic_runtime_title", _blocking_generic_title)
+
+    worker = threading.Thread(
+        target=player._prefetch_queue_item_metadata_worker,
+        args=(dict(now_a), url_a, False),
+    )
+    worker.start()
+    assert entered_patch_window.wait(timeout=2.0)
+
+    # Playback switches to item B after _apply_enriched_metadata_to_active_playback
+    # matched item A, before it writes back to NOW_PLAYING.
+    state.NOW_PLAYING = dict(now_b)
+    release_patch_window.set()
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+
+    assert state.NOW_PLAYING is not None
+    assert state.NOW_PLAYING["history_id"] == "hist-b"
+    assert state.NOW_PLAYING["url"] == url_b
+    assert state.NOW_PLAYING["title"] == "Clip B"
+    assert state.NOW_PLAYING["channel"] == "Channel B"
+    # Item A's own history entry still receives its enriched metadata.
+    hist_a = next(h for h in state.HISTORY if h["history_id"] == "hist-a")
+    assert hist_a["thumbnail"] == thumb_url
+    assert hist_a["thumbnail_local"] == thumb_cache.local_rel_path(tid)
+    assert hist_a["channel"] == "Channel A"
+
+
+def test_now_playing_metadata_prefetch_updates_both_original_and_replayed_history_entries(
+    thumb_env, monkeypatch
+) -> None:
+    from relaytv_app import player, state
+
+    url = "https://www.bitchute.com/video/wPdrOYMYZsnn/"
+    thumb_url = "https://static-3.bitchute.com/live/cover_images/rzUd1ovwJXug/wPdrOYMYZsnn_640x360.jpg"
+    tid = thumb_cache.thumb_id(thumb_url)
+    dst = thumb_cache.local_abs_path(tid)
+    with open(dst, "wb") as f:
+        f.write(b"\xff\xd8\xff\xd9")
+
+    play_1 = {
+        "url": url,
+        "title": url,
+        "_metadata_lightweight": True,
+        "provider": "bitchute",
+        "thumbnail": None,
+        "thumbnail_local": None,
+        "channel": None,
+        "history_id": "hist-play-1",
+    }
+    play_2 = {
+        "url": url,
+        "title": "Custom Replay Title",
+        "provider": "bitchute",
+        "thumbnail": None,
+        "thumbnail_local": None,
+        "channel": None,
+        "history_id": "hist-play-2",
+    }
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(play_1), raising=False)
+    monkeypatch.setattr(
+        state,
+        "HISTORY",
+        [
+            {"history_id": "hist-play-1", "url": url, "title": url, "provider": "bitchute"},
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(state, "persist_session", lambda: True)
+    monkeypatch.setattr(state, "_persist_history", lambda: True)
+    monkeypatch.setattr(
+        state,
+        "set_now_playing",
+        lambda updated: setattr(state, "NOW_PLAYING", updated),
+    )
+
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
+
+    def _slow_ytdlp_info(requested_url: str):
+        lookup_started.set()
+        assert release_lookup.wait(timeout=2.0)
+        return {
+            "title": "Fetched BitChute Title",
+            "thumbnail": thumb_url,
+            "channel": "The Reese Report",
+        }
+
+    monkeypatch.setattr(resolver, "ytdlp_info", _slow_ytdlp_info)
+
+    worker = threading.Thread(
+        target=player._prefetch_queue_item_metadata_worker,
+        args=(dict(play_1), url, False),
+    )
+    worker.start()
+    assert lookup_started.wait(timeout=2.0)
+
+    # While play_1's lookup is in flight, the user replays the same URL as play_2.
+    state.HISTORY.insert(
+        0,
+        {
+            "history_id": "hist-play-2",
+            "url": url,
+            "title": "Custom Replay Title",
+            "provider": "bitchute",
+        },
+    )
+    state.NOW_PLAYING = dict(play_2)
+    release_lookup.set()
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+
+    assert state.NOW_PLAYING is not None
+    assert state.NOW_PLAYING["history_id"] == "hist-play-2"
+    assert state.NOW_PLAYING["title"] == "Custom Replay Title"
+    assert state.NOW_PLAYING["thumbnail"] == thumb_url
+    assert state.NOW_PLAYING["thumbnail_local"] == thumb_cache.local_rel_path(tid)
+    assert state.NOW_PLAYING["channel"] == "The Reese Report"
+
+    hist_1 = next(h for h in state.HISTORY if h["history_id"] == "hist-play-1")
+    hist_2 = next(h for h in state.HISTORY if h["history_id"] == "hist-play-2")
+    assert hist_1["title"] == "Fetched BitChute Title"
+    assert hist_1["thumbnail"] == thumb_url
+    assert hist_1["thumbnail_local"] == thumb_cache.local_rel_path(tid)
+    assert hist_1["channel"] == "The Reese Report"
+    assert hist_2["title"] == "Custom Replay Title"
+    assert hist_2["thumbnail"] == thumb_url
+    assert hist_2["thumbnail_local"] == thumb_cache.local_rel_path(tid)
+    assert hist_2["channel"] == "The Reese Report"

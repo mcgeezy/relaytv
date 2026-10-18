@@ -216,6 +216,11 @@ function createFixture(sharedStorage) {
       {season_id: 'sb-1', season_number: 1, title: 'Season 1'},
       {season_id: 'sb-2', season_number: 2, title: 'Season 2'},
     ],
+    'series-a-remake': [
+      {season_id: 'sar-1', season_number: 1, title: 'Season 1'},
+      {season_id: 'sar-2', season_number: 2, title: 'Season 2'},
+      {season_id: 'sar-3', season_number: 3, title: 'Season 3'},
+    ],
   };
 
   const context = vm.createContext({
@@ -375,6 +380,15 @@ test('clicking a TV series selects the last season that was browsed for that ser
   // User navigates back to the TV series list (which clears active series state).
   await vm.runInContext('loadJellyfinTvSeries(false)', f.context);
   assert.equal(vm.runInContext('__jfTvSeasonNumber', f.context), null);
+
+  // Another series with the exact same title but a distinct series_id must NOT inherit Season 3.
+  await vm.runInContext(
+    "loadJellyfinTvSeriesDetail('series-a-remake', {title: 'Severance'})",
+    f.context,
+  );
+  assert.equal(vm.runInContext('__jfTvSeasonNumber', f.context), 1);
+  assert.ok(f.requestedUrls.includes('/browse/tv/series/series-a-remake/episodes?season_number=1'));
+  await vm.runInContext('loadJellyfinTvSeries(false)', f.context);
 
   // User opens series-b: should default to Season 1 of series-b, not Season 3 from series-a.
   await vm.runInContext(

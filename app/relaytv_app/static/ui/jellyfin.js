@@ -390,12 +390,11 @@ function _jfResetBrowseScroll(){
 }
 
 function _jfNormalizeSeriesSeasonKeys(seriesId, title){
-  const keys = [];
   const sid = String(seriesId || '').trim();
-  if (sid) keys.push(`id:${sid}`);
+  if (sid) return [`id:${sid}`];
   const normTitle = String(title || '').trim().toLowerCase();
-  if (normTitle && normTitle !== 'series') keys.push(`title:${normTitle}`);
-  return keys;
+  if (normTitle && normTitle !== 'series') return [`title:${normTitle}`];
+  return [];
 }
 
 function _jfReadSavedSeasonMap(){
