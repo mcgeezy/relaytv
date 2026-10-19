@@ -40,6 +40,9 @@ function fixture(){
   const elements = new Map([
     ['seerrSearchInput', fakeElement()],
     ['seerrRequestFilter', fakeElement()],
+    ['seerrGrid', fakeElement()],
+    ['seerrMoreBtn', fakeElement()],
+    ['seerrBrowseStatus', fakeElement()],
   ]);
   const context = vm.createContext({
     AbortController,
@@ -69,9 +72,12 @@ function fixture(){
     _uiPushLayer(){},
   });
   vm.runInContext(SOURCE, context, {filename:'seerr.js'});
+  const realLoadSeerrBrowse = vm.runInContext('loadSeerrBrowse', context);
   vm.runInContext('loadSeerrBrowse = () => {};', context);
   return {
     context,
+    elements,
+    realLoadSeerrBrowse,
     timers,
     evaluate: source => vm.runInContext(source, context),
   };
@@ -170,4 +176,45 @@ test('request-user selector survives lookup failure and permits an intentional c
   assert.equal(result.retainedValue, '7');
   assert.equal(result.clearedValue, '');
   assert.deepEqual(result.options, ['', '7']);
+});
+
+test('multi-word search distinguishes upstream failure from zero matches', async() => {
+  const state = fixture();
+  const urls = [];
+  state.context.loadSeerrBrowse = state.realLoadSeerrBrowse;
+  state.evaluate('__seerrVisible = true; __seerrQuery = "the matrix";');
+
+  state.context.fetch = async url => {
+    urls.push(url);
+    return {
+      ok: false,
+      status: 502,
+      json: async() => ({detail: {message: 'Seerr returned an upstream error'}}),
+    };
+  };
+  await state.realLoadSeerrBrowse({append: false});
+  assert.equal(urls[0], '/seerr/search?query=the%20matrix&page=1');
+  assert.equal(
+    state.elements.get('seerrGrid').children[0].textContent,
+    'Search could not be completed.',
+  );
+  assert.equal(
+    state.elements.get('seerrBrowseStatus').textContent,
+    'Seerr returned an upstream error',
+  );
+
+  state.context.fetch = async url => {
+    urls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      json: async() => ({page: 1, total_pages: 1, total_results: 0, results: []}),
+    };
+  };
+  await state.realLoadSeerrBrowse({append: false});
+  assert.equal(
+    state.elements.get('seerrGrid').children[0].textContent,
+    'No matching movies or series.',
+  );
+  assert.equal(state.elements.get('seerrBrowseStatus').textContent, '0 results');
 });

@@ -133,6 +133,84 @@ def test_search_bounds_query_and_maps_unknown_future_status(monkeypatch) -> None
         raise AssertionError("blank search should fail")
 
 
+def test_search_multi_word_query_satisfies_seerr_openapi_reserved_char_validation(
+    monkeypatch,
+) -> None:
+    import json
+    import re
+    import urllib.parse
+
+    reserved_chars = re.compile(r"[:/?#\[\]@!$&'()*+,;=]")
+    observed_paths: list[str] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            observed_paths.append(self.path)
+            raw_query = urllib.parse.urlsplit(self.path).query
+            for pair in raw_query.split("&"):
+                _key, _sep, raw_val = pair.partition("=")
+                if reserved_chars.search(raw_val) or " " in raw_val:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(
+                        b'{"message":"Parameter \'query\' must be url encoded. '
+                        b'Its value may not contain reserved characters."}'
+                    )
+                    return
+            params = dict(urllib.parse.parse_qsl(raw_query))
+            body = json.dumps(
+                {
+                    "page": int(params.get("page") or 1),
+                    "totalPages": 1,
+                    "totalResults": 1,
+                    "results": [
+                        {
+                            "id": 603,
+                            "mediaType": "movie",
+                            "title": params.get("query") or "",
+                            "releaseDate": "1999-03-31",
+                            "mediaInfo": {"status": 5},
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        host, port = server.server_address
+        config = SeerrConfig(
+            enabled=True,
+            server_url=f"http://{host}:{port}",
+            api_key="server-secret",
+            shared_requests_enabled=False,
+            request_user_id=None,
+        )
+        monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+
+        result = seerr_service.search("The Matrix: Reloaded (2003)", 1)
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+    assert observed_paths == [
+        "/api/v1/search?query=The%20Matrix%3A%20Reloaded%20%282003%29&page=1"
+    ]
+    assert result["total_results"] == 1
+    assert result["results"][0]["title"] == "The Matrix: Reloaded (2003)"
+
+
 def test_tv_detail_is_a_small_stable_product_model(monkeypatch) -> None:
     _install_client(
         monkeypatch,

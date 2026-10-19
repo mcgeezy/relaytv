@@ -304,7 +304,7 @@ class SeerrClient:
                 if value is not None
             }
             if params:
-                url = f"{url}?{urllib.parse.urlencode(params)}"
+                url = f"{url}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
 
         payload = None
         request_headers = {

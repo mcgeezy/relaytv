@@ -141,6 +141,20 @@ def test_client_keeps_api_key_in_header_and_out_of_url() -> None:
     assert "super-secret" not in request.full_url
 
 
+def test_client_percent_encodes_spaces_and_reserved_query_characters() -> None:
+    opener = _RecordingOpener({"results": []})
+    client = seerr_client.SeerrClient(_config(), opener=opener)
+
+    client.get("/search", query={"query": "the matrix: reloaded (2003)", "page": 1})
+
+    request = opener.requests[0]
+    assert request.full_url == (
+        "https://seerr.example/base/api/v1/search"
+        "?query=the%20matrix%3A%20reloaded%20%282003%29&page=1"
+    )
+    assert "+" not in request.full_url
+
+
 def test_cross_origin_redirect_is_rejected_before_secret_can_move() -> None:
     handler = seerr_client._SameOriginRedirectHandler()
     request = urllib.request.Request(

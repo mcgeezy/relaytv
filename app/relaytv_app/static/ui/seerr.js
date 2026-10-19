@@ -190,7 +190,7 @@ function _seerrCard(item){
   return button;
 }
 
-function _seerrRender(){
+function _seerrRender(emptyText){
   const grid = document.getElementById('seerrGrid');
   const more = document.getElementById('seerrMoreBtn');
   if (!grid || !more) return;
@@ -198,7 +198,7 @@ function _seerrRender(){
   if (!__seerrItems.length) {
     const empty = document.createElement('div');
     empty.className = 'seerrEmpty';
-    empty.textContent = __seerrQuery ? 'No matching movies or series.' : 'Nothing to show yet.';
+    empty.textContent = emptyText || (__seerrQuery ? 'No matching movies or series.' : 'Nothing to show yet.');
     grid.appendChild(empty);
   } else {
     __seerrItems.forEach(item => grid.appendChild(_seerrCard(item)));
@@ -243,7 +243,10 @@ async function loadSeerrBrowse(options){
   } catch (error) {
     if (error && error.name === 'AbortError') return;
     if (serial !== __seerrRequestSerial) return;
-    if (!append) { __seerrItems = []; _seerrRender(); }
+    if (!append) {
+      __seerrItems = [];
+      _seerrRender(__seerrQuery ? 'Search could not be completed.' : 'Seerr could not be loaded.');
+    }
     _seerrSetStatus(error && error.message ? error.message : 'Seerr is unavailable.', true);
   } finally {
     if (__seerrBrowseController === controller) __seerrBrowseController = null;
