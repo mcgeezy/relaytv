@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/mcgeezy/relaytv/compare/v0.12.0...v0.12.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* enlarge Seerr search bar and tighten UI header spacing ([#165](https://github.com/mcgeezy/relaytv/issues/165)) ([43f1215](https://github.com/mcgeezy/relaytv/commit/43f1215bcd8a8df2445d325f24fa09d681d91772))
+* percent-encode Seerr search queries for multi-word terms ([#163](https://github.com/mcgeezy/relaytv/issues/163)) ([9784f01](https://github.com/mcgeezy/relaytv/commit/9784f0125324c070ac44d712e12e1d710ea73ba3))
+
 ## [0.12.0](https://github.com/mcgeezy/relaytv/compare/v0.11.2...v0.12.0) (2026-10-18)
 
 
