@@ -43,6 +43,7 @@ function fixture(){
     ['seerrGrid', fakeElement()],
     ['seerrMoreBtn', fakeElement()],
     ['seerrBrowseStatus', fakeElement()],
+    ['seerrConnection', fakeElement()],
   ]);
   const context = vm.createContext({
     AbortController,
@@ -217,4 +218,29 @@ test('multi-word search distinguishes upstream failure from zero matches', async
     'No matching movies or series.',
   );
   assert.equal(state.elements.get('seerrBrowseStatus').textContent, '0 results');
+});
+
+test('updateSeerrStatus hides Connected status badge unless caller_session is active', () => {
+  const state = fixture();
+  const connection = state.elements.get('seerrConnection');
+
+  state.evaluate(`updateSeerrStatus({
+    enabled: true,
+    configured: true,
+    reachable: true,
+    version: '2.5.2',
+    request_mode: 'shared_admin',
+  })`);
+  assert.equal(connection.classList.contains('hidden'), true);
+  assert.equal(connection.textContent, '');
+
+  state.evaluate(`updateSeerrStatus({
+    enabled: true,
+    configured: true,
+    reachable: true,
+    request_mode: 'caller_session',
+    caller_connected: false,
+  })`);
+  assert.equal(connection.classList.contains('hidden'), false);
+  assert.equal(connection.textContent, 'Connect account');
 });

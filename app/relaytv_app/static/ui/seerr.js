@@ -105,17 +105,19 @@ function updateSeerrStatus(status){
   const title = document.getElementById('seerrTitle');
   if (title) title.textContent = String(value.application_title || 'Seerr');
   if (connection) {
+    const showAccount = __seerrRequestMode === 'caller_session';
     const ready = __seerrEnabled && __seerrConfigured && !!value.reachable;
-    connection.classList.toggle('account', __seerrRequestMode === 'caller_session');
-    connection.classList.toggle('up', ready);
-    connection.classList.toggle('down', __seerrEnabled && !ready);
-    if (__seerrRequestMode === 'caller_session') {
+    connection.classList.toggle('hidden', !showAccount);
+    connection.classList.toggle('account', showAccount);
+    connection.classList.toggle('up', showAccount && ready);
+    connection.classList.toggle('down', showAccount && __seerrEnabled && !ready);
+    if (showAccount) {
       const identity = value.caller_identity || {};
       const name = String(identity.display_name || identity.username || 'Caller');
       connection.textContent = __seerrCallerConnected ? `${name} · Sign out` : 'Connect account';
       connection.title = __seerrCallerConnected ? 'Sign out of this browser’s Seerr session' : 'Connect this browser to Seerr';
     } else {
-      connection.textContent = !__seerrEnabled ? 'Disabled' : (ready ? `Connected${value.version ? ` · ${value.version}` : ''}` : (__seerrConfigured ? 'Unavailable' : 'Setup required'));
+      connection.textContent = '';
       connection.title = '';
     }
   }

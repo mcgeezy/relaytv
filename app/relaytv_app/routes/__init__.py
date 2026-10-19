@@ -4796,7 +4796,7 @@ def ui():
         <header class="seerrShellHead">
           <button id="seerrBackBtn" class="seerrBack" aria-label="Back to RelayTV"><span aria-hidden="true">←</span><span>Back</span></button>
           <div class="seerrIdentity"><span class="seerrMark" aria-hidden="true">✦</span><div><small>Discover and request</small><strong id="seerrTitle">Seerr</strong></div></div>
-          <button id="seerrConnection" class="seerrConnection" type="button" aria-live="polite">Checking…</button>
+          <button id="seerrConnection" class="seerrConnection hidden" type="button" aria-live="polite"></button>
         </header>
         <div class="seerrWorkspace">
           <nav class="seerrTabs" role="tablist" aria-label="Seerr sections">

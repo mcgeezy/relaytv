@@ -47,14 +47,14 @@
         radial-gradient(900px 520px at 90% 10%, rgba(180,120,255,.08), transparent 60%),
         radial-gradient(800px 600px at 50% 110%, rgba(120,255,190,.06), transparent 55%),
         linear-gradient(180deg, var(--bg0), var(--bg1));
-      padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
+      padding: 4px 14px max(16px, env(safe-area-inset-bottom));
     }
 
     .wrap{
       max-width: 920px;
       margin: 0 auto;
       display: grid;
-      gap: 14px;
+      gap: 10px;
     }
     /* Grid items refuse to shrink below min-content by default, so one long
        nowrap title would widen the shared column past the viewport. */
@@ -65,7 +65,7 @@
       align-items:center;
       justify-content:space-between;
       gap: 10px;
-      padding: 2px 2px 6px;
+      padding: 0 2px 2px;
     }
     .hdrBrand{
       display: flex;
@@ -2592,7 +2592,7 @@
    phone screen; only the queue scrolls below the fold. The now-playing
    header collapses into chips floating over the hero art. --- */
 @media (max-width: 520px){
-  .wrap{ gap: 12px; }
+  .wrap{ gap: 10px; }
   .topgrid{ gap: 12px; }
 
   .nowCard{ position: relative; padding: 12px; }
@@ -2643,7 +2643,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 10px 8px;
+    gap: 8px;
   }
   .hdrRight{
     display: contents;
