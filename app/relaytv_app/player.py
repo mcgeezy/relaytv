@@ -5704,6 +5704,29 @@ def _consume_mpv_queued_next_if_started(
             now_item["jellyfin_item_id"] = consumed.get("jellyfin_item_id")
         if consumed.get("jellyfin_media_source_id"):
             now_item["jellyfin_media_source_id"] = consumed.get("jellyfin_media_source_id")
+        if consumed.get("jellyfin_stream_mode"):
+            now_item["jellyfin_stream_mode"] = consumed.get("jellyfin_stream_mode")
+        if consumed.get("jellyfin_stream_reason"):
+            now_item["jellyfin_stream_reason"] = consumed.get("jellyfin_stream_reason")
+        if consumed.get("jellyfin_audio_stream_index") is not None:
+            now_item["jellyfin_audio_stream_index"] = consumed.get("jellyfin_audio_stream_index")
+        if consumed.get("jellyfin_subtitle_stream_index") is not None:
+            now_item["jellyfin_subtitle_stream_index"] = consumed.get(
+                "jellyfin_subtitle_stream_index"
+            )
+        if isinstance(consumed.get("audio_streams"), list):
+            now_item["audio_streams"] = list(consumed["audio_streams"])
+        if isinstance(consumed.get("subtitle_streams"), list):
+            now_item["subtitle_streams"] = list(consumed["subtitle_streams"])
+        for jf_key in (
+            "audio_language",
+            "subtitle_language",
+            "jellyfin_audio_language",
+            "jellyfin_subtitle_language",
+            "_jellyfin_metadata_user_id",
+        ):
+            if consumed.get(jf_key):
+                now_item[jf_key] = consumed.get(jf_key)
         if consumed.get("history_id"):
             now_item["history_id"] = consumed.get("history_id")
         if consumed.get("_resolved_source_url") == url and consumed.get("_resolved_stream"):
@@ -5711,6 +5734,40 @@ def _consume_mpv_queued_next_if_started(
             now_item["_resolved_stream"] = consumed.get("_resolved_stream")
             now_item["_resolved_audio"] = consumed.get("_resolved_audio") or ""
             now_item["_resolved_at"] = consumed.get("_resolved_at") or time.time()
+
+    if str(now_item.get("provider") or "").strip().lower() == "jellyfin" or now_item.get(
+        "jellyfin_item_id"
+    ):
+        now_item["provider"] = "jellyfin"
+        if not now_item.get("jellyfin_item_id"):
+            extracted_iid = str(jellyfin_receiver.extract_item_id_from_url(url) or "").strip()
+            if extracted_iid:
+                now_item["jellyfin_item_id"] = extracted_iid
+        if not now_item.get("jellyfin_media_source_id"):
+            extracted_msid = _extract_jellyfin_media_source_id_from_url(url)
+            if extracted_msid:
+                now_item["jellyfin_media_source_id"] = extracted_msid
+        if not now_item.get("jellyfin_stream_mode"):
+            now_item["jellyfin_stream_mode"] = "transcode" if ".m3u8" in url.lower() else "direct"
+        try:
+            from .integrations import jellyfin_service
+
+            if (
+                now_item.get("jellyfin_audio_stream_index") is None
+                or str(now_item.get("jellyfin_audio_stream_index")).strip() == ""
+            ):
+                extracted_audio_idx = jellyfin_service.extract_audio_stream_index_from_url(url)
+                if extracted_audio_idx:
+                    now_item["jellyfin_audio_stream_index"] = extracted_audio_idx
+            if (
+                now_item.get("jellyfin_subtitle_stream_index") is None
+                or str(now_item.get("jellyfin_subtitle_stream_index")).strip() == ""
+            ):
+                extracted_sub_idx = jellyfin_service.extract_subtitle_stream_index_from_url(url)
+                if extracted_sub_idx:
+                    now_item["jellyfin_subtitle_stream_index"] = extracted_sub_idx
+        except Exception:
+            pass
 
     try:
         pos = props.get("time-pos")
@@ -5725,6 +5782,21 @@ def _consume_mpv_queued_next_if_started(
     state.set_session_state("playing")
     state.set_pause_reason(None)
     _reset_mpv_up_next_state()
+    if str(now_item.get("provider") or "").strip().lower() == "jellyfin" and now_item.get(
+        "jellyfin_item_id"
+    ):
+        try:
+            from .integrations import jellyfin_service
+
+            jellyfin_service.apply_startup_stream_tracks(
+                audio_stream_index=now_item.get("jellyfin_audio_stream_index"),
+                subtitle_stream_index=now_item.get("jellyfin_subtitle_stream_index"),
+                expected_item_id=str(now_item["jellyfin_item_id"]),
+                playback_intent=current_playback_intent(),
+            )
+            jellyfin_service.emit_playback_start_hint()
+        except Exception:
+            pass
     _prime_mpv_up_next_from_queue(force=True)
     return True
 
@@ -6379,6 +6451,46 @@ def _play_item_owned(
         **(
             {"jellyfin_subtitle_stream_index": item.get("jellyfin_subtitle_stream_index")}
             if item.get("jellyfin_subtitle_stream_index") is not None
+            else {}
+        ),
+        **(
+            {"audio_streams": list(item["audio_streams"])}
+            if isinstance(item.get("audio_streams"), list)
+            else {}
+        ),
+        **(
+            {"subtitle_streams": list(item["subtitle_streams"])}
+            if isinstance(item.get("subtitle_streams"), list)
+            else {}
+        ),
+        **(
+            {"audio_language": item.get("audio_language")}
+            if item.get("audio_language")
+            else {}
+        ),
+        **(
+            {"subtitle_language": item.get("subtitle_language")}
+            if item.get("subtitle_language")
+            else {}
+        ),
+        **(
+            {"jellyfin_audio_language": item.get("jellyfin_audio_language")}
+            if item.get("jellyfin_audio_language")
+            else {}
+        ),
+        **(
+            {"jellyfin_subtitle_language": item.get("jellyfin_subtitle_language")}
+            if item.get("jellyfin_subtitle_language")
+            else {}
+        ),
+        **(
+            {"jellyfin_play_session_id": item.get("jellyfin_play_session_id")}
+            if item.get("jellyfin_play_session_id")
+            else {}
+        ),
+        **(
+            {"_jellyfin_metadata_user_id": item.get("_jellyfin_metadata_user_id")}
+            if item.get("_jellyfin_metadata_user_id")
             else {}
         ),
         **({"iptv_source_id": item.get("iptv_source_id")} if item.get("iptv_source_id") else {}),

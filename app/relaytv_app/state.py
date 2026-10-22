@@ -421,10 +421,14 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "history_id",
         "jellyfin_item_id",
         "jellyfin_media_source_id",
+        "jellyfin_stream_mode",
+        "jellyfin_stream_reason",
         "series_name",
         "type",
         "audio_language",
         "subtitle_language",
+        "jellyfin_audio_language",
+        "jellyfin_subtitle_language",
         "iptv_source_id",
         "iptv_channel_id",
         "plex_item_id",
@@ -440,6 +444,11 @@ def _persistable_queue_item(item: dict) -> dict | None:
         val = item.get(key)
         if isinstance(val, str) and val.strip():
             out[key] = val.strip()
+
+    for key in ("jellyfin_audio_stream_index", "jellyfin_subtitle_stream_index"):
+        val = item.get(key)
+        if val is not None and str(val).strip() != "":
+            out[key] = str(val).strip()
 
     for key in ("season_number", "episode_number", "year"):
         val = item.get(key)
