@@ -998,8 +998,9 @@ function _renderNowLanguageButton(st, np, hasNow){
 function _renderNowSubtitleButton(st, np, hasNow){
   const btn = document.getElementById('nowSubLangBtn');
   if (!btn) return;
-  const streamCount = Array.isArray(np && np.subtitle_streams) ? np.subtitle_streams.length : 0;
-  const show = !!(hasNow && _isNowPlayingJellyfin(np) && streamCount > 0);
+  const hasKnownStreams = Array.isArray(np && np.subtitle_streams);
+  const hasSubtitlesOrUnknown = !hasKnownStreams || np.subtitle_streams.length > 0;
+  const show = !!(hasNow && _isNowPlayingJellyfin(np) && hasSubtitlesOrUnknown);
   btn.classList.toggle('hidden', !show);
   btn.disabled = !show;
   btn.textContent = _labelNowSubtitleLanguage(np);

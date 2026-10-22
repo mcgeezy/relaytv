@@ -117,3 +117,54 @@ for (const button of ['setJfApplyBtn', 'settingsSaveBtn']) {
     assert.equal(f.requests[0].body.jellyfin_auth_mode, 'shared_api_key');
   });
 }
+
+test('_renderNowSubtitleButton shows for unknown or non-empty subtitle_streams and hides when known empty', () => {
+  const f = fixture();
+  const subBtn = f.element('nowSubLangBtn');
+  const nowHelpersStart = source.indexOf('function _looksLikeJellyfinMediaUrl(u)');
+  const nowHelpersEnd = source.indexOf('function youtubeIdFromUrl(u)', nowHelpersStart);
+  vm.runInContext(source.slice(nowHelpersStart, nowHelpersEnd), f.context);
+
+  // 1. Queue-advanced Jellyfin item before subtitle_streams is populated on NOW_PLAYING
+  f.context._renderNowSubtitleButton(
+    {playing: true},
+    {
+      provider: 'jellyfin',
+      jellyfin_item_id: 'fd21d371452f90b5e2ef6ef16b77801c',
+      url: 'http://jf.example/Videos/fd21d371452f90b5e2ef6ef16b77801c/stream?static=true',
+    },
+    true,
+  );
+  assert.equal(subBtn.classList.contains('hidden'), false);
+  assert.equal(subBtn.disabled, false);
+  assert.equal(subBtn.textContent, 'Subs');
+
+  // 2. Enriched Jellyfin item with subtitle streams and Subs: Off selected
+  f.context._renderNowSubtitleButton(
+    {playing: true},
+    {
+      provider: 'jellyfin',
+      jellyfin_item_id: 'fd21d371452f90b5e2ef6ef16b77801c',
+      jellyfin_subtitle_stream_index: '-1',
+      subtitle_language: 'off',
+      subtitle_streams: [{index: 3, language: 'eng'}],
+    },
+    true,
+  );
+  assert.equal(subBtn.classList.contains('hidden'), false);
+  assert.equal(subBtn.disabled, false);
+  assert.equal(subBtn.textContent, 'Subs: Off');
+
+  // 3. Enriched Jellyfin item known to have zero subtitle streams
+  f.context._renderNowSubtitleButton(
+    {playing: true},
+    {
+      provider: 'jellyfin',
+      jellyfin_item_id: 'fd21d371452f90b5e2ef6ef16b77801c',
+      subtitle_streams: [],
+    },
+    true,
+  );
+  assert.equal(subBtn.classList.contains('hidden'), true);
+  assert.equal(subBtn.disabled, true);
+});

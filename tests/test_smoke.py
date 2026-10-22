@@ -8732,3 +8732,90 @@ def test_qt_libmpv_disables_demuxer_buffer_donation(monkeypatch: pytest.MonkeyPa
     )
 
     assert ("demuxer-donate-buffer", "no") in opts
+
+
+def test_consume_mpv_queued_next_preserves_jellyfin_stream_fields_and_applies_startup_tracks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from relaytv_app.integrations import jellyfin_service
+
+    startup_calls: list[dict[str, object]] = []
+    start_hints: list[bool] = []
+    queued_url = (
+        "http://jf.local:8096/Videos/fd21d371452f90b5e2ef6ef16b77801c/stream"
+        "?static=true&api_key=tok&mediaSourceId=fd21d371452f90b5e2ef6ef16b77801c"
+        "&subtitleStreamIndex=-1"
+    )
+    queued_item = {
+        "url": queued_url,
+        "title": "Dune: Part Two",
+        "provider": "jellyfin",
+        "jellyfin_item_id": "fd21d371452f90b5e2ef6ef16b77801c",
+        "jellyfin_media_source_id": "fd21d371452f90b5e2ef6ef16b77801c",
+        "jellyfin_stream_mode": "direct",
+        "jellyfin_stream_reason": "direct_ok",
+        "jellyfin_audio_stream_index": "1",
+        "jellyfin_subtitle_stream_index": "-1",
+    }
+
+    monkeypatch.setattr(player, "_is_playing", lambda: True)
+    monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
+    monkeypatch.setattr(
+        player.state,
+        "NOW_PLAYING",
+        {
+            "url": "http://jf.local:8096/Videos/prev/stream?static=true",
+            "title": "Dune",
+            "provider": "jellyfin",
+            "jellyfin_item_id": "prev",
+            "resume_pos": 120.0,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(player.state, "QUEUE", [dict(queued_item)], raising=False)
+    monkeypatch.setattr(
+        player,
+        "_MPV_UPNEXT_ARMED_ID",
+        player._queue_item_identity(player.state.QUEUE[0]),
+        raising=False,
+    )
+    monkeypatch.setattr(player, "_MPV_UPNEXT_ARMED_URL", queued_url, raising=False)
+    monkeypatch.setattr(player.state, "persist_queue_payload", lambda payload: True)
+    monkeypatch.setattr(player.state, "persist_history", lambda: True)
+    monkeypatch.setattr(player.state, "persist_session", lambda: True)
+    monkeypatch.setattr(player, "update_history_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(player, "_emit_jellyfin_stopped_from_now", lambda now: None)
+    monkeypatch.setattr(player, "_prime_mpv_up_next_from_queue", lambda force=False: None)
+    monkeypatch.setattr(
+        jellyfin_service,
+        "apply_startup_stream_tracks",
+        lambda **kwargs: startup_calls.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        jellyfin_service,
+        "emit_playback_start_hint",
+        lambda: start_hints.append(True),
+    )
+
+    consumed = player._consume_mpv_queued_next_if_started(
+        {"playlist-pos": 1, "time-pos": 1.2, "path": queued_url},
+        force_playlist_advance=True,
+    )
+
+    assert consumed is True
+    now = player.state.NOW_PLAYING
+    assert isinstance(now, dict)
+    assert now["jellyfin_item_id"] == "fd21d371452f90b5e2ef6ef16b77801c"
+    assert now["jellyfin_stream_mode"] == "direct"
+    assert now["jellyfin_stream_reason"] == "direct_ok"
+    assert now["jellyfin_audio_stream_index"] == "1"
+    assert now["jellyfin_subtitle_stream_index"] == "-1"
+    assert startup_calls == [
+        {
+            "audio_stream_index": "1",
+            "subtitle_stream_index": "-1",
+            "expected_item_id": "fd21d371452f90b5e2ef6ef16b77801c",
+            "playback_intent": player.current_playback_intent(),
+        }
+    ]
+    assert start_hints == [True]

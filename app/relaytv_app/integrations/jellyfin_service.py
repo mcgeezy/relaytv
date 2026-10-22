@@ -1271,7 +1271,7 @@ def retarget_queue_stream_preferences() -> int:
     if not snapshot:
         return 0
 
-    updates: dict[str, tuple[str, str, str]] = {}
+    updates: dict[str, tuple[str, str, str, str, str]] = {}
     for entry in snapshot:
         if not isinstance(entry, dict):
             continue
@@ -1299,8 +1299,24 @@ def retarget_queue_stream_preferences() -> int:
             ]
         )
         next_url = apply_media_source_param(next_url, media_source_id=media_source_id)
-        if next_url and next_url != raw_url:
-            updates[state.queue_item_id(entry)] = (raw_url, next_url, item_id)
+        if next_url and (
+            next_url != raw_url
+            or (
+                pref_audio_idx != ""
+                and str(entry.get("jellyfin_audio_stream_index") or "") != pref_audio_idx
+            )
+            or (
+                pref_sub_idx != ""
+                and str(entry.get("jellyfin_subtitle_stream_index") or "") != pref_sub_idx
+            )
+        ):
+            updates[state.queue_item_id(entry)] = (
+                raw_url,
+                next_url,
+                item_id,
+                pref_audio_idx,
+                pref_sub_idx,
+            )
 
     if not updates:
         return 0
@@ -1315,6 +1331,10 @@ def retarget_queue_stream_preferences() -> int:
             out_entry["url"] = update[1]
             if update[2]:
                 out_entry["jellyfin_item_id"] = update[2]
+            if update[3] != "":
+                out_entry["jellyfin_audio_stream_index"] = update[3]
+            if update[4] != "":
+                out_entry["jellyfin_subtitle_stream_index"] = update[4]
             state.QUEUE[i] = out_entry
             changed += 1
     if not changed:
@@ -1381,26 +1401,34 @@ def enrich_now_stream_metadata(
     now: dict,
     *,
     detail: dict | None = None,
-    audio_stream_index: str = "",
-    subtitle_stream_index: str = "",
+    audio_stream_index: str | int | None = "",
+    subtitle_stream_index: str | int | None = "",
 ) -> dict:
     out = dict(now or {})
     meta = detail if isinstance(detail, dict) else {}
-    audio_streams = meta.get("audio_streams") if isinstance(meta.get("audio_streams"), list) else []
-    subtitle_streams = (
-        meta.get("subtitle_streams") if isinstance(meta.get("subtitle_streams"), list) else []
-    )
-    if audio_streams:
+    has_audio_streams = isinstance(meta.get("audio_streams"), list)
+    has_subtitle_streams = isinstance(meta.get("subtitle_streams"), list)
+    audio_streams = meta.get("audio_streams") if has_audio_streams else []
+    subtitle_streams = meta.get("subtitle_streams") if has_subtitle_streams else []
+    if has_audio_streams:
         out["audio_streams"] = audio_streams
-    if subtitle_streams:
+    if has_subtitle_streams:
         out["subtitle_streams"] = subtitle_streams
 
-    selected_audio = str(audio_stream_index or out.get("jellyfin_audio_stream_index") or "").strip()
+    raw_audio_idx = (
+        audio_stream_index
+        if audio_stream_index is not None and str(audio_stream_index).strip() != ""
+        else out.get("jellyfin_audio_stream_index")
+    )
+    selected_audio = "" if raw_audio_idx is None else str(raw_audio_idx).strip()
     if not selected_audio:
         selected_audio = extract_audio_stream_index_from_url(str(out.get("url") or ""))
-    selected_sub = str(
-        subtitle_stream_index or out.get("jellyfin_subtitle_stream_index") or ""
-    ).strip()
+    raw_sub_idx = (
+        subtitle_stream_index
+        if subtitle_stream_index is not None and str(subtitle_stream_index).strip() != ""
+        else out.get("jellyfin_subtitle_stream_index")
+    )
+    selected_sub = "" if raw_sub_idx is None else str(raw_sub_idx).strip()
     if not selected_sub:
         selected_sub = extract_subtitle_stream_index_from_url(str(out.get("url") or ""))
 
@@ -1743,6 +1771,33 @@ def apply_startup_stream_tracks(
     """Best-effort track selection owned by one playback generation."""
     intent = player.current_playback_intent() if playback_intent is None else playback_intent
     expected_id = canonical_item_id(expected_item_id)
+
+    def _current_item() -> dict | None:
+        cur = state.NOW_PLAYING
+        if not isinstance(cur, dict):
+            return None
+        if expected_id and canonical_item_id(cur.get("jellyfin_item_id")) != expected_id:
+            return None
+        return cur
+
+    def _needs_stream_detail(cur: dict | None) -> bool:
+        if not isinstance(cur, dict):
+            return False
+        return not isinstance(cur.get("audio_streams"), list) or not isinstance(
+            cur.get("subtitle_streams"), list
+        )
+
+    cur_snapshot = _current_item() or {}
+    cur_url = str(cur_snapshot.get("url") or "").strip()
+    if audio_stream_index is None or str(audio_stream_index).strip() == "":
+        extracted_audio = extract_audio_stream_index_from_url(cur_url)
+        if extracted_audio:
+            audio_stream_index = extracted_audio
+    if subtitle_stream_index is None or str(subtitle_stream_index).strip() == "":
+        extracted_sub = extract_subtitle_stream_index_from_url(cur_url)
+        if extracted_sub:
+            subtitle_stream_index = extracted_sub
+
     target_audio_idx: int | None = None
     if audio_stream_index is not None and str(audio_stream_index).strip() not in (
         "",
@@ -1787,45 +1842,70 @@ def apply_startup_stream_tracks(
         else:
             target_sub_lang = sub_pref
 
-    if (
+    has_track_target = not (
         target_audio_idx is None
         and not target_audio_lang
         and target_sub_idx is None
         and not target_sub_lang
         and not sub_off
-    ):
+    )
+    if not has_track_target and not _needs_stream_detail(cur_snapshot):
         return
 
-    def _current_item() -> dict | None:
-        cur = state.NOW_PLAYING
-        if not isinstance(cur, dict):
-            return None
-        if expected_id and canonical_item_id(cur.get("jellyfin_item_id")) != expected_id:
-            return None
-        return cur
+    def _fetch_stream_detail(cur: dict | None) -> dict:
+        if not _needs_stream_detail(cur):
+            return cur if isinstance(cur, dict) else {}
+        item_id_for_detail = str(
+            (cur or {}).get("jellyfin_item_id") or expected_item_id or ""
+        ).strip()
+        if not item_id_for_detail:
+            return cur if isinstance(cur, dict) else {}
+        user_id = str((cur or {}).get("_jellyfin_metadata_user_id") or "").strip()
+        try:
+            fetched = (
+                jellyfin_receiver.get_item_detail(item_id_for_detail, user_id_override=user_id)
+                if user_id
+                else jellyfin_receiver.get_item_detail(item_id_for_detail)
+            )
+        except Exception:
+            fetched = {}
+        if isinstance(fetched, dict) and fetched:
+            merged = dict(cur or {})
+            for key in ("audio_streams", "subtitle_streams", "audio_language", "subtitle_language"):
+                if key in fetched and key not in merged:
+                    merged[key] = fetched[key]
+            return merged
+        return cur if isinstance(cur, dict) else {}
 
-    def _apply() -> None:
+    def _apply(detail_source: dict | None = None) -> None:
         cur = _current_item()
         if cur is None:
             return
-        # The server has already selected/remapped tracks for conversions.
-        if str(cur.get("jellyfin_stream_mode") or "").lower() in {"transcode", "remux"}:
+        converted = str(cur.get("jellyfin_stream_mode") or "").lower() in {"transcode", "remux"}
+        if converted and not _needs_stream_detail(cur):
             return
-        if target_audio_idx is not None or target_audio_lang:
-            try_set_mpv_audio_track(
-                preferred_stream_index=target_audio_idx,
-                language=target_audio_lang,
-            )
-        if sub_off:
-            try_set_mpv_subtitle_track(off=True)
-        elif target_sub_idx is not None or target_sub_lang:
-            try_set_mpv_subtitle_track(
-                preferred_stream_index=target_sub_idx,
-                language=target_sub_lang,
-            )
+        # The server has already selected/remapped tracks for conversions.
+        if not converted:
+            if target_audio_idx is not None or target_audio_lang:
+                try_set_mpv_audio_track(
+                    preferred_stream_index=target_audio_idx,
+                    language=target_audio_lang,
+                )
+            if sub_off:
+                try_set_mpv_subtitle_track(off=True)
+            elif target_sub_idx is not None or target_sub_lang:
+                try_set_mpv_subtitle_track(
+                    preferred_stream_index=target_sub_idx,
+                    language=target_sub_lang,
+                )
+        detail_for_enrich = dict(cur)
+        if isinstance(detail_source, dict):
+            for key in ("audio_streams", "subtitle_streams", "audio_language", "subtitle_language"):
+                if key in detail_source and key not in detail_for_enrich:
+                    detail_for_enrich[key] = detail_source[key]
         updated_now = enrich_now_stream_metadata(
             dict(cur),
-            detail=cur,
+            detail=detail_for_enrich,
             audio_stream_index=target_audio_idx,
             subtitle_stream_index="-1" if sub_off else target_sub_idx,
         )
@@ -1843,14 +1923,31 @@ def apply_startup_stream_tracks(
                 isinstance(t, dict) and str(t.get("type") or "").strip().lower() == "audio"
                 for t in tl
             ):
+                if not player.playback_intent_current(intent) or _current_item() is None:
+                    return
+                detail_source = _fetch_stream_detail(_current_item())
                 # Poll outside locks, then atomically recheck ownership and
                 # apply local changes against Play/Stop/Close and publication.
                 try:
-                    player.apply_playback_intent(intent, _apply)
+                    player.apply_playback_intent(intent, lambda: _apply(detail_source))
                 except Exception:
                     logger.debug("jellyfin_startup_tracks_failed", exc_info=True)
                 return
             time.sleep(delay_sec)
+        if not player.playback_intent_current(intent):
+            return
+        cur_after = _current_item()
+        if cur_after is None or not _needs_stream_detail(cur_after):
+            return
+        detail_source = _fetch_stream_detail(cur_after)
+        if not isinstance(detail_source.get("audio_streams"), list) and not isinstance(
+            detail_source.get("subtitle_streams"), list
+        ):
+            return
+        try:
+            player.apply_playback_intent(intent, lambda: _apply(detail_source))
+        except Exception:
+            logger.debug("jellyfin_startup_tracks_failed", exc_info=True)
 
     if run_async:
         try:
@@ -3355,10 +3452,27 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                                     if isinstance(q_item, dict) and q_item.get("thumbnail")
                                     else {}
                                 ),
+                                **(
+                                    {"thumbnail_local": q_item.get("thumbnail_local")}
+                                    if isinstance(q_item, dict) and q_item.get("thumbnail_local")
+                                    else {}
+                                ),
                                 **({"jellyfin_item_id": item_id} if item_id else {}),
                                 **(
                                     {"jellyfin_media_source_id": source_media_source_id}
                                     if source_media_source_id
+                                    else {}
+                                ),
+                                **(
+                                    {"jellyfin_audio_stream_index": audio_stream_index}
+                                    if audio_stream_index is not None
+                                    and str(audio_stream_index) != ""
+                                    else {}
+                                ),
+                                **(
+                                    {"jellyfin_subtitle_stream_index": subtitle_stream_index}
+                                    if subtitle_stream_index is not None
+                                    and str(subtitle_stream_index) != ""
                                     else {}
                                 ),
                                 "jellyfin_stream_mode": str(selected_queue.get("mode") or ""),
@@ -3427,6 +3541,16 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                             **(
                                 {"jellyfin_media_source_id": q_media_source_id}
                                 if q_media_source_id
+                                else {}
+                            ),
+                            **(
+                                {"jellyfin_audio_stream_index": q_audio_idx}
+                                if q_audio_idx is not None and str(q_audio_idx) != ""
+                                else {}
+                            ),
+                            **(
+                                {"jellyfin_subtitle_stream_index": q_sub_idx}
+                                if q_sub_idx is not None and str(q_sub_idx) != ""
                                 else {}
                             ),
                             "jellyfin_stream_mode": str(selected_q.get("mode") or ""),
@@ -3710,6 +3834,16 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                             **(
                                 {"jellyfin_media_source_id": q_media_source_id}
                                 if q_media_source_id
+                                else {}
+                            ),
+                            **(
+                                {"jellyfin_audio_stream_index": q_audio_idx}
+                                if q_audio_idx is not None and str(q_audio_idx) != ""
+                                else {}
+                            ),
+                            **(
+                                {"jellyfin_subtitle_stream_index": q_sub_idx}
+                                if q_sub_idx is not None and str(q_sub_idx) != ""
                                 else {}
                             ),
                             "jellyfin_stream_mode": str(selected_q.get("mode") or ""),

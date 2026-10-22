@@ -1562,3 +1562,83 @@ def test_enrich_converted_stream_preserves_original_track_indexes(monkeypatch, m
     assert enriched["jellyfin_subtitle_stream_index"] == "3"
     assert enriched["audio_language"] == "eng"
     assert enriched["subtitle_language"] == "eng"
+
+
+def test_enrich_now_stream_metadata_preserves_explicit_empty_stream_lists() -> None:
+    now = {"provider": "jellyfin", "jellyfin_item_id": "item-empty"}
+    enriched_empty = jellyfin_service.enrich_now_stream_metadata(
+        now,
+        detail={"audio_streams": [], "subtitle_streams": []},
+    )
+    assert enriched_empty["audio_streams"] == []
+    assert enriched_empty["subtitle_streams"] == []
+
+    enriched_unknown = jellyfin_service.enrich_now_stream_metadata(now, detail={})
+    assert "audio_streams" not in enriched_unknown
+    assert "subtitle_streams" not in enriched_unknown
+
+
+def test_apply_startup_stream_tracks_enriches_queue_item_metadata_and_url_indices(
+    monkeypatch,
+) -> None:
+    set_calls: list[tuple[str, object]] = []
+    published: list[dict[str, object]] = []
+    track_list = [
+        {"id": 1, "type": "audio", "lang": "eng", "ff-index": 1, "selected": True},
+        {"id": 2, "type": "sub", "lang": "eng", "ff-index": 3, "selected": True},
+    ]
+    monkeypatch.setattr(
+        player,
+        "mpv_get",
+        lambda key: list(track_list) if key == "track-list" else None,
+    )
+    monkeypatch.setattr(
+        player,
+        "mpv_get_many",
+        lambda keys: {
+            "track-list": list(track_list),
+            "sid": "no",
+            "sub-visibility": False,
+        },
+    )
+    monkeypatch.setattr(player, "mpv_set", lambda key, val: set_calls.append((key, val)))
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "get_item_detail",
+        lambda item_id, refresh=False, user_id_override="": {
+            "item_id": item_id,
+            "audio_streams": [{"index": 1, "language": "eng", "display": "English"}],
+            "subtitle_streams": [{"index": 3, "language": "eng", "display": "English"}],
+        },
+    )
+    now_initial = {
+        "provider": "jellyfin",
+        "jellyfin_item_id": "fd21d371452f90b5e2ef6ef16b77801c",
+        "url": "http://jf.local/Videos/fd21d371452f90b5e2ef6ef16b77801c/stream?static=true&subtitleStreamIndex=-1",
+        "mode": "auto_next_queue",
+    }
+    monkeypatch.setattr(state, "NOW_PLAYING", dict(now_initial))
+    monkeypatch.setattr(
+        playback_service,
+        "update_now_playing",
+        lambda updated: published.append(dict(updated)),
+    )
+    intent = player.claim_playback_intent()
+
+    jellyfin_service.apply_startup_stream_tracks(
+        expected_item_id="fd21d371452f90b5e2ef6ef16b77801c",
+        playback_intent=intent,
+        run_async=False,
+    )
+
+    assert ("sid", "no") in set_calls
+    assert len(published) == 1
+    assert published[0]["subtitle_streams"] == [
+        {"index": 3, "language": "eng", "display": "English"}
+    ]
+    assert published[0]["audio_streams"] == [
+        {"index": 1, "language": "eng", "display": "English"}
+    ]
+    assert published[0]["jellyfin_subtitle_stream_index"] == "-1"
+    assert published[0]["subtitle_language"] == "off"

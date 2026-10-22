@@ -670,6 +670,23 @@ def preserve_current_to_queue_front(
         preserved["jellyfin_item_id"] = now.get("jellyfin_item_id")
     if isinstance(now.get("jellyfin_media_source_id"), str) and now.get("jellyfin_media_source_id"):
         preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
+    for jf_str_key in (
+        "jellyfin_stream_mode",
+        "jellyfin_stream_reason",
+        "audio_language",
+        "subtitle_language",
+        "jellyfin_audio_language",
+        "jellyfin_subtitle_language",
+    ):
+        if isinstance(now.get(jf_str_key), str) and now.get(jf_str_key):
+            preserved[jf_str_key] = now[jf_str_key]
+    for jf_idx_key in ("jellyfin_audio_stream_index", "jellyfin_subtitle_stream_index"):
+        if now.get(jf_idx_key) is not None and str(now.get(jf_idx_key)).strip() != "":
+            preserved[jf_idx_key] = now[jf_idx_key]
+    if isinstance(now.get("audio_streams"), list):
+        preserved["audio_streams"] = list(now["audio_streams"])
+    if isinstance(now.get("subtitle_streams"), list):
+        preserved["subtitle_streams"] = list(now["subtitle_streams"])
     if isinstance(now.get("history_id"), str) and now.get("history_id"):
         preserved["history_id"] = now.get("history_id")
     if is_iptv:
