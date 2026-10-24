@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/mcgeezy/relaytv/compare/v0.12.1...v0.12.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* preserve Jellyfin subtitle and audio stream metadata across queue transitions ([#166](https://github.com/mcgeezy/relaytv/issues/166)) ([9f6dfe7](https://github.com/mcgeezy/relaytv/commit/9f6dfe7a583bb371734afd9bbfe1518759d24ab9))
+
 ## [0.12.1](https://github.com/mcgeezy/relaytv/compare/v0.12.0...v0.12.1) (2026-10-19)
 
 
