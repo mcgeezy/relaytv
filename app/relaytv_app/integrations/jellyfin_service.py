@@ -1877,7 +1877,7 @@ def apply_startup_stream_tracks(
             return merged
         return cur if isinstance(cur, dict) else {}
 
-    def _apply(detail_source: dict | None = None) -> None:
+    def _apply(detail_source: dict | None = None, *, select_tracks: bool = True) -> None:
         cur = _current_item()
         if cur is None:
             return
@@ -1885,7 +1885,7 @@ def apply_startup_stream_tracks(
         if converted and not _needs_stream_detail(cur):
             return
         # The server has already selected/remapped tracks for conversions.
-        if not converted:
+        if select_tracks and not converted:
             if target_audio_idx is not None or target_audio_lang:
                 try_set_mpv_audio_track(
                     preferred_stream_index=target_audio_idx,
@@ -1906,8 +1906,8 @@ def apply_startup_stream_tracks(
         updated_now = enrich_now_stream_metadata(
             dict(cur),
             detail=detail_for_enrich,
-            audio_stream_index=target_audio_idx,
-            subtitle_stream_index="-1" if sub_off else target_sub_idx,
+            audio_stream_index=target_audio_idx if select_tracks else None,
+            subtitle_stream_index=("-1" if sub_off else target_sub_idx) if select_tracks else None,
         )
         playback_service.update_now_playing(updated_now)
 
@@ -1925,15 +1925,20 @@ def apply_startup_stream_tracks(
             ):
                 if not player.playback_intent_current(intent) or _current_item() is None:
                     return
-                detail_source = _fetch_stream_detail(_current_item())
-                # Poll outside locks, then atomically recheck ownership and
-                # apply local changes against Play/Stop/Close and publication.
+                # Apply startup choices before network metadata work. After the
+                # fetch, enrichment must use current selections rather than
+                # replaying startup choices over an in-place user track switch.
                 try:
-                    player.apply_playback_intent(intent, lambda: _apply(detail_source))
+                    if not player.apply_playback_intent(intent, _apply):
+                        return
                 except Exception:
                     logger.debug("jellyfin_startup_tracks_failed", exc_info=True)
+                _enrich_missing_detail()
                 return
             time.sleep(delay_sec)
+        _enrich_missing_detail()
+
+    def _enrich_missing_detail() -> None:
         if not player.playback_intent_current(intent):
             return
         cur_after = _current_item()
@@ -1945,7 +1950,7 @@ def apply_startup_stream_tracks(
         ):
             return
         try:
-            player.apply_playback_intent(intent, lambda: _apply(detail_source))
+            player.apply_playback_intent(intent, lambda: _apply(detail_source, select_tracks=False))
         except Exception:
             logger.debug("jellyfin_startup_tracks_failed", exc_info=True)
 

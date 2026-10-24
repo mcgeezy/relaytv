@@ -1633,12 +1633,94 @@ def test_apply_startup_stream_tracks_enriches_queue_item_metadata_and_url_indice
     )
 
     assert ("sid", "no") in set_calls
-    assert len(published) == 1
-    assert published[0]["subtitle_streams"] == [
+    assert len(published) == 2
+    assert published[-1]["subtitle_streams"] == [
         {"index": 3, "language": "eng", "display": "English"}
     ]
-    assert published[0]["audio_streams"] == [
+    assert published[-1]["audio_streams"] == [
         {"index": 1, "language": "eng", "display": "English"}
     ]
-    assert published[0]["jellyfin_subtitle_stream_index"] == "-1"
-    assert published[0]["subtitle_language"] == "off"
+    assert published[-1]["jellyfin_subtitle_stream_index"] == "-1"
+    assert published[-1]["subtitle_language"] == "off"
+
+
+@pytest.mark.parametrize("track", ["audio", "subtitle"])
+def test_startup_metadata_fetch_preserves_in_place_track_switch(monkeypatch, track):
+    entered, release = threading.Event(), threading.Event()
+    writes, writes_at_fetch, errors = [], [], []
+    tracks = [
+        {"id": 1, "type": "audio", "lang": "jpn", "ff-index": 1, "selected": True},
+        {"id": 2, "type": "audio", "lang": "eng", "ff-index": 2, "selected": False},
+        {"id": 3, "type": "sub", "lang": "eng", "ff-index": 3, "selected": False},
+    ]
+    props = {"track-list": tracks, "sid": "no", "sub-visibility": False}
+    detail = {
+        "audio_streams": [{"index": 1, "language": "jpn"}, {"index": 2, "language": "eng"}],
+        "subtitle_streams": [{"index": 3, "language": "eng"}],
+    }
+
+    def fetch(*args, **kwargs):
+        if threading.current_thread() is worker:
+            writes_at_fetch.extend(writes)
+            entered.set()
+            assert release.wait(5)
+        return detail
+
+    def set_property(key, value):
+        writes.append((key, value))
+        props[key] = value
+        if key in {"aid", "sid"}:
+            for row in tracks:
+                if row["type"] == ("audio" if key == "aid" else "sub"):
+                    row["selected"] = row["id"] == value
+
+    monkeypatch.setattr(player, "mpv_get", lambda key: props.get(key))
+    monkeypatch.setattr(player, "mpv_get_many", lambda keys: {key: props.get(key) for key in keys})
+    monkeypatch.setattr(player, "mpv_set", set_property)
+    monkeypatch.setattr(state, "get_settings", lambda: {})
+    monkeypatch.setattr(state, "update_settings", lambda *args: None)
+    monkeypatch.setattr(jellyfin_service.runtime_config, "set_value", lambda *args: None)
+    monkeypatch.setattr(jellyfin_service, "retarget_queue_stream_preferences", lambda: 0)
+    monkeypatch.setattr(jellyfin_service, "_capture_switch_position", lambda now: (0, False, None))
+    monkeypatch.setattr(jellyfin_service, "emit_progress_hint", lambda: None)
+    monkeypatch.setattr(jellyfin_receiver, "get_item_detail", fetch)
+    monkeypatch.setattr(
+        state,
+        "NOW_PLAYING",
+        {
+            "provider": "jellyfin",
+            "jellyfin_item_id": "item1",
+            "url": "http://jf/Videos/item1/stream?audioStreamIndex=1&subtitleStreamIndex=-1",
+        },
+    )
+    monkeypatch.setattr(
+        playback_service, "update_now_playing", lambda now: setattr(state, "NOW_PLAYING", now)
+    )
+    intent = player.claim_playback_intent()
+
+    def run():
+        try:
+            jellyfin_service.apply_startup_stream_tracks(
+                expected_item_id="item1", playback_intent=intent, run_async=False
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        switch = getattr(jellyfin_service, f"switch_{track}_track")
+        requested_index = 2 if track == "audio" else 3
+        result = switch(requested_index, server_status={})
+        assert result[f"current_{track}_stream_index"] == requested_index
+        writes_after_switch = list(writes)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert writes == writes_after_switch  # Metadata completion must never select tracks again.
+    assert state.NOW_PLAYING[f"jellyfin_{track}_stream_index"] == str(requested_index)
+    assert ("aid", 1) in writes_at_fetch
+    assert ("sid", "no") in writes_at_fetch
