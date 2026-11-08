@@ -4856,6 +4856,568 @@ def ui():
         <aside id="plexDetail" class="plexDetail hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="plexDetailTitle"></aside>
       </div>
     </div>
+
+    <!-- Settings modal -->
+    <div id="settingsBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+      <div class="modal settingsModal">
+        <div class="settingsStickyHead">
+          <div class="modalTop">
+            <div id="settingsModalTitle" class="modalTitle">Settings</div>
+            <div class="modalBtns">
+              <button id="settingsCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
+            </div>
+          </div>
+
+          <nav id="settingsTabs" class="settingsTabs" role="tablist" aria-label="Settings categories">
+            <button type="button" class="settingsTabBtn active" data-settings-tab="device" role="tab" aria-selected="true">Device &amp; TV</button>
+            <button type="button" class="settingsTabBtn" data-settings-tab="media" role="tab" aria-selected="false">Servers</button>
+            <button type="button" class="settingsTabBtn" data-settings-tab="sources" role="tab" aria-selected="false">Sources</button>
+            <button type="button" class="settingsTabBtn" data-settings-tab="all" role="tab" aria-selected="false">All</button>
+          </nav>
+        </div>
+
+        <details class="settingsGroup" id="setPlaybackGroup" data-settings-cat="device" open>
+          <summary><span class="summaryTitle">Playback &amp; Device</span></summary>
+          <div class="settingsBody">
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setDeviceName">Device name</label>
+              <input id="setDeviceName" class="input" placeholder="RelayTV Living Room" maxlength="80" />
+              <div class="hint">Used for UI branding and Jellyfin client/session identity.</div>
+            </div>
+
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setAudioDev">Audio device</label>
+              <select id="setAudioDev" class="input"></select>
+              <div class="hint">Auto picks the HDMI ALSA device that best matches the active connector.</div>
+            </div>
+
+            <div class="fieldGrid2">
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setQuality">Quality cap</label>
+                <select id="setQuality" class="input">
+                  <option value="">Auto</option>
+                  <option value="1080">≤1080p</option>
+                  <option value="720">≤720p</option>
+                  <option value="480">≤480p</option>
+                  <option value="360">≤360p</option>
+                  <option value="worst">Worst</option>
+                </select>
+                <div class="hint">Capped modes prefer non-AV1 formats with safe fallback.</div>
+              </div>
+
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setSubs">Subtitles</label>
+                <select id="setSubs" class="input">
+                  <option value="">Off</option>
+                  <option value="en">English</option>
+                </select>
+                <div class="hint">Default subtitle preference for direct streams.</div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup" id="setTvControlGroup" data-settings-cat="device">
+          <summary><span class="summaryTitle">TV Control</span> <span id="setCecStatus" class="sectionStatus unknown">Unknown</span></summary>
+          <div class="settingsBody">
+            <div id="setCecAvailabilityHint" class="hint">Checking HDMI-CEC adapter availability.</div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Enable HDMI-CEC</div>
+                <div class="toggleHint">Allow RelayTV to send TV power, input, and source commands through the host CEC adapter.</div>
+              </div>
+              <label class="toggleSwitch" for="setCecEnabled" title="Enable HDMI-CEC">
+                <input type="checkbox" id="setCecEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Switch to this HDMI input on playback</div>
+                <div class="toggleHint">When playback starts from a share or play request, announce RelayTV as the active source.</div>
+              </div>
+              <label class="toggleSwitch" for="setTvTakeoverEnabled" title="Switch to this HDMI input on playback">
+                <input type="checkbox" id="setTvTakeoverEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Pause when TV leaves this input</div>
+                <div class="toggleHint">Pause playback if CEC reports a different active HDMI source.</div>
+              </div>
+              <label class="toggleSwitch" for="setTvPauseOnInputChange" title="Pause when TV leaves this input">
+                <input type="checkbox" id="setTvPauseOnInputChange" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Resume when TV returns</div>
+                <div class="toggleHint">Resume playback when CEC reports this RelayTV input as active again.</div>
+              </div>
+              <label class="toggleSwitch" for="setTvAutoResumeOnReturn" title="Resume when TV returns">
+                <input type="checkbox" id="setTvAutoResumeOnReturn" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup" id="setIdleGroup" data-settings-cat="device">
+          <summary><span class="summaryTitle">Idle Dashboard &amp; Weather</span></summary>
+          <div class="settingsBody">
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Show idle dashboard between plays</div>
+                <div class="toggleHint">Turn off to return to the desktop while RelayTV stays ready for the next play.</div>
+              </div>
+              <label class="toggleSwitch" for="setIdleDashboardEnabled" title="Show idle dashboard between plays">
+                <input type="checkbox" id="setIdleDashboardEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Show toast notifications while idle</div>
+                <div class="toggleHint">Keep a lightweight notification surface available when nothing is playing.</div>
+              </div>
+              <label class="toggleSwitch" for="setIdleNotificationsEnabled" title="Show toast notifications while idle">
+                <input type="checkbox" id="setIdleNotificationsEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="settingsSubSection">
+              <div class="settingsSubHead">QR Code in Idle</div>
+              <div class="toggleRow">
+                <div class="toggleCopy">
+                  <div class="toggleTitle">Show connect QR in idle</div>
+                  <div class="toggleHint">Display a scannable code for the current RelayTV remote URL, with logo center.</div>
+                </div>
+                <label class="toggleSwitch" for="setIdleQrEnabled" title="Show connect QR in idle">
+                  <input type="checkbox" id="setIdleQrEnabled" />
+                  <span class="toggleTrack" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setIdleQrSize">QR size <span id="setIdleQrSizeVal">168px</span></label>
+                <input id="setIdleQrSize" class="input" type="range" min="96" max="280" step="4" value="168" />
+                <div class="hint">Adjusts idle QR size for screen distance and room layout.</div>
+              </div>
+            </div>
+
+            <div class="settingsSubSection">
+              <div class="settingsSubHead">Weather</div>
+              <div class="hint">Powered by Open-Meteo. Choose your city and card layout for the idle screen.</div>
+              <div id="setIdlePanels"></div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setWeatherDays">Forecast range</label>
+                <select id="setWeatherDays" class="input">
+                  <option value="1">1 day</option>
+                  <option value="3">3 days</option>
+                  <option value="7">7 days</option>
+                </select>
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setWeatherCity">Weather location</label>
+                <div class="weatherLocStack">
+                  <div class="weatherLocRow">
+                    <input id="setWeatherCity" class="input" placeholder="City or postal code (e.g. Seattle, WA)" autocomplete="off" />
+                    <button type="button" id="setWeatherFindBtn" class="btn">Find city</button>
+                  </div>
+                  <div id="setWeatherLocationMeta" class="weatherLocMeta"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setBrowseServersGroup" data-settings-cat="media" open>
+          <summary><span class="summaryTitle">Unified Browse Servers</span> <span id="setBrowseStatus" class="sectionStatus unknown">0 connected</span></summary>
+          <div class="settingsBody">
+            <div class="hint">Combine multiple Jellyfin, Emby, and Plex servers into a single unified Browse library. Duplicate movies and shows are deduplicated automatically across servers.</div>
+            <div class="inlineApplyRow">
+              <button type="button" id="setBrowseProbeBtn" class="btn electricBlue">Probe servers</button>
+              <button type="button" id="setBrowseAddServerBtn" class="btn">+ Add server</button>
+              <div id="setBrowseActionMsg" class="inlineApplyMsg" aria-live="polite"></div>
+            </div>
+            <div id="setBrowseServerList" class="browseServerList"></div>
+            <div id="setBrowseServerForm" class="browseServerForm hidden">
+              <h3 id="setBrowseFormTitle">Add media server</h3>
+              <input type="hidden" id="setBrowseFormId" value="" />
+              <div class="fieldGrid2">
+                <div class="fieldRow">
+                  <label class="fieldLbl" for="setBrowseFormType">Server type</label>
+                  <select id="setBrowseFormType" class="input">
+                    <option value="jellyfin">Jellyfin</option>
+                    <option value="emby">Emby</option>
+                    <option value="plex">Plex</option>
+                  </select>
+                </div>
+                <div class="fieldRow">
+                  <label class="fieldLbl" for="setBrowseFormName">Display name</label>
+                  <input id="setBrowseFormName" class="input" placeholder="e.g. NAS Jellyfin" maxlength="80" />
+                </div>
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setBrowseFormUrl">Server URL</label>
+                <input id="setBrowseFormUrl" class="input" type="url" placeholder="http://10.0.55.2:8096" />
+              </div>
+              <div id="setBrowseFormJfFields">
+                <div class="fieldGrid2">
+                  <div class="fieldRow">
+                    <label class="fieldLbl" for="setBrowseFormUsername">Username (optional if API key set)</label>
+                    <input id="setBrowseFormUsername" class="input" placeholder="username" />
+                  </div>
+                  <div class="fieldRow">
+                    <label class="fieldLbl" for="setBrowseFormPassword">Password</label>
+                    <input id="setBrowseFormPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep)" />
+                  </div>
+                </div>
+                <div class="fieldGrid2">
+                  <div class="fieldRow">
+                    <label class="fieldLbl" for="setBrowseFormApiKey">API key (optional)</label>
+                    <input id="setBrowseFormApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep)" />
+                  </div>
+                  <div class="fieldRow">
+                    <label class="fieldLbl" for="setBrowseFormUserId">User ID (optional)</label>
+                    <input id="setBrowseFormUserId" class="input" placeholder="UUID (optional)" />
+                  </div>
+                </div>
+              </div>
+              <div id="setBrowseFormPlexFields" class="hidden">
+                <div class="fieldRow">
+                  <label class="fieldLbl" for="setBrowseFormToken">X-Plex-Token (optional if account linked)</label>
+                  <input id="setBrowseFormToken" class="input" type="password" autocomplete="new-password" placeholder="(uses linked Plex account token if blank)" />
+                </div>
+              </div>
+              <div class="inlineApplyRow">
+                <button type="button" id="setBrowseFormSaveBtn" class="btn primary electricBlue">Save server</button>
+                <button type="button" id="setBrowseFormCancelBtn" class="btn">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setJfGroup" data-settings-cat="media">
+          <summary><span class="summaryTitle"><span class="jfBrand">Jellyfin / Emby</span> Integration</span> <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
+          <div class="settingsBody">
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Enable <span class="jfBrand">Jellyfin / Emby</span> integration</div>
+                <div class="toggleHint">Show <span class="jfBrand">Jellyfin / Emby</span> browsing and playback controls when server settings are configured.</div>
+              </div>
+              <label class="toggleSwitch" for="setJfEnabled" title="Enable media server integration">
+                <input type="checkbox" id="setJfEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setJfServerUrl"><span class="jfBrand">Jellyfin / Emby</span> server</label>
+              <input id="setJfServerUrl" class="input" placeholder="http://10.0.55.2:8096" />
+              <div class="hint">Use your local Jellyfin or Emby base URL, for example <code>http://10.0.55.2:8096</code>. The server type is detected automatically.</div>
+            </div>
+
+            <div id="setJfUserAuthFields" class="settingsSubSection" role="group" aria-labelledby="setJfClientHeading">
+              <h3 id="setJfClientHeading" class="settingsSubHead">Client login</h3>
+              <div class="hint">Sign in for RelayTV’s media browser, personal library, and resume points. Works alongside the shared cast target below.</div>
+              <div class="hint statusBanner" id="setJfClientStatus" role="status"></div>
+              <div class="fieldGrid2">
+                <div class="fieldRow">
+                  <label class="fieldLbl" for="setJfUsername">Username</label>
+                  <input id="setJfUsername" class="input" placeholder="server username" />
+                </div>
+                <div class="fieldRow">
+                  <label class="fieldLbl" for="setJfPassword">Password</label>
+                  <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+                </div>
+              </div>
+              <div class="secretFooterRow">
+                <div class="hint secretState" id="setJfPasswordState"></div>
+                <label class="secretClearToggle" for="setJfClearPassword" title="Clear stored password">
+                  <span>Clear stored password</span>
+                  <span class="toggleSwitch sm">
+                    <input type="checkbox" id="setJfClearPassword" />
+                    <span class="toggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setJfUserId">Preferred user ID (optional)</label>
+                <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
+                <div class="hint">Leave blank to use the signed-in account. For API-key-only browsing, enter a server user ID.</div>
+                <div class="hint" id="setJfUserIdState" role="status"></div>
+              </div>
+            </div>
+
+            <div id="setJfSharedAuthFields" class="settingsSubSection" role="group" aria-labelledby="setJfCastHeading">
+              <h3 id="setJfCastHeading" class="settingsSubHead">Shared cast target</h3>
+              <div class="toggleRow">
+                <div class="toggleCopy">
+                  <div class="toggleTitle">Share this cast target using an API key</div>
+                  <div class="toggleHint">Let permitted Jellyfin users cast to this TV independently of the client login.</div>
+                </div>
+                <label class="toggleSwitch" for="setJfSharedCastEnabled" title="Enable shared cast target">
+                  <input type="checkbox" id="setJfSharedCastEnabled" />
+                  <span class="toggleTrack" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div class="hint" id="setJfAuthModeHint"></div>
+              <div class="hint statusBanner" id="setJfCastStatus" role="status"></div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setJfApiKey">Server API key</label>
+                <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
+                <div class="hint">Create a key in Jellyfin Dashboard → Advanced → API Keys. API keys are administrator-level secrets.</div>
+                <div class="secretFooterRow">
+                  <div class="hint secretState" id="setJfApiKeyState"></div>
+                  <label class="secretClearToggle" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
+                    <span>Clear stored API key</span>
+                    <span class="toggleSwitch sm">
+                      <input type="checkbox" id="setJfClearApiKey" />
+                      <span class="toggleTrack" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="fieldGrid2">
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setJfAudioLang">Preferred audio language</label>
+                <input id="setJfAudioLang" class="input" placeholder="e.g. en, pt-BR" />
+                <div class="hint">Used when selecting server audio tracks.</div>
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setJfSubLang">Preferred subtitle language</label>
+                <input id="setJfSubLang" class="input" placeholder="e.g. en, pt-BR, or off" />
+                <div class="hint">Set <code>off</code> to prefer no subtitles by default.</div>
+              </div>
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setJfPlaybackMode">Playback mode</label>
+              <select id="setJfPlaybackMode" class="input">
+                <option value="auto">Auto (direct unless compatibility risk)</option>
+                <option value="direct">Direct play preferred</option>
+                <option value="transcode">Always transcode to compatibility stream</option>
+              </select>
+              <div class="hint">Auto uses host decode profile and display cap to choose direct or transcode.</div>
+            </div>
+            <div class="inlineApplyRow">
+              <button type="button" id="setJfApplyBtn" class="btn electricBlue">Apply <span class="jfBrand">Jellyfin / Emby</span></button>
+              <button type="button" id="setJfCacheClearBtn" class="btn">Clear Catalog Cache</button>
+              <div id="setJfApplyResult" class="inlineApplyMsg"></div>
+              <div id="setJfCacheClearResult" class="inlineApplyMsg"></div>
+            </div>
+            <details class="settingsDiag">
+              <summary>Sync &amp; cache diagnostics</summary>
+              <div id="setJfSyncDiag" class="hint"></div>
+            </details>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setPlexGroup" data-settings-cat="media">
+          <summary><span class="summaryTitle">Plex Integration</span> <span id="setPlexStatus" class="sectionStatus unknown">Disabled</span></summary>
+          <div class="settingsBody">
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Enable Plex</div>
+                <div class="toggleHint">Use the linked Plex account and selected server for RelayTV library access.</div>
+              </div>
+              <label class="toggleSwitch" for="setPlexEnabled" title="Enable Plex integration">
+                <input type="checkbox" id="setPlexEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="settingsSubSection" role="group" aria-labelledby="setPlexAccountHeading">
+              <h3 id="setPlexAccountHeading" class="settingsSubHead">Plex account</h3>
+              <div class="hint">Link on Plex’s site. RelayTV never asks for or stores your Plex password.</div>
+              <div id="setPlexAccountStatus" class="hint statusBanner" role="status">No account linked.</div>
+              <div class="inlineApplyRow">
+                <button type="button" id="setPlexLinkBtn" class="btn electricBlue">Link Plex account</button>
+                <a id="setPlexLinkUrl" class="btn electricBlue hidden" href="#" target="_blank" rel="noopener noreferrer">Continue on Plex</a>
+                <button type="button" id="setPlexPollBtn" class="btn hidden">Check link</button>
+                <button type="button" id="setPlexCancelBtn" class="btn hidden">Cancel link</button>
+                <button type="button" id="setPlexUnlinkBtn" class="btn danger hidden">Unlink account</button>
+              </div>
+            </div>
+
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setPlexServer">Library server</label>
+              <select id="setPlexServer" class="input">
+                <option value="">Link an account to load servers</option>
+              </select>
+              <div class="hint">Local connections are preferred. Relay connections are excluded.</div>
+            </div>
+            <div class="fieldGrid2">
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setPlexPlaybackMode">Playback mode</label>
+                <select id="setPlexPlaybackMode" class="input">
+                  <option value="auto">Automatic</option>
+                  <option value="direct">Direct play</option>
+                  <option value="transcode">Always transcode</option>
+                </select>
+                <div class="hint">Automatic prefers direct play and converts when needed.</div>
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setPlexMaxBitrate">Maximum video bitrate</label>
+                <select id="setPlexMaxBitrate" class="input">
+                  <option value="0">Original quality</option>
+                  <option value="20000">20 Mbps</option>
+                  <option value="12000">12 Mbps</option>
+                  <option value="8000">8 Mbps</option>
+                  <option value="4000">4 Mbps</option>
+                </select>
+                <div class="hint">Automatic converts files above this limit.</div>
+              </div>
+            </div>
+            <div class="inlineApplyRow">
+              <button type="button" id="setPlexApplyBtn" class="btn electricBlue">Apply Plex</button>
+              <button type="button" id="setPlexTestBtn" class="btn">Test server</button>
+              <div id="setPlexApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
+            </div>
+            <div id="setPlexDiag" class="hint"></div>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setYoutubeGroup" data-settings-cat="sources" open>
+          <summary><span class="summaryTitle">YouTube</span></summary>
+          <div class="settingsBody">
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Keep yt-dlp up to date</div>
+                <div class="toggleHint">Check for yt-dlp updates daily (and right away when enabled). Recommended to prevent YouTube playback failures.</div>
+              </div>
+              <label class="toggleSwitch" for="setYtdlpAutoUpdate" title="Keep yt-dlp up to date">
+                <input type="checkbox" id="setYtdlpAutoUpdate" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Use Invidious server for YouTube playback</div>
+                <div class="toggleHint">Resolve YouTube playback through the configured Invidious base URL.</div>
+              </div>
+              <label class="toggleSwitch" for="setYtUseInvidious" title="Use Invidious server for YouTube playback">
+                <input type="checkbox" id="setYtUseInvidious" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setYtInvidiousBase">Invidious server</label>
+              <input id="setYtInvidiousBase" class="input" placeholder="https://invidious.example.org" />
+              <div class="hint">Used when Invidious mode is enabled. Enter base URL only.</div>
+            </div>
+            <div class="settingsSubSection">
+              <div class="settingsSubHead">Direct-play cookies.txt</div>
+              <div class="fieldRow">
+                <input id="setYtCookiesFile" class="input fileInput" type="file" accept=".txt,text/plain" aria-label="Direct-play cookies.txt" />
+                <div class="hint">Upload Netscape-format cookies.txt for yt-dlp (node/deno challenge flow).</div>
+              </div>
+              <div class="inlineApplyRow">
+                <button type="button" id="setYtCookiesUploadBtn" class="btn electricBlue">Upload cookies.txt</button>
+                <button type="button" id="setYtCookiesClearBtn" class="btn">Clear cookies.txt</button>
+                <div id="setYtCookiesState" class="inlineApplyMsg"></div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setUploadsGroup" data-settings-cat="sources">
+          <summary><span class="summaryTitle">Uploads</span></summary>
+          <div class="settingsBody">
+            <div class="hint">Uploaded videos are cleaned up when either limit is reached first.</div>
+            <div class="fieldGrid2">
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setUploadMaxSize">Storage max size (GB)</label>
+                <input id="setUploadMaxSize" class="input" type="number" min="0.25" max="500" step="0.25" value="5" />
+              </div>
+              <div class="fieldRow">
+                <label class="fieldLbl" for="setUploadRetentionHours">Retention max hours</label>
+                <input id="setUploadRetentionHours" class="input" type="number" min="1" max="2160" step="1" value="24" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setIptvGroup" data-settings-cat="sources">
+          <summary><span class="summaryTitle">IPTV Integration</span> <span id="setIptvStatus" class="sectionStatus unknown">Disabled</span></summary>
+          <div class="settingsBody">
+            <div class="toggleRow">
+              <div class="toggleCopy">
+                <div class="toggleTitle">Enable IPTV</div>
+                <div class="toggleHint">Show searchable live-channel browsing, favorites, visibility controls, and source discovery.</div>
+              </div>
+              <label class="toggleSwitch" for="setIptvEnabled" title="Enable IPTV integration">
+                <input type="checkbox" id="setIptvEnabled" />
+                <span class="toggleTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="hint">Playlists and stream credentials are stored owner-only in <code>/data/iptv.sqlite3</code>, but are not encrypted at rest. Free directory providers are opt-in.</div>
+            <div class="inlineApplyRow">
+              <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
+              <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
+            </div>
+          </div>
+        </details>
+
+        <details class="settingsGroup hidden" id="setSeerrGroup" data-settings-cat="sources">
+          <summary><span class="summaryTitle">Seerr Integration</span> <span id="setSeerrStatus" class="sectionStatus unknown">Disabled</span></summary>
+          <div class="settingsBody">
+            <div class="toggleRow">
+              <div class="toggleCopy"><div class="toggleTitle">Enable Seerr</div><div class="toggleHint">Show RelayTV discovery, search, and request status backed by Seerr.</div></div>
+              <label class="toggleSwitch" for="setSeerrEnabled" title="Enable Seerr integration"><input type="checkbox" id="setSeerrEnabled" /><span class="toggleTrack" aria-hidden="true"></span></label>
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setSeerrServerUrl">Seerr server</label>
+              <input id="setSeerrServerUrl" class="input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://10.0.55.2:5055" />
+              <div class="hint">Use the Seerr base URL. An API key is required only for shared browsing and administrator requests.</div>
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setSeerrApiKey">API key</label>
+              <input id="setSeerrApiKey" class="input" type="password" autocomplete="new-password" spellcheck="false" placeholder="(leave blank to keep existing)" />
+              <div class="secretFooterRow">
+                <div id="setSeerrApiKeyState" class="hint secretState"></div>
+                <label class="secretClearToggle" for="setSeerrClearApiKey" title="Clear stored Seerr API key">
+                  <span>Clear stored API key</span>
+                  <span class="toggleSwitch sm">
+                    <input type="checkbox" id="setSeerrClearApiKey" />
+                    <span class="toggleTrack" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="fieldRow">
+              <label class="fieldLbl" for="setSeerrRequestMode">Request identity</label>
+              <select id="setSeerrRequestMode" class="input">
+                <option value="disabled">Requests disabled</option>
+                <option value="shared_admin">Shared administrator API</option>
+                <option value="caller_session">Caller-specific sign-in</option>
+              </select>
+              <div id="setSeerrRequestModeHint" class="hint">Choose exactly which Seerr identity is allowed to create requests.</div>
+            </div>
+            <div id="setSeerrRequestUserRow" class="fieldRow hidden">
+              <label class="fieldLbl" for="setSeerrRequestUser">Shared request attribution</label>
+              <select id="setSeerrRequestUser" class="input"><option value="">API identity (default)</option></select>
+              <div class="hint">Changes attribution only; the administrator API identity still controls permissions and auto-approval.</div>
+            </div>
+            <div class="inlineApplyRow">
+              <button type="button" id="setSeerrApplyBtn" class="btn electricBlue">Apply Seerr</button>
+              <button type="button" id="setSeerrTestBtn" class="btn">Test connection</button>
+              <div id="setSeerrApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
+            </div>
+            <div id="setSeerrDiag" class="hint"></div>
+          </div>
+        </details>
+
+        <div class="modalBottom">
+          <button type="button" id="settingsCancelBtn" class="btn">Cancel</button>
+          <button id="settingsSaveBtn" class="btn primary electricBlue">Save &amp; Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>window.RELAYTV_IDLE_PANEL_CATALOG = __IDLE_PANEL_CATALOG__;</script>
@@ -4869,544 +5431,6 @@ def ui():
   <script src="/static/ui/peers.js?v=__UI_ASSET_V__" defer></script>
 </body>
 </html>
-<!-- Settings modal -->
-<div id="settingsBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true">
-  <div class="modal settingsModal">
-    <div class="modalTop">
-      <div class="modalTitle">Settings</div>
-      <div class="modalBtns">
-        <button id="settingsCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
-      </div>
-    </div>
-
-    <nav id="settingsTabs" class="settingsTabs" role="tablist" aria-label="Settings categories">
-      <button type="button" class="settingsTabBtn active" data-settings-tab="device" role="tab" aria-selected="true">Device &amp; TV</button>
-      <button type="button" class="settingsTabBtn" data-settings-tab="media" role="tab" aria-selected="false">Media Servers</button>
-      <button type="button" class="settingsTabBtn" data-settings-tab="sources" role="tab" aria-selected="false">Sources &amp; Add-ons</button>
-      <button type="button" class="settingsTabBtn" data-settings-tab="all" role="tab" aria-selected="false">All</button>
-    </nav>
-
-    <details class="settingsGroup" id="setPlaybackGroup" data-settings-cat="device" open>
-      <summary>Playback &amp; Device</summary>
-      <div class="settingsBody">
-        <div class="fieldRow">
-          <label class="fieldLbl">Device name</label>
-          <input id="setDeviceName" class="input" placeholder="RelayTV Living Room" maxlength="80" />
-          <div class="hint">Used for UI branding and Jellyfin client/session identity.</div>
-        </div>
-
-        <div class="fieldRow">
-          <label class="fieldLbl">Audio device</label>
-          <select id="setAudioDev" class="input"></select>
-          <div class="hint">Auto picks the HDMI ALSA device that best matches the active connector.</div>
-        </div>
-
-        <div class="fieldRow">
-          <label class="fieldLbl">Quality cap</label>
-          <select id="setQuality" class="input">
-            <option value="">Auto</option>
-            <option value="1080">≤1080p</option>
-            <option value="720">≤720p</option>
-            <option value="480">≤480p</option>
-            <option value="360">≤360p</option>
-            <option value="worst">Worst</option>
-          </select>
-          <div class="hint">Capped modes prefer non-AV1 formats with safe fallback for better compatibility.</div>
-        </div>
-
-        <div class="fieldRow">
-          <label class="fieldLbl">Subtitles</label>
-          <select id="setSubs" class="input">
-            <option value="">Off</option>
-            <option value="en">English</option>
-          </select>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup" id="setTvControlGroup" data-settings-cat="device">
-      <summary>TV Control <span id="setCecStatus" class="sectionStatus unknown">Unknown</span></summary>
-      <div class="settingsBody">
-        <div id="setCecAvailabilityHint" class="hint">Checking HDMI-CEC adapter availability.</div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Enable HDMI-CEC</div>
-            <div class="toggleHint">Allow RelayTV to send TV power, input, and source commands through the host CEC adapter.</div>
-          </div>
-          <label class="toggleSwitch" for="setCecEnabled" title="Enable HDMI-CEC">
-            <input type="checkbox" id="setCecEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Switch to this HDMI input on playback</div>
-            <div class="toggleHint">When playback starts from a share or play request, announce RelayTV as the active source.</div>
-          </div>
-          <label class="toggleSwitch" for="setTvTakeoverEnabled" title="Switch to this HDMI input on playback">
-            <input type="checkbox" id="setTvTakeoverEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Pause when TV leaves this input</div>
-            <div class="toggleHint">Pause playback if CEC reports a different active HDMI source.</div>
-          </div>
-          <label class="toggleSwitch" for="setTvPauseOnInputChange" title="Pause when TV leaves this input">
-            <input type="checkbox" id="setTvPauseOnInputChange" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Resume when TV returns</div>
-            <div class="toggleHint">Resume playback when CEC reports this RelayTV input as active again.</div>
-          </div>
-          <label class="toggleSwitch" for="setTvAutoResumeOnReturn" title="Resume when TV returns">
-            <input type="checkbox" id="setTvAutoResumeOnReturn" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup" id="setIdleGroup" data-settings-cat="device">
-      <summary>Idle Dashboard &amp; Weather</summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Show idle dashboard between plays</div>
-            <div class="toggleHint">Turn off to return to the desktop while RelayTV stays ready for the next play.</div>
-          </div>
-          <label class="toggleSwitch" for="setIdleDashboardEnabled" title="Show idle dashboard between plays">
-            <input type="checkbox" id="setIdleDashboardEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Show toast notifications while idle</div>
-            <div class="toggleHint">Keep a lightweight notification surface available when nothing is playing.</div>
-          </div>
-          <label class="toggleSwitch" for="setIdleNotificationsEnabled" title="Show toast notifications while idle">
-            <input type="checkbox" id="setIdleNotificationsEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <details class="settingsGroup settingsSubGroup" open>
-          <summary>Show QR in Idle</summary>
-          <div class="settingsBody">
-            <div class="toggleRow">
-              <div class="toggleCopy">
-                <div class="toggleTitle">Show connect QR in idle</div>
-                <div class="toggleHint">Display a scannable code for the current RelayTV remote URL, with logo center.</div>
-              </div>
-              <label class="toggleSwitch" for="setIdleQrEnabled" title="Show connect QR in idle">
-                <input type="checkbox" id="setIdleQrEnabled" />
-                <span class="toggleTrack" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="fieldRow">
-              <label class="fieldLbl" for="setIdleQrSize">QR size <span id="setIdleQrSizeVal">168px</span></label>
-              <input id="setIdleQrSize" class="input" type="range" min="96" max="280" step="4" value="168" />
-              <div class="hint">Adjusts idle QR size for screen distance and room layout.</div>
-            </div>
-          </div>
-        </details>
-        <details class="settingsGroup settingsSubGroup" open>
-          <summary>Weather</summary>
-          <div class="settingsBody">
-            <div class="hint">Powered by Open-Meteo. Pick a city so the idle card stays local.</div>
-            <div class="hint">Enable/disable weather on idle and choose card layout.</div>
-            <div id="setIdlePanels"></div>
-            <div class="fieldRow">
-              <label class="fieldLbl">Forecast range</label>
-              <select id="setWeatherDays" class="input">
-                <option value="1">1 day</option>
-                <option value="3">3 days</option>
-                <option value="7">7 days</option>
-              </select>
-            </div>
-            <div class="fieldRow">
-              <div class="weatherLocStack">
-                <div class="hint">Use zip code.</div>
-                <div class="weatherLocRow">
-                  <input id="setWeatherCity" class="input" placeholder="e.g. Seattle, WA" autocomplete="off" />
-                  <button type="button" id="setWeatherFindBtn" class="btn">Find city</button>
-                </div>
-                <div id="setWeatherLocationMeta" class="weatherLocMeta"></div>
-              </div>
-            </div>
-          </div>
-        </details>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setBrowseServersGroup" data-settings-cat="media" open>
-      <summary>Media Servers &amp; Unified Browse <span id="setBrowseStatus" class="sectionStatus unknown">0 connected</span></summary>
-      <div class="settingsBody">
-        <div class="hint">Combine multiple Jellyfin, Emby, and Plex servers into a single unified Browse library. Duplicate movies and shows are deduplicated automatically across servers.</div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setBrowseProbeBtn" class="btn electricBlue">Probe servers</button>
-          <button type="button" id="setBrowseAddServerBtn" class="btn">+ Add server</button>
-          <div id="setBrowseActionMsg" class="inlineApplyMsg" aria-live="polite"></div>
-        </div>
-        <div id="setBrowseServerList" class="browseServerList"></div>
-        <div id="setBrowseServerForm" class="browseServerForm hidden">
-          <h3 id="setBrowseFormTitle">Add media server</h3>
-          <input type="hidden" id="setBrowseFormId" value="" />
-          <div class="fieldRow">
-            <label class="fieldLbl" for="setBrowseFormType">Server type</label>
-            <select id="setBrowseFormType" class="input">
-              <option value="jellyfin">Jellyfin</option>
-              <option value="emby">Emby</option>
-              <option value="plex">Plex</option>
-            </select>
-          </div>
-          <div class="fieldRow">
-            <label class="fieldLbl" for="setBrowseFormName">Display name</label>
-            <input id="setBrowseFormName" class="input" placeholder="e.g. NAS Jellyfin, Secondary Plex" maxlength="80" />
-          </div>
-          <div class="fieldRow">
-            <label class="fieldLbl" for="setBrowseFormUrl">Server URL</label>
-            <input id="setBrowseFormUrl" class="input" type="url" placeholder="http://10.0.55.2:8096" />
-          </div>
-          <div id="setBrowseFormJfFields">
-            <div class="fieldRow">
-              <label class="fieldLbl" for="setBrowseFormUsername">Username (optional if API key set)</label>
-              <input id="setBrowseFormUsername" class="input" placeholder="username" />
-            </div>
-            <div class="fieldRow">
-              <label class="fieldLbl" for="setBrowseFormPassword">Password</label>
-              <input id="setBrowseFormPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-            </div>
-            <div class="fieldRow">
-              <label class="fieldLbl" for="setBrowseFormApiKey">API key (optional)</label>
-              <input id="setBrowseFormApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-            </div>
-            <div class="fieldRow">
-              <label class="fieldLbl" for="setBrowseFormUserId">User ID (optional)</label>
-              <input id="setBrowseFormUserId" class="input" placeholder="UUID (optional)" />
-            </div>
-          </div>
-          <div id="setBrowseFormPlexFields" class="hidden">
-            <div class="fieldRow">
-              <label class="fieldLbl" for="setBrowseFormToken">X-Plex-Token (optional if account linked)</label>
-              <input id="setBrowseFormToken" class="input" type="password" autocomplete="new-password" placeholder="(uses linked Plex account token if blank)" />
-            </div>
-          </div>
-          <div class="inlineApplyRow">
-            <button type="button" id="setBrowseFormSaveBtn" class="btn primary electricBlue">Save server</button>
-            <button type="button" id="setBrowseFormCancelBtn" class="btn">Cancel</button>
-          </div>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setJfGroup" data-settings-cat="media">
-      <summary><span class="jfBrand">Jellyfin / Emby</span> Integration <span id="setJfStatus" class="sectionStatus unknown">Disabled</span></summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Enable <span class="jfBrand">Jellyfin / Emby</span> integration</div>
-            <div class="toggleHint">Show <span class="jfBrand">Jellyfin / Emby</span> browsing and playback controls when server settings are configured.</div>
-          </div>
-          <label class="toggleSwitch" for="setJfEnabled" title="Enable media server integration">
-            <input type="checkbox" id="setJfEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-
-        <div class="fieldRow">
-          <label class="fieldLbl"><span class="jfBrand">Jellyfin / Emby</span> server</label>
-          <input id="setJfServerUrl" class="input" placeholder="http://10.0.55.2:8096" />
-          <div class="hint">Use your local Jellyfin or Emby base URL, for example `http://10.0.55.2:8096`. The server type is detected automatically.</div>
-        </div>
-
-        <div id="setJfUserAuthFields" role="group" aria-labelledby="setJfClientHeading">
-          <h3 id="setJfClientHeading">Client login</h3>
-          <div class="hint">Sign in for RelayTV’s media browser, personal library, and resume points. This login works alongside the shared cast target below.</div>
-          <div class="hint" id="setJfClientStatus" role="status"></div>
-          <div class="fieldRow">
-            <label class="fieldLbl" for="setJfUsername">Username</label>
-            <input id="setJfUsername" class="input" placeholder="server username" />
-          </div>
-          <div class="fieldRow">
-            <label class="fieldLbl" for="setJfPassword">Password</label>
-            <input id="setJfPassword" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-            <div class="toggleRow">
-              <div class="toggleCopy">
-                <div class="toggleTitle">Clear stored password</div>
-                <div class="toggleHint">Remove the saved server password on the next apply.</div>
-              </div>
-              <label class="toggleSwitch" for="setJfClearPassword" title="Clear stored password">
-                <input type="checkbox" id="setJfClearPassword" />
-                <span class="toggleTrack" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="hint" id="setJfPasswordState"></div>
-          </div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setJfUserId">Preferred user ID (optional)</label>
-          <input id="setJfUserId" class="input" placeholder="Server user Id (UUID)" />
-          <div class="hint">Leave blank to use the signed-in account. For API-key-only browsing, enter a server user ID. A login can only access profiles its account is allowed to read.</div>
-          <div class="hint" id="setJfUserIdState" role="status"></div>
-        </div>
-
-        <div id="setJfSharedAuthFields" role="group" aria-labelledby="setJfCastHeading">
-          <h3 id="setJfCastHeading">Shared cast target</h3>
-          <div class="toggleRow">
-            <div class="toggleCopy">
-              <div class="toggleTitle">Share this cast target using an API key</div>
-              <div class="toggleHint">Let permitted Jellyfin users cast to this TV independently of the client login.</div>
-            </div>
-            <label class="toggleSwitch" for="setJfSharedCastEnabled" title="Enable shared cast target">
-              <input type="checkbox" id="setJfSharedCastEnabled" />
-              <span class="toggleTrack" aria-hidden="true"></span>
-            </label>
-          </div>
-          <div class="hint" id="setJfAuthModeHint"></div>
-          <div class="hint" id="setJfCastStatus" role="status"></div>
-          <div class="fieldRow">
-            <label class="fieldLbl" for="setJfApiKey">Server API key</label>
-            <input id="setJfApiKey" class="input" type="password" autocomplete="new-password" placeholder="(leave blank to keep existing)" />
-            <div class="hint">Create a key in Jellyfin Dashboard → Advanced → API Keys. It keeps the shared cast target connected while client browsing uses the login above. API keys are administrator-level secrets.</div>
-            <div class="toggleRow">
-              <div class="toggleCopy">
-                <div class="toggleTitle">Clear stored API key</div>
-                <div class="toggleHint">Remove the saved server API key on the next apply.</div>
-              </div>
-              <label class="toggleSwitch" for="setJfClearApiKey" title="Clear stored Jellyfin API key">
-                <input type="checkbox" id="setJfClearApiKey" />
-                <span class="toggleTrack" aria-hidden="true"></span>
-              </label>
-            </div>
-            <div class="hint" id="setJfApiKeyState"></div>
-          </div>
-        </div>
-
-        <div class="fieldRow">
-          <label class="fieldLbl">Preferred audio language</label>
-          <input id="setJfAudioLang" class="input" placeholder="e.g. en, pt-BR" />
-          <div class="hint">Used when selecting server audio tracks if available.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Preferred subtitle language</label>
-          <input id="setJfSubLang" class="input" placeholder="e.g. en, pt-BR, or off" />
-          <div class="hint">Set `off` to prefer no subtitles by default.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Playback mode</label>
-          <select id="setJfPlaybackMode" class="input">
-            <option value="auto">Auto (direct unless compatibility risk)</option>
-            <option value="direct">Direct play preferred</option>
-            <option value="transcode">Always transcode to compatibility stream</option>
-          </select>
-          <div class="hint">Auto uses host decode profile and display cap to choose direct or transcode.</div>
-        </div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setJfApplyBtn" class="btn electricBlue">Apply <span class="jfBrand">Jellyfin / Emby</span></button>
-          <div id="setJfApplyResult" class="inlineApplyMsg"></div>
-        </div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setJfCacheClearBtn" class="btn electricBlue">Clear Catalog Cache</button>
-          <div id="setJfCacheClearResult" class="inlineApplyMsg"></div>
-        </div>
-        <div id="setJfSyncDiag" class="hint"></div>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setPlexGroup" data-settings-cat="media">
-      <summary>Plex Integration <span id="setPlexStatus" class="sectionStatus unknown">Disabled</span></summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Enable Plex</div>
-            <div class="toggleHint">Use the linked Plex account and selected server for RelayTV library access.</div>
-          </div>
-          <label class="toggleSwitch" for="setPlexEnabled" title="Enable Plex integration">
-            <input type="checkbox" id="setPlexEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-
-        <div role="group" aria-labelledby="setPlexAccountHeading">
-          <h3 id="setPlexAccountHeading">Plex account</h3>
-          <div class="hint">Link on Plex’s site. RelayTV never asks for or stores your Plex password.</div>
-          <div id="setPlexAccountStatus" class="hint" role="status">No account linked.</div>
-          <div class="inlineApplyRow">
-            <button type="button" id="setPlexLinkBtn" class="btn electricBlue">Link Plex account</button>
-            <a id="setPlexLinkUrl" class="btn primary hidden" href="#" target="_blank" rel="noopener noreferrer">Continue on Plex</a>
-            <button type="button" id="setPlexPollBtn" class="btn hidden">Check link</button>
-            <button type="button" id="setPlexCancelBtn" class="btn hidden">Cancel link</button>
-            <button type="button" id="setPlexUnlinkBtn" class="btn hidden">Unlink account</button>
-          </div>
-        </div>
-
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setPlexServer">Library server</label>
-          <select id="setPlexServer" class="input">
-            <option value="">Link an account to load servers</option>
-          </select>
-          <div class="hint">Local connections are preferred. Relay connections are excluded from this first integration phase.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setPlexPlaybackMode">Playback mode</label>
-          <select id="setPlexPlaybackMode" class="input">
-            <option value="auto">Automatic</option>
-            <option value="direct">Direct play</option>
-            <option value="transcode">Always transcode</option>
-          </select>
-          <div class="hint">Automatic prefers the original file and asks Plex to convert it when direct playback is unavailable.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setPlexMaxBitrate">Maximum video bitrate</label>
-          <select id="setPlexMaxBitrate" class="input">
-            <option value="0">Original quality</option>
-            <option value="20000">20 Mbps</option>
-            <option value="12000">12 Mbps</option>
-            <option value="8000">8 Mbps</option>
-            <option value="4000">4 Mbps</option>
-          </select>
-          <div class="hint">Automatic converts files above this limit. Direct play always uses the original bitrate.</div>
-        </div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setPlexApplyBtn" class="btn electricBlue">Apply Plex</button>
-          <button type="button" id="setPlexTestBtn" class="btn">Test server</button>
-          <div id="setPlexApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
-        </div>
-        <div id="setPlexDiag" class="hint"></div>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setYoutubeGroup" data-settings-cat="sources" open>
-      <summary>YouTube</summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Keep yt-dlp up to date</div>
-            <div class="toggleHint">Check for yt-dlp updates daily (and right away when enabled). Recommended: stale yt-dlp is the most common cause of YouTube playback failures.</div>
-          </div>
-          <label class="toggleSwitch" for="setYtdlpAutoUpdate" title="Keep yt-dlp up to date">
-            <input type="checkbox" id="setYtdlpAutoUpdate" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Use Invidious server for YouTube playback</div>
-            <div class="toggleHint">Resolve YouTube playback through the configured Invidious base URL.</div>
-          </div>
-          <label class="toggleSwitch" for="setYtUseInvidious" title="Use Invidious server for YouTube playback">
-            <input type="checkbox" id="setYtUseInvidious" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Invidious server</label>
-          <input id="setYtInvidiousBase" class="input" placeholder="https://invidious.example.org" />
-          <div class="hint">Used when Invidious mode is enabled. Enter base URL only.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Direct-play cookies.txt</label>
-          <input id="setYtCookiesFile" class="input" type="file" accept=".txt,text/plain" />
-          <div class="hint">Upload Netscape-format cookies.txt for yt-dlp (node/deno challenge flow).</div>
-        </div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setYtCookiesUploadBtn" class="btn electricBlue">Upload cookies.txt</button>
-          <button type="button" id="setYtCookiesClearBtn" class="btn electricBlue">Clear cookies.txt</button>
-          <div id="setYtCookiesState" class="inlineApplyMsg"></div>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setUploadsGroup" data-settings-cat="sources">
-      <summary>Uploads</summary>
-      <div class="settingsBody">
-        <div class="hint">Uploaded videos are cleaned up when either limit is reached first.</div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Storage max size (GB)</label>
-          <input id="setUploadMaxSize" class="input" type="number" min="0.25" max="500" step="0.25" value="5" />
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl">Retention max hours</label>
-          <input id="setUploadRetentionHours" class="input" type="number" min="1" max="2160" step="1" value="24" />
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setIptvGroup" data-settings-cat="sources">
-      <summary>IPTV Integration <span id="setIptvStatus" class="sectionStatus unknown">Disabled</span></summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy">
-            <div class="toggleTitle">Enable IPTV</div>
-            <div class="toggleHint">Show searchable live-channel browsing, favorites, visibility controls, and source discovery.</div>
-          </div>
-          <label class="toggleSwitch" for="setIptvEnabled" title="Enable IPTV integration">
-            <input type="checkbox" id="setIptvEnabled" />
-            <span class="toggleTrack" aria-hidden="true"></span>
-          </label>
-        </div>
-        <div class="hint">Playlists and stream credentials are stored owner-only in <code>/data/iptv.sqlite3</code>, but are not encrypted at rest. Free directory providers are opt-in.</div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setIptvApplyBtn" class="btn electricBlue">Apply IPTV</button>
-          <div id="setIptvApplyResult" class="inlineApplyMsg"></div>
-        </div>
-      </div>
-    </details>
-
-    <details class="settingsGroup hidden" id="setSeerrGroup" data-settings-cat="sources">
-      <summary>Seerr Integration <span id="setSeerrStatus" class="sectionStatus unknown">Disabled</span></summary>
-      <div class="settingsBody">
-        <div class="toggleRow">
-          <div class="toggleCopy"><div class="toggleTitle">Enable Seerr</div><div class="toggleHint">Show RelayTV discovery, search, and request status backed by Seerr.</div></div>
-          <label class="toggleSwitch" for="setSeerrEnabled" title="Enable Seerr integration"><input type="checkbox" id="setSeerrEnabled" /><span class="toggleTrack" aria-hidden="true"></span></label>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setSeerrServerUrl">Seerr server</label>
-          <input id="setSeerrServerUrl" class="input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://10.0.55.2:5055" />
-          <div class="hint">Use the Seerr base URL. An API key is required only for shared browsing and administrator requests.</div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setSeerrApiKey">API key</label>
-          <input id="setSeerrApiKey" class="input" type="password" autocomplete="new-password" spellcheck="false" placeholder="(leave blank to keep existing)" />
-          <div class="toggleRow">
-            <div class="toggleCopy"><div class="toggleTitle">Clear stored API key</div><div class="toggleHint">Remove the saved key on the next apply.</div></div>
-            <label class="toggleSwitch" for="setSeerrClearApiKey" title="Clear stored Seerr API key"><input type="checkbox" id="setSeerrClearApiKey" /><span class="toggleTrack" aria-hidden="true"></span></label>
-          </div>
-          <div id="setSeerrApiKeyState" class="hint"></div>
-        </div>
-        <div class="fieldRow">
-          <label class="fieldLbl" for="setSeerrRequestMode">Request identity</label>
-          <select id="setSeerrRequestMode" class="input">
-            <option value="disabled">Requests disabled</option>
-            <option value="shared_admin">Shared administrator API</option>
-            <option value="caller_session">Caller-specific sign-in</option>
-          </select>
-          <div id="setSeerrRequestModeHint" class="hint">Choose exactly which Seerr identity is allowed to create requests.</div>
-        </div>
-        <div id="setSeerrRequestUserRow" class="fieldRow hidden">
-          <label class="fieldLbl" for="setSeerrRequestUser">Shared request attribution</label>
-          <select id="setSeerrRequestUser" class="input"><option value="">API identity (default)</option></select>
-          <div class="hint">Changes attribution only; the administrator API identity still controls permissions and auto-approval.</div>
-        </div>
-        <div class="inlineApplyRow">
-          <button type="button" id="setSeerrApplyBtn" class="btn electricBlue">Apply Seerr</button>
-          <button type="button" id="setSeerrTestBtn" class="btn">Test connection</button>
-          <div id="setSeerrApplyResult" class="inlineApplyMsg" aria-live="polite"></div>
-        </div>
-        <div id="setSeerrDiag" class="hint"></div>
-      </div>
-    </details>
-
-    <div class="modalBottom">
-      <button id="settingsSaveBtn" class="btn primary electricBlue">Apply</button>
-    </div>
-  </div>
-</div>
 
 
 """

@@ -2827,6 +2827,11 @@ function renderIdlePanelSettings(cfg){
         </label>
       </div>`;
 
+    const lbl = document.createElement('label');
+    lbl.className = 'fieldLbl';
+    lbl.textContent = 'Card layout';
+    row.appendChild(lbl);
+
     const sel = document.createElement('select');
     sel.className = 'input';
     sel.setAttribute('data-idle-layout', key);
@@ -3616,11 +3621,13 @@ async function loadSettingsUi(){
 function bindSettingsUi(){
   const btn = document.getElementById('settingsBtn');
   const closeBtn = document.getElementById('settingsCloseBtn');
+  const cancelBtn = document.getElementById('settingsCancelBtn');
   const saveBtn = document.getElementById('settingsSaveBtn');
   const bd = document.getElementById('settingsBackdrop');
 
   if (btn) btn.onclick = openSettings;
   if (closeBtn) closeBtn.onclick = closeSettings;
+  if (cancelBtn) cancelBtn.onclick = closeSettings;
   if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeSettings(); });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
