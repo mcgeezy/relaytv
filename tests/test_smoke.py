@@ -275,6 +275,13 @@ def test_ui_smoke() -> None:
     assert 'class="chk"' not in response.text
     assert ".settingsBody input.input:not([type])" in css
     assert ".settingsBody select.input{" in css
+    assert ".settingsBody .btn," in css
+    assert ".settingsBody .btn.sm{" in css
+    assert "color:var(--txt)" not in css and "color: var(--txt)" not in css
+    assert response.text.index('id="settingsBackdrop"') < response.text.index("</body>")
+    assert 'class="settingsStickyHead"' in response.text
+    assert 'class="secretFooterRow"' in response.text
+    assert 'id="settingsCancelBtn"' in response.text
     assert "appearance:none;" in css
     assert "Show idle dashboard between plays" in response.text
     assert "Use Invidious server for YouTube playback" in response.text
