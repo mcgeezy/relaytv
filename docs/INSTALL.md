@@ -289,6 +289,11 @@ Source builds (`docker compose up -d --build`) enable an in-container virtual X 
 Rerunning the installer in a physical-display mode after headless mode disables
 the saved headless remote service. To keep remote helpers enabled during that
 switch, explicitly pass `RELAYTV_HEADLESS_REMOTE_ENABLED=1` in the environment.
+With image-only Compose installations, saved remote settings are retained for
+custom images and untagged digest references, whose Xvfb support the installer
+cannot infer. Official published tags (`latest`, `main`, `vX.Y.Z`, `X.Y.Z`, and
+`X.Y`) default to API-only mode; custom images still require an explicit
+initial remote setting.
 
 ## Runtime Detection
 
