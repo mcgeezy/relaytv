@@ -373,14 +373,6 @@ if [ "${RELAYTV_CEC_ENABLED+x}" != "x" ]; then
 fi
 CEC_RUNTIME_VAL="$(resolve_saved_or_env_scalar RELAYTV_CEC "")"
 CEC_MONITOR_VAL="$(resolve_saved_or_env_scalar RELAYTV_CEC_MONITOR "")"
-# An explicit CEC choice replaces saved dependent flags. Individually supplied
-# runtime/monitor overrides still win; plain reruns retain the saved values.
-case "${RELAYTV_CEC_ENABLED:-}" in
-  0|1)
-    if [[ ! -v RELAYTV_CEC ]]; then CEC_RUNTIME_VAL="$RELAYTV_CEC_ENABLED"; fi
-    if [[ ! -v RELAYTV_CEC_MONITOR ]]; then CEC_MONITOR_VAL="$RELAYTV_CEC_ENABLED"; fi
-    ;;
-esac
 
 pi_gen="$(detect_pi_generation "$HOST_MODEL")"
 pi_generation_override="${RELAYTV_PI_GENERATION:-}"
@@ -751,10 +743,15 @@ if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
   esac
 fi
 
-# The saved headless default must not follow a switch to a physical display.
-# Operators can still explicitly request remote helpers alongside desktop mode.
-if [ "$MODE" != "headless" ] && [ "$(existing_env_value RELAYTV_MODE || true)" = "headless" ] && [[ ! -v RELAYTV_HEADLESS_REMOTE_ENABLED ]]; then
-  HEADLESS_REMOTE_ENABLED_VAL="0"
+# The saved headless default must not follow a switch to a physical display,
+# or onto a release-only compose manifest whose published image omits Xvfb.
+# Operators can still explicitly request remote helpers via env override.
+if [[ ! -v RELAYTV_HEADLESS_REMOTE_ENABLED ]]; then
+  if [ "$MODE" != "headless" ] && [ "$(existing_env_value RELAYTV_MODE || true)" = "headless" ]; then
+    HEADLESS_REMOTE_ENABLED_VAL="0"
+  elif [ "$MODE" = "headless" ] && ! compose_supports_local_build; then
+    HEADLESS_REMOTE_ENABLED_VAL="0"
+  fi
 fi
 if [ -z "$HEADLESS_REMOTE_ENABLED_VAL" ]; then
   if [ "$MODE" = "headless" ] && compose_supports_local_build; then
@@ -773,7 +770,7 @@ if [ -z "$HEADLESS_REMOTE_SOFTWARE_VAL" ]; then
   HEADLESS_REMOTE_SOFTWARE_VAL="1"
 fi
 if [ -z "$HEADLESS_VNC_ENABLED_VAL" ]; then
-  HEADLESS_VNC_ENABLED_VAL="$HEADLESS_REMOTE_ENABLED_VAL"
+  HEADLESS_VNC_ENABLED_VAL="1"
 fi
 if [ -z "$HEADLESS_VNC_LISTEN_VAL" ]; then
   HEADLESS_VNC_LISTEN_VAL="127.0.0.1"
@@ -1287,7 +1284,21 @@ if [ "$NVIDIA_DEVICE_DETECTED" = "1" ] && [ "$NVIDIA_DOCKER_TOOLKIT_AVAILABLE" =
 fi
 
 CEC_NODES_DETECTED="$(detect_cec_device_nodes | sort -u | paste -sd, - 2>/dev/null || true)"
+CEC_PROMPTED="0"
+if [ "$CEC_ENABLED_VAL" = "auto" ] && [ -n "$CEC_NODES_DETECTED" ] && [ "${RELAYTV_INSTALL_YES:-0}" != "1" ] && has_controlling_tty; then
+  CEC_PROMPTED="1"
+fi
 CEC_ENABLED_VAL="$(resolve_cec_enabled "$CEC_ENABLED_VAL" "$CEC_NODES_DETECTED")"
+# An explicit CEC choice (0, 1, or auto) or an interactive prompt answer updates
+# saved dependent flags; individually supplied runtime/monitor overrides still win.
+if [[ -v RELAYTV_CEC_ENABLED ]] || [ "$CEC_PROMPTED" = "1" ]; then
+  if [[ ! -v RELAYTV_CEC ]]; then
+    CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
+  fi
+  if [[ ! -v RELAYTV_CEC_MONITOR ]]; then
+    CEC_MONITOR_VAL="$CEC_ENABLED_VAL"
+  fi
+fi
 if [ -z "$CEC_RUNTIME_VAL" ]; then
   CEC_RUNTIME_VAL="$CEC_ENABLED_VAL"
 fi
@@ -1544,34 +1555,34 @@ if [ "${HEADLESS_REMOTE_ENABLED_VAL}" = "1" ] || [ "${MODE}" = "headless" ]; the
   # entrypoint defaults it to 1 when unset; omitting 0 would re-enable Xvfb.
   HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_ENABLED" "${HEADLESS_REMOTE_ENABLED_VAL}")
   HEADLESS_ENV_BLOCK+=$'\n'
-  if [ "${HEADLESS_REMOTE_DISPLAY_VAL}" != ":99" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_DISPLAY" "${HEADLESS_REMOTE_DISPLAY_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
-  if [ "${HEADLESS_REMOTE_RESOLUTION_VAL}" != "1920x1080x24" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_RESOLUTION" "${HEADLESS_REMOTE_RESOLUTION_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
-  if [ "${HEADLESS_REMOTE_SOFTWARE_VAL}" != "1" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_SOFTWARE" "${HEADLESS_REMOTE_SOFTWARE_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
-  if [ "${HEADLESS_VNC_ENABLED_VAL}" != "1" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_ENABLED" "${HEADLESS_VNC_ENABLED_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
-  if [ "${HEADLESS_VNC_LISTEN_VAL}" != "127.0.0.1" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_LISTEN" "${HEADLESS_VNC_LISTEN_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
-  if [ "${HEADLESS_VNC_PORT_VAL}" != "5900" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_PORT" "${HEADLESS_VNC_PORT_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
-  if [ -n "${HEADLESS_VNC_PASSWORD_FILE_VAL}" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_PASSWORD_FILE" "${HEADLESS_VNC_PASSWORD_FILE_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
+fi
+if [ "${HEADLESS_REMOTE_DISPLAY_VAL}" != ":99" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_DISPLAY" "${HEADLESS_REMOTE_DISPLAY_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
+fi
+if [ "${HEADLESS_REMOTE_RESOLUTION_VAL}" != "1920x1080x24" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_RESOLUTION" "${HEADLESS_REMOTE_RESOLUTION_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
+fi
+if [ "${HEADLESS_REMOTE_SOFTWARE_VAL}" != "1" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_SOFTWARE" "${HEADLESS_REMOTE_SOFTWARE_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
+fi
+if [ "${HEADLESS_VNC_ENABLED_VAL}" != "1" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_ENABLED" "${HEADLESS_VNC_ENABLED_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
+fi
+if [ "${HEADLESS_VNC_LISTEN_VAL}" != "127.0.0.1" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_LISTEN" "${HEADLESS_VNC_LISTEN_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
+fi
+if [ "${HEADLESS_VNC_PORT_VAL}" != "5900" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_PORT" "${HEADLESS_VNC_PORT_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
+fi
+if [ -n "${HEADLESS_VNC_PASSWORD_FILE_VAL}" ]; then
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_VNC_PASSWORD_FILE" "${HEADLESS_VNC_PASSWORD_FILE_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
 fi
 
 if [ "${YTDLP_AUTO_UPDATE_VAL}" != "0" ]; then
@@ -1592,7 +1603,7 @@ if [ "${YTDLP_AUTO_UPDATE_STATE_FILE_VAL}" != "/data/.relaytv-ytdlp-update.json"
 fi
 
 CEC_ENV_BLOCK=""
-if [ "${CEC_ENABLED_VAL}" = "1" ] || [ "${CEC_RUNTIME_VAL}" = "1" ] || [ "${CEC_MONITOR_VAL}" = "1" ] || existing_playback_env_line RELAYTV_CEC_ENABLED >/dev/null 2>&1; then
+if [ "${CEC_ENABLED_VAL}" = "1" ] || [ "${CEC_RUNTIME_VAL}" = "1" ] || [ "${CEC_MONITOR_VAL}" = "1" ] || [ "${CEC_PROMPTED}" = "1" ] || existing_playback_env_line RELAYTV_CEC_ENABLED >/dev/null 2>&1; then
   CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC" "${CEC_RUNTIME_VAL}")
   CEC_ENV_BLOCK+=$'\n'
   CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC_ENABLED" "${CEC_ENABLED_VAL}")

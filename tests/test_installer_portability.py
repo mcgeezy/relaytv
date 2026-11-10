@@ -883,12 +883,13 @@ def test_env_defaults_references_current_qt_shell_and_session_vars() -> None:
 @pytest.mark.parametrize("enabled", ["0", "1"])
 @pytest.mark.parametrize("individual_override", [False, True])
 def test_explicit_cec_choice_replaces_saved_flags(
-    tmp_path: Path, enabled: str, individual_override: bool,
+    tmp_path: Path,
+    enabled: str,
+    individual_override: bool,
 ) -> None:
     previous = "1" if enabled == "0" else "0"
     (tmp_path / ".env").write_text(
-        f"RELAYTV_CEC_ENABLED={previous}\n"
-        f"RELAYTV_CEC={previous}\nRELAYTV_CEC_MONITOR={previous}\n",
+        f"RELAYTV_CEC_ENABLED={previous}\nRELAYTV_CEC={previous}\nRELAYTV_CEC_MONITOR={previous}\n",
         encoding="utf-8",
     )
     overrides = {"RELAYTV_CEC_ENABLED": enabled}
@@ -908,7 +909,9 @@ def test_explicit_cec_choice_replaces_saved_flags(
 @pytest.mark.parametrize("mode", ["x11", "wayland", "headless"])
 @pytest.mark.parametrize("explicit_remote", [False, True])
 def test_headless_rerun_recomputes_remote_default_when_switching_modes(
-    tmp_path: Path, mode: str, explicit_remote: bool,
+    tmp_path: Path,
+    mode: str,
+    explicit_remote: bool,
 ) -> None:
     shutil.copy2(ROOT_DIR / "docker-compose.yml", tmp_path / "docker-compose.yml")
     first = _run_host_installer(tmp_path, args=["--mode", "headless"])
@@ -920,7 +923,9 @@ def test_headless_rerun_recomputes_remote_default_when_switching_modes(
         overrides["RELAYTV_HEADLESS_REMOTE_ENABLED"] = "1"
 
     result = _run_host_installer(
-        tmp_path, args=["--mode", mode, "--use-shell-env"], env_overrides=overrides,
+        tmp_path,
+        args=["--mode", mode, "--use-shell-env"],
+        env_overrides=overrides,
     )
 
     assert result.returncode == 0, result.stderr
@@ -935,11 +940,14 @@ def test_headless_rerun_recomputes_remote_default_when_switching_modes(
 
 @pytest.mark.parametrize(
     ("choice", "saved", "expected", "monitor"),
-    [(None, "1", "1", "0"), ("--enable-cec", "0", "1", "1"),
-     ("--no-cec", "1", "0", "0")],
+    [(None, "1", "1", "0"), ("--enable-cec", "0", "1", "1"), ("--no-cec", "1", "0", "0")],
 )
 def test_bootstrap_distinguishes_saved_cec_from_explicit_choice(
-    tmp_path: Path, choice: str | None, saved: str, expected: str, monitor: str,
+    tmp_path: Path,
+    choice: str | None,
+    saved: str,
+    expected: str,
+    monitor: str,
 ) -> None:
     install_dir = tmp_path / "install"
     install_dir.mkdir()
@@ -968,10 +976,23 @@ def test_bootstrap_distinguishes_saved_cec_from_explicit_choice(
         RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
     )
     result = subprocess.run(
-        ["bash", str(ROOT_DIR / "install.sh"), "--dir", str(install_dir),
-         "--yes", "--no-pull", "--no-start", "--mode", "headless",
-         *([choice] if choice else [])],
-        cwd=tmp_path, env=env, capture_output=True, text=True, check=False,
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(install_dir),
+            "--yes",
+            "--no-pull",
+            "--no-start",
+            "--mode",
+            "headless",
+            *([choice] if choice else []),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -979,3 +1000,232 @@ def test_bootstrap_distinguishes_saved_cec_from_explicit_choice(
     assert f"RELAYTV_CEC_ENABLED={expected}\n" in env_text
     assert f"RELAYTV_CEC={expected}\n" in env_text
     assert f"RELAYTV_CEC_MONITOR={monitor}\n" in env_text
+
+
+def test_api_only_headless_does_not_poison_vnc_enabled_on_later_remote_upgrade(
+    tmp_path: Path,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    first = _run_host_installer(tmp_path, args=["--mode", "headless"])
+    assert first.returncode == 0, first.stderr
+    first_env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in first_env
+    assert "RELAYTV_HEADLESS_VNC_ENABLED=0" not in first_env
+
+    shutil.rmtree(tmp_path / "scripts")
+    shutil.copy2(ROOT_DIR / "docker-compose.yml", tmp_path / "docker-compose.yml")
+    second = _run_host_installer(
+        tmp_path,
+        args=["--mode", "headless"],
+        env_overrides={"RELAYTV_HEADLESS_REMOTE_ENABLED": "1"},
+    )
+    assert second.returncode == 0, second.stderr
+    second_env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=1\n" in second_env
+    assert "RELAYTV_HEADLESS_VNC_ENABLED=0" not in second_env
+
+
+def test_interactive_cec_auto_syncs_dependent_flags_and_persists_decline(
+    tmp_path: Path,
+) -> None:
+    import fcntl
+    import pty
+    import select
+    import termios
+
+    def run_with_pty(work_dir: Path, answer: bytes, extra_env: dict[str, str]) -> tuple[int, str]:
+        installer = _copy_host_installer(work_dir)
+        fake_bin = work_dir / "cec-bin"
+        fake_bin.mkdir(exist_ok=True)
+        cec_client = fake_bin / "cec-client"
+        cec_client.write_text("#!/bin/sh\nprintf 'com port: /dev/ttyACM0\\n'\n", encoding="utf-8")
+        cec_client.chmod(0o755)
+
+        env = os.environ.copy()
+        for key in (
+            "RELAYTV_CEC",
+            "RELAYTV_CEC_ENABLED",
+            "RELAYTV_CEC_MONITOR",
+            "RELAYTV_INSTALL_YES",
+        ):
+            env.pop(key, None)
+        env.update(
+            {
+                "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+                "RELAYTV_TARGET_USER": pwd.getpwuid(os.getuid()).pw_name,
+                "RELAYTV_PI_VIDEO_DEVICES_ENABLED": "0",
+                **extra_env,
+            }
+        )
+
+        master_fd, slave_fd = pty.openpty()
+        try:
+            if answer:
+                os.write(master_fd, answer)
+
+            def attach_ctty() -> None:
+                os.setsid()
+                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+            proc = subprocess.run(
+                [str(installer), "--mode", "headless"],
+                cwd=work_dir,
+                env=env,
+                stdin=slave_fd,
+                capture_output=True,
+                text=True,
+                preexec_fn=attach_ctty,
+                timeout=10,
+                check=False,
+            )
+            os.close(slave_fd)
+            slave_fd = -1
+            pty_chunks: list[bytes] = []
+            while select.select([master_fd], [], [], 0.05)[0]:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                pty_chunks.append(data)
+            return proc.returncode, b"".join(pty_chunks).decode("utf-8", errors="replace")
+        finally:
+            if slave_fd >= 0:
+                os.close(slave_fd)
+            os.close(master_fd)
+
+    # 1. Explicit RELAYTV_CEC_ENABLED=auto answered "y" updates saved 0 flags to 1.
+    auto_dir = tmp_path / "auto-yes"
+    auto_dir.mkdir()
+    (auto_dir / ".env").write_text(
+        "RELAYTV_CEC_ENABLED=0\nRELAYTV_CEC=0\nRELAYTV_CEC_MONITOR=0\n",
+        encoding="utf-8",
+    )
+    rc, pty_out = run_with_pty(auto_dir, b"y\n", {"RELAYTV_CEC_ENABLED": "auto"})
+    assert rc == 0
+    assert "Enable HDMI-CEC passthrough?" in pty_out
+    auto_env = (auto_dir / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_CEC_ENABLED=1\n" in auto_env
+    assert "RELAYTV_CEC=1\n" in auto_env
+    assert "RELAYTV_CEC_MONITOR=1\n" in auto_env
+
+    # 2. Fresh interactive decline ("n") persists RELAYTV_CEC_ENABLED=0 so reruns do not re-prompt.
+    decline_dir = tmp_path / "fresh-no"
+    decline_dir.mkdir()
+    rc1, pty_out1 = run_with_pty(decline_dir, b"n\n", {})
+    assert rc1 == 0
+    assert "Enable HDMI-CEC passthrough?" in pty_out1
+    decline_env = (decline_dir / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_CEC_ENABLED=0\n" in decline_env
+
+    shutil.rmtree(decline_dir / "scripts")
+    rc2, pty_out2 = run_with_pty(decline_dir, b"", {})
+    assert rc2 == 0
+    assert "Enable HDMI-CEC passthrough?" not in pty_out2
+
+
+def test_bootstrap_branch_main_unpins_saved_tag_and_empty_cec_env_preserves_saved(
+    tmp_path: Path,
+) -> None:
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    (install_dir / ".env").write_text(
+        "RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:v0.12.1\n"
+        "RELAYTV_CEC_ENABLED=1\n"
+        "RELAYTV_CEC=1\n"
+        "RELAYTV_CEC_MONITOR=0\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for name, content in {
+        "docker": "#!/bin/sh\nexit 0\n",
+        "curl": (
+            "#!/bin/bash\n"
+            'url="${@: -1}"\n'
+            f'cat {shlex.quote(str(ROOT_DIR))}/"${{url#https://review.invalid/}}"\n'
+        ),
+    }.items():
+        command = fake_bin / name
+        command.write_text(content, encoding="utf-8")
+        command.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+    env.update(
+        PATH=f"{fake_bin}:{env.get('PATH', '')}",
+        RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+        RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+        RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+        RELAYTV_CEC_ENABLED="",
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(install_dir),
+            "--branch",
+            "main",
+            "--yes",
+            "--no-pull",
+            "--no-start",
+            "--mode",
+            "headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (install_dir / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_IMAGE_REF=" not in env_text
+    assert "RELAYTV_CEC_ENABLED=1\n" in env_text
+    assert "RELAYTV_CEC=1\n" in env_text
+    assert "RELAYTV_CEC_MONITOR=0\n" in env_text
+
+
+def test_headless_mode_switches_preserve_vnc_tunables_and_disable_xvfb_on_release_compose(
+    tmp_path: Path,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.yml", tmp_path / "docker-compose.yml")
+    first = _run_host_installer(
+        tmp_path,
+        args=["--mode", "headless"],
+        env_overrides={
+            "RELAYTV_HEADLESS_VNC_PORT": "5901",
+            "RELAYTV_HEADLESS_VNC_PASSWORD_FILE": "/data/vnc.pass",
+        },
+    )
+    assert first.returncode == 0, first.stderr
+
+    # Switch to x11: remote Xvfb disables, but operator VNC tunables stay saved.
+    shutil.rmtree(tmp_path / "scripts")
+    to_x11 = _run_host_installer(
+        tmp_path,
+        args=["--mode", "x11", "--use-shell-env"],
+        env_overrides={"DISPLAY": ":0", "XDG_SESSION_TYPE": "x11"},
+    )
+    assert to_x11.returncode == 0, to_x11.stderr
+    x11_env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=1" not in x11_env
+    assert "RELAYTV_HEADLESS_VNC_PORT=5901\n" in x11_env
+    assert "RELAYTV_HEADLESS_VNC_PASSWORD_FILE=/data/vnc.pass\n" in x11_env
+
+    # Switch back to source headless, then onto release-only compose without Xvfb.
+    shutil.rmtree(tmp_path / "scripts")
+    back_source = _run_host_installer(tmp_path, args=["--mode", "headless"])
+    assert back_source.returncode == 0, back_source.stderr
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=1\n" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+    shutil.rmtree(tmp_path / "scripts")
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    to_release = _run_host_installer(tmp_path, args=["--mode", "headless"])
+    assert to_release.returncode == 0, to_release.stderr
+    release_env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in release_env
+    assert "RELAYTV_HEADLESS_VNC_PORT=5901\n" in release_env
+    assert "RELAYTV_HEADLESS_VNC_PASSWORD_FILE=/data/vnc.pass\n" in release_env

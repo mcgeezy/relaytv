@@ -460,10 +460,11 @@ Manual override:
 RELAYTV_CEC_ENABLED=1 ./scripts/install.sh
 ```
 
-An explicit `RELAYTV_CEC_ENABLED=0` or `1` (or bootstrap `--no-cec` /
-`--enable-cec`) also updates the saved runtime and monitor flags. Individually
-supplied `RELAYTV_CEC` and `RELAYTV_CEC_MONITOR` environment overrides take
-precedence. Reruns without an explicit CEC choice preserve the saved flags.
+An explicit `RELAYTV_CEC_ENABLED=0`, `1`, or `auto` (or bootstrap `--no-cec` /
+`--enable-cec`) also updates the saved runtime and monitor flags to match the
+resolved CEC state. Individually supplied `RELAYTV_CEC` and `RELAYTV_CEC_MONITOR`
+environment overrides take precedence. Reruns without an explicit CEC choice
+preserve the saved flags.
 
 Equivalent compose passthrough:
 

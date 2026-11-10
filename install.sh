@@ -215,8 +215,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$IMAGE_EXPLICIT" = "0" ]; then
-  if [ "$BRANCH_EXPLICIT" = "1" ] && [[ "$BRANCH" =~ ^v?[0-9]+\.[0-9]+(\.[0-9]+)?([.-][A-Za-z0-9._-]+)?$ ]]; then
-    IMAGE_REF="ghcr.io/mcgeezy/relaytv:${BRANCH}"
+  if [ "$BRANCH_EXPLICIT" = "1" ]; then
+    if [[ "$BRANCH" =~ ^v?[0-9]+\.[0-9]+(\.[0-9]+)?([.-][A-Za-z0-9._-]+)?$ ]]; then
+      IMAGE_REF="ghcr.io/mcgeezy/relaytv:${BRANCH}"
+    else
+      IMAGE_REF="$DEFAULT_IMAGE"
+    fi
   elif saved_image_ref="$(read_dotenv_key "$INSTALL_DIR/.env" RELAYTV_IMAGE_REF)" && [ -n "$saved_image_ref" ]; then
     IMAGE_REF="$saved_image_ref"
   fi
@@ -566,6 +570,8 @@ say "Generating RelayTV runtime configuration..."
   # Do not turn a saved CEC choice into an explicit override of runtime flags.
   if [ "$CEC_EXPLICIT" = "1" ]; then
     export RELAYTV_CEC_ENABLED="$CEC_CHOICE"
+  else
+    unset RELAYTV_CEC_ENABLED
   fi
   RELAYTV_NVIDIA_DOCKER_TOOLKIT="$NVIDIA_TOOLKIT_HINT" RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
 )
