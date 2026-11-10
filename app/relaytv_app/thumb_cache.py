@@ -7,8 +7,11 @@ import subprocess
 import queue
 import time
 import shutil
+import urllib.error
 import urllib.request
 from urllib.parse import urlparse
+
+from . import url_boundary
 
 
 def _read_max_total_bytes() -> int:
@@ -236,9 +239,44 @@ def _headers_for(url: str) -> dict[str, str]:
     return headers
 
 
+def _is_allowed_thumb_url(url: object) -> bool:
+    parsed = url_boundary.parse_url(url)
+    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    return not url_boundary.is_forbidden_ip_literal(parsed.hostname)
+
+
+class _SafeThumbRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_allowed_thumb_url(newurl):
+            raise urllib.error.URLError("blocked thumbnail redirect target")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _is_raster_image_file(path: str) -> bool:
+    """Return True when ``path`` begins with a supported raster image header."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+    except OSError:
+        return False
+    if head.startswith(b"\xff\xd8\xff"):
+        return True
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return True
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return True
+    return False
+
+
 def _download_to(url: str, fp: str) -> bool:
+    if not _is_allowed_thumb_url(url):
+        return False
     req = urllib.request.Request(url, headers=_headers_for(url))
-    with urllib.request.urlopen(req, timeout=15) as r:
+    opener = urllib.request.build_opener(_SafeThumbRedirectHandler)
+    with opener.open(req, timeout=15) as r:
         total = 0
         with open(fp, "wb") as f:
             while True:
@@ -297,9 +335,11 @@ def _worker() -> None:
                 tmp_out = os.path.join(td, "out.jpg")
                 if _normalize_to_jpg(raw_fp, tmp_out):
                     committed = _commit_file(tmp_out, dst)
-                else:
-                    # Fallback: persist original bytes (may not be jpg but better than dropping).
+                elif _is_raster_image_file(raw_fp):
+                    # Fallback: persist verified raster image bytes when ffmpeg is unavailable.
                     committed = _commit_file(raw_fp, dst)
+                else:
+                    committed = False
                 if not committed:
                     # A full/read-only disk is a failed thumbnail attempt too;
                     # clearing backoff here hammers storage on every status poll.
@@ -443,8 +483,10 @@ def ensure_cached_sync(thumb_id: str, timeout_s: float = 3.0) -> bool:
             out_fp = os.path.join(td, "out.jpg")
             if _normalize_to_jpg(raw_fp, out_fp):
                 _commit_file(out_fp, p)
-            else:
+            elif _is_raster_image_file(raw_fp):
                 _commit_file(raw_fp, p)
+            else:
+                return False
         _touch(p)
         _prune_thumb_dir()
         failed = not (os.path.exists(p) and os.path.getsize(p) > 0)

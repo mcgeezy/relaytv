@@ -293,6 +293,27 @@ def validate_user_url(raw: str) -> str:
         raise HTTPException(status_code=400, detail="Unsupported URL scheme (http/https only)")
     if not parsed.hostname:
         raise HTTPException(status_code=400, detail="Invalid url host")
+    if url_boundary.is_forbidden_ip_literal(parsed.hostname):
+        raise HTTPException(status_code=400, detail="Unsupported URL host")
+    return u
+
+
+def validate_resolved_stream_url(raw: object) -> str:
+    """Validate a stream or audio URL emitted by an external resolver.
+
+    Prevents a compromised or hostile extractor/Invidious response from handing
+    mpv non-network protocols (file://, edl://, av://), CLI option tokens, or
+    link-local metadata addresses.
+    """
+    u = str(raw or "").strip()
+    parsed = url_boundary.parse_url(u)
+    if (
+        parsed is None
+        or parsed.scheme not in ("http", "https")
+        or not parsed.hostname
+        or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+    ):
+        raise HTTPException(status_code=400, detail="Resolver returned an unsupported stream URL")
     return u
 
 
@@ -644,7 +665,7 @@ def _run_ytdlp_provider_command(
         kwargs: dict[str, object] = {"check": False}
         if timeout is not None:
             kwargs["timeout"] = timeout
-        return run([*args, *command_args, url], **kwargs)
+        return run([*args, *command_args, "--", url], **kwargs)
 
     selected_args = list(base_args)
     result = _invoke(selected_args)
@@ -931,18 +952,25 @@ def resolve_streams_ytdlp(url: str):
         raise HTTPException(status_code=400, detail="yt-dlp returned no stream URLs")
     if len(lines) == 1:
         return ResolvedStreams(
-            stream=lines[0],
+            stream=validate_resolved_stream_url(lines[0]),
             transport="yt-dlp",
             live_status=live_status,
             available_at=available_at,
         )
     return ResolvedStreams(
-        stream=lines[0],
-        audio=lines[1],
+        stream=validate_resolved_stream_url(lines[0]),
+        audio=validate_resolved_stream_url(lines[1]),
         transport="yt-dlp",
         live_status=live_status,
         available_at=available_at,
     )
+
+
+def _normalize_invidious_stream_url(raw: object, resolved_base: str) -> str:
+    url = str(raw or "").strip()
+    if url.startswith("/") and not url.startswith("//"):
+        url = f"{resolved_base}{url}"
+    return validate_resolved_stream_url(url)
 
 
 def resolve_streams_invidious(youtube_url: str, base: str | None = None):
@@ -981,7 +1009,7 @@ def resolve_streams_invidious(youtube_url: str, base: str | None = None):
             return (res, br)
 
         best = sorted(pool, key=mux_score, reverse=True)[0]
-        return best["url"], None
+        return _normalize_invidious_stream_url(best["url"], resolved_base), None
 
     # Adaptive: choose best video + best audio
     vids = [
@@ -1011,8 +1039,16 @@ def resolve_streams_invidious(youtube_url: str, base: str | None = None):
     def a_score(x):
         return int(x.get("bitrate") or 0)
 
-    vbest = sorted(vids, key=v_score, reverse=True)[0]["url"]
-    abest = sorted(auds, key=a_score, reverse=True)[0]["url"] if auds else None
+    vbest = _normalize_invidious_stream_url(
+        sorted(vids, key=v_score, reverse=True)[0]["url"], resolved_base
+    )
+    abest = (
+        _normalize_invidious_stream_url(
+            sorted(auds, key=a_score, reverse=True)[0]["url"], resolved_base
+        )
+        if auds
+        else None
+    )
     return vbest, abest
 
 
