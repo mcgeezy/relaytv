@@ -41,9 +41,71 @@ if [[ "$SESSION" == "wayland" ]]; then
 fi
 
 
+is_secret_env_key() {
+  local key_uc
+  key_uc="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  case "$key_uc" in
+    *_FILE|*_PATH|*_DIR|*_ENABLED|*_MODE) return 1 ;;
+  esac
+  [[ "$key_uc" =~ (^|_)(TOKEN|KEY|PASSWORD|PASSWD|SECRET)($|_) ]]
+}
+
+print_redacted_env() {
+  local file="$1" line prefix key rhs
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^([[:space:]]*(export[[:space:]]+)?)([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      prefix="${BASH_REMATCH[1]}"
+      key="${BASH_REMATCH[3]}"
+      rhs="${BASH_REMATCH[4]}"
+      if is_secret_env_key "$key" && [[ ! "$rhs" =~ ^[[:space:]]*(\"\"|\'\')?[[:space:]]*(#.*)?$ ]]; then
+        printf "  %s%s=<redacted>\n" "$prefix" "$key"
+        continue
+      fi
+    fi
+    printf "  %s\n" "$line"
+  done < "$file"
+}
+
+read_configured_port() {
+  local port="${RELAYTV_PORT:-}" line matched_key raw
+  if [[ -z "$port" && -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%$'\r'}"
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(RELAYTV_PORT|PORT)=(.*)$ ]]; then
+        matched_key="${BASH_REMATCH[2]}"
+        raw="${BASH_REMATCH[3]}"
+        raw="${raw#"${raw%%[![:space:]]*}"}"
+        if [[ "$raw" =~ ^\"([^\"]*)\" ]]; then
+          raw="${BASH_REMATCH[1]}"
+        elif [[ "$raw" =~ ^\'([^\']*)\' ]]; then
+          raw="${BASH_REMATCH[1]}"
+        elif [[ "$raw" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then
+          raw="${BASH_REMATCH[1]}"
+        else
+          raw="${raw%"${raw##*[![:space:]]}"}"
+        fi
+        if [[ "$matched_key" == "RELAYTV_PORT" || -z "$port" ]]; then
+          port="$raw"
+        fi
+      fi
+    done < .env
+  fi
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+    port="8787"
+  fi
+  printf "%s" "$port"
+}
+
 if [[ -f .env ]]; then
   say ".env"
-  sed 's/^/  /' .env
+  if command -v stat >/dev/null 2>&1; then
+    env_mode="$(stat -c '%a' .env 2>/dev/null || true)"
+    if [[ -n "$env_mode" && "$env_mode" != "600" ]]; then
+      echo "  WARN: .env mode is ${env_mode} (expected 600)"
+    fi
+  fi
+  print_redacted_env .env
 else
   say ".env"
   echo "  (missing) — run ./scripts/install.sh"
@@ -93,8 +155,9 @@ fi
 
 say "HTTP health checks"
 if command -v curl >/dev/null 2>&1; then
-  base="${RELAYTV_BASE:-http://127.0.0.1:8787}"
-  for ep in /status /ui /x11/overlay; do
+  port="$(read_configured_port)"
+  base="${RELAYTV_BASE:-http://127.0.0.1:${port}}"
+  for ep in /health /status /ui /x11/overlay; do
     code="$(curl -s -o /dev/null -w "%{http_code}" "$base$ep" || true)"
     kv "$base$ep" "$code"
   done

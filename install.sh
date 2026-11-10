@@ -62,8 +62,44 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+has_controlling_tty() {
+  ( exec </dev/tty >/dev/tty ) 2>/dev/null
+}
+
 default_install_dir() {
   pwd -P
+}
+
+parse_dotenv_scalar() {
+  local raw="${1#*=}"
+  raw="${raw%$'\r'}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  if [[ "$raw" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    if [[ "$raw" =~ ^#.*$ ]]; then
+      raw=""
+    elif [[ "$raw" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then
+      raw="${BASH_REMATCH[1]}"
+    else
+      raw="${raw%"${raw##*[![:space:]]}"}"
+    fi
+    printf '%s' "$raw"
+  fi
+}
+
+read_dotenv_key() {
+  local file="$1" wanted="$2" line found=""
+  [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)= ]] && [ "${BASH_REMATCH[2]}" = "$wanted" ]; then
+      found="$line"
+    fi
+  done < "$file"
+  [ -n "$found" ] || return 1
+  parse_dotenv_scalar "$found"
 }
 
 INSTALL_DIR_EXPLICIT="0"
@@ -74,11 +110,29 @@ else
   INSTALL_DIR="$(default_install_dir)"
 fi
 REPO="${RELAYTV_BOOTSTRAP_REPO:-$DEFAULT_REPO}"
-BRANCH="${RELAYTV_BOOTSTRAP_BRANCH:-$DEFAULT_BRANCH}"
-IMAGE_REF="${RELAYTV_IMAGE_REF:-$DEFAULT_IMAGE}"
+BRANCH_EXPLICIT="0"
+if [ -n "${RELAYTV_BOOTSTRAP_BRANCH:-}" ]; then
+  BRANCH="$RELAYTV_BOOTSTRAP_BRANCH"
+  BRANCH_EXPLICIT="1"
+else
+  BRANCH="$DEFAULT_BRANCH"
+fi
+IMAGE_EXPLICIT="0"
+if [ -n "${RELAYTV_IMAGE_REF:-}" ]; then
+  IMAGE_REF="$RELAYTV_IMAGE_REF"
+  IMAGE_EXPLICIT="1"
+else
+  IMAGE_REF="$DEFAULT_IMAGE"
+fi
 ASSUME_YES="${RELAYTV_INSTALL_YES:-0}"
 DOCKER_INSTALL="${RELAYTV_INSTALL_DOCKER:-auto}"
-CEC_CHOICE="${RELAYTV_CEC_ENABLED:-auto}"
+CEC_EXPLICIT="0"
+if [ -n "${RELAYTV_CEC_ENABLED:-}" ]; then
+  CEC_CHOICE="$RELAYTV_CEC_ENABLED"
+  CEC_EXPLICIT="1"
+else
+  CEC_CHOICE="auto"
+fi
 DO_PULL="${RELAYTV_INSTALL_PULL:-1}"
 DO_START="${RELAYTV_INSTALL_START:-1}"
 FORCE_INSTALL="${RELAYTV_INSTALL_FORCE:-0}"
@@ -101,11 +155,13 @@ while [[ $# -gt 0 ]]; do
       shift
       [[ $# -gt 0 ]] || die "--branch requires a value"
       BRANCH="$1"
+      BRANCH_EXPLICIT="1"
       ;;
     --image)
       shift
       [[ $# -gt 0 ]] || die "--image requires a value"
       IMAGE_REF="$1"
+      IMAGE_EXPLICIT="1"
       ;;
     --yes)
       ASSUME_YES="1"
@@ -118,9 +174,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --enable-cec)
       CEC_CHOICE="1"
+      CEC_EXPLICIT="1"
       ;;
     --no-cec)
       CEC_CHOICE="0"
+      CEC_EXPLICIT="1"
       ;;
     --no-pull)
       DO_PULL="0"
@@ -156,6 +214,25 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if [ "$IMAGE_EXPLICIT" = "0" ]; then
+  if [ "$BRANCH_EXPLICIT" = "1" ]; then
+    if [[ "$BRANCH" =~ ^v?[0-9]+\.[0-9]+(\.[0-9]+)?([.-][A-Za-z0-9._-]+)?$ ]]; then
+      IMAGE_REF="ghcr.io/mcgeezy/relaytv:${BRANCH}"
+    else
+      IMAGE_REF="$DEFAULT_IMAGE"
+    fi
+  elif saved_image_ref="$(read_dotenv_key "$INSTALL_DIR/.env" RELAYTV_IMAGE_REF)" && [ -n "$saved_image_ref" ]; then
+    IMAGE_REF="$saved_image_ref"
+  fi
+fi
+if [ "$CEC_EXPLICIT" = "0" ]; then
+  if saved_cec_choice="$(read_dotenv_key "$INSTALL_DIR/.env" RELAYTV_CEC_ENABLED)" && [ -n "$saved_cec_choice" ]; then
+    case "$saved_cec_choice" in
+      0|1) CEC_CHOICE="$saved_cec_choice" ;;
+    esac
+  fi
+fi
+
 case "$CEC_CHOICE" in
   auto|0|1) ;;
   *) die "RELAYTV_CEC_ENABLED must be auto, 0, or 1" ;;
@@ -187,10 +264,23 @@ validate_host_platform() {
 }
 
 confirm_current_directory_install() {
+  local resolved_dir="$INSTALL_DIR" home_dir=""
+  if [ -d "$INSTALL_DIR" ]; then
+    resolved_dir="$(cd "$INSTALL_DIR" 2>/dev/null && pwd -P || printf '%s' "$INSTALL_DIR")"
+  fi
+  if [ "$resolved_dir" = "/" ]; then
+    die "Refusing to install RelayTV directly into /."
+  fi
+  if [ -n "${HOME:-}" ]; then
+    home_dir="$(cd "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")"
+  fi
+  if [ -n "$home_dir" ] && [ "$resolved_dir" = "$home_dir" ] && [ "$INSTALL_DIR_EXPLICIT" = "0" ] && [ "$FORCE_INSTALL" != "1" ] && [ "$ASSUME_YES" = "1" ]; then
+    die "Refusing to install directly into your home directory ($INSTALL_DIR) with --yes. Create a subdirectory first (mkdir -p ~/relaytv && cd ~/relaytv), pass --dir PATH, or add --force."
+  fi
   if [ "$INSTALL_DIR_EXPLICIT" = "1" ] || [ "$ASSUME_YES" = "1" ]; then
     return 0
   fi
-  if [ ! -r /dev/tty ]; then
+  if ! has_controlling_tty; then
     die "RelayTV installs into the current directory by default: $INSTALL_DIR. Re-run from the directory where you want the service installed, pass --dir PATH, or use --yes for non-interactive install."
   fi
 
@@ -253,7 +343,7 @@ confirm_docker_install() {
   if [ "$DOCKER_INSTALL" = "1" ] || [ "$ASSUME_YES" = "1" ]; then
     return 0
   fi
-  if [ ! -r /dev/tty ]; then
+  if ! has_controlling_tty; then
     die "Docker is not installed. Re-run with --install-docker (or --yes), or install Docker Engine and the Compose plugin first."
   fi
 
@@ -302,9 +392,13 @@ install_docker_engine() {
     die "Docker installation failed. Review the package-manager output above."
   fi
   rm -f "$installer"
+  if command -v systemctl >/dev/null 2>&1; then
+    run_as_root systemctl enable --now docker >/dev/null 2>&1 || true
+  fi
 }
 
 DOCKER_CMD=(docker)
+NVIDIA_TOOLKIT_HINT="0"
 ensure_docker_ready() {
   local direct_error=""
   if ! command -v docker >/dev/null 2>&1; then
@@ -325,7 +419,7 @@ ensure_docker_ready() {
 
   if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet docker 2>/dev/null; then
     say "Starting Docker Engine..."
-    run_as_root systemctl start docker || true
+    run_as_root systemctl enable --now docker >/dev/null 2>&1 || run_as_root systemctl start docker || true
     if docker info >/dev/null 2>&1; then
       DOCKER_CMD=(docker)
       return 0
@@ -337,6 +431,9 @@ ensure_docker_ready() {
   fi
   if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
     DOCKER_CMD=(sudo docker)
+    if sudo docker info 2>/dev/null | grep -qi 'nvidia'; then
+      NVIDIA_TOOLKIT_HINT="1"
+    fi
     say "Docker requires administrator access; RelayTV will use sudo for this installation."
     say "No users were added to the docker group."
     return 0
@@ -350,18 +447,13 @@ ensure_docker_ready() {
 ensure_docker_ready
 
 read_install_port() {
-  local port="${RELAYTV_PORT:-}" line
-  if [ -z "$port" ] && [ -f "$INSTALL_DIR/.env" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in
-        RELAYTV_PORT=*) port="${line#RELAYTV_PORT=}" ;;
-      esac
-    done < "$INSTALL_DIR/.env"
+  local port="${RELAYTV_PORT:-}"
+  if [ -z "$port" ]; then
+    port="$(read_dotenv_key "$INSTALL_DIR/.env" RELAYTV_PORT || true)"
   fi
-  port="${port%\"}"
-  port="${port#\"}"
-  port="${port%\'}"
-  port="${port#\'}"
+  if [ -z "$port" ]; then
+    port="$(read_dotenv_key "$INSTALL_DIR/.env" PORT || true)"
+  fi
   if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
     port="8787"
   fi
@@ -403,15 +495,37 @@ fetch_to() {
 if [ -d "$INSTALL_DIR/.git" ] && [ "$FORCE_INSTALL" != "1" ]; then
   die "$INSTALL_DIR looks like a source checkout. Use scripts/install.sh from that checkout, choose --dir, or rerun with --force."
 fi
+if [ -f "$INSTALL_DIR/docker-compose.yml" ] && [ "$FORCE_INSTALL" != "1" ] && ! grep -q 'relaytv:' "$INSTALL_DIR/docker-compose.yml" 2>/dev/null; then
+  die "$INSTALL_DIR/docker-compose.yml already exists and does not look like a RelayTV compose file. Choose --dir or rerun with --force."
+fi
+
+need_cmd mv
+need_cmd rm
 
 mkdir -p "$INSTALL_DIR/scripts" "$INSTALL_DIR/data" "$INSTALL_DIR/bin" \
   || die "Could not create $INSTALL_DIR. Re-run with sudo or choose --dir ~/relaytv."
 
 tmp_dir="$(mktemp -d)"
+STAGE_FILES=()
 cleanup() {
+  local f
+  for f in "${STAGE_FILES[@]}"; do
+    if [ -n "$f" ]; then
+      rm -f "$f"
+    fi
+  done
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+install_file_atomic() {
+  local src="$1" dest="$2" mode="$3" stage
+  stage="$(mktemp "${dest}.tmp.XXXXXX")"
+  STAGE_FILES+=("$stage")
+  cp "$src" "$stage"
+  chmod "$mode" "$stage"
+  mv -f "$stage" "$dest"
+}
 
 say "RelayTV bootstrap installer"
 say "  Repository: ${REPO}"
@@ -425,18 +539,41 @@ fetch_to "$RAW_BASE/scripts/install.sh" "$tmp_dir/install.sh"
 fetch_to "$RAW_BASE/scripts/doctor.sh" "$tmp_dir/doctor.sh"
 fetch_to "$RAW_BASE/scripts/host-ops.sh" "$tmp_dir/host-ops.sh"
 
-cp "$tmp_dir/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
-cp "$tmp_dir/bootstrap-install.sh" "$INSTALL_DIR/install.sh"
-cp "$tmp_dir/install.sh" "$INSTALL_DIR/scripts/install.sh"
-cp "$tmp_dir/doctor.sh" "$INSTALL_DIR/scripts/doctor.sh"
-cp "$tmp_dir/host-ops.sh" "$INSTALL_DIR/scripts/host-ops.sh"
-chmod +x "$INSTALL_DIR/install.sh" "$INSTALL_DIR/scripts/install.sh" "$INSTALL_DIR/scripts/doctor.sh" "$INSTALL_DIR/scripts/host-ops.sh"
+install_file_atomic "$tmp_dir/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml" 0644
+install_file_atomic "$tmp_dir/bootstrap-install.sh" "$INSTALL_DIR/install.sh" 0755
+install_file_atomic "$tmp_dir/install.sh" "$INSTALL_DIR/scripts/install.sh" 0755
+install_file_atomic "$tmp_dir/doctor.sh" "$INSTALL_DIR/scripts/doctor.sh" 0755
+install_file_atomic "$tmp_dir/host-ops.sh" "$INSTALL_DIR/scripts/host-ops.sh" 0755
+
+if [ "$(id -u)" -eq 0 ]; then
+  target_user="${RELAYTV_TARGET_USER:-${SUDO_USER:-}}"
+  if [ -n "$target_user" ] && [ "$target_user" != "root" ] && id -u "$target_user" >/dev/null 2>&1; then
+    target_uid="$(id -u "$target_user")"
+    target_gid="$(id -g "$target_user")"
+    chown "${target_uid}:${target_gid}" \
+      "$INSTALL_DIR" \
+      "$INSTALL_DIR/scripts" \
+      "$INSTALL_DIR/data" \
+      "$INSTALL_DIR/bin" \
+      "$INSTALL_DIR/docker-compose.yml" \
+      "$INSTALL_DIR/install.sh" \
+      "$INSTALL_DIR/scripts/install.sh" \
+      "$INSTALL_DIR/scripts/doctor.sh" \
+      "$INSTALL_DIR/scripts/host-ops.sh" 2>/dev/null || true
+  fi
+fi
 
 say ""
 say "Generating RelayTV runtime configuration..."
 (
   cd "$INSTALL_DIR"
-  RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_CEC_ENABLED="$CEC_CHOICE" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
+  # Do not turn a saved CEC choice into an explicit override of runtime flags.
+  if [ "$CEC_EXPLICIT" = "1" ]; then
+    export RELAYTV_CEC_ENABLED="$CEC_CHOICE"
+  else
+    unset RELAYTV_CEC_ENABLED
+  fi
+  RELAYTV_NVIDIA_DOCKER_TOOLKIT="$NVIDIA_TOOLKIT_HINT" RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
 )
 
 if [ "$DO_PULL" = "1" ]; then
@@ -452,10 +589,15 @@ if [ "$DO_START" = "1" ]; then
   wait_for_relaytv_health
 fi
 
+RESOLVED_CEC_MODE="$(read_dotenv_key "$INSTALL_DIR/.env" RELAYTV_CEC_ENABLED || true)"
+if [ -z "$RESOLVED_CEC_MODE" ]; then
+  RESOLVED_CEC_MODE="0"
+fi
+
 say ""
 say "RelayTV install complete."
 say "  Directory: $INSTALL_DIR"
-say "  CEC mode: $CEC_CHOICE"
+say "  CEC mode: $RESOLVED_CEC_MODE"
 say ""
 say "Useful commands:"
 say "  cd $INSTALL_DIR"

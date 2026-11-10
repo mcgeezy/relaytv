@@ -205,7 +205,7 @@ The default container build is now lean and native-Qt-first. Optional feature bu
 - `RELAYTV_INSTALL_IDLE_BROWSER=1`: include Chromium for the optional browser-backed idle dashboard
 - `RELAYTV_INSTALL_OPS_TOOLS=1`: include extra debug/ops tools (`mesa-utils`, `procps`, `socat`)
 
-`scripts/install.sh` auto-emits the X11 overlay or headless bundle flags when those modes are explicitly selected.
+`scripts/install.sh` auto-emits `RELAYTV_INSTALL_HEADLESS=1` when headless remote display is enabled on a source checkout, and `RELAYTV_INSTALL_X11_OVERLAY=1` when `RELAYTV_X11_OVERLAY=1` is explicitly enabled.
 
 ## Runtime Profiles
 
@@ -284,7 +284,11 @@ or:
 RELAYTV_INSTALL_MODE=headless ./scripts/install.sh
 ```
 
-Headless mode uses an in-container virtual X server plus VNC.
+Source builds (`docker compose up -d --build`) enable an in-container virtual X server plus VNC (`RELAYTV_HEADLESS_REMOTE_ENABLED=1`, `RELAYTV_INSTALL_HEADLESS=1`). Published release images omit `Xvfb` and `x11vnc` (`RELAYTV_INSTALL_HEADLESS=0`), so release-only installs default to API-only headless mode (`RELAYTV_HEADLESS_REMOTE_ENABLED=0`).
+
+Rerunning the installer in a physical-display mode after headless mode disables
+the saved headless remote service. To keep remote helpers enabled during that
+switch, explicitly pass `RELAYTV_HEADLESS_REMOTE_ENABLED=1` in the environment.
 
 ## Runtime Detection
 
@@ -455,6 +459,12 @@ Manual override:
 ```bash
 RELAYTV_CEC_ENABLED=1 ./scripts/install.sh
 ```
+
+An explicit `RELAYTV_CEC_ENABLED=0`, `1`, or `auto` (or bootstrap `--no-cec` /
+`--enable-cec`) also updates the saved runtime and monitor flags to match the
+resolved CEC state. Individually supplied `RELAYTV_CEC` and `RELAYTV_CEC_MONITOR`
+environment overrides take precedence. Reruns without an explicit CEC choice
+preserve the saved flags.
 
 Equivalent compose passthrough:
 
