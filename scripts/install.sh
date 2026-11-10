@@ -373,6 +373,14 @@ if [ "${RELAYTV_CEC_ENABLED+x}" != "x" ]; then
 fi
 CEC_RUNTIME_VAL="$(resolve_saved_or_env_scalar RELAYTV_CEC "")"
 CEC_MONITOR_VAL="$(resolve_saved_or_env_scalar RELAYTV_CEC_MONITOR "")"
+# An explicit CEC choice replaces saved dependent flags. Individually supplied
+# runtime/monitor overrides still win; plain reruns retain the saved values.
+case "${RELAYTV_CEC_ENABLED:-}" in
+  0|1)
+    if [[ ! -v RELAYTV_CEC ]]; then CEC_RUNTIME_VAL="$RELAYTV_CEC_ENABLED"; fi
+    if [[ ! -v RELAYTV_CEC_MONITOR ]]; then CEC_MONITOR_VAL="$RELAYTV_CEC_ENABLED"; fi
+    ;;
+esac
 
 pi_gen="$(detect_pi_generation "$HOST_MODEL")"
 pi_generation_override="${RELAYTV_PI_GENERATION:-}"
@@ -743,6 +751,11 @@ if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
   esac
 fi
 
+# The saved headless default must not follow a switch to a physical display.
+# Operators can still explicitly request remote helpers alongside desktop mode.
+if [ "$MODE" != "headless" ] && [ "$(existing_env_value RELAYTV_MODE || true)" = "headless" ] && [[ ! -v RELAYTV_HEADLESS_REMOTE_ENABLED ]]; then
+  HEADLESS_REMOTE_ENABLED_VAL="0"
+fi
 if [ -z "$HEADLESS_REMOTE_ENABLED_VAL" ]; then
   if [ "$MODE" = "headless" ] && compose_supports_local_build; then
     HEADLESS_REMOTE_ENABLED_VAL="1"

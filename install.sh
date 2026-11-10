@@ -563,7 +563,11 @@ say ""
 say "Generating RelayTV runtime configuration..."
 (
   cd "$INSTALL_DIR"
-  RELAYTV_NVIDIA_DOCKER_TOOLKIT="$NVIDIA_TOOLKIT_HINT" RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_CEC_ENABLED="$CEC_CHOICE" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
+  # Do not turn a saved CEC choice into an explicit override of runtime flags.
+  if [ "$CEC_EXPLICIT" = "1" ]; then
+    export RELAYTV_CEC_ENABLED="$CEC_CHOICE"
+  fi
+  RELAYTV_NVIDIA_DOCKER_TOOLKIT="$NVIDIA_TOOLKIT_HINT" RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
 )
 
 if [ "$DO_PULL" = "1" ]; then

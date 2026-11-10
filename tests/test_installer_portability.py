@@ -878,3 +878,104 @@ def test_env_defaults_references_current_qt_shell_and_session_vars() -> None:
     assert "RELAYTV_SHELL_V2_" not in defaults
     assert "RELAYTV_XDG_SESSION_TYPE" not in defaults
     assert "RELAYTV_HOST_SESSION_TYPE=x11" in defaults
+
+
+@pytest.mark.parametrize("enabled", ["0", "1"])
+@pytest.mark.parametrize("individual_override", [False, True])
+def test_explicit_cec_choice_replaces_saved_flags(
+    tmp_path: Path, enabled: str, individual_override: bool,
+) -> None:
+    previous = "1" if enabled == "0" else "0"
+    (tmp_path / ".env").write_text(
+        f"RELAYTV_CEC_ENABLED={previous}\n"
+        f"RELAYTV_CEC={previous}\nRELAYTV_CEC_MONITOR={previous}\n",
+        encoding="utf-8",
+    )
+    overrides = {"RELAYTV_CEC_ENABLED": enabled}
+    if individual_override:
+        overrides.update(RELAYTV_CEC=previous, RELAYTV_CEC_MONITOR=previous)
+
+    result = _run_host_installer(tmp_path, env_overrides=overrides)
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text()
+    expected = previous if individual_override else enabled
+    assert f"RELAYTV_CEC_ENABLED={enabled}\n" in env_text
+    assert f"RELAYTV_CEC={expected}\n" in env_text
+    assert f"RELAYTV_CEC_MONITOR={expected}\n" in env_text
+
+
+@pytest.mark.parametrize("mode", ["x11", "wayland", "headless"])
+@pytest.mark.parametrize("explicit_remote", [False, True])
+def test_headless_rerun_recomputes_remote_default_when_switching_modes(
+    tmp_path: Path, mode: str, explicit_remote: bool,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.yml", tmp_path / "docker-compose.yml")
+    first = _run_host_installer(tmp_path, args=["--mode", "headless"])
+    assert first.returncode == 0, first.stderr
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=1\n" in (tmp_path / ".env").read_text()
+    shutil.rmtree(tmp_path / "scripts")
+    overrides = {"DISPLAY": ":0", "XDG_SESSION_TYPE": mode}
+    if explicit_remote:
+        overrides["RELAYTV_HEADLESS_REMOTE_ENABLED"] = "1"
+
+    result = _run_host_installer(
+        tmp_path, args=["--mode", mode, "--use-shell-env"], env_overrides=overrides,
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text()
+    assert f"RELAYTV_MODE={mode}\n" in env_text
+    if explicit_remote or mode == "headless":
+        assert "RELAYTV_HEADLESS_REMOTE_ENABLED=1\n" in env_text
+    else:
+        assert "RELAYTV_HEADLESS_REMOTE_ENABLED=1\n" not in env_text
+        assert "RELAYTV_INSTALL_HEADLESS=1\n" not in env_text
+
+
+@pytest.mark.parametrize(
+    ("choice", "saved", "expected", "monitor"),
+    [(None, "1", "1", "0"), ("--enable-cec", "0", "1", "1"),
+     ("--no-cec", "1", "0", "0")],
+)
+def test_bootstrap_distinguishes_saved_cec_from_explicit_choice(
+    tmp_path: Path, choice: str | None, saved: str, expected: str, monitor: str,
+) -> None:
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    (install_dir / ".env").write_text(
+        f"RELAYTV_CEC_ENABLED={saved}\nRELAYTV_CEC={saved}\nRELAYTV_CEC_MONITOR=0\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for name, content in {
+        "docker": "#!/bin/sh\nexit 0\n",
+        "curl": (
+            "#!/bin/bash\n"
+            'url="${@: -1}"\n'
+            f'cat {shlex.quote(str(ROOT_DIR))}/"${{url#https://review.invalid/}}"\n'
+        ),
+    }.items():
+        command = fake_bin / name
+        command.write_text(content)
+        command.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+    env.update(
+        PATH=f"{fake_bin}:{env.get('PATH', '')}",
+        RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+        RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+        RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+    )
+    result = subprocess.run(
+        ["bash", str(ROOT_DIR / "install.sh"), "--dir", str(install_dir),
+         "--yes", "--no-pull", "--no-start", "--mode", "headless",
+         *([choice] if choice else [])],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (install_dir / ".env").read_text()
+    assert f"RELAYTV_CEC_ENABLED={expected}\n" in env_text
+    assert f"RELAYTV_CEC={expected}\n" in env_text
+    assert f"RELAYTV_CEC_MONITOR={monitor}\n" in env_text

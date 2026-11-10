@@ -286,6 +286,10 @@ RELAYTV_INSTALL_MODE=headless ./scripts/install.sh
 
 Source builds (`docker compose up -d --build`) enable an in-container virtual X server plus VNC (`RELAYTV_HEADLESS_REMOTE_ENABLED=1`, `RELAYTV_INSTALL_HEADLESS=1`). Published release images omit `Xvfb` and `x11vnc` (`RELAYTV_INSTALL_HEADLESS=0`), so release-only installs default to API-only headless mode (`RELAYTV_HEADLESS_REMOTE_ENABLED=0`).
 
+Rerunning the installer in a physical-display mode after headless mode disables
+the saved headless remote service. To keep remote helpers enabled during that
+switch, explicitly pass `RELAYTV_HEADLESS_REMOTE_ENABLED=1` in the environment.
+
 ## Runtime Detection
 
 Default behavior is clean autodetect and ignores ambient shell vars such as `DISPLAY` or `XDG_SESSION_TYPE`.
@@ -455,6 +459,11 @@ Manual override:
 ```bash
 RELAYTV_CEC_ENABLED=1 ./scripts/install.sh
 ```
+
+An explicit `RELAYTV_CEC_ENABLED=0` or `1` (or bootstrap `--no-cec` /
+`--enable-cec`) also updates the saved runtime and monitor flags. Individually
+supplied `RELAYTV_CEC` and `RELAYTV_CEC_MONITOR` environment overrides take
+precedence. Reruns without an explicit CEC choice preserve the saved flags.
 
 Equivalent compose passthrough:
 
