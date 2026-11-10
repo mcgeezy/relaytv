@@ -109,11 +109,14 @@ resolve_wayland_display_name() {
     return 0
   fi
   local candidate=""
-  candidate="$(ls "${runtime_dir}"/wayland-* 2>/dev/null | head -n 1 || true)"
-  if [[ -n "$candidate" ]]; then
+  for candidate in "${runtime_dir}"/wayland-*; do
+    [[ -S "$candidate" ]] || continue
+    if [[ "$candidate" == *.lock ]]; then
+      continue
+    fi
     printf "%s" "$(basename "$candidate")"
     return 0
-  fi
+  done
   printf "wayland-0"
 }
 
@@ -219,20 +222,9 @@ run_compose_up() {
       XDG_SESSION_TYPE=x11
       RELAYTV_MODE=headless
       QT_QPA_PLATFORM=xcb
-      RELAYTV_XAUTHORITY_HOST_PATH=
       RELAYTV_HEADLESS_REMOTE_ENABLED=1
       RELAYTV_HEADLESS_VNC_ENABLED=1
     )
-  fi
-  if [[ "$mode" == "wayland-native" || "$mode" == "x11-native" || "$mode" == "x11-compat" ]]; then
-    local xauth_override="${RELAYTV_XAUTHORITY_HOST_PATH:-}"
-    if [[ -z "$xauth_override" ]]; then
-      xauth_override="$(resolve_live_xauthority || true)"
-    fi
-    if [[ -n "$xauth_override" ]]; then
-      env_args+=(RELAYTV_XAUTHORITY_HOST_PATH="$xauth_override")
-      echo "host-shell-v2-ops: RELAYTV_XAUTHORITY_HOST_PATH=${xauth_override}"
-    fi
   fi
   if [[ "$mode" == "wayland-native" ]]; then
     echo "host-shell-v2-ops: mode=wayland-native DISPLAY=${display_name} XDG_RUNTIME_DIR=${runtime_dir} WAYLAND_DISPLAY=${wayland_display_name} DELEGATE_QPA=${delegate_qpa:-<unset>}"

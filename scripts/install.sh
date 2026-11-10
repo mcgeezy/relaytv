@@ -56,6 +56,21 @@ need_cmd id
 need_cmd date
 need_cmd mktemp
 
+INSTALLER_TMP_FILES=()
+cleanup_installer_tmp() {
+  local f
+  for f in "${INSTALLER_TMP_FILES[@]}"; do
+    if [ -n "$f" ]; then
+      rm -f "$f"
+    fi
+  done
+}
+trap cleanup_installer_tmp EXIT
+
+has_controlling_tty() {
+  ( exec </dev/tty >/dev/tty ) 2>/dev/null
+}
+
 CLEAN_AUTODETECT="${RELAYTV_INSTALL_CLEAN_AUTODETECT:-1}"
 INSTALL_MODE="${RELAYTV_INSTALL_MODE:-auto}"
 INSTALL_RUNTIME_PROFILE="${RELAYTV_INSTALL_RUNTIME_PROFILE:-native-qt}"
@@ -242,19 +257,57 @@ CEC_MONITOR_VAL="${RELAYTV_CEC_MONITOR:-}"
 # bcm2835-codec V4L2 decode/encode nodes (Pi 4 and earlier) and rpivid HEVC / DMA nodes (Pi 4 & Pi 5)
 PI_VIDEO_DECODE_NODES="/dev/video10 /dev/video11 /dev/video12 /dev/video13 /dev/video19 /dev/media0 /dev/dma_heap"
 
-# These playback knobs are operator settings. Preserve their original dotenv
-# lines (including quoting) unless explicitly overridden in the shell. Never
-# source .env: it is data, and may contain secrets or shell metacharacters.
+# These playback and operator knobs live in .env. Preserve their original dotenv
+# lines (including quoting) or scalar values unless explicitly overridden in the
+# shell. Never source .env: it is data, and may contain secrets or shell
+# metacharacters.
 existing_playback_env_line() {
   local wanted="$1" line found=""
   [ -f "$ROOT/.env" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)= ]] && [ "${BASH_REMATCH[2]}" = "$wanted" ]; then
-      found="$line"
+      found="${line%$'\r'}"
     fi
   done < "$ROOT/.env"
   [ -n "$found" ] || return 1
   printf '%s\n' "$found"
+}
+
+parse_dotenv_scalar() {
+  local raw="${1#*=}"
+  raw="${raw%$'\r'}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  if [[ "$raw" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$raw" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    if [[ "$raw" =~ ^#.*$ ]]; then
+      raw=""
+    elif [[ "$raw" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then
+      raw="${BASH_REMATCH[1]}"
+    else
+      raw="${raw%"${raw##*[![:space:]]}"}"
+    fi
+    printf '%s' "$raw"
+  fi
+}
+
+existing_env_value() {
+  local line
+  line="$(existing_playback_env_line "$1")" || return 1
+  parse_dotenv_scalar "$line"
+}
+
+resolve_saved_or_env_scalar() {
+  local key="$1" default="${2:-}" saved=""
+  if [[ -v "$key" ]]; then
+    printf '%s' "${!key}"
+  elif saved="$(existing_env_value "$key")"; then
+    printf '%s' "$saved"
+  else
+    printf '%s' "$default"
+  fi
 }
 
 emit_playback_env() {
@@ -267,6 +320,59 @@ emit_playback_env() {
     emit_env_line "$key" "$default"
   fi
 }
+
+if [ "${RELAYTV_QT_RUNTIME_MODE+x}" != "x" ]; then
+  QT_RUNTIME_MODE_SAVED_LINE="$(existing_playback_env_line RELAYTV_QT_RUNTIME_MODE || true)"
+  if [ -n "$QT_RUNTIME_MODE_SAVED_LINE" ]; then
+    QT_RUNTIME_MODE_VAL="$(parse_dotenv_scalar "$QT_RUNTIME_MODE_SAVED_LINE")"
+  fi
+else
+  QT_RUNTIME_MODE_SAVED_LINE=""
+fi
+if [ "${RELAYTV_QT_SHELL_MPV_ARGS+x}" != "x" ]; then
+  QT_SHELL_MPV_ARGS_SAVED_LINE="$(existing_playback_env_line RELAYTV_QT_SHELL_MPV_ARGS || true)"
+  if [ -n "$QT_SHELL_MPV_ARGS_SAVED_LINE" ]; then
+    QT_SHELL_MPV_ARGS_VAL="$(parse_dotenv_scalar "$QT_SHELL_MPV_ARGS_SAVED_LINE")"
+  fi
+else
+  QT_SHELL_MPV_ARGS_SAVED_LINE=""
+fi
+QT_SHELL_MODULE_VAL="$(resolve_saved_or_env_scalar RELAYTV_QT_SHELL_MODULE "")"
+X11_OVERLAY_FROM_ENV="0"
+if [ "${RELAYTV_X11_OVERLAY+x}" = "x" ]; then
+  X11_OVERLAY_FROM_ENV="1"
+  X11_OVERLAY_VAL="${RELAYTV_X11_OVERLAY}"
+  X11_OVERLAY_SAVED_LINE=""
+else
+  X11_OVERLAY_SAVED_LINE="$(existing_playback_env_line RELAYTV_X11_OVERLAY || true)"
+  if [ -n "$X11_OVERLAY_SAVED_LINE" ]; then
+    X11_OVERLAY_VAL="$(parse_dotenv_scalar "$X11_OVERLAY_SAVED_LINE")"
+  else
+    X11_OVERLAY_VAL=""
+  fi
+fi
+IMAGE_REF_VAL="$(resolve_saved_or_env_scalar RELAYTV_IMAGE_REF "")"
+HEADLESS_REMOTE_ENABLED_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_REMOTE_ENABLED "")"
+HEADLESS_REMOTE_DISPLAY_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_REMOTE_DISPLAY "")"
+HEADLESS_REMOTE_RESOLUTION_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_REMOTE_RESOLUTION "")"
+HEADLESS_REMOTE_SOFTWARE_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_REMOTE_SOFTWARE "")"
+HEADLESS_VNC_ENABLED_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_VNC_ENABLED "")"
+HEADLESS_VNC_LISTEN_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_VNC_LISTEN "")"
+HEADLESS_VNC_PORT_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_VNC_PORT "")"
+HEADLESS_VNC_PASSWORD_FILE_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_VNC_PASSWORD_FILE "")"
+YTDLP_AUTO_UPDATE_VAL="$(resolve_saved_or_env_scalar RELAYTV_YTDLP_AUTO_UPDATE "")"
+YTDLP_AUTO_UPDATE_INTERVAL_HOURS_VAL="$(resolve_saved_or_env_scalar RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS "")"
+YTDLP_AUTO_UPDATE_TIMEOUT_SEC_VAL="$(resolve_saved_or_env_scalar RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC "")"
+YTDLP_AUTO_UPDATE_STATE_FILE_VAL="$(resolve_saved_or_env_scalar RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE "")"
+INSTALL_IDLE_BROWSER_BUNDLE_VAL="$(resolve_saved_or_env_scalar RELAYTV_INSTALL_IDLE_BROWSER "")"
+INSTALL_OPS_TOOLS_BUNDLE_VAL="$(resolve_saved_or_env_scalar RELAYTV_INSTALL_OPS_TOOLS "")"
+if [ "${RELAYTV_CEC_ENABLED+x}" != "x" ]; then
+  if saved_cec_enabled="$(existing_env_value RELAYTV_CEC_ENABLED)" && [ -n "$saved_cec_enabled" ]; then
+    CEC_ENABLED_VAL="$saved_cec_enabled"
+  fi
+fi
+CEC_RUNTIME_VAL="$(resolve_saved_or_env_scalar RELAYTV_CEC "")"
+CEC_MONITOR_VAL="$(resolve_saved_or_env_scalar RELAYTV_CEC_MONITOR "")"
 
 pi_gen="$(detect_pi_generation "$HOST_MODEL")"
 pi_generation_override="${RELAYTV_PI_GENERATION:-}"
@@ -330,6 +436,20 @@ case "$CEC_ENABLED_VAL" in
     ;;
 esac
 
+apply_detected_session_vars() {
+  local disp="$1" wayland="$2" xdg_runtime="$3"
+  if [ "$CLEAN_AUTODETECT" = "1" ]; then
+    if [ -n "$disp" ]; then DISPLAY_VAL="$disp"; fi
+    if [ -n "$wayland" ]; then WAYLAND_DISPLAY_VAL="$wayland"; fi
+    if [ -n "$xdg_runtime" ]; then XDG_RUNTIME_DIR_VAL="$xdg_runtime"; fi
+  else
+    if [ -z "$DISPLAY_VAL" ] && [ -n "$disp" ]; then DISPLAY_VAL="$disp"; fi
+    if [ -z "$WAYLAND_DISPLAY_VAL" ] && [ -n "$wayland" ]; then WAYLAND_DISPLAY_VAL="$wayland"; fi
+    if [ -z "$XDG_RUNTIME_DIR_VAL" ] && [ -n "$xdg_runtime" ]; then XDG_RUNTIME_DIR_VAL="$xdg_runtime"; fi
+  fi
+  return 0
+}
+
 detect_from_session_leader() {
   local leader="$1"
   [ -n "$leader" ] || return 0
@@ -342,66 +462,153 @@ detect_from_session_leader() {
   wayland="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="WAYLAND_DISPLAY"{print $2; exit}')"
   xdg_runtime="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="XDG_RUNTIME_DIR"{print $2; exit}')"
 
-  if [ "$CLEAN_AUTODETECT" = "1" ]; then
-    DISPLAY_VAL="$disp"
-  elif [ -z "$DISPLAY_VAL" ] && [ -n "$disp" ]; then
-    DISPLAY_VAL="$disp"
+  apply_detected_session_vars "$disp" "$wayland" "$xdg_runtime"
+}
+
+detect_from_user_systemd() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  [ -d "/run/user/${PUID}" ] || return 0
+
+  local env_out=""
+  if [ "$(id -un 2>/dev/null || true)" = "$TARGET_USER" ]; then
+    env_out="$(XDG_RUNTIME_DIR="/run/user/${PUID}" systemctl --user show-environment 2>/dev/null || true)"
+  elif [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+    env_out="$(runuser -u "$TARGET_USER" -- env XDG_RUNTIME_DIR="/run/user/${PUID}" systemctl --user show-environment 2>/dev/null || true)"
   fi
-  if [ "$CLEAN_AUTODETECT" = "1" ]; then
-    WAYLAND_DISPLAY_VAL="$wayland"
-  elif [ -z "$WAYLAND_DISPLAY_VAL" ] && [ -n "$wayland" ]; then
-    WAYLAND_DISPLAY_VAL="$wayland"
+  [ -n "$env_out" ] || return 0
+
+  local disp="" wayland="" xdg_runtime="" sess_type=""
+  disp="$(printf '%s\n' "$env_out" | awk -F= '$1=="DISPLAY"{print substr($0, 9); exit}')"
+  wayland="$(printf '%s\n' "$env_out" | awk -F= '$1=="WAYLAND_DISPLAY"{print substr($0, 17); exit}')"
+  xdg_runtime="$(printf '%s\n' "$env_out" | awk -F= '$1=="XDG_RUNTIME_DIR"{print substr($0, 17); exit}')"
+  sess_type="$(printf '%s\n' "$env_out" | awk -F= '$1=="XDG_SESSION_TYPE"{print substr($0, 18); exit}')"
+
+  if [ "$sess_type" = "x11" ] || [ "$sess_type" = "wayland" ]; then
+    if [ "$CLEAN_AUTODETECT" = "1" ] || [ -z "$XDG_SESSION_TYPE_VAL" ]; then
+      XDG_SESSION_TYPE_VAL="$sess_type"
+    fi
   fi
-  if [ "$CLEAN_AUTODETECT" = "1" ]; then
-    XDG_RUNTIME_DIR_VAL="$xdg_runtime"
-  elif [ -z "$XDG_RUNTIME_DIR_VAL" ] && [ -n "$xdg_runtime" ]; then
-    XDG_RUNTIME_DIR_VAL="$xdg_runtime"
+  if [ "$CLEAN_AUTODETECT" = "0" ] && [ -n "$XDG_RUNTIME_DIR_VAL" ] && [ "$XDG_RUNTIME_DIR_VAL" != "${xdg_runtime:-/run/user/${PUID}}" ]; then
+    wayland=""
   fi
+  apply_detected_session_vars "$disp" "$wayland" "$xdg_runtime"
 }
 
 detect_via_loginctl() {
   command -v loginctl >/dev/null 2>&1 || return 0
 
-  # Prefer active seat0 session for target user.
-  local sid=""
-  sid="$(
-    loginctl list-sessions --no-legend 2>/dev/null \
-      | awk -v u="$TARGET_USER" '$3 == u && $4 == "seat0" {print $1; exit}'
-  )" || true
+  # Prefer active graphical seat0 session for target user, falling back to any
+  # graphical seat0 session or active seat0 session for target user.
+  local sid="" best_graphical="" best_any=""
+  local cand _uid user seat _rest typ active cls
+  while read -r cand _uid user seat _rest; do
+    [ "${seat:-}" = "seat0" ] || continue
+    [ "${user:-}" = "$TARGET_USER" ] || continue
+    typ="$(loginctl show-session "$cand" -p Type --value 2>/dev/null || true)"
+    active="$(loginctl show-session "$cand" -p Active --value 2>/dev/null || true)"
+    if { [ "$typ" = "x11" ] || [ "$typ" = "wayland" ]; } && [ "$active" = "yes" ]; then
+      sid="$cand"
+      break
+    fi
+    if { [ "$typ" = "x11" ] || [ "$typ" = "wayland" ]; } && [ -z "$best_graphical" ]; then
+      best_graphical="$cand"
+    elif [ -z "$best_any" ]; then
+      best_any="$cand"
+    fi
+  done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
 
-  # SSH install fallback: if target user seat0 session is not visible, try any
-  # graphical seat0 session and extract its display/auth details.
   if [ -z "$sid" ]; then
-    local cand typ
+    sid="${best_graphical:-$best_any}"
+  fi
+
+  # SSH install fallback: if target user seat0 session is not visible, try an
+  # active non-greeter graphical seat0 session first, then any non-greeter
+  # graphical seat0 session.
+  if [ -z "$sid" ]; then
+    best_graphical=""
     while read -r cand _uid _user seat _rest; do
       [ "${seat:-}" = "seat0" ] || continue
+      cls="$(loginctl show-session "$cand" -p Class --value 2>/dev/null || true)"
+      if [ "$cls" = "greeter" ]; then
+        continue
+      fi
       typ="$(loginctl show-session "$cand" -p Type --value 2>/dev/null || true)"
+      active="$(loginctl show-session "$cand" -p Active --value 2>/dev/null || true)"
       case "$typ" in
         x11|wayland)
-          sid="$cand"
-          break
+          if [ "$active" = "yes" ]; then
+            sid="$cand"
+            break
+          fi
+          if [ -z "$best_graphical" ]; then
+            best_graphical="$cand"
+          fi
           ;;
       esac
     done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
+    if [ -z "$sid" ]; then
+      sid="$best_graphical"
+    fi
   fi
 
-  [ -n "$sid" ] || return 0
+  if [ -n "$sid" ]; then
+    local disp leader
+    typ="$(loginctl show-session "$sid" -p Type --value 2>/dev/null || true)"
+    disp="$(loginctl show-session "$sid" -p Display --value 2>/dev/null || true)"
+    leader="$(loginctl show-session "$sid" -p Leader --value 2>/dev/null || true)"
 
-  local typ disp leader
-  typ="$(loginctl show-session "$sid" -p Type --value 2>/dev/null || true)"
-  disp="$(loginctl show-session "$sid" -p Display --value 2>/dev/null || true)"
-  leader="$(loginctl show-session "$sid" -p Leader --value 2>/dev/null || true)"
+    if [ "$typ" = "x11" ] || [ "$typ" = "wayland" ]; then
+      if [ "$CLEAN_AUTODETECT" = "1" ] || [ -z "$XDG_SESSION_TYPE_VAL" ]; then
+        XDG_SESSION_TYPE_VAL="$typ"
+      fi
+    fi
+    if [ "$CLEAN_AUTODETECT" = "1" ]; then
+      if [ -n "$disp" ]; then
+        DISPLAY_VAL="$disp"
+      fi
+    elif [ -z "$DISPLAY_VAL" ] && [ -n "$disp" ]; then
+      DISPLAY_VAL="$disp"
+    fi
 
-  if [ "$typ" = "x11" ] || [ "$typ" = "wayland" ]; then
-    XDG_SESSION_TYPE_VAL="$typ"
+    detect_from_session_leader "$leader"
   fi
-  if [ "$CLEAN_AUTODETECT" = "1" ]; then
-    DISPLAY_VAL="$disp"
-  elif [ -z "$DISPLAY_VAL" ] && [ -n "$disp" ]; then
-    DISPLAY_VAL="$disp"
-  fi
 
-  detect_from_session_leader "$leader"
+  # Session leader is commonly a root-owned display-manager worker whose
+  # environ lacks DISPLAY/WAYLAND_DISPLAY; supplement from user systemd.
+  detect_from_user_systemd
+  return 0
+}
+
+find_host_x11_display() {
+  [ -d /tmp/.X11-unix ] || return 0
+  local cand num fallback="" owner=""
+  for cand in /tmp/.X11-unix/X*; do
+    [ -S "$cand" ] || continue
+    num="${cand##*/X}"
+    [[ "$num" =~ ^[0-9]+$ ]] || continue
+    if command -v stat >/dev/null 2>&1; then
+      owner="$(stat -c '%u' "$cand" 2>/dev/null || true)"
+      if [ "$owner" = "$PUID" ]; then
+        printf ':%s' "$num"
+        return 0
+      fi
+    fi
+    if [ -z "$fallback" ]; then fallback=":${num}"; fi
+  done
+  if [ -n "$fallback" ]; then printf '%s' "$fallback"; fi
+  return 0
+}
+
+find_wayland_socket_name() {
+  local runtime_dir="$1" cand
+  [ -d "$runtime_dir" ] || return 0
+  for cand in "$runtime_dir"/wayland-*; do
+    [ -S "$cand" ] || continue
+    if [[ "$cand" == *.lock ]]; then continue; fi
+    basename "$cand"
+    return 0
+  done
+  return 0
 }
 
 # First attempt: infer from active graphical session (works from SSH/sudo context).
@@ -409,19 +616,16 @@ detect_via_loginctl
 
 # Additional fallback for shell-env mode only: infer DISPLAY from X11 sockets.
 # Clean autodetect intentionally avoids this to prevent stale/container sockets.
-if [ "$CLEAN_AUTODETECT" = "0" ] && [ -z "$DISPLAY_VAL" ] && [ "${XDG_SESSION_TYPE_VAL:-}" != "wayland" ] && [ -d /tmp/.X11-unix ]; then
-  x_sock="$(ls /tmp/.X11-unix/X* 2>/dev/null | head -n 1 || true)"
-  if [ -n "$x_sock" ]; then
-    x_num="${x_sock##*/X}"
-    if [[ "$x_num" =~ ^[0-9]+$ ]]; then
-      DISPLAY_VAL=":${x_num}"
-    fi
-  fi
+if [ "$CLEAN_AUTODETECT" = "0" ] && [ -z "$DISPLAY_VAL" ] && [ "${XDG_SESSION_TYPE_VAL:-}" != "wayland" ]; then
+  DISPLAY_VAL="$(find_host_x11_display || true)"
 fi
 
-# If still missing and this looks like an X11 host, default to :0.
+# If still missing and this looks like an X11 host, prefer a socket owned by target uid or :0.
 if [ -z "$DISPLAY_VAL" ] && [ "${XDG_SESSION_TYPE_VAL:-}" = "x11" ]; then
-  DISPLAY_VAL=":0"
+  DISPLAY_VAL="$(find_host_x11_display || true)"
+  if [ -z "$DISPLAY_VAL" ]; then
+    DISPLAY_VAL=":0"
+  fi
 fi
 
 if [ -z "$XDG_SESSION_TYPE_VAL" ]; then
@@ -434,18 +638,20 @@ elif [ "$XDG_SESSION_TYPE_VAL" = "tty" ] && [ -n "$DISPLAY_VAL" ]; then
   XDG_SESSION_TYPE_VAL="x11"
 fi
 
-# XDG runtime dir should match target uid.
+# XDG runtime dir should match target uid. Preserve /run/user/<uid> when /run/user
+# exists and a desktop mode is selected (e.g. SSH install prior to desktop login).
 if [ -z "$XDG_RUNTIME_DIR_VAL" ]; then
   XDG_RUNTIME_DIR_VAL="/run/user/${PUID}"
 fi
-if [ ! -d "$XDG_RUNTIME_DIR_VAL" ]; then
-  XDG_RUNTIME_DIR_VAL="/tmp"
-fi
 
-if [ -z "$WAYLAND_DISPLAY_VAL" ] && [ "$XDG_SESSION_TYPE_VAL" = "wayland" ] && [ -d "$XDG_RUNTIME_DIR_VAL" ]; then
-  wayland_sock="$(ls "$XDG_RUNTIME_DIR_VAL"/wayland-* 2>/dev/null | head -n 1 || true)"
-  if [ -n "$wayland_sock" ]; then
-    WAYLAND_DISPLAY_VAL="$(basename "$wayland_sock")"
+if [ "$XDG_SESSION_TYPE_VAL" = "wayland" ] && [ -d "$XDG_RUNTIME_DIR_VAL" ]; then
+  if [ -z "$WAYLAND_DISPLAY_VAL" ]; then
+    WAYLAND_DISPLAY_VAL="$(find_wayland_socket_name "$XDG_RUNTIME_DIR_VAL" || true)"
+  elif { [ "$CLEAN_AUTODETECT" = "1" ] || [ -z "${WAYLAND_DISPLAY:-}" ]; } && [ ! -S "${XDG_RUNTIME_DIR_VAL}/${WAYLAND_DISPLAY_VAL}" ]; then
+    fallback_wayland_sock="$(find_wayland_socket_name "$XDG_RUNTIME_DIR_VAL" || true)"
+    if [ -n "$fallback_wayland_sock" ]; then
+      WAYLAND_DISPLAY_VAL="$fallback_wayland_sock"
+    fi
   fi
 fi
 
@@ -497,17 +703,36 @@ if [ "$MODE" = "drm" ] && [ "$DRM_CONNECTED" != "1" ]; then
   exit 3
 fi
 
-# Wayland sessions often expose Xwayland for xcb delegate runtime; infer DISPLAY
-# when missing so overlay notifications can stay visible on this host profile.
-if [ "$MODE" = "wayland" ] && [ -z "$DISPLAY_VAL" ] && [ -d /tmp/.X11-unix ]; then
-  x_sock="$(ls /tmp/.X11-unix/X* 2>/dev/null | head -n 1 || true)"
-  if [ -n "$x_sock" ]; then
-    x_num="${x_sock##*/X}"
-    if [[ "$x_num" =~ ^[0-9]+$ ]]; then
-      DISPLAY_VAL=":${x_num}"
-    fi
+# Explicit non-desktop modes must not inherit host desktop sockets or displays.
+if [ "$MODE" = "headless" ] || [ "$MODE" = "drm" ]; then
+  DISPLAY_VAL=""
+  WAYLAND_DISPLAY_VAL=""
+  if [ "$MODE" = "drm" ]; then
+    XDG_SESSION_TYPE_VAL="tty"
+  else
+    XDG_SESSION_TYPE_VAL=""
   fi
 fi
+
+if [ ! -d "$XDG_RUNTIME_DIR_VAL" ]; then
+  if [[ "$XDG_RUNTIME_DIR_VAL" == /run/user/* ]] && [ -d /run/user ] && { [ "$MODE" = "wayland" ] || [ "$MODE" = "x11" ]; }; then
+    :
+  else
+    XDG_RUNTIME_DIR_VAL="/tmp"
+  fi
+fi
+
+# Wayland sessions often expose Xwayland for xcb delegate runtime; infer DISPLAY
+# when missing so overlay notifications can stay visible on this host profile.
+if [ "$MODE" = "wayland" ] && [ -z "$DISPLAY_VAL" ]; then
+  DISPLAY_VAL="$(find_host_x11_display || true)"
+fi
+
+compose_supports_local_build() {
+  local compose_file="$ROOT/docker-compose.yml"
+  [ -f "$compose_file" ] || return 0
+  grep -Eq '^[[:space:]]*build:[[:space:]]*$' "$compose_file"
+}
 
 if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
   case "$MODE" in
@@ -519,7 +744,7 @@ if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
 fi
 
 if [ -z "$HEADLESS_REMOTE_ENABLED_VAL" ]; then
-  if [ "$MODE" = "headless" ]; then
+  if [ "$MODE" = "headless" ] && compose_supports_local_build; then
     HEADLESS_REMOTE_ENABLED_VAL="1"
   else
     HEADLESS_REMOTE_ENABLED_VAL="0"
@@ -570,6 +795,13 @@ fi
 if [ -z "$PLAYER_BACKEND_VAL" ]; then
   case "$MODE" in
     drm) PLAYER_BACKEND_VAL="mpv" ;;
+    headless)
+      if [ "$HEADLESS_REMOTE_ENABLED_VAL" = "1" ]; then
+        PLAYER_BACKEND_VAL="qt"
+      else
+        PLAYER_BACKEND_VAL="mpv"
+      fi
+      ;;
     *) PLAYER_BACKEND_VAL="qt" ;;
   esac
 fi
@@ -590,7 +822,8 @@ needs_stable_xauthority_bind() {
   # X11 and explicit Xwayland bridge mode need a stable cookie file visible
   # inside the container. Mutter session-scoped runtime cookies are handled
   # through the mounted /run/user parent instead.
-  { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } \
+  [ "$MODE" != "headless" ] && [ "$MODE" != "drm" ] \
+    && { [ "$MODE" = "x11" ] || [[ "${QT_QPA_PLATFORM_VAL}" == xcb* ]] || [ "${QT_QPA_PLATFORM_VAL}" = "x11" ]; } \
     && [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.Xauthority" ]
 }
 
@@ -601,11 +834,6 @@ if [ -z "$QT_RUNTIME_MODE_VAL" ]; then
   esac
 fi
 
-X11_OVERLAY_VAL="0"
-if [ "$MODE" = "x11" ]; then
-  X11_OVERLAY_VAL="1"
-fi
-
 if [ -z "$INSTALL_X11_OVERLAY_BUNDLE_VAL" ]; then
   if [ "$X11_OVERLAY_VAL" = "1" ]; then
     INSTALL_X11_OVERLAY_BUNDLE_VAL="1"
@@ -614,7 +842,7 @@ if [ -z "$INSTALL_X11_OVERLAY_BUNDLE_VAL" ]; then
   fi
 fi
 if [ -z "$INSTALL_HEADLESS_BUNDLE_VAL" ]; then
-  if [ "$HEADLESS_REMOTE_ENABLED_VAL" = "1" ] || [ "$MODE" = "headless" ]; then
+  if [ "$HEADLESS_REMOTE_ENABLED_VAL" = "1" ]; then
     INSTALL_HEADLESS_BUNDLE_VAL="1"
   else
     INSTALL_HEADLESS_BUNDLE_VAL="0"
@@ -672,13 +900,16 @@ detect_render_gid() {
   fi
 
   # Best source: actual render node gid from host.
-  if [ -e /dev/dri/renderD128 ] && command -v stat >/dev/null 2>&1; then
-    local gid=""
-    gid="$(stat -c '%g' /dev/dri/renderD128 2>/dev/null || true)"
-    if [[ "$gid" =~ ^[0-9]+$ ]]; then
-      printf "%s" "$gid"
-      return 0
-    fi
+  if command -v stat >/dev/null 2>&1; then
+    local render_node gid=""
+    for render_node in /dev/dri/renderD128 /dev/dri/renderD*; do
+      [ -e "$render_node" ] || continue
+      gid="$(stat -c '%g' "$render_node" 2>/dev/null || true)"
+      if [[ "$gid" =~ ^[0-9]+$ ]]; then
+        printf "%s" "$gid"
+        return 0
+      fi
+    done
   fi
 
   # Fallback: system render group gid, if present.
@@ -696,7 +927,7 @@ detect_render_gid() {
 }
 
 RENDER_GID_DETECTED="$(detect_render_gid)"
-AUDIO_DEVICE_VAL="${MPV_AUDIO_DEVICE:-}"
+AUDIO_DEVICE_VAL="$(resolve_saved_or_env_scalar MPV_AUDIO_DEVICE "")"
 
 docker_tag_sanitize() {
   printf '%s' "$1" \
@@ -707,7 +938,6 @@ docker_tag_sanitize() {
 detect_default_image_ref() {
   local image_repo="ghcr.io/mcgeezy/relaytv"
   local exact_tag=""
-  local branch_name=""
 
   exact_tag="$(git describe --exact-match --tags 2>/dev/null || true)"
   if [ -n "$exact_tag" ]; then
@@ -715,15 +945,7 @@ detect_default_image_ref() {
     return 0
   fi
 
-  branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  case "$branch_name" in
-    ""|HEAD|main|master)
-      printf '%s:latest' "$image_repo"
-      ;;
-    *)
-      printf '%s:%s' "$image_repo" "$(docker_tag_sanitize "$branch_name")"
-      ;;
-  esac
+  printf '%s:latest' "$image_repo"
 }
 
 if [ -z "$IMAGE_REF_VAL" ]; then
@@ -737,9 +959,23 @@ detect_cec_device_nodes() {
     printf "%s\n" "$node"
   done
   if command -v cec-client >/dev/null 2>&1; then
-    cec-client -l 2>/dev/null \
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 5 cec-client -l 2>/dev/null
+    else
+      cec-client -l 2>/dev/null
+    fi \
       | grep -Eo '/dev/(cec[0-9]+|ttyACM[0-9]+)' \
       || true
+  fi
+}
+
+stat_nonroot_gid() {
+  local path="$1" gid=""
+  [ -e "$path" ] || return 0
+  command -v stat >/dev/null 2>&1 || return 0
+  gid="$(stat -c '%g' "$path" 2>/dev/null || true)"
+  if [[ "$gid" =~ ^[1-9][0-9]*$ ]]; then
+    printf "%s\n" "$gid"
   fi
 }
 
@@ -747,9 +983,30 @@ detect_cec_device_group_ids() {
   local node
   while IFS= read -r node; do
     [ -n "$node" ] || continue
-    [ -e "$node" ] || continue
-    stat -c '%g' "$node" 2>/dev/null || true
+    stat_nonroot_gid "$node"
   done < <(detect_cec_device_nodes | sort -u)
+}
+
+detect_host_device_group_ids() {
+  local pi_enabled="$1" cec_enabled="$2" node sub
+  for node in /dev/dri/card* /dev/dri/renderD* /dev/snd/controlC* /dev/snd/pcm* /dev/snd/timer; do
+    stat_nonroot_gid "$node"
+  done
+  if [ "$pi_enabled" = "1" ]; then
+    for node in $PI_VIDEO_DECODE_NODES; do
+      [ -e "$node" ] || continue
+      if [ -d "$node" ]; then
+        for sub in "$node"/*; do
+          stat_nonroot_gid "$sub"
+        done
+      else
+        stat_nonroot_gid "$node"
+      fi
+    done
+  fi
+  if [ "$cec_enabled" = "1" ]; then
+    detect_cec_device_group_ids
+  fi
 }
 
 resolve_cec_enabled() {
@@ -767,7 +1024,7 @@ resolve_cec_enabled() {
     printf "0"
     return 0
   fi
-  if [ "${RELAYTV_INSTALL_YES:-0}" = "1" ] || [ ! -r /dev/tty ]; then
+  if [ "${RELAYTV_INSTALL_YES:-0}" = "1" ] || ! has_controlling_tty; then
     printf "0"
     return 0
   fi
@@ -801,11 +1058,19 @@ detect_nvidia_device() {
 }
 
 detect_nvidia_docker_toolkit() {
+  if [ "${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-}" = "1" ]; then
+    printf "1"
+    return 0
+  fi
   if command -v docker >/dev/null 2>&1 && docker info 2>/dev/null | grep -qi 'nvidia'; then
     printf "1"
     return 0
   fi
   if command -v nvidia-container-cli >/dev/null 2>&1 && nvidia-container-cli info >/dev/null 2>&1; then
+    printf "1"
+    return 0
+  fi
+  if [ -r /etc/docker/daemon.json ] && grep -qi 'nvidia' /etc/docker/daemon.json 2>/dev/null; then
     printf "1"
     return 0
   fi
@@ -914,11 +1179,14 @@ EOF
       [ -n "$node" ] || continue
       devices_block+="      - ${node}:${node}"$'\n'
     done < <(detect_cec_device_nodes | sort -u)
-    while IFS= read -r gid; do
-      [ -n "$gid" ] || continue
-      group_block+="      - \"${gid}\""$'\n'
-    done < <(detect_cec_device_group_ids | sort -n -u)
   fi
+  while IFS= read -r gid; do
+    [ -n "$gid" ] || continue
+    if [ "$gid" = "$RENDER_GID_DETECTED" ]; then
+      continue
+    fi
+    group_block+="      - \"${gid}\""$'\n'
+  done < <(detect_host_device_group_ids "$pi_enabled" "$cec_enabled" | sort -n -u)
   if [ "$nvidia_enabled" = "1" ]; then
     nvidia_block=$(cat <<'EOF'
     gpus: all
@@ -931,6 +1199,7 @@ EOF
 
   if [ -n "$volumes_block" ] || [ -n "$devices_block" ] || [ -n "$group_block" ] || [ -n "$nvidia_block" ] || [ -n "$security_block" ]; then
     override_tmp="$(mktemp "$ROOT/.docker-compose.override.yml.tmp.XXXXXX")"
+    INSTALLER_TMP_FILES+=("$override_tmp")
     cat > "$override_tmp" <<EOF
 $marker
 services:
@@ -981,6 +1250,11 @@ check_pi_video_nodes() {
   local missing=""
   local node
   for node in $PI_VIDEO_DECODE_NODES; do
+    if [ "$pi_gen" = "5" ]; then
+      case "$node" in
+        /dev/video10|/dev/video11|/dev/video12|/dev/video13) continue ;;
+      esac
+    fi
     if [ ! -e "$node" ]; then
       if [ -z "$missing" ]; then
         missing="$node"
@@ -1041,30 +1315,40 @@ if [ "$CEC_ENABLED_VAL" = "1" ] && [ -z "$CEC_NODES_DETECTED" ]; then
 fi
 
 ensure_data_dir_ownership() {
-  local data_dir="$ROOT/data"
-  mkdir -p "$data_dir"
+  local dir cur_uid="" cur_gid=""
+  mkdir -p "$ROOT/data" "$ROOT/bin"
 
   # Installer commonly runs via sudo for first turn-up; normalize ownership
-  # so compose bind-mount does not leave runtime state unwritable.
+  # so compose bind-mounts do not leave runtime state or ./bin unwritable.
   if [ "$(id -u)" -eq 0 ]; then
-    chown -R "${PUID}:${PGID}" "$data_dir" 2>/dev/null || true
+    chown -R "${PUID}:${PGID}" "$ROOT/data" "$ROOT/bin" 2>/dev/null || true
     return 0
   fi
 
-  local cur_uid="" cur_gid=""
   if command -v stat >/dev/null 2>&1; then
-    cur_uid="$(stat -c '%u' "$data_dir" 2>/dev/null || true)"
-    cur_gid="$(stat -c '%g' "$data_dir" 2>/dev/null || true)"
-  fi
-  if [ -n "$cur_uid" ] && [ -n "$cur_gid" ] && { [ "$cur_uid" != "$PUID" ] || [ "$cur_gid" != "$PGID" ]; }; then
-    say "WARN: $data_dir ownership is ${cur_uid}:${cur_gid}; expected ${PUID}:${PGID}. Re-run install with sudo to repair."
+    for dir in "$ROOT/data" "$ROOT/bin"; do
+      cur_uid="$(stat -c '%u' "$dir" 2>/dev/null || true)"
+      cur_gid="$(stat -c '%g' "$dir" 2>/dev/null || true)"
+      if [ -n "$cur_uid" ] && [ -n "$cur_gid" ] && { [ "$cur_uid" != "$PUID" ] || [ "$cur_gid" != "$PGID" ]; }; then
+        say "WARN: $dir ownership is ${cur_uid}:${cur_gid}; expected ${PUID}:${PGID}. Re-run install with sudo to repair."
+      fi
+    done
   fi
 }
 
 ensure_data_dir_ownership
 
 emit_env_line() {
-  printf '%s=%s\n' "$1" "$2"
+  local key="$1" val="$2"
+  val="${val//$'\r'/}"
+  val="${val//$'\n'/}"
+  if [[ "$val" == *[#$'\"']* ]] || [[ "$val" =~ ^[[:space:]] ]] || [[ "$val" =~ [[:space:]]$ ]]; then
+    if [[ "$val" != *"'"* ]]; then
+      printf "%s='%s'\n" "$key" "$val"
+      return 0
+    fi
+  fi
+  printf '%s=%s\n' "$key" "$val"
 }
 
 emit_section() {
@@ -1085,7 +1369,7 @@ installer_owned_env_key() {
     RELAYTV_HEADLESS_VNC_PASSWORD_FILE|RELAYTV_HEADLESS_VNC_PORT|RELAYTV_HOST_PROFILE|\
     RELAYTV_HOST_SESSION_TYPE|RELAYTV_IMAGE_REF|RELAYTV_INSTALL_HEADLESS|RELAYTV_INSTALL_IDLE_BROWSER|\
     RELAYTV_INSTALL_NODE|RELAYTV_INSTALL_OPS_TOOLS|RELAYTV_INSTALL_QT|RELAYTV_INSTALL_X11_OVERLAY|\
-    RELAYTV_MODE|RELAYTV_PLAYER_BACKEND|RELAYTV_QT_RUNTIME_MODE|RELAYTV_QT_SHELL_MODULE|\
+    RELAYTV_MODE|RELAYTV_PLAYER_BACKEND|RELAYTV_PORT|RELAYTV_QT_RUNTIME_MODE|RELAYTV_QT_SHELL_MODULE|\
     RELAYTV_QT_SHELL_MPV_ARGS|RELAYTV_RENDER_GID|RELAYTV_VIDEO_MODE|RELAYTV_X11_OVERLAY|\
     RELAYTV_XAUTHORITY_HOST_PATH|RELAYTV_YTDLP_AUTO_UPDATE|RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS|\
     RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE|RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC|\
@@ -1134,9 +1418,17 @@ if needs_stable_xauthority_bind; then
 fi
 RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_MODE" "${MODE}")
 RUNTIME_ENV_BLOCK+=$'\n'
-if [ "${X11_OVERLAY_VAL}" != "0" ]; then
-  RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_X11_OVERLAY" "${X11_OVERLAY_VAL}")
-  RUNTIME_ENV_BLOCK+=$'\n'
+port_line="$(emit_playback_env "RELAYTV_PORT" "")"
+if [ -n "$port_line" ]; then
+  RUNTIME_ENV_BLOCK+="$port_line"$'\n'
+fi
+if [ "${X11_OVERLAY_FROM_ENV}" = "1" ]; then
+  if [ -n "${X11_OVERLAY_VAL}" ]; then
+    RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_X11_OVERLAY" "${X11_OVERLAY_VAL}")
+    RUNTIME_ENV_BLOCK+=$'\n'
+  fi
+elif [ -n "${X11_OVERLAY_SAVED_LINE}" ]; then
+  RUNTIME_ENV_BLOCK+="${X11_OVERLAY_SAVED_LINE}"$'\n'
 fi
 if [ "${VIDEO_MODE_VAL}" != "auto" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_VIDEO_MODE" "${VIDEO_MODE_VAL}")
@@ -1153,10 +1445,14 @@ fi
 if [ "${QT_RUNTIME_MODE_FROM_ENV}" = "1" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_QT_RUNTIME_MODE" "${QT_RUNTIME_MODE_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
+elif [ -n "${QT_RUNTIME_MODE_SAVED_LINE}" ]; then
+  RUNTIME_ENV_BLOCK+="${QT_RUNTIME_MODE_SAVED_LINE}"$'\n'
 fi
 if [ "${QT_SHELL_MPV_ARGS_FROM_ENV}" = "1" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_QT_SHELL_MPV_ARGS" "${QT_SHELL_MPV_ARGS_VAL}")
   RUNTIME_ENV_BLOCK+=$'\n'
+elif [ -n "${QT_SHELL_MPV_ARGS_SAVED_LINE}" ]; then
+  RUNTIME_ENV_BLOCK+="${QT_SHELL_MPV_ARGS_SAVED_LINE}"$'\n'
 fi
 if [ "${QT_SHELL_MODULE_VAL}" != "relaytv_app.qt_shell_app" ]; then
   RUNTIME_ENV_BLOCK+=$(emit_env_line "RELAYTV_QT_SHELL_MODULE" "${QT_SHELL_MODULE_VAL}")
@@ -1231,10 +1527,10 @@ for playback_setting in \
 done
 
 if [ "${HEADLESS_REMOTE_ENABLED_VAL}" = "1" ] || [ "${MODE}" = "headless" ]; then
-  if [ "${HEADLESS_REMOTE_ENABLED_VAL}" != "0" ]; then
-    HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_ENABLED" "${HEADLESS_REMOTE_ENABLED_VAL}")
-    HEADLESS_ENV_BLOCK+=$'\n'
-  fi
+  # Always emit RELAYTV_HEADLESS_REMOTE_ENABLED in headless mode because the
+  # entrypoint defaults it to 1 when unset; omitting 0 would re-enable Xvfb.
+  HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_ENABLED" "${HEADLESS_REMOTE_ENABLED_VAL}")
+  HEADLESS_ENV_BLOCK+=$'\n'
   if [ "${HEADLESS_REMOTE_DISPLAY_VAL}" != ":99" ]; then
     HEADLESS_ENV_BLOCK+=$(emit_env_line "RELAYTV_HEADLESS_REMOTE_DISPLAY" "${HEADLESS_REMOTE_DISPLAY_VAL}")
     HEADLESS_ENV_BLOCK+=$'\n'
@@ -1283,7 +1579,7 @@ if [ "${YTDLP_AUTO_UPDATE_STATE_FILE_VAL}" != "/data/.relaytv-ytdlp-update.json"
 fi
 
 CEC_ENV_BLOCK=""
-if [ "${CEC_ENABLED_VAL}" = "1" ] || [ "${CEC_RUNTIME_VAL}" = "1" ] || [ "${CEC_MONITOR_VAL}" = "1" ]; then
+if [ "${CEC_ENABLED_VAL}" = "1" ] || [ "${CEC_RUNTIME_VAL}" = "1" ] || [ "${CEC_MONITOR_VAL}" = "1" ] || existing_playback_env_line RELAYTV_CEC_ENABLED >/dev/null 2>&1; then
   CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC" "${CEC_RUNTIME_VAL}")
   CEC_ENV_BLOCK+=$'\n'
   CEC_ENV_BLOCK+=$(emit_env_line "RELAYTV_CEC_ENABLED" "${CEC_ENABLED_VAL}")
@@ -1297,9 +1593,9 @@ if [ "${RENDER_GID_DETECTED}" != "992" ]; then
   RENDER_ENV_BLOCK+=$'\n'
 fi
 
-if [ -n "${AUDIO_DEVICE_VAL}" ]; then
-  AUDIO_ENV_BLOCK+=$(emit_env_line "MPV_AUDIO_DEVICE" "${AUDIO_DEVICE_VAL}")
-  AUDIO_ENV_BLOCK+=$'\n'
+audio_line="$(emit_playback_env "MPV_AUDIO_DEVICE" "")"
+if [ -n "$audio_line" ]; then
+  AUDIO_ENV_BLOCK+="$audio_line"$'\n'
 fi
 
 write_runtime_env() {
@@ -1307,6 +1603,7 @@ write_runtime_env() {
   local env_tmp preserved_tmp line key
   env_tmp="$(mktemp "$ROOT/.env.tmp.XXXXXX")"
   preserved_tmp="$(mktemp "$ROOT/.env.preserved.tmp.XXXXXX")"
+  INSTALLER_TMP_FILES+=("$env_tmp" "$preserved_tmp")
 
   if [ -f "$env_file" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1371,9 +1668,15 @@ say "  DISPLAY: ${DISPLAY_VAL:-<unset>}"
 say "  XDG_SESSION_TYPE: ${XDG_SESSION_TYPE_VAL:-<unset>}"
 say "  WAYLAND_DISPLAY: ${WAYLAND_DISPLAY_VAL:-<unset>}"
 say "  QT_QPA_PLATFORM: ${QT_QPA_PLATFORM_VAL:-<unset>}"
-say "  XAUTHORITY: resolved from the mounted session directory at runtime"
+if needs_stable_xauthority_bind; then
+  say "  XAUTHORITY: /tmp/.Xauthority (bound from ${TARGET_HOME}/.Xauthority)"
+elif [ "$MODE" = "wayland" ] || [ "$MODE" = "x11" ]; then
+  say "  XAUTHORITY: resolved from the mounted session directory at runtime"
+else
+  say "  XAUTHORITY: <none>"
+fi
 say "  RELAYTV_MODE: ${MODE}"
-say "  RELAYTV_X11_OVERLAY: ${X11_OVERLAY_VAL}"
+say "  RELAYTV_X11_OVERLAY: ${X11_OVERLAY_VAL:-<auto>}"
 say "  RELAYTV_VIDEO_MODE: ${VIDEO_MODE_VAL}"
 say "  RELAYTV_DRM_CONNECTOR: ${DRM_CONNECTOR_VAL:-<unset>} (detected=${DRM_CONNECTOR_DETECTED:-<none>})"
 say "  RELAYTV_PLAYER_BACKEND: ${PLAYER_BACKEND_VAL}"
@@ -1418,7 +1721,10 @@ fi
 if [ "$SND_NODE_MISSING" = "1" ]; then
   say "  WARN: /dev/snd not found; container audio output will be unavailable."
 fi
-if [ "$NVIDIA_PASSTHROUGH_ENABLED" != "1" ]; then
+if [ "$HEADLESS_REMOTE_ENABLED_VAL" = "1" ] && ! compose_supports_local_build; then
+  say "  WARN: RELAYTV_HEADLESS_REMOTE_ENABLED=1 requires an image built with RELAYTV_INSTALL_HEADLESS=1 (published GHCR images omit Xvfb/x11vnc)."
+fi
+if [ "$NVIDIA_DEVICE_DETECTED" = "1" ] && [ "$NVIDIA_PASSTHROUGH_ENABLED" != "1" ]; then
   say "  WARN: NVIDIA decoder passthrough disabled; NVIDIA playback acceleration will not be used unless both an NVIDIA device and Docker NVIDIA toolkit are detected."
 fi
 say "  MPV_AUDIO_DEVICE: ${AUDIO_DEVICE_VAL:-<auto>}"

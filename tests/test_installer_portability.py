@@ -41,16 +41,45 @@ def _run_host_installer(
     env = os.environ.copy()
     for key in (
         "DISPLAY",
+        "MPV_AUDIO_DEVICE",
+        "PORT",
         "QT_QPA_PLATFORM",
-        "RELAYTV_HOST_PROFILE",
-        "RELAYTV_PI_GENERATION",
-        "RELAYTV_ARM_FAST_PROFILE",
-        "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT",
         "RELAYTV_ARM_DEFAULT_QUALITY",
+        "RELAYTV_ARM_ENFORCE_SAFE_YTDL_FORMAT",
+        "RELAYTV_ARM_FAST_PROFILE",
+        "RELAYTV_CEC",
+        "RELAYTV_CEC_ENABLED",
+        "RELAYTV_CEC_MONITOR",
         "RELAYTV_DISPLAY_CAP_HEIGHT",
+        "RELAYTV_HEADLESS_REMOTE_DISPLAY",
+        "RELAYTV_HEADLESS_REMOTE_ENABLED",
+        "RELAYTV_HEADLESS_REMOTE_RESOLUTION",
+        "RELAYTV_HEADLESS_REMOTE_SOFTWARE",
+        "RELAYTV_HEADLESS_VNC_ENABLED",
+        "RELAYTV_HEADLESS_VNC_LISTEN",
+        "RELAYTV_HEADLESS_VNC_PASSWORD_FILE",
+        "RELAYTV_HEADLESS_VNC_PORT",
+        "RELAYTV_HOST_PROFILE",
+        "RELAYTV_IMAGE_REF",
+        "RELAYTV_INSTALL_HEADLESS",
+        "RELAYTV_INSTALL_IDLE_BROWSER",
         "RELAYTV_INSTALL_MODE",
+        "RELAYTV_INSTALL_OPS_TOOLS",
+        "RELAYTV_INSTALL_X11_OVERLAY",
+        "RELAYTV_INSTALL_YES",
         "RELAYTV_MODE",
+        "RELAYTV_PI_GENERATION",
+        "RELAYTV_PLAYER_BACKEND",
+        "RELAYTV_PORT",
+        "RELAYTV_QT_RUNTIME_MODE",
+        "RELAYTV_QT_SHELL_MODULE",
+        "RELAYTV_QT_SHELL_MPV_ARGS",
         "RELAYTV_TARGET_HOME",
+        "RELAYTV_X11_OVERLAY",
+        "RELAYTV_YTDLP_AUTO_UPDATE",
+        "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS",
+        "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE",
+        "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC",
         "WAYLAND_DISPLAY",
         "XAUTHORITY",
         "XDG_RUNTIME_DIR",
@@ -470,3 +499,382 @@ def test_installer_rejects_invalid_pi_generation_without_evaluating_it(
     assert "RELAYTV_PI_GENERATION" in result.stderr
     assert not (tmp_path / "should-not-exist").exists()
     assert (tmp_path / ".env").read_text() == original
+
+
+def test_release_compose_headless_install_disables_xvfb_remote_by_default(tmp_path: Path) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+
+    result = _run_host_installer(tmp_path, args=["--mode", "headless"])
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_MODE=headless\n" in env_text
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in env_text
+    assert "RELAYTV_PLAYER_BACKEND=mpv\n" in env_text
+    assert "RELAYTV_INSTALL_HEADLESS=1" not in env_text
+
+
+def test_source_compose_headless_honors_explicit_remote_disable(tmp_path: Path) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.yml", tmp_path / "docker-compose.yml")
+
+    result = _run_host_installer(
+        tmp_path,
+        args=["--mode", "headless"],
+        env_overrides={"RELAYTV_HEADLESS_REMOTE_ENABLED": "0"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    # Must explicitly write =0 because container_entrypoint defaults unset to =1.
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in env_text
+    assert "RELAYTV_PLAYER_BACKEND=mpv\n" in env_text
+
+
+def test_host_installer_preserves_documented_operator_settings_across_reruns(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".env").write_text(
+        'export MPV_AUDIO_DEVICE="alsa/hdmi:CARD=PCH,DEV=0" # pinned sink\n'
+        "RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:v0.12.2\n"
+        "RELAYTV_YTDLP_AUTO_UPDATE=1\n"
+        "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS=24\n"
+        "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC=300\n"
+        "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE=/data/custom-ytdlp.json\n"
+        "RELAYTV_CEC_ENABLED=1\n"
+        "RELAYTV_CEC=1\n"
+        "RELAYTV_CEC_MONITOR=0\n"
+        "RELAYTV_QT_RUNTIME_MODE=external_mpv\n"
+        'RELAYTV_QT_SHELL_MPV_ARGS="--gpu-api=opengl"\n'
+        "RELAYTV_HEADLESS_VNC_PORT=5901\n"
+        "RELAYTV_PORT=8899\n",
+        encoding="utf-8",
+    )
+
+    installer = _copy_host_installer(tmp_path)
+    env = os.environ.copy()
+    for key in (
+        "MPV_AUDIO_DEVICE",
+        "RELAYTV_IMAGE_REF",
+        "RELAYTV_YTDLP_AUTO_UPDATE",
+        "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS",
+        "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC",
+        "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE",
+        "RELAYTV_CEC_ENABLED",
+        "RELAYTV_CEC",
+        "RELAYTV_CEC_MONITOR",
+        "RELAYTV_QT_RUNTIME_MODE",
+        "RELAYTV_QT_SHELL_MPV_ARGS",
+        "RELAYTV_HEADLESS_VNC_PORT",
+        "RELAYTV_PORT",
+    ):
+        env.pop(key, None)
+    env.update(
+        {
+            "RELAYTV_TARGET_USER": pwd.getpwuid(os.getuid()).pw_name,
+            "RELAYTV_PI_VIDEO_DEVICES_ENABLED": "0",
+        }
+    )
+
+    result = subprocess.run(
+        [str(installer), "--mode", "headless"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert 'export MPV_AUDIO_DEVICE="alsa/hdmi:CARD=PCH,DEV=0" # pinned sink\n' in env_text
+    assert "RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:v0.12.2\n" in env_text
+    assert "RELAYTV_YTDLP_AUTO_UPDATE=1\n" in env_text
+    assert "RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS=24\n" in env_text
+    assert "RELAYTV_YTDLP_AUTO_UPDATE_TIMEOUT_SEC=300\n" in env_text
+    assert "RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE=/data/custom-ytdlp.json\n" in env_text
+    assert "RELAYTV_CEC_ENABLED=1\n" in env_text
+    assert "RELAYTV_CEC=1\n" in env_text
+    assert "RELAYTV_CEC_MONITOR=0\n" in env_text
+    assert "RELAYTV_QT_RUNTIME_MODE=external_mpv\n" in env_text
+    assert 'RELAYTV_QT_SHELL_MPV_ARGS="--gpu-api=opengl"\n' in env_text
+    assert "RELAYTV_HEADLESS_VNC_PORT=5901\n" in env_text
+    assert "RELAYTV_PORT=8899\n" in env_text
+    assert env_text.count("RELAYTV_PORT=") == 1
+    assert env_text.count("MPV_AUDIO_DEVICE=") == 1
+
+
+def test_non_tty_detached_sessions_do_not_crash_on_dev_tty(tmp_path: Path) -> None:
+    if shutil.which("setsid") is None:
+        pytest.skip("setsid is unavailable")
+
+    # 1. Root bootstrap without --dir/--yes in a session with no controlling TTY.
+    boot_dir = tmp_path / "boot-cwd"
+    boot_dir.mkdir()
+    boot = subprocess.run(
+        ["setsid", "/bin/bash", str(ROOT_DIR / "install.sh")],
+        cwd=boot_dir,
+        stdin=subprocess.DEVNULL,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert boot.returncode != 0
+    assert "No such device or address" not in boot.stderr
+    assert "RelayTV installs into the current directory by default" in boot.stderr
+
+    # 2. scripts/install.sh with detected CEC hardware and RELAYTV_CEC_ENABLED=auto
+    # in a session with no controlling TTY must default cleanly to 0 instead of ENXIO.
+    host_dir = tmp_path / "host-cec"
+    host_dir.mkdir()
+    installer = _copy_host_installer(host_dir)
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir()
+    cec_client = bin_dir / "cec-client"
+    cec_client.write_text("#!/bin/sh\nprintf 'com port: /dev/ttyACM0\\n'\n", encoding="utf-8")
+    cec_client.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["RELAYTV_TARGET_USER"] = pwd.getpwuid(os.getuid()).pw_name
+    env["RELAYTV_CEC_ENABLED"] = "auto"
+    env["RELAYTV_PI_VIDEO_DEVICES_ENABLED"] = "0"
+    env.pop("RELAYTV_INSTALL_YES", None)
+
+    host_res = subprocess.run(
+        ["setsid", str(installer), "--mode", "headless"],
+        cwd=host_dir,
+        stdin=subprocess.DEVNULL,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert host_res.returncode == 0, host_res.stderr
+    assert "No such device or address" not in host_res.stderr
+    assert (host_dir / ".env").is_file()
+
+
+def test_x11_mode_leaves_legacy_overlay_unset_unless_explicit(tmp_path: Path) -> None:
+    result = _run_host_installer(
+        tmp_path,
+        args=["--mode", "x11", "--use-shell-env"],
+        env_overrides={"DISPLAY": ":0", "XDG_SESSION_TYPE": "x11"},
+    )
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_MODE=x11\n" in env_text
+    assert "RELAYTV_X11_OVERLAY=" not in env_text
+    assert "RELAYTV_INSTALL_X11_OVERLAY=" not in env_text
+
+    shutil.rmtree(tmp_path / "scripts")
+    explicit = _run_host_installer(
+        tmp_path,
+        args=["--mode", "x11", "--use-shell-env"],
+        env_overrides={
+            "DISPLAY": ":0",
+            "XDG_SESSION_TYPE": "x11",
+            "RELAYTV_X11_OVERLAY": "1",
+        },
+    )
+    assert explicit.returncode == 0, explicit.stderr
+    explicit_env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_X11_OVERLAY=1\n" in explicit_env
+    assert "RELAYTV_INSTALL_X11_OVERLAY=1\n" in explicit_env
+
+
+def test_doctor_redacts_secrets_and_respects_configured_port(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    doctor = scripts_dir / "doctor.sh"
+    shutil.copy2(ROOT_DIR / "scripts" / "doctor.sh", doctor)
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text("#!/bin/sh\nprintf '200'\n", encoding="utf-8")
+    fake_curl.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_docker.chmod(0o755)
+
+    api_secret = "token-secret-xyz987"
+    jf_pass = "jellyfin-pass-abc123"
+    jf_key = "jellyfin-key-def456"
+    seerr_key = "seerr-key-ghi789"
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"RELAYTV_API_TOKEN={api_secret}\n"
+        f"export RELAYTV_JELLYFIN_PASSWORD='{jf_pass}'\n"
+        f'RELAYTV_JELLYFIN_API_KEY="{jf_key}"\n'
+        f"RELAYTV_SEERR_API_KEY={seerr_key}\n"
+        "RELAYTV_JELLYFIN_AUTH_ENABLED=1\n"
+        "RELAYTV_HEADLESS_VNC_PASSWORD_FILE=/data/vnc.pass\n"
+        'export RELAYTV_PORT="8899" # custom port\n',
+        encoding="utf-8",
+    )
+    env_file.chmod(0o644)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env.pop("RELAYTV_BASE", None)
+    env.pop("RELAYTV_PORT", None)
+
+    result = subprocess.run(
+        [str(doctor)],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    combined = result.stdout + "\n" + result.stderr
+    for secret in (api_secret, jf_pass, jf_key, seerr_key):
+        assert secret not in combined
+    assert "RELAYTV_API_TOKEN=<redacted>" in result.stdout
+    assert "export RELAYTV_JELLYFIN_PASSWORD=<redacted>" in result.stdout
+    assert "RELAYTV_JELLYFIN_API_KEY=<redacted>" in result.stdout
+    assert "RELAYTV_SEERR_API_KEY=<redacted>" in result.stdout
+    assert "RELAYTV_JELLYFIN_AUTH_ENABLED=1" in result.stdout
+    assert "RELAYTV_HEADLESS_VNC_PASSWORD_FILE=/data/vnc.pass" in result.stdout
+    assert "WARN: .env mode is 644 (expected 600)" in result.stdout
+    assert "http://127.0.0.1:8899/health" in result.stdout
+
+
+def test_wayland_socket_discovery_ignores_stale_lock_files(tmp_path: Path) -> None:
+    import socket
+    import tempfile
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as short_dir:
+        runtime_dir = Path(short_dir)
+        (runtime_dir / "wayland-0.lock").write_text("stale", encoding="utf-8")
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(str(runtime_dir / "wayland-1"))
+        try:
+            result = _run_host_installer(
+                tmp_path,
+                args=["--mode", "wayland", "--use-shell-env"],
+                env_overrides={
+                    "XDG_RUNTIME_DIR": str(runtime_dir),
+                    "XDG_SESSION_TYPE": "wayland",
+                },
+            )
+            assert result.returncode == 0, result.stderr
+            env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+            assert "WAYLAND_DISPLAY=wayland-1\n" in env_text
+            assert "wayland-0.lock" not in env_text
+
+            host_ops = tmp_path / "scripts" / "host-ops.sh"
+            shutil.copy2(ROOT_DIR / "scripts" / "host-ops.sh", host_ops)
+            ops_env = os.environ.copy()
+            ops_env.pop("WAYLAND_DISPLAY", None)
+            ops_res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; resolve_wayland_display_name "$2"',
+                    "host-ops-wayland-test",
+                    str(host_ops),
+                    str(runtime_dir),
+                ],
+                cwd=tmp_path,
+                env=ops_env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert ops_res.returncode == 0, ops_res.stderr
+            assert ops_res.stdout == "wayland-1"
+        finally:
+            sock.close()
+
+
+def test_prelogin_desktop_install_preserves_run_user_mount(tmp_path: Path) -> None:
+    if not Path("/run/user").is_dir():
+        pytest.skip("/run/user is not present on this host")
+
+    result = _run_host_installer(
+        tmp_path,
+        args=["--mode", "wayland", "--use-shell-env"],
+        env_overrides={
+            "XDG_RUNTIME_DIR": "/run/user/999999",
+            "XDG_SESSION_TYPE": "wayland",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "XDG_RUNTIME_DIR=/tmp" not in env_text
+    assert 'source: "/run/user"' in override
+
+
+def test_explicit_headless_mode_does_not_leak_host_display_or_x11_mount(tmp_path: Path) -> None:
+    result = _run_host_installer(
+        tmp_path,
+        args=["--mode", "headless", "--use-shell-env"],
+        env_overrides={
+            "DISPLAY": ":0",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_SESSION_TYPE": "wayland",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "DISPLAY=" not in env_text
+    assert "WAYLAND_DISPLAY=" not in env_text
+    assert "/tmp/.X11-unix" not in override
+
+
+def test_feature_branch_checkout_defaults_image_ref_to_latest(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", "fix/custom-feature"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    (tmp_path / "README").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+    result = _run_host_installer(tmp_path)
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_IMAGE_REF=" not in env_text
+
+    subprocess.run(["git", "tag", "v0.12.2"], cwd=tmp_path, check=True)
+    shutil.rmtree(tmp_path / "scripts")
+    tagged = _run_host_installer(tmp_path)
+    assert tagged.returncode == 0, tagged.stderr
+    tagged_env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:v0.12.2\n" in tagged_env
+
+
+def test_bootstrap_refuses_implicit_home_install_with_yes(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env.pop("RELAYTV_INSTALL_DIR", None)
+
+    result = subprocess.run(
+        ["/bin/bash", str(ROOT_DIR / "install.sh"), "--yes", "--no-pull", "--no-start"],
+        cwd=fake_home,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing to install directly into your home directory" in result.stderr
+
+
+def test_env_defaults_references_current_qt_shell_and_session_vars() -> None:
+    defaults = (ROOT_DIR / ".env.defaults").read_text(encoding="utf-8")
+    assert "RELAYTV_QT_SHELL_MODULE=relaytv_app.qt_shell_app" in defaults
+    assert "shell_v2_app" not in defaults
+    assert "RELAYTV_SHELL_V2_" not in defaults
+    assert "RELAYTV_XDG_SESSION_TYPE" not in defaults
+    assert "RELAYTV_HOST_SESSION_TYPE=x11" in defaults
