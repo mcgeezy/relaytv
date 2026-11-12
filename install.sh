@@ -82,7 +82,7 @@ parse_dotenv_scalar() {
       if [[ "$ch" == "\\" ]] && (( i + 1 < len )); then
         next="${inner:i+1:1}"
         case "$next" in
-          \"|\\|\$|\`)
+          \"|\\|\$)
             out+="$next"
             (( i += 2 ))
             continue

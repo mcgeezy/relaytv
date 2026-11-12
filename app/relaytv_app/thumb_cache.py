@@ -290,7 +290,7 @@ def _download_to(url: str, fp: str) -> bool:
     if not _is_allowed_thumb_url(url):
         return False
     req = urllib.request.Request(url, headers=_headers_for(url))
-    opener = urllib.request.build_opener(_SafeThumbRedirectHandler)
+    opener = url_boundary.safe_http_opener(_SafeThumbRedirectHandler)
     with opener.open(req, timeout=15) as r:
         total = 0
         with open(fp, "wb") as f:

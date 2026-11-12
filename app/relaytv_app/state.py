@@ -534,17 +534,8 @@ def _persistable_history_item(item: dict) -> dict | None:
     # Queue identity belongs to one queued instance, not to the media's
     # history/now-playing identity.
     out.pop(QUEUE_ITEM_ID_KEY, None)
-    # History is display/replay metadata; strip query-string secrets (?api_key=,
-    # signed CDN tokens) before writing to disk. Jellyfin items retain
-    # jellyfin_item_id for authenticated re-resolution on replay.
-    from . import public_media
-
-    for url_key in ("url", "thumbnail"):
-        raw_val = out.get(url_key)
-        if isinstance(raw_val, str) and raw_val.startswith(("http://", "https://")):
-            cleaned = public_media.sanitize_public_url(raw_val)
-            if cleaned:
-                out[url_key] = cleaned
+    # Preserve authenticated URLs for replay after restart. State files are
+    # private (0600); public payloads redact credentials at serialization time.
     ts = item.get("ts")
     if ts is not None:
         try:

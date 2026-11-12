@@ -102,7 +102,7 @@ def _extract_bash_function(script_path: Path, func_name: str) -> str:
         ("line1\r\nline2", "KEY=line1line2"),
         (
             "--osd-playing-msg='${media-title}' # \"quote\" \\ `cmd`",
-            'KEY="--osd-playing-msg=\'\\${media-title}\' # \\"quote\\" \\\\ \\`cmd\\`"',
+            'KEY="--osd-playing-msg=\'\\${media-title}\' # \\"quote\\" \\\\ `cmd`"',
         ),
     ],
 )
@@ -156,6 +156,37 @@ def test_parse_dotenv_scalar_round_trips_across_all_scripts(
     assert res.stdout == scalar
 
 
+@pytest.mark.parametrize("scalar", [
+    "/data/it's `archive`.json",
+    "it's a \"quoted\" $var with \\backslash\\ and `ticks` # comment",
+    "literal '\\`tick\\`' and ${media-title}",
+])
+def test_emitted_dotenv_round_trips_through_compose(tmp_path: Path, scalar: str) -> None:
+    if not shutil.which("docker") or subprocess.run(
+        ["docker", "compose", "version"], capture_output=True, check=False
+    ).returncode:
+        pytest.skip("Docker Compose is unavailable")
+    emit_fn = _extract_bash_function(ROOT_DIR / "scripts" / "install.sh", "emit_env_line")
+    emitted = subprocess.check_output(
+        ["bash", "-c", f'{emit_fn}\nemit_env_line REVIEW_VALUE "$1"', "bash", scalar],
+        text=True,
+    )
+    (tmp_path / ".env").write_text(emitted, encoding="utf-8")
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "services:\n  review:\n    image: alpine\n    environment:\n"
+        "      REVIEW_VALUE: ${REVIEW_VALUE}\n", encoding="utf-8"
+    )
+    result = subprocess.run(
+        ["docker", "compose", "--project-directory", str(tmp_path), "-f", str(compose),
+         "config", "--environment"],
+        capture_output=True, text=True, check=False,
+        env={k: v for k, v in os.environ.items() if k != "REVIEW_VALUE"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"REVIEW_VALUE={scalar}" in result.stdout.splitlines()
+
+
 def test_installer_rerun_preserves_complex_dotenv_values_without_corruption(
     tmp_path: Path,
 ) -> None:
@@ -173,11 +204,11 @@ def test_installer_rerun_preserves_complex_dotenv_values_without_corruption(
     assert first.returncode == 0, first.stderr
     first_env = (tmp_path / ".env").read_text(encoding="utf-8")
     assert (
-        'RELAYTV_QT_SHELL_MPV_ARGS="--osd-playing-msg=\'\\${media-title}\' # \\"quoted\\" \\\\ \\`tick\\`"\n'
+        'RELAYTV_QT_SHELL_MPV_ARGS="--osd-playing-msg=\'\\${media-title}\' # \\"quoted\\" \\\\ `tick`"\n'
         in first_env
     )
     assert (
-        'RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE="/data/it\'s a \\"state\\" \\$file \\\\ \\`path\\` #1.json"\n'
+        'RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE="/data/it\'s a \\"state\\" \\$file \\\\ `path` #1.json"\n'
         in first_env
     )
 
@@ -186,11 +217,11 @@ def test_installer_rerun_preserves_complex_dotenv_values_without_corruption(
     assert second.returncode == 0, second.stderr
     second_env = (tmp_path / ".env").read_text(encoding="utf-8")
     assert (
-        'RELAYTV_QT_SHELL_MPV_ARGS="--osd-playing-msg=\'\\${media-title}\' # \\"quoted\\" \\\\ \\`tick\\`"\n'
+        'RELAYTV_QT_SHELL_MPV_ARGS="--osd-playing-msg=\'\\${media-title}\' # \\"quoted\\" \\\\ `tick`"\n'
         in second_env
     )
     assert (
-        'RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE="/data/it\'s a \\"state\\" \\$file \\\\ \\`path\\` #1.json"\n'
+        'RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE="/data/it\'s a \\"state\\" \\$file \\\\ `path` #1.json"\n'
         in second_env
     )
     assert f"RELAYTV_QT_SHELL_MPV_ARGS: {mpv_args}" in second.stdout

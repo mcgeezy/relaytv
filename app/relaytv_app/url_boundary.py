@@ -25,6 +25,7 @@ validation rejects it, serialization omits it, classification calls it
 """
 
 from dataclasses import dataclass
+import http.client
 import ipaddress
 import re
 import socket
@@ -244,6 +245,71 @@ class SafeHttpRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, resolved)
 
 
+def _safe_create_connection(
+    address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None
+):
+    """Validate and connect the same DNS answers, without a second lookup."""
+    host, port = address
+    if is_forbidden_ip_literal(host):
+        raise OSError("Blocked unsafe connection target")
+    infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+    if not infos or any(is_forbidden_ip_literal(info[4][0]) for info in infos):
+        raise OSError("Blocked unsafe connection target")
+    last_error = None
+    for family, socktype, proto, _canon, sockaddr in infos:
+        sock = None
+        try:
+            sock = socket.socket(family, socktype, proto)
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            last_error = exc
+            if sock is not None:
+                sock.close()
+    raise last_error or OSError("No usable connection target")
+
+
+class _SafeHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _safe_create_connection
+
+
+class _SafeHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep the original host for TLS SNI and certificate verification.
+        self._create_connection = _safe_create_connection
+
+
+class _SafeHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_SafeHTTPConnection, req)
+
+
+class _SafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_SafeHTTPSConnection, req, context=self._context)
+
+
+def safe_http_opener(*redirect_handlers):
+    """Build a direct opener that checks the actual socket addresses on every hop.
+
+    Ambient proxies cannot enforce this boundary: they resolve the destination
+    themselves, outside our connection validation.
+    """
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _SafeHTTPHandler(),
+        _SafeHTTPSHandler(),
+        *(redirect_handlers or (SafeHttpRedirectHandler(),)),
+    )
+
+
 def safe_urlopen(url_or_req, *, timeout: float = 15.0):
     """Open an http(s) URL after validating its host, DNS resolution, and redirects."""
     raw_url = (
@@ -255,5 +321,5 @@ def safe_urlopen(url_or_req, *, timeout: float = 15.0):
         raise urllib.error.URLError("Blocked unsafe URL target")
     if urllib.request.urlopen is not _ORIG_URLOPEN:
         return urllib.request.urlopen(url_or_req, timeout=timeout)
-    opener = urllib.request.build_opener(SafeHttpRedirectHandler)
+    opener = safe_http_opener()
     return opener.open(url_or_req, timeout=timeout)

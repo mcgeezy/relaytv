@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from relaytv_app import (
     api_auth,
+    public_media,
     playback_service,
     player,
     postlive_relay,
@@ -420,9 +421,11 @@ def test_postlive_route_requires_loopback_and_state_persists_0600_sanitized(
         }
     )
     assert cleaned_hist is not None
-    assert "leak-key" not in cleaned_hist["url"]
-    assert "user:pass" not in cleaned_hist["url"]
-    assert "plex-leak" not in str(cleaned_hist.get("thumbnail") or "")
+    assert "leak-key" in cleaned_hist["url"]
+    public_hist = public_media.public_media_item(cleaned_hist)
+    assert "leak-key" not in public_hist["url"]
+    assert "user:pass" not in public_hist["url"]
+    assert "plex-leak" not in str(public_hist.get("thumbnail") or "")
 
 
 def test_settings_server_repointing_clears_stored_secrets(

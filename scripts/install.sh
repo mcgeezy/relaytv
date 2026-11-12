@@ -285,7 +285,7 @@ parse_dotenv_scalar() {
       if [[ "$ch" == "\\" ]] && (( i + 1 < len )); then
         next="${inner:i+1:1}"
         case "$next" in
-          \"|\\|\$|\`)
+          \"|\\|\$)
             out+="$next"
             (( i += 2 ))
             continue
@@ -1437,7 +1437,6 @@ emit_env_line() {
     escaped="${val//\\/\\\\}"
     escaped="${escaped//\"/\\\"}"
     escaped="${escaped//\$/\\\$}"
-    escaped="${escaped//\`/\\\`}"
     printf '%s="%s"\n' "$key" "$escaped"
     return 0
   fi
