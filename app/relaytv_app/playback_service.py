@@ -1043,16 +1043,30 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     plex_item = str(now.get("provider") or "").strip().lower() == "plex" and bool(
         str(now.get("plex_item_id") or "").strip()
     )
-    if plex_item or not isinstance(stream, str) or not stream.strip():
+    postlive_stream = bool(
+        isinstance(stream, str)
+        and stream.strip()
+        and bool(getattr(player, "_relay_token_from_url", lambda _u: "")(stream))
+    )
+    if plex_item or postlive_stream or not isinstance(stream, str) or not stream.strip():
+        resume_source = dict(now) if isinstance(now, dict) else now
+        if isinstance(resume_source, dict) and postlive_stream:
+            resume_source.pop("stream", None)
+            resume_source.pop("_resolved_stream", None)
         resumed = play_now(
-            now,
+            resume_source,
             use_resolver=not plex_item,
             cec=False,
             clear_queue=False,
             mode="resume",
             start_pos=start_pos,
         )
+        if isinstance(resumed, dict) and resumed.get("closed"):
+            resumed = dict(resumed)
+            resumed["closed"] = False
+            state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
     else:
+        player.retire_playback_intents("resume_session")
         with player.MPV_LOCK:
             stream_url = stream.strip()
             audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
@@ -1074,7 +1088,11 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
         resumed["started"] = int(time.time())
         resumed["mode"] = "resume"
         resumed["closed"] = False
-        state.update_session(now_playing=resumed, session_state="playing")
+        state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
+        try:
+            player._arm_playback_start_watchdog(resumed)
+        except Exception:
+            pass
 
     resume_result: dict[str, Any] | None = None
     if start_pos is not None:

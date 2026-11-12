@@ -826,6 +826,121 @@ def auto_prefers_transcode(
     return False, "direct_ok"
 
 
+_IMAGE_SUBTITLE_CODECS = frozenset(
+    {
+        "pgssub",
+        "hdmv_pgs_subtitle",
+        "dvdsub",
+        "dvd_subtitle",
+        "vobsub",
+        "dvbsub",
+        "dvb_subtitle",
+        "xsub",
+    }
+)
+
+
+def _project_detail_media_source(detail: object, media_source_id: str = "") -> dict[str, object]:
+    if not isinstance(detail, dict):
+        return {}
+    wanted = str(media_source_id or "").strip()
+    if not wanted:
+        return detail
+    media_sources = detail.get("media_sources")
+    if not isinstance(media_sources, list):
+        return detail
+    for ms in media_sources:
+        if not isinstance(ms, dict):
+            continue
+        ms_id = str(ms.get("media_source_id") or ms.get("id") or "").strip()
+        if ms_id == wanted:
+            projected = dict(detail)
+            projected["media_source_id"] = ms_id
+            for key in (
+                "audio_streams",
+                "subtitle_streams",
+                "audio_language",
+                "subtitle_language",
+                "video_codec",
+                "video_profile",
+                "video_width",
+                "video_height",
+                "video_bit_depth",
+                "video_fps",
+                "video_bitrate",
+            ):
+                if key in ms:
+                    projected[key] = ms[key]
+            return projected
+    return detail
+
+
+def _get_item_detail_for_source(
+    item_id: str,
+    *,
+    media_source_id: str = "",
+    user_id_override: str = "",
+    refresh: bool = False,
+) -> dict[str, object]:
+    iid = str(item_id or "").strip()
+    if not iid:
+        return {}
+    mid = str(media_source_id or "").strip()
+    uid = str(user_id_override or "").strip()
+    kwargs: dict[str, object] = {}
+    if refresh:
+        kwargs["refresh"] = True
+    if uid:
+        kwargs["user_id_override"] = uid
+    if mid:
+        try:
+            detail = jellyfin_receiver.get_item_detail(iid, media_source_id=mid, **kwargs)
+            return _project_detail_media_source(detail, mid)
+        except TypeError:
+            pass
+    try:
+        detail = (
+            jellyfin_receiver.get_item_detail(iid, **kwargs)
+            if kwargs
+            else jellyfin_receiver.get_item_detail(iid)
+        )
+    except TypeError:
+        detail = jellyfin_receiver.get_item_detail(iid)
+    return _project_detail_media_source(detail, mid)
+
+
+def _subtitle_requires_transcode(
+    detail: dict | None, subtitle_stream_index: str
+) -> tuple[bool, str]:
+    sidx_raw = str(subtitle_stream_index or "").strip()
+    if not sidx_raw or sidx_raw == "-1" or not isinstance(detail, dict):
+        return False, ""
+    try:
+        target_idx = int(sidx_raw)
+    except (TypeError, ValueError):
+        return False, ""
+    if target_idx < 0:
+        return False, ""
+    subtitle_streams = detail.get("subtitle_streams")
+    if not isinstance(subtitle_streams, list):
+        return False, ""
+    for row in subtitle_streams:
+        if not isinstance(row, dict):
+            continue
+        try:
+            if int(row.get("index")) != target_idx:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if bool(row.get("is_external")):
+            return True, "external_subtitle_requires_transcode"
+        codec = str(row.get("codec") or "").strip().lower()
+        if codec in _IMAGE_SUBTITLE_CODECS:
+            return True, "image_subtitle_burn_in"
+        break
+    return False, ""
+
+
 def select_playback_url(
     *,
     item_id: str,
@@ -849,12 +964,10 @@ def select_playback_url(
     if not iid:
         return {"url": src, "mode": "direct", "reason": "no_item_id", "media_source_id": mid}
 
-    detail = {}
+    detail: dict[str, object] = {}
     try:
-        detail = (
-            jellyfin_receiver.get_item_detail(iid, user_id_override=user_id_override)
-            if user_id_override
-            else jellyfin_receiver.get_item_detail(iid)
+        detail = _get_item_detail_for_source(
+            iid, media_source_id=mid, user_id_override=user_id_override
         )
     except Exception:
         detail = {}
@@ -880,6 +993,11 @@ def select_playback_url(
             reason = "auto_no_detail"
         else:
             prefer_transcode, reason = auto_prefers_transcode(item_detail=detail, profile=profile)
+            if not prefer_transcode:
+                sub_transcode, sub_reason = _subtitle_requires_transcode(detail, sidx)
+                if sub_transcode:
+                    prefer_transcode = True
+                    reason = sub_reason
 
     if not src:
         src = build_item_stream_url(
@@ -963,10 +1081,8 @@ def resolve_playable_item(
         return {"item_id": "", "detail": {}, "media_source_id": ""}
 
     try:
-        detail = (
-            jellyfin_receiver.get_item_detail(iid, user_id_override=user_id_override)
-            if user_id_override
-            else jellyfin_receiver.get_item_detail(iid)
+        detail = _get_item_detail_for_source(
+            iid, media_source_id=media_source_id, user_id_override=user_id_override
         )
     except Exception:
         detail = {}
@@ -1143,6 +1259,136 @@ def dispatch_external_item(
     return dict(result) if isinstance(result, dict) else {"ok": bool(result)}
 
 
+def _normalize_optional_stream_index(
+    raw: object, *, allow_off: bool = False, field_name: str = "stream_index"
+) -> str:
+    text = str(raw if raw is not None else "").strip()
+    if not text:
+        return ""
+    if allow_off and text.lower() in {"off", "none", "disabled", "no"}:
+        return "-1"
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"invalid {field_name}") from None
+    if parsed < (-1 if allow_off else 0):
+        raise HTTPException(status_code=400, detail=f"invalid {field_name}")
+    return str(parsed)
+
+
+def perform_item_action(
+    item_id: str,
+    command: str = "play_now",
+    *,
+    resume_pos: float | None = None,
+    media_source_id: str = "",
+    audio_stream_index: str | int | None = None,
+    subtitle_stream_index: str | int | None = None,
+) -> dict[str, object]:
+    """Product entrypoint for catalog/UI item actions without importing routes."""
+    st = jellyfin_receiver.status()
+    if not bool(st.get("enabled")):
+        raise HTTPException(status_code=503, detail="jellyfin integration disabled")
+    if not bool(st.get("running")):
+        raise HTTPException(status_code=503, detail="jellyfin integration not running")
+    if not str(st.get("server_url") or "").strip():
+        raise HTTPException(status_code=400, detail="jellyfin server_url not configured")
+    if "catalog_ready" in st and not bool(st.get("catalog_ready")):
+        raise HTTPException(
+            status_code=503,
+            detail=str(st.get("catalog_reason") or "jellyfin catalog is not ready"),
+        )
+
+    iid = str(item_id or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="item_id is required")
+    cmd = str(command or "play_now").strip().lower()
+    if cmd not in {"play_now", "play_next", "play_last", "resume"}:
+        raise HTTPException(status_code=400, detail="unsupported command")
+
+    mid = str(media_source_id or "").strip()
+    aidx = _normalize_optional_stream_index(
+        audio_stream_index, allow_off=False, field_name="audio_stream_index"
+    )
+    sidx = _normalize_optional_stream_index(
+        subtitle_stream_index, allow_off=True, field_name="subtitle_stream_index"
+    )
+
+    payload: dict[str, object] = {"ItemId": iid, "PlayCommand": "PlayNow"}
+    if cmd == "play_next":
+        payload["PlayCommand"] = "PlayNext"
+    elif cmd == "play_last":
+        payload["PlayCommand"] = "PlayLast"
+    elif cmd == "resume":
+        payload["PlayCommand"] = "Resume"
+    if mid:
+        payload["MediaSourceId"] = mid
+    if aidx != "":
+        payload["AudioStreamIndex"] = int(aidx)
+    if sidx != "":
+        payload["SubtitleStreamIndex"] = int(sidx)
+
+    start_pos: float | None = None
+    if cmd == "resume":
+        if resume_pos is not None:
+            try:
+                rp = float(resume_pos)
+                if rp > 0:
+                    start_pos = rp
+            except Exception:
+                start_pos = None
+        if start_pos is None:
+            try:
+                meta = _get_item_detail_for_source(iid, media_source_id=mid)
+                rp2 = (
+                    float(meta.get("resume_pos"))
+                    if isinstance(meta, dict) and meta.get("resume_pos") is not None
+                    else None
+                )
+                if rp2 is not None and rp2 > 0:
+                    start_pos = rp2
+            except Exception:
+                start_pos = None
+
+    if should_suppress_duplicate_ui_action(cmd, iid, start_pos):
+        return {
+            "ok": True,
+            "action": "ui_suppressed",
+            "suppressed_duplicate_ui_action": True,
+            "ui_command": cmd,
+            "item_id": iid,
+            "resolved_resume_pos": start_pos,
+        }
+
+    dispatch_payload = dict(payload)
+    if start_pos is not None:
+        dispatch_payload["_start_pos"] = start_pos
+
+    generation = jellyfin_receiver.config_generation()
+
+    def still_current() -> bool:
+        return jellyfin_receiver.config_generation() == generation
+
+    try:
+        result = jellyfin_receiver.dispatch_command(
+            "Play",
+            dispatch_payload,
+            guard=still_current,
+            cast_scope=False,
+        )
+    except TypeError:
+        result = jellyfin_receiver.dispatch_command(
+            "Play",
+            dispatch_payload,
+            guard=still_current,
+        )
+    out = dict(result) if isinstance(result, dict) else {"ok": bool(result)}
+    out["ui_command"] = cmd
+    out["item_id"] = iid
+    out["resolved_resume_pos"] = start_pos
+    return out
+
+
 def _normalize_lang_pref(raw: str) -> str:
     text = str(raw or "").strip().lower().replace("_", "-")
     if "," in text:
@@ -1216,7 +1462,12 @@ def _language_matches(pref: str, candidate: str) -> bool:
     return False
 
 
-def preferred_stream_indices(item_id: str, *, user_id_override: str = "") -> tuple[str, str]:
+def preferred_stream_indices(
+    item_id: str,
+    *,
+    user_id_override: str = "",
+    media_source_id: str = "",
+) -> tuple[str, str]:
     iid = str(item_id or "").strip()
     if not iid:
         return "", ""
@@ -1227,10 +1478,8 @@ def preferred_stream_indices(item_id: str, *, user_id_override: str = "") -> tup
         return "", ""
     sub_off = sub_pref in {"off", "none", "disabled", "no", "false", "0"}
     try:
-        detail = (
-            jellyfin_receiver.get_item_detail(iid, user_id_override=user_id_override)
-            if user_id_override
-            else jellyfin_receiver.get_item_detail(iid)
+        detail = _get_item_detail_for_source(
+            iid, media_source_id=media_source_id, user_id_override=user_id_override
         )
     except Exception:
         detail = {}
@@ -1263,6 +1512,28 @@ def preferred_stream_indices(item_id: str, *, user_id_override: str = "") -> tup
     return audio_idx, sub_idx
 
 
+def _preferred_indices_for_item(
+    item_id: str,
+    *,
+    user_id_override: str = "",
+    media_source_id: str = "",
+) -> tuple[str, str]:
+    uid = str(user_id_override or "").strip()
+    mid = str(media_source_id or "").strip()
+    if mid:
+        try:
+            if uid:
+                return preferred_stream_indices(
+                    item_id, user_id_override=uid, media_source_id=mid
+                )
+            return preferred_stream_indices(item_id, media_source_id=mid)
+        except TypeError:
+            pass
+    if uid:
+        return preferred_stream_indices(item_id, user_id_override=uid)
+    return preferred_stream_indices(item_id)
+
+
 def retarget_queue_stream_preferences() -> int:
     """Best-effort: rewrite queued Jellyfin URLs using current language prefs."""
     with state.QUEUE_LOCK:
@@ -1271,7 +1542,21 @@ def retarget_queue_stream_preferences() -> int:
     if not snapshot:
         return 0
 
-    updates: dict[str, tuple[str, str, str, str, str]] = {}
+    try:
+        settings_snapshot = state.get_settings() if hasattr(state, "get_settings") else {}
+    except Exception:
+        settings_snapshot = {}
+    if not isinstance(settings_snapshot, dict):
+        settings_snapshot = {}
+    mode = effective_playback_mode(settings_snapshot)
+    try:
+        st = jellyfin_receiver.status()
+    except Exception:
+        st = {}
+    configured_server_url = str((st or {}).get("server_url") or "").strip()
+    configured_token = catalog_token()
+
+    updates: dict[str, tuple[str, str, str, str, str, str, str, str]] = {}
     for entry in snapshot:
         if not isinstance(entry, dict):
             continue
@@ -1284,7 +1569,17 @@ def retarget_queue_stream_preferences() -> int:
             item_id = extract_item_id_from_url_raw(raw_url)
         if provider != "jellyfin" and not item_id:
             continue
-        pref_audio_idx, pref_sub_idx = preferred_stream_indices(item_id) if item_id else ("", "")
+        media_source_id = _first_nonempty_str(
+            [
+                str(entry.get("jellyfin_media_source_id") or "").strip(),
+                extract_media_source_id_from_url(raw_url),
+            ]
+        )
+        pref_audio_idx, pref_sub_idx = (
+            _preferred_indices_for_item(item_id, media_source_id=media_source_id)
+            if item_id
+            else ("", "")
+        )
         if pref_audio_idx == "" and pref_sub_idx == "":
             continue
         next_url = apply_stream_params(
@@ -1292,13 +1587,55 @@ def retarget_queue_stream_preferences() -> int:
             audio_stream_index=pref_audio_idx,
             subtitle_stream_index=pref_sub_idx,
         )
-        media_source_id = _first_nonempty_str(
-            [
-                str(entry.get("jellyfin_media_source_id") or "").strip(),
-                extract_media_source_id_from_url(raw_url),
-            ]
-        )
         next_url = apply_media_source_param(next_url, media_source_id=media_source_id)
+        next_mode = str(entry.get("jellyfin_stream_mode") or "").strip()
+        next_reason = str(entry.get("jellyfin_stream_reason") or "").strip()
+
+        if item_id and "static=true" in raw_url.lower() and mode in {"auto", "transcode"}:
+            detail_lookup: dict[str, object] = {}
+            try:
+                detail_lookup = _get_item_detail_for_source(
+                    item_id, media_source_id=media_source_id
+                )
+            except Exception:
+                detail_lookup = {}
+            server_base = configured_server_url or url_origin(raw_url)
+            api_tok = configured_token or _extract_api_key_from_url(raw_url)
+            if server_base and (mode == "transcode" or (isinstance(detail_lookup, dict) and detail_lookup)):
+                try:
+                    selected_q = select_playback_url(
+                        item_id=item_id,
+                        source_url=next_url,
+                        server_url=server_base,
+                        api_key=api_tok,
+                        media_source_id=media_source_id,
+                        audio_stream_index=pref_audio_idx,
+                        subtitle_stream_index=pref_sub_idx,
+                        settings=settings_snapshot,
+                    )
+                except Exception:
+                    selected_q = {}
+                sel_url = str((selected_q or {}).get("url") or "").strip()
+                if sel_url:
+                    next_url = normalize_source_url(
+                        sel_url, server_url=server_base, api_key=api_tok
+                    )
+                    next_url = apply_stream_params(
+                        next_url,
+                        audio_stream_index=pref_audio_idx,
+                        subtitle_stream_index=pref_sub_idx,
+                    )
+                    media_source_id = _first_nonempty_str(
+                        [
+                            str((selected_q or {}).get("media_source_id") or "").strip(),
+                            extract_media_source_id_from_url(next_url),
+                            media_source_id,
+                        ]
+                    )
+                    next_url = apply_media_source_param(next_url, media_source_id=media_source_id)
+                    next_mode = str((selected_q or {}).get("mode") or next_mode)
+                    next_reason = str((selected_q or {}).get("reason") or next_reason)
+
         if next_url and (
             next_url != raw_url
             or (
@@ -1316,6 +1653,9 @@ def retarget_queue_stream_preferences() -> int:
                 item_id,
                 pref_audio_idx,
                 pref_sub_idx,
+                media_source_id,
+                next_mode,
+                next_reason,
             )
 
     if not updates:
@@ -1335,6 +1675,12 @@ def retarget_queue_stream_preferences() -> int:
                 out_entry["jellyfin_audio_stream_index"] = update[3]
             if update[4] != "":
                 out_entry["jellyfin_subtitle_stream_index"] = update[4]
+            if update[5]:
+                out_entry["jellyfin_media_source_id"] = update[5]
+            if update[6]:
+                out_entry["jellyfin_stream_mode"] = update[6]
+            if update[7]:
+                out_entry["jellyfin_stream_reason"] = update[7]
             state.QUEUE[i] = out_entry
             changed += 1
     if not changed:
@@ -1861,11 +2207,16 @@ def apply_startup_stream_tracks(
         if not item_id_for_detail:
             return cur if isinstance(cur, dict) else {}
         user_id = str((cur or {}).get("_jellyfin_metadata_user_id") or "").strip()
+        media_source_id_for_detail = str(
+            (cur or {}).get("jellyfin_media_source_id")
+            or extract_media_source_id_from_url(str((cur or {}).get("url") or ""))
+            or ""
+        ).strip()
         try:
-            fetched = (
-                jellyfin_receiver.get_item_detail(item_id_for_detail, user_id_override=user_id)
-                if user_id
-                else jellyfin_receiver.get_item_detail(item_id_for_detail)
+            fetched = _get_item_detail_for_source(
+                item_id_for_detail,
+                media_source_id=media_source_id_for_detail,
+                user_id_override=user_id,
             )
         except Exception:
             fetched = {}
@@ -1912,17 +2263,43 @@ def apply_startup_stream_tracks(
         playback_service.update_now_playing(updated_now)
 
     def _worker() -> None:
-        for _ in range(max_retries):
-            if not player.playback_intent_current(intent) or _current_item() is None:
+        want_audio = target_audio_idx is not None or bool(target_audio_lang)
+        want_sub = target_sub_idx is not None or bool(target_sub_lang) or sub_off
+        for attempt in range(max_retries):
+            cur_live = _current_item()
+            if not player.playback_intent_current(intent) or cur_live is None:
                 return
             try:
                 tl = player.mpv_get("track-list")
             except Exception:
                 tl = None
-            if isinstance(tl, list) and any(
+            has_audio_track = isinstance(tl, list) and any(
                 isinstance(t, dict) and str(t.get("type") or "").strip().lower() == "audio"
                 for t in tl
-            ):
+            )
+            has_sub_track = isinstance(tl, list) and any(
+                isinstance(t, dict)
+                and str(t.get("type") or "").strip().lower() in {"sub", "subtitle"}
+                for t in tl
+            )
+            has_video_track = isinstance(tl, list) and any(
+                isinstance(t, dict) and str(t.get("type") or "").strip().lower() == "video"
+                for t in tl
+            )
+            known_no_audio = isinstance(cur_live.get("audio_streams"), list) and (
+                len(cur_live.get("audio_streams") or []) == 0
+            )
+            tracks_ready = has_audio_track or (
+                isinstance(tl, list)
+                and (has_sub_track or has_video_track)
+                and (
+                    known_no_audio
+                    or (want_sub and not want_audio)
+                    or (not want_audio and not want_sub)
+                    or (attempt + 1 >= max_retries)
+                )
+            )
+            if tracks_ready:
                 if not player.playback_intent_current(intent) or _current_item() is None:
                     return
                 # Apply startup choices before network metadata work. After the
@@ -2250,11 +2627,14 @@ def _restart_with_stream_params(
         settings_snapshot = state.get_settings()
     except Exception:
         settings_snapshot = {}
-    auth_token = catalog_token()
+    settings_dict = settings_snapshot if isinstance(settings_snapshot, dict) else {}
+    effective_mode = effective_playback_mode(settings_dict)
+    effective_server_url = str(server_url or "").strip() or url_origin(str(now.get("url") or ""))
+    auth_token = catalog_token() or _extract_api_key_from_url(str(now.get("url") or ""))
 
     source_url = build_item_stream_url(
         item_id,
-        server_url=server_url,
+        server_url=effective_server_url,
         api_key=auth_token,
         media_source_id=media_source_id,
         audio_stream_index=audio_stream_index,
@@ -2263,16 +2643,38 @@ def _restart_with_stream_params(
     selected_stream = select_playback_url(
         item_id=item_id,
         source_url=source_url,
-        server_url=server_url,
+        server_url=effective_server_url,
         api_key=auth_token,
         media_source_id=media_source_id,
         audio_stream_index=audio_stream_index,
         subtitle_stream_index=subtitle_stream_index,
-        settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
+        settings=settings_dict,
     )
+    if (
+        str(selected_stream.get("mode") or "") == "direct"
+        and effective_mode in {"auto", "transcode"}
+        and effective_server_url
+        and "static=true" in str(selected_stream.get("url") or source_url).lower()
+    ):
+        transcode_settings = dict(settings_dict)
+        transcode_settings["jellyfin_playback_mode"] = "transcode"
+        renegotiated = select_playback_url(
+            item_id=item_id,
+            source_url=source_url,
+            server_url=effective_server_url,
+            api_key=auth_token,
+            media_source_id=media_source_id,
+            audio_stream_index=audio_stream_index,
+            subtitle_stream_index=subtitle_stream_index,
+            settings=transcode_settings,
+        )
+        if str(renegotiated.get("url") or "").strip():
+            selected_stream = dict(renegotiated)
+            if selected_stream.get("reason") == "forced_transcode_mode" and effective_mode == "auto":
+                selected_stream["reason"] = "track_switch_transcode"
     source_url = normalize_source_url(
         str(selected_stream.get("url") or source_url),
-        server_url=server_url,
+        server_url=effective_server_url,
         api_key=auth_token,
     )
     source_url = apply_stream_params(
@@ -2354,9 +2756,17 @@ def switch_audio_track(requested_index: object, *, server_status: dict) -> dict:
     with the same statuses the route historically returned.
     """
     now, item_id = _require_current_jellyfin_item()
+    current_media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            extract_media_source_id_from_url(str(now.get("url") or "")),
+        ]
+    )
 
     try:
-        detail = jellyfin_receiver.get_item_detail(item_id)
+        detail = _get_item_detail_for_source(
+            item_id, media_source_id=current_media_source_id
+        )
     except Exception as e:
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin item detail")
@@ -2477,9 +2887,17 @@ def switch_subtitle_track(requested_index: object, *, server_status: dict) -> di
     ``switch_audio_track``; index -1 turns subtitles off.
     """
     now, item_id = _require_current_jellyfin_item()
+    current_media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            extract_media_source_id_from_url(str(now.get("url") or "")),
+        ]
+    )
 
     try:
-        detail = jellyfin_receiver.get_item_detail(item_id)
+        detail = _get_item_detail_for_source(
+            item_id, media_source_id=current_media_source_id
+        )
     except Exception as e:
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin item detail")
@@ -2895,14 +3313,23 @@ def smart_item_from_url(
         server_url = origin or str(st.get("server_url") or "")
         link_api_key = _extract_api_key_from_url(shared)
         token = link_api_key or catalog_token()
-        pref_audio_idx, pref_sub_idx = preferred_stream_indices(
-            item_id, user_id_override=user_id_override
+        explicit_audio_idx = extract_audio_stream_index_from_url(shared)
+        explicit_sub_idx = extract_subtitle_stream_index_from_url(shared)
+        shared_media_source_id = extract_media_source_id_from_url(shared)
+        pref_audio_idx, pref_sub_idx = _preferred_indices_for_item(
+            item_id,
+            user_id_override=user_id_override,
+            media_source_id=shared_media_source_id,
         )
+        effective_audio_idx = (
+            explicit_audio_idx if explicit_audio_idx != "" else pref_audio_idx
+        )
+        effective_sub_idx = explicit_sub_idx if explicit_sub_idx != "" else pref_sub_idx
         normalized_url = normalize_source_url(shared, server_url=server_url, api_key=token)
         normalized_url = apply_stream_params(
             normalized_url,
-            audio_stream_index=pref_audio_idx,
-            subtitle_stream_index=pref_sub_idx,
+            audio_stream_index=effective_audio_idx,
+            subtitle_stream_index=effective_sub_idx,
         )
         # Share links commonly use /Items/<id>/Download - convert to stream endpoint for consistency.
         low_path = (urlsplit(shared).path or "").lower()
@@ -2911,10 +3338,11 @@ def smart_item_from_url(
                 item_id,
                 server_url=server_url,
                 api_key=token,
-                audio_stream_index=pref_audio_idx,
-                subtitle_stream_index=pref_sub_idx,
+                media_source_id=shared_media_source_id,
+                audio_stream_index=effective_audio_idx,
+                subtitle_stream_index=effective_sub_idx,
             )
-        media_source_id = extract_media_source_id_from_url(normalized_url)
+        media_source_id = extract_media_source_id_from_url(normalized_url) or shared_media_source_id
         try:
             settings_snapshot = state.get_settings()
         except Exception:
@@ -2925,8 +3353,8 @@ def smart_item_from_url(
             server_url=server_url,
             api_key=token,
             media_source_id=media_source_id,
-            audio_stream_index=pref_audio_idx,
-            subtitle_stream_index=pref_sub_idx,
+            audio_stream_index=effective_audio_idx,
+            subtitle_stream_index=effective_sub_idx,
             settings=settings_snapshot,
             user_id_override=user_id_override,
         )
@@ -2950,12 +3378,14 @@ def smart_item_from_url(
             **({"_jellyfin_metadata_user_id": user_id_override} if user_id_override else {}),
             **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
             **(
-                {"jellyfin_audio_stream_index": pref_audio_idx}
-                if pref_audio_idx is not None
+                {"jellyfin_audio_stream_index": effective_audio_idx}
+                if effective_audio_idx is not None
                 else {}
             ),
             **(
-                {"jellyfin_subtitle_stream_index": pref_sub_idx} if pref_sub_idx is not None else {}
+                {"jellyfin_subtitle_stream_index": effective_sub_idx}
+                if effective_sub_idx is not None
+                else {}
             ),
             "jellyfin_stream_mode": str(selected.get("mode") or "direct"),
             "jellyfin_stream_reason": str(selected.get("reason") or ""),
@@ -3236,21 +3666,17 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                             "media_source_id": media_source_id
                             or str(playlist_items[0].get("media_source_id") or "").strip(),
                         }
-                pref_audio_idx, pref_sub_idx = (
-                    preferred_stream_indices(item_id, user_id_override=command_user_id)
-                    if command_user_id
-                    else preferred_stream_indices(item_id)
+                pref_audio_idx, pref_sub_idx = _preferred_indices_for_item(
+                    item_id,
+                    user_id_override=command_user_id,
+                    media_source_id=media_source_id,
                 )
                 if not media_source_id:
                     detail = resolved_detail if isinstance(resolved_detail, dict) else {}
                     if not detail:
                         try:
-                            detail = (
-                                jellyfin_receiver.get_item_detail(
-                                    item_id, user_id_override=command_user_id
-                                )
-                                if command_user_id
-                                else jellyfin_receiver.get_item_detail(item_id)
+                            detail = _get_item_detail_for_source(
+                                item_id, user_id_override=command_user_id
                             )
                         except Exception:
                             detail = {}
@@ -3338,6 +3764,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     "suppressed_recent_stop_replay": True,
                     "now_playing": state.NOW_PLAYING,
                 }
+            if not still_owned():
+                logger.info("jellyfin_command_discarded action=play reason=session_retired")
+                return {"ok": False, "action": "play", "reason": "session_retired"}
+            with playback_service.queue_commit():
+                pass
             if should_suppress_duplicate_play(source_url, item_id, start_sec):
                 return {
                     "ok": True,
@@ -3490,10 +3921,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     iid = str(entry.get("id") or "").strip()
                     if not iid:
                         continue
-                    q_audio_idx, q_sub_idx = (
-                        preferred_stream_indices(iid, user_id_override=command_user_id)
-                        if command_user_id
-                        else preferred_stream_indices(iid)
+                    entry_mid = str(entry.get("media_source_id") or "").strip()
+                    q_audio_idx, q_sub_idx = _preferred_indices_for_item(
+                        iid,
+                        user_id_override=command_user_id,
+                        media_source_id=entry_mid,
                     )
                     if explicit_audio_idx:
                         q_audio_idx = explicit_audio_idx
@@ -3503,7 +3935,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                         iid,
                         server_url=str(st.get("server_url") or ""),
                         api_key=auth_token,
-                        media_source_id=str(entry.get("media_source_id") or "").strip(),
+                        media_source_id=entry_mid,
                         audio_stream_index=q_audio_idx,
                         subtitle_stream_index=q_sub_idx,
                     )
@@ -3647,6 +4079,8 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
             if not still_owned():
                 logger.info("jellyfin_command_discarded action=play reason=session_retired")
                 return {"ok": False, "action": "play", "reason": "session_retired"}
+            with playback_service.queue_commit():
+                pass
             playback_service.suppress_auto_next(2.0)
             play_item_payload = (
                 smart_item_from_url(
@@ -3657,6 +4091,11 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                 if command_user_id
                 else smart_item_from_url(source_url, start_pos=start_sec)
             )
+            if not still_owned():
+                logger.info("jellyfin_command_discarded action=play reason=session_retired")
+                return {"ok": False, "action": "play", "reason": "session_retired"}
+            with playback_service.queue_commit():
+                pass
             play_target = play_item_payload if isinstance(play_item_payload, dict) else source_url
             if isinstance(play_target, dict):
                 play_target["jellyfin_item_id"] = item_id
@@ -3700,12 +4139,10 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     if play_session_id:
                         now["jellyfin_play_session_id"] = play_session_id
                     try:
-                        detail = (
-                            jellyfin_receiver.get_item_detail(
-                                item_id, user_id_override=command_user_id
-                            )
-                            if command_user_id
-                            else jellyfin_receiver.get_item_detail(item_id)
+                        detail = _get_item_detail_for_source(
+                            item_id,
+                            media_source_id=media_source_id,
+                            user_id_override=command_user_id,
                         )
                     except Exception:
                         detail = {}
@@ -3717,6 +4154,7 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     )
                 playback_service.update_now_playing(now)
             # Playlist-style play command support: enqueue remaining ItemIds.
+            cancelled_remaining = False
             if item_ids and len(item_ids) > 1:
                 extra_items = (
                     playlist_items[1:]
@@ -3774,114 +4212,139 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                     else:
                         _remember_seen("", existing, "")
 
-                for entry in extra_items:
-                    iid = str(entry.get("id") or "").strip()
-                    if not iid:
-                        continue
-                    q_audio_idx, q_sub_idx = (
-                        preferred_stream_indices(iid, user_id_override=command_user_id)
-                        if command_user_id
-                        else preferred_stream_indices(iid)
-                    )
-                    if explicit_audio_idx:
-                        q_audio_idx = explicit_audio_idx
-                    if explicit_sub_idx:
-                        q_sub_idx = explicit_sub_idx
-                    qurl = build_item_stream_url(
-                        iid,
-                        server_url=str(st.get("server_url") or ""),
-                        api_key=auth_token,
-                        media_source_id=str(entry.get("media_source_id") or "").strip(),
-                        audio_stream_index=q_audio_idx,
-                        subtitle_stream_index=q_sub_idx,
-                    )
-                    if not qurl:
-                        continue
-                    q_media_source_id = str(entry.get("media_source_id") or "").strip()
-                    selected_q = select_playback_url(
-                        item_id=iid,
-                        source_url=qurl,
-                        server_url=str(st.get("server_url") or ""),
-                        api_key=auth_token,
-                        media_source_id=q_media_source_id,
-                        audio_stream_index=q_audio_idx,
-                        subtitle_stream_index=q_sub_idx,
-                        settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
-                        user_id_override=command_user_id,
-                    )
-                    qurl = normalize_source_url(
-                        str(selected_q.get("url") or qurl),
-                        server_url=str(st.get("server_url") or ""),
-                        api_key=auth_token,
-                    )
-                    q_media_source_id = _first_nonempty_str(
-                        [
-                            str(selected_q.get("media_source_id") or "").strip(),
-                            extract_media_source_id_from_url(qurl),
-                            q_media_source_id,
-                        ]
-                    )
-                    if _seen(iid, qurl, q_media_source_id):
-                        continue
-                    q_display = _playlist_entry_display_fields(
-                        entry,
-                        iid,
-                        api_key=auth_token,
-                        server_url=str(st.get("server_url") or ""),
-                        user_id_override=command_user_id,
-                    )
-                    queued.append(
-                        {
-                            "url": qurl,
-                            **q_display,
-                            "provider": "jellyfin",
-                            "jellyfin_item_id": iid,
-                            **(
-                                {"jellyfin_media_source_id": q_media_source_id}
-                                if q_media_source_id
-                                else {}
-                            ),
-                            **(
-                                {"jellyfin_audio_stream_index": q_audio_idx}
-                                if q_audio_idx is not None and str(q_audio_idx) != ""
-                                else {}
-                            ),
-                            **(
-                                {"jellyfin_subtitle_stream_index": q_sub_idx}
-                                if q_sub_idx is not None and str(q_sub_idx) != ""
-                                else {}
-                            ),
-                            "jellyfin_stream_mode": str(selected_q.get("mode") or ""),
-                            "jellyfin_stream_reason": str(selected_q.get("reason") or ""),
-                        }
-                    )
-                    _remember_seen(iid, qurl, q_media_source_id)
-                if queued and not still_owned():
+                try:
+                    for entry in extra_items:
+                        if not still_owned():
+                            cancelled_remaining = True
+                            queued = []
+                            break
+                        with playback_service.queue_commit():
+                            pass
+                        iid = str(entry.get("id") or "").strip()
+                        if not iid:
+                            continue
+                        q_media_source_id = str(entry.get("media_source_id") or "").strip()
+                        q_audio_idx, q_sub_idx = _preferred_indices_for_item(
+                            iid,
+                            user_id_override=command_user_id,
+                            media_source_id=q_media_source_id,
+                        )
+                        if explicit_audio_idx:
+                            q_audio_idx = explicit_audio_idx
+                        if explicit_sub_idx:
+                            q_sub_idx = explicit_sub_idx
+                        qurl = build_item_stream_url(
+                            iid,
+                            server_url=str(st.get("server_url") or ""),
+                            api_key=auth_token,
+                            media_source_id=q_media_source_id,
+                            audio_stream_index=q_audio_idx,
+                            subtitle_stream_index=q_sub_idx,
+                        )
+                        if not qurl:
+                            continue
+                        selected_q = select_playback_url(
+                            item_id=iid,
+                            source_url=qurl,
+                            server_url=str(st.get("server_url") or ""),
+                            api_key=auth_token,
+                            media_source_id=q_media_source_id,
+                            audio_stream_index=q_audio_idx,
+                            subtitle_stream_index=q_sub_idx,
+                            settings=settings_snapshot if isinstance(settings_snapshot, dict) else {},
+                            user_id_override=command_user_id,
+                        )
+                        qurl = normalize_source_url(
+                            str(selected_q.get("url") or qurl),
+                            server_url=str(st.get("server_url") or ""),
+                            api_key=auth_token,
+                        )
+                        q_media_source_id = _first_nonempty_str(
+                            [
+                                str(selected_q.get("media_source_id") or "").strip(),
+                                extract_media_source_id_from_url(qurl),
+                                q_media_source_id,
+                            ]
+                        )
+                        if _seen(iid, qurl, q_media_source_id):
+                            continue
+                        if not still_owned():
+                            cancelled_remaining = True
+                            queued = []
+                            break
+                        with playback_service.queue_commit():
+                            pass
+                        q_display = _playlist_entry_display_fields(
+                            entry,
+                            iid,
+                            api_key=auth_token,
+                            server_url=str(st.get("server_url") or ""),
+                            user_id_override=command_user_id,
+                        )
+                        queued.append(
+                            {
+                                "url": qurl,
+                                **q_display,
+                                "provider": "jellyfin",
+                                "jellyfin_item_id": iid,
+                                **(
+                                    {"jellyfin_media_source_id": q_media_source_id}
+                                    if q_media_source_id
+                                    else {}
+                                ),
+                                **(
+                                    {"jellyfin_audio_stream_index": q_audio_idx}
+                                    if q_audio_idx is not None and str(q_audio_idx) != ""
+                                    else {}
+                                ),
+                                **(
+                                    {"jellyfin_subtitle_stream_index": q_sub_idx}
+                                    if q_sub_idx is not None and str(q_sub_idx) != ""
+                                    else {}
+                                ),
+                                "jellyfin_stream_mode": str(selected_q.get("mode") or ""),
+                                "jellyfin_stream_reason": str(selected_q.get("reason") or ""),
+                            }
+                        )
+                        _remember_seen(iid, qurl, q_media_source_id)
+                    if queued and not still_owned():
+                        cancelled_remaining = True
+                        queued = []
+                    if queued:
+                        with playback_service.queue_commit():
+                            state.QUEUE.extend(queued)
+                            queue_snapshot = list(state.QUEUE)
+                        try:
+                            state.persist_queue()
+                        except Exception:
+                            pass
+                        try:
+                            player.prime_mpv_up_next_from_queue(force=True)
+                        except Exception:
+                            pass
+                        ui["queue_event"](
+                            "jellyfin_playlist",
+                            queue=queue_snapshot,
+                            queue_length=len(queue_snapshot),
+                            source="jellyfin",
+                        )
+                except playback_service.QueueImportCancelled:
+                    cancelled_remaining = True
                     queued = []
-                if queued:
-                    with playback_service.queue_commit():
-                        state.QUEUE.extend(queued)
-                        queue_snapshot = list(state.QUEUE)
-                    try:
-                        state.persist_queue()
-                    except Exception:
-                        pass
-                    try:
-                        player.prime_mpv_up_next_from_queue(force=True)
-                    except Exception:
-                        pass
-                    ui["queue_event"](
-                        "jellyfin_playlist",
-                        queue=queue_snapshot,
-                        queue_length=len(queue_snapshot),
-                        source="jellyfin",
-                    )
             if isinstance(stopped_payload, dict) and stopped_payload:
                 emit_stopped_payload(stopped_payload)
             emit_playback_start_hint()
             ui["jellyfin_event"](
                 "play", refresh_active_tab=True, refresh_status=True, reason=play_mode or "play"
             )
+            if cancelled_remaining:
+                return {
+                    "ok": True,
+                    "action": "play",
+                    "now_playing": now,
+                    "cancelled": True,
+                    "queued_count": 0,
+                }
             return {"ok": True, "action": "play", "now_playing": now}
 
         if not still_owned():

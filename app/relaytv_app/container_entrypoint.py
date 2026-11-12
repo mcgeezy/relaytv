@@ -163,6 +163,17 @@ def _normalize_runtime_defaults(env: dict[str, str]) -> None:
     if mode == "headless" and not (env.get("RELAYTV_HEADLESS_REMOTE_ENABLED") or "").strip():
         env["RELAYTV_HEADLESS_REMOTE_ENABLED"] = "1"
 
+    if mode == "drm" or (
+        mode == "headless" and not _is_true(env.get("RELAYTV_HEADLESS_REMOTE_ENABLED"), False)
+    ):
+        for key in ("DISPLAY", "WAYLAND_DISPLAY"):
+            env.pop(key, None)
+            os.environ.pop(key, None)
+        if mode == "headless":
+            for key in ("XDG_SESSION_TYPE", "RELAYTV_HOST_SESSION_TYPE"):
+                env.pop(key, None)
+                os.environ.pop(key, None)
+
     if not (env.get("RELAYTV_QT_RUNTIME_MODE") or "").strip() and mode in ("wayland", "x11"):
         env["RELAYTV_QT_RUNTIME_MODE"] = "embed"
 
@@ -460,6 +471,18 @@ def shutil_which(name: str) -> str | None:
     return None
 
 
+def _usable_vnc_password_file(path_str: str) -> bool:
+    path = Path(path_str)
+    try:
+        st = path.stat()
+        if not path.is_file() or (st.st_mode & 0o444) == 0 or not os.access(path, os.R_OK):
+            return False
+        with path.open("rb") as fh:
+            return bool(fh.read(64).strip())
+    except OSError:
+        return False
+
+
 def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
     if not shutil_which("Xvfb"):
         raise RuntimeError("RELAYTV_HEADLESS_REMOTE_ENABLED=1 but Xvfb is not installed")
@@ -526,7 +549,15 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
     if _is_true(env.get("RELAYTV_HEADLESS_VNC_ENABLED"), True):
         listen = (env.get("RELAYTV_HEADLESS_VNC_LISTEN") or "127.0.0.1").strip()
         port = (env.get("RELAYTV_HEADLESS_VNC_PORT") or "5900").strip()
-        pass_file = (env.get("RELAYTV_HEADLESS_VNC_PASSWORD_FILE") or "").strip()
+        vnc_pw = (env.get("RELAYTV_HEADLESS_VNC_PASSWORD_FILE") or "").strip()
+        pass_file = vnc_pw
+
+        if vnc_pw and not _usable_vnc_password_file(vnc_pw):
+            _eprint(
+                f"entrypoint: ERROR: RELAYTV_HEADLESS_VNC_PASSWORD_FILE={vnc_pw} "
+                "does not exist or is empty/unreadable; refusing to start x11vnc"
+            )
+            return procs
 
         if not pass_file:
             raw_pass = (env.get("RELAYTV_HEADLESS_VNC_PASSWORD") or "").strip()
@@ -555,7 +586,7 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
             "-noxfixes",
             "-noxdamage",
         ]
-        if pass_file and Path(pass_file).is_file():
+        if pass_file and _usable_vnc_password_file(pass_file):
             cmd.extend(["-rfbauth", pass_file])
         else:
             cmd.append("-nopw")
@@ -615,7 +646,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         args.append("--no-access-log")
 
-    env = refresh_display_credentials(os.environ)
+    env = dict(os.environ)
     helper_procs: list[subprocess.Popen] = []
     main_proc: subprocess.Popen | None = None
 
@@ -628,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
         # is where pruning used to live, never runs with the toggle off.
         _prune_persisted_ytdlp(env)
         _normalize_runtime_defaults(env)
+        env = refresh_display_credentials(env)
         _sync_legacy_brand_assets()
         _yt_dlp_auto_update(env)
         if _is_true(env.get("RELAYTV_HEADLESS_REMOTE_ENABLED"), False):

@@ -37,6 +37,17 @@ def _write_chunk(handle, chunk: bytes, *, sync: bool) -> None:
         os.fsync(handle.fileno())
 
 
+def _cleanup_tmp_file(path: str) -> None:
+    """Remove an incomplete upload temp file off the event loop."""
+    if not path:
+        return
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 @router.get("/media/uploads/{upload_id}/{filename}", name="get_uploaded_media")
 def get_uploaded_media(upload_id: str, filename: str):
     meta = upload_store.load_metadata(upload_id)
@@ -251,11 +262,7 @@ async def ingest_media(
             await file.close()
         except Exception:
             pass
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
+        await run_in_threadpool(_cleanup_tmp_file, tmp_path)
 
 
 @router.post("/ingest/media/enqueue")
@@ -266,7 +273,7 @@ async def ingest_media_enqueue(
     media_url = str(created.get("url") or "").strip() if isinstance(created, dict) else ""
     if not media_url:
         raise HTTPException(status_code=500, detail="Uploaded media missing playback URL")
-    result = _enqueue_uploaded_media_url(media_url)
+    result = await run_in_threadpool(_enqueue_uploaded_media_url, media_url)
     out = dict(created)
     out.update({"action": "enqueue", "result": result})
     return out

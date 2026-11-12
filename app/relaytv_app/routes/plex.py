@@ -50,6 +50,17 @@ def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
 
+_LOOPBACK_STREAM_HOSTS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+
+def _require_loopback_client(request: Request) -> None:
+    client = getattr(request, "client", None)
+    host = str(getattr(client, "host", "") or "").strip().lower()
+    if host in _LOOPBACK_STREAM_HOSTS or host == "testclient":
+        return
+    raise HTTPException(status_code=403, detail="Stream proxy is local-only")
+
+
 def _active_playback_error(action: str) -> HTTPException:
     return HTTPException(
         status_code=409,
@@ -259,6 +270,7 @@ def plex_artwork(asset_id: str):
 
 @router.get("/plex/stream/{stream_id}")
 def plex_stream(stream_id: str, request: Request):
+    _require_loopback_client(request)
     try:
         stream = plex_service.catalog_service.media_stream(
             stream_id,

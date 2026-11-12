@@ -610,6 +610,14 @@ def _rotate_mpv_log_if_needed(reopen) -> None:
         pass
 
 
+def _mpv_format_loadfile_opt(name: str, value: object) -> str:
+    text = str(value or "")
+    if any(ch in text for ch in (",", ";", '"', "'", "%", "\n", "\r", "\t", " ")):
+        raw_len = len(text.encode("utf-8"))
+        return f"{name}=%{raw_len}%{text}"
+    return f"{name}={text}"
+
+
 def _build_mpv_args(
     stream: str,
     wid: int,
@@ -728,9 +736,12 @@ def _build_mpv_args(
         args.extend(extra)
     args = _first_wins_dedupe(args)
     if file_opts:
-        args.extend(["--{", *file_opts, stream, "--}"])
+        if str(stream).startswith("-"):
+            args.extend(["--{", *file_opts, "--", stream, "--}"])
+        else:
+            args.extend(["--{", *file_opts, stream, "--}"])
     else:
-        args.append(stream)
+        args.extend(["--", stream])
     return args
 
 
@@ -987,7 +998,7 @@ class _QtLibMpvPlayer:
         if pos is not None and pos > 0.0:
             options.append(f"start={f'{pos:.3f}'.rstrip('0').rstrip('.')}")
         if a:
-            options.append(f"audio-files-append={a}")
+            options.append(_mpv_format_loadfile_opt("audio-files-append", a))
         if options:
             self._command("loadfile", s, "replace", "-1", ",".join(options))
             return
@@ -1311,6 +1322,8 @@ class _QtLibMpvPlayer:
         extra = _split_env_args("RELAYTV_QT_SHELL_MPV_ARGS")
         if not extra:
             extra = _split_env_args("MPV_ARGS")
+        if not _has_opt(extra, "--load-scripts"):
+            self._set_opt_best_effort("load-scripts", "no")
         blocked_extra = {
             "wid",
             "vo",
@@ -3538,7 +3551,9 @@ def main(argv: list[str] | None = None) -> int:
                         if start_pos is not None and start_pos > 0.0:
                             options.append(f"start={f'{start_pos:.3f}'.rstrip('0').rstrip('.')}")
                         if audio_url:
-                            options.append(f"audio-files-append={audio_url}")
+                            options.append(
+                                _mpv_format_loadfile_opt("audio-files-append", audio_url)
+                            )
                         if options:
                             command.extend(["-1", ",".join(options)])
                         result = _subprocess_mpv_ipc_request(command)

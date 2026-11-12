@@ -6,12 +6,15 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import base64
 import copy
+import hashlib
+import hmac
 import json
 import os
 import re
 import threading
 import time
 from typing import Any
+from urllib import error as _urlerror
 from urllib import parse as _urlparse
 from urllib import request as _urlrequest
 import uuid
@@ -19,7 +22,7 @@ import uuid
 from .. import config, playback_service, public_media, state, url_boundary
 from ..debug import get_logger
 from ..thumb_cache import attach_local_thumbnail
-from . import jellyfin_receiver, plex_auth, plex_service
+from . import jellyfin_receiver, jellyfin_service, plex_auth, plex_service
 from .plex_client import (
     MAX_BINARY_RESPONSE_BYTES, SAFE_IMAGE_TYPES,
     PlexBinaryResponse, PlexClient, PlexError, PlexStreamResponse,
@@ -31,6 +34,13 @@ MEDIA_SERVERS_FILE = "media_servers.json"
 MEDIA_SERVERS_VERSION = 1
 SERVER_TYPES = {"jellyfin", "emby", "plex"}
 ITEM_ID_PREFIX = "ms~"
+CUSTOM_STREAM_TTL_SEC = 6 * 3600
+
+_ORIG_URLOPEN = _urlrequest.urlopen
+_CUSTOM_STREAM_SECRET = os.urandom(32)
+_CUSTOM_PLEX_ARTWORK_PATH_RE = re.compile(
+    r"^/library/(metadata/[0-9]+/(thumb|art|banner|clearLogo|theme)(/[0-9]+)?|arts/[0-9]+|thumbs/[0-9]+)$"
+)
 
 _STORE_LOCK = threading.RLock()
 _LATENCY_LOCK = threading.RLock()
@@ -394,15 +404,52 @@ def list_servers_public() -> dict[str, Any]:
     }
 
 
+def _clear_dedupe_caches() -> None:
+    with _SERIES_GROUP_LOCK:
+        _SERIES_GROUPS.clear()
+        _DEDUPED_ITEMS.clear()
+        _DEDUPE_KEY_TO_ITEM_IDS.clear()
+
+
+def _parsed_origin(parsed: url_boundary.ParsedUrl) -> tuple[str, str, int]:
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    port = parsed.port if parsed.port is not None else (443 if scheme == "https" else 80)
+    return (scheme, host, port)
+
+
+def _try_url_origin(raw_url: object) -> tuple[str, str, int] | None:
+    parsed = url_boundary.parse_url(raw_url)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return _parsed_origin(parsed)
+
+
+def _normalize_custom_server_url_and_origin(
+    raw_url: object,
+) -> tuple[str, tuple[str, str, int]]:
+    raw = str(raw_url or "").strip()
+    if not raw or not (raw.startswith("http://") or raw.startswith("https://")):
+        raise ValueError("Valid http:// or https:// server_url is required")
+    parsed = url_boundary.parse_url(raw)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Valid http:// or https:// server_url is required")
+    if parsed.username or parsed.password:
+        raise ValueError("Server URL must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Server URL must not contain query parameters or fragments")
+    if url_boundary.is_forbidden_ip_literal(parsed.hostname):
+        raise ValueError("Forbidden server address")
+    clean_path = (parsed.path or "").rstrip("/")
+    normalized = _urlparse.urlunsplit((parsed.scheme, parsed.netloc, clean_path, "", ""))
+    return normalized, _parsed_origin(parsed)
+
+
 def upsert_custom_server(data: dict[str, Any]) -> dict[str, Any]:
     stype = str(data.get("type") or "jellyfin").strip().lower()
     if stype not in SERVER_TYPES:
         raise ValueError("Server type must be jellyfin, emby, or plex")
-    server_url = str(data.get("server_url") or "").strip().rstrip("/")
-    if not server_url or not (
-        server_url.startswith("http://") or server_url.startswith("https://")
-    ):
-        raise ValueError("Valid http:// or https:// server_url is required")
+    server_url, new_origin = _normalize_custom_server_url_and_origin(data.get("server_url"))
     name = str(data.get("name") or "").strip() or f"{stype.title()} ({server_url})"
     sid = str(data.get("id") or "").strip()
     enabled = bool(data.get("enabled", True))
@@ -418,16 +465,19 @@ def upsert_custom_server(data: dict[str, Any]) -> dict[str, Any]:
         if not sid or sid in {"jf_primary", "plex_primary"}:
             sid = f"srv_{uuid.uuid4().hex[:8]}"
 
+        prev_origin = _try_url_origin(prev.get("server_url")) if existing_idx >= 0 else None
+        origin_changed = existing_idx >= 0 and prev_origin != new_origin
+
         password = str(data.get("password") or "")
-        if not password and not bool(data.get("clear_password")):
+        if not password and not bool(data.get("clear_password")) and not origin_changed:
             password = str(prev.get("password") or "")
 
         api_key = str(data.get("api_key") or "").strip()
-        if not api_key and not bool(data.get("clear_api_key")):
+        if not api_key and not bool(data.get("clear_api_key")) and not origin_changed:
             api_key = str(prev.get("api_key") or "").strip()
 
         token = str(data.get("token") or "").strip()
-        if not token and not bool(data.get("clear_token")):
+        if not token and not bool(data.get("clear_token")) and not origin_changed:
             token = str(prev.get("token") or "").strip()
 
         record = {
@@ -452,6 +502,7 @@ def upsert_custom_server(data: dict[str, Any]) -> dict[str, Any]:
 
     with _CUSTOM_AUTH_LOCK:
         _CUSTOM_JF_SESSIONS.pop(sid, None)
+    _clear_dedupe_caches()
 
     probe_single_server(record)
     return _public_server_entry(record)
@@ -474,6 +525,7 @@ def delete_custom_server(server_id: str) -> bool:
         _SERVER_METRICS.pop(sid, None)
     with _CUSTOM_AUTH_LOCK:
         _CUSTOM_JF_SESSIONS.pop(sid, None)
+    _clear_dedupe_caches()
     return True
 
 
@@ -491,11 +543,37 @@ def _custom_jf_headers(token: str = "") -> dict[str, str]:
     return headers
 
 
+class _SameOriginCustomJfRedirectHandler(_urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        resolved = _urlparse.urljoin(req.full_url, str(newurl or ""))
+        orig_parsed = url_boundary.parse_url(req.full_url)
+        next_parsed = url_boundary.parse_url(resolved)
+        if (
+            orig_parsed is None
+            or next_parsed is None
+            or next_parsed.scheme not in {"http", "https"}
+            or not next_parsed.hostname
+            or url_boundary.is_forbidden_ip_literal(next_parsed.hostname)
+            or _parsed_origin(orig_parsed) != _parsed_origin(next_parsed)
+        ):
+            raise _urlerror.HTTPError(
+                req.full_url, code, "Cross-origin redirect blocked", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
+
+
+def _open_custom_jf_request(req: _urlrequest.Request, *, timeout: float):
+    if _urlrequest.urlopen is not _ORIG_URLOPEN:
+        return _urlrequest.urlopen(req, timeout=timeout)
+    opener = _urlrequest.build_opener(_SameOriginCustomJfRedirectHandler())
+    return opener.open(req, timeout=timeout)
+
+
 def _custom_jf_get_json(url: str, *, token: str = "", timeout: float = 5.0) -> Any:
     req = _urlrequest.Request(url, method="GET")
     for k, v in _custom_jf_headers(token).items():
         req.add_header(k, v)
-    with _urlrequest.urlopen(req, timeout=timeout) as resp:
+    with _open_custom_jf_request(req, timeout=timeout) as resp:
         raw = (resp.read() or b"{}").decode("utf-8", "ignore")
     return json.loads(raw) if raw.strip() else {}
 
@@ -530,7 +608,7 @@ def _resolve_custom_jf_auth(server: dict[str, Any]) -> tuple[str, str, str]:
         req.add_header("Authorization", identity)
         req.add_header("X-Emby-Authorization", identity)
         try:
-            with _urlrequest.urlopen(req, timeout=4.0) as resp:
+            with _open_custom_jf_request(req, timeout=4.0) as resp:
                 raw = (resp.read() or b"{}").decode("utf-8", "ignore")
             data = json.loads(raw) if raw.strip() else {}
             if isinstance(data, dict):
@@ -1748,9 +1826,11 @@ def _list_unified_catalog(
     }
 
 
-def _find_server_by_id(server_id: str) -> dict[str, Any] | None:
+def _find_server_by_id(
+    server_id: str, *, include_disabled: bool = False
+) -> dict[str, Any] | None:
     sid = str(server_id or "jf_primary").strip()
-    for s in _collect_configured_servers(include_disabled=True):
+    for s in _collect_configured_servers(include_disabled=include_disabled):
         if str(s.get("id") or "") == sid:
             return s
     return None
@@ -2213,7 +2293,7 @@ def get_unified_item_detail(item_id: str, *, refresh: bool = False) -> dict[str,
         fields = (
             "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,"
             "UserData,SeriesId,SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,"
-            "DefaultAudioStreamIndex,DefaultSubtitleStreamIndex,ProviderIds"
+            "MediaSources,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex,ProviderIds"
         )
         url = (
             f"{base}/Users/{_urlparse.quote(uid, safe='')}/Items/{quoted}?Fields={fields}"
@@ -2324,14 +2404,13 @@ def perform_unified_action(
             resume_pos = float(overlay["resume_pos"])
 
     if sid == "jf_primary":
-        from ..routes import jellyfin as jf_routes
-
-        res = jf_routes.jellyfin_item_action(
-            jf_routes.JellyfinItemActionReq(
-                item_id=raw_id,
-                command=cmd,
-                resume_pos=resume_pos,
-            )
+        res = jellyfin_service.perform_item_action(
+            raw_id,
+            cmd,
+            resume_pos=resume_pos,
+            media_source_id=version_id,
+            audio_stream_index=audio_id,
+            subtitle_stream_index=subtitle_id,
         )
         if isinstance(res, dict):
             return res
@@ -2372,14 +2451,31 @@ def perform_unified_action(
         base, token, _uid = _resolve_custom_jf_auth(server)
         if not base:
             raise ValueError("Server URL not configured")
+        mid = str(version_id or "").strip()
+        aidx = jellyfin_service._normalize_optional_stream_index(
+            audio_id, allow_off=False, field_name="audio_id"
+        )
+        sidx = jellyfin_service._normalize_optional_stream_index(
+            subtitle_id, allow_off=True, field_name="subtitle_id"
+        )
         stream_url = f"{base}/Videos/{_urlparse.quote(raw_id, safe='')}/stream?static=true"
         if token:
             stream_url += f"&api_key={_urlparse.quote(token, safe='')}"
+        stream_url = jellyfin_service.apply_media_source_param(stream_url, media_source_id=mid)
+        stream_url = jellyfin_service.apply_stream_params(
+            stream_url,
+            audio_stream_index=aidx,
+            subtitle_stream_index=sidx,
+        )
         queue_entry = {
             "url": stream_url,
             "title": display_title,
             "provider": stype,
             "thumbnail": thumb,
+            "jellyfin_item_id": raw_id,
+            **({"jellyfin_media_source_id": mid} if mid else {}),
+            **({"jellyfin_audio_stream_index": aidx} if aidx != "" else {}),
+            **({"jellyfin_subtitle_stream_index": sidx} if sidx != "" else {}),
         }
     else:
         # Keep a server-aware durable reference so the normal player lifecycle
@@ -2476,6 +2572,17 @@ def _custom_plex_item_source(item_id: str) -> tuple[dict[str, Any], str]:
     return server, path
 
 
+def _custom_plex_stream_signature(
+    server: dict[str, Any], part_path: str, exp: int
+) -> str:
+    sid = str(server.get("id") or "").strip()
+    srv_url = str(server.get("server_url") or "").strip().rstrip("/")
+    tok = str(server.get("token") or server.get("api_key") or "").strip()
+    tok_hash = hashlib.sha256(tok.encode("utf-8")).hexdigest()
+    msg = f"{sid}\n{srv_url}\n{tok_hash}\n{part_path}\n{int(exp)}".encode("utf-8")
+    return hmac.new(_CUSTOM_STREAM_SECRET, msg, hashlib.sha256).hexdigest()
+
+
 def resolve_custom_plex_playback_item(item: dict[str, Any]) -> dict[str, Any]:
     server, path = _custom_plex_item_source(str(item.get("plex_item_id") or ""))
     client = _custom_plex_client(server)
@@ -2488,9 +2595,11 @@ def resolve_custom_plex_playback_item(item: dict[str, Any]) -> dict[str, Any]:
     if not part_path.startswith("/library/parts/"):
         raise PlexError("plex_media_unavailable", "Plex media part is unavailable", status_code=502)
     sid = str(server["id"])
+    exp = int(time.time()) + CUSTOM_STREAM_TTL_SEC
+    sig = _custom_plex_stream_signature(server, part_path, exp)
     url = (
         f"http://127.0.0.1:{config.server_port()}/browse/stream/{_urlparse.quote(sid, safe='')}"
-        f"?path={_urlparse.quote(part_path, safe='')}"
+        f"?path={_urlparse.quote(part_path, safe='')}&exp={exp}&sig={sig}"
     )
     resolved = {**item, "url": url, "plex_stream_mode": "direct"}
     duration = _safe_float(records[0].get("duration"))
@@ -2592,23 +2701,74 @@ def fetch_custom_plex_artwork(server_id: str, path: str) -> PlexBinaryResponse:
     server = _find_server_by_id(server_id)
     if not server or str(server.get("type") or "").lower() != "plex":
         raise PlexError("plex_not_found", "Plex server not found", status_code=404)
+    parts = url_boundary.parse_url(path)
     safe_path = plex_service._safe_upstream_path(path)
-    if not safe_path:
+    if (
+        parts is None
+        or parts.scheme
+        or parts.raw_netloc
+        or parts.query
+        or parts.fragment
+        or not safe_path
+        or not _CUSTOM_PLEX_ARTWORK_PATH_RE.fullmatch(safe_path)
+    ):
         raise PlexError("plex_invalid_reference", "Invalid artwork path", status_code=400)
     client = _custom_plex_client(server)
-    return client.get_bytes(
-        safe_path, query={"width": 1000, "height": 1500, "minSize": 1, "upscale": 0}
-    )
+    try:
+        artwork = client.get_bytes(
+            safe_path, query={"width": 1000, "height": 1500, "minSize": 1, "upscale": 0}
+        )
+    except PlexError:
+        raise PlexError(
+            "browse_artwork_unavailable", "Media artwork is unavailable", status_code=502
+        ) from None
+    media_type = str(artwork.content_type or "").partition(";")[0].strip().lower()
+    if (
+        not artwork.body
+        or len(artwork.body) > MAX_BINARY_RESPONSE_BYTES
+        or media_type not in SAFE_IMAGE_TYPES
+    ):
+        raise PlexError(
+            "browse_artwork_unavailable", "Media artwork is unavailable", status_code=502
+        )
+    return PlexBinaryResponse(body=artwork.body, content_type=media_type)
 
 
 def open_custom_plex_stream(
-    server_id: str, path: str, *, range_header: str = ""
+    server_id: str,
+    path: str,
+    *,
+    range_header: str = "",
+    exp: int | str | None = None,
+    sig: str = "",
 ) -> PlexStreamResponse:
     server = _find_server_by_id(server_id)
     if not server or str(server.get("type") or "").lower() != "plex":
         raise PlexError("plex_not_found", "Plex server not found", status_code=404)
+    parts = url_boundary.parse_url(path)
     safe_path = plex_service._safe_upstream_path(path)
-    if not safe_path or not safe_path.startswith("/library/parts/"):
+    if (
+        parts is None
+        or parts.scheme
+        or parts.raw_netloc
+        or parts.query
+        or parts.fragment
+        or not safe_path
+        or not safe_path.startswith("/library/parts/")
+    ):
         raise PlexError("plex_invalid_reference", "Invalid stream path", status_code=400)
+    exp_int = _safe_int(exp)
+    sig_clean = str(sig or "").strip()
+    if exp_int is None or not sig_clean:
+        raise PlexError(
+            "plex_stream_forbidden", "Missing or invalid stream signature", status_code=403
+        )
+    if exp_int < int(time.time()):
+        raise PlexError(
+            "plex_stream_expired", "Stream capability token has expired", status_code=403
+        )
+    expected_sig = _custom_plex_stream_signature(server, safe_path, exp_int)
+    if not hmac.compare_digest(sig_clean, expected_sig):
+        raise PlexError("plex_stream_forbidden", "Invalid stream signature", status_code=403)
     client = _custom_plex_client(server)
     return client.open_stream(safe_path, range_header=range_header)

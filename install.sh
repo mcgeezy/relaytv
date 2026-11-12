@@ -74,8 +74,25 @@ parse_dotenv_scalar() {
   local raw="${1#*=}"
   raw="${raw%$'\r'}"
   raw="${raw#"${raw%%[![:space:]]*}"}"
-  if [[ "$raw" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
+  local dq_pattern='^"(([^"\\]|\\.)*)"[[:space:]]*(#.*)?$'
+  if [[ "$raw" =~ $dq_pattern ]]; then
+    local inner="${BASH_REMATCH[1]}" out="" i=0 len="${#BASH_REMATCH[1]}" ch next
+    while (( i < len )); do
+      ch="${inner:i:1}"
+      if [[ "$ch" == "\\" ]] && (( i + 1 < len )); then
+        next="${inner:i+1:1}"
+        case "$next" in
+          \"|\\|\$|\`)
+            out+="$next"
+            (( i += 2 ))
+            continue
+            ;;
+        esac
+      fi
+      out+="$ch"
+      (( i += 1 ))
+    done
+    printf '%s' "$out"
   elif [[ "$raw" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
   else
@@ -488,8 +505,21 @@ wait_for_relaytv_health() {
 RAW_BASE="${RELAYTV_BOOTSTRAP_RAW_BASE:-https://raw.githubusercontent.com/${REPO}/${BRANCH}}"
 
 fetch_to() {
-  local url="$1" dest="$2"
-  "${FETCH[@]}" "$url" > "$dest"
+  local url="$1" dest="$2" rel_path="" fallback_base=""
+  if "${FETCH[@]}" "$url" > "$dest"; then
+    return 0
+  fi
+  if [[ "$BRANCH" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9._-]+)?$ ]] && [[ "$url" == "${RAW_BASE}/"* ]]; then
+    rel_path="${url#"${RAW_BASE}/"}"
+    if [[ "$RAW_BASE" == */"$BRANCH" ]]; then
+      fallback_base="${RAW_BASE%/"$BRANCH"}/v${BRANCH}"
+    else
+      fallback_base="${RAW_BASE%/}/v${BRANCH}"
+    fi
+    "${FETCH[@]}" "${fallback_base}/${rel_path}" > "$dest"
+    return $?
+  fi
+  return 1
 }
 
 if [ -d "$INSTALL_DIR/.git" ] && [ "$FORCE_INSTALL" != "1" ]; then

@@ -283,13 +283,33 @@ def browse_artwork(server_id: str, path: str = ""):
     )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+
+def _require_loopback_client(request: Request) -> None:
+    client = request.client
+    host = str(client.host if client is not None else "").strip().lower()
+    if host in _LOOPBACK_HOSTS or host == "testclient":
+        return
+    raise HTTPException(status_code=403, detail="Stream proxy is local-only")
+
+
 @router.get("/browse/stream/{server_id}")
-def browse_stream(server_id: str, request: Request, path: str = ""):
+def browse_stream(
+    server_id: str,
+    request: Request,
+    path: str = "",
+    exp: str = "",
+    sig: str = "",
+):
+    _require_loopback_client(request)
     try:
         stream = browse_service.open_custom_plex_stream(
             server_id,
             path,
             range_header=str(request.headers.get("range") or ""),
+            exp=exp,
+            sig=sig,
         )
     except PlexError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None

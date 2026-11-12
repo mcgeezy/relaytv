@@ -734,6 +734,25 @@ MPV_LOCK = threading.Lock()
 _INTENT_LOCK = threading.Lock()
 _PLAYBACK_INTENT = 0
 _PLAYBACK_LOAD_STARTED_INTENT: int | None = None
+_PLAYBACK_PUBLISHED_INTENT: int | None = None
+
+
+def _mpv_format_loadfile_opt(name: str, value: object) -> str:
+    """Format an mpv ``loadfile`` per-file option without comma/quote injection."""
+    text = str(value or "")
+    if any(ch in text for ch in (",", ";", '"', "'", "%", "\n", "\r", "\t", " ")):
+        raw_len = len(text.encode("utf-8"))
+        return f"{name}=%{raw_len}%{text}"
+    return f"{name}={text}"
+
+
+def _mpv_unwrap_loadfile_opt_value(raw: str) -> str:
+    """Unwrap mpv's ``%<byte_len>%<value>`` prefix when present."""
+    if raw.startswith("%"):
+        sep = raw.find("%", 1)
+        if sep > 1 and raw[1:sep].isdigit():
+            return raw[sep + 1 :]
+    return raw
 
 
 def claim_playback_intent() -> int:
@@ -1462,9 +1481,9 @@ def _build_qt_external_mpv_args(
         ytdl_format_override=ytdl_format_override,
         ytdl_raw_options_override=ytdl_raw_options_override,
     )
-    # _build_mpv_args ends with the media as either a bare stream URL or a
-    # grouped per-file spec (["--{", *file_opts, stream_url, "--}"]); keep the
-    # whole spec intact instead of assuming the last token is the URL.
+    # _build_mpv_args ends with the media as either a bare stream URL (preceded
+    # by "--") or a grouped per-file spec (["--{", *file_opts, stream_url, "--}"]);
+    # keep the whole spec intact instead of assuming the last token is the URL.
     if args and args[-1] == "--}":
         open_idx = len(args) - 1
         while open_idx >= 0 and args[open_idx] != "--{":
@@ -1472,6 +1491,8 @@ def _build_qt_external_mpv_args(
         if open_idx < 0:
             open_idx = len(args) - 1
         prefix, file_spec = args[:open_idx], args[open_idx:]
+    elif len(args) >= 2 and args[-2] == "--":
+        prefix, file_spec = args[:-2], args[-2:]
     else:
         prefix, file_spec = args[:-1], args[-1:]
     base = _strip_mpv_renderer_args(prefix)
@@ -2403,9 +2424,9 @@ def _qt_shell_runtime_command(cmd_list: list):
             option_arg = str(cmd[3] or "").strip()
         audio = ""
         if stream and option_arg.startswith("audio-file="):
-            audio = option_arg.split("=", 1)[1]
+            audio = _mpv_unwrap_loadfile_opt_value(option_arg.split("=", 1)[1])
         elif stream and option_arg.startswith("audio-files-append="):
-            audio = option_arg.split("=", 1)[1]
+            audio = _mpv_unwrap_loadfile_opt_value(option_arg.split("=", 1)[1])
         if stream and audio:
             return _qt_shell_runtime_write_control(
                 {
@@ -3179,9 +3200,12 @@ def _build_mpv_args(
     mpv_args += extra
     mpv_args = _first_wins_dedupe(mpv_args)
     if file_opts:
-        mpv_args.extend(["--{", *file_opts, stream_url, "--}"])
+        if str(stream_url).startswith("-"):
+            mpv_args.extend(["--{", *file_opts, "--", stream_url, "--}"])
+        else:
+            mpv_args.extend(["--{", *file_opts, stream_url, "--}"])
     else:
-        mpv_args.append(stream_url)
+        mpv_args.extend(["--", stream_url])
     return mpv_args
 
 
@@ -3496,8 +3520,8 @@ def _load_stream_in_existing_mpv(
         cmd: list[object] = ["loadfile", str(stream_url), "replace"]
         start_value = _mpv_start_option_value(start_pos)
         if audio_url:
-            option_value = f"audio-files-append={str(audio_url)}"
-            if start_value and "," not in option_value:
+            option_value = _mpv_format_loadfile_opt("audio-files-append", audio_url)
+            if start_value:
                 option_value = f"start={start_value},{option_value}"
             cmd.extend(["-1", option_value])
         elif start_value:
@@ -3585,6 +3609,7 @@ def start_mpv(
                 ytdl_raw_options_override=ytdl_raw_options_override,
             )
             if not wait_for_ipc_ready(timeout=startup_timeout):
+                stop_mpv(restart_splash=False)
                 raise HTTPException(
                     status_code=500, detail="qt external mpv started but IPC not ready"
                 )
@@ -3607,6 +3632,7 @@ def start_mpv(
                         ytdl_raw_options_override=ytdl_raw_options_override,
                     )
                     if not wait_for_ipc_ready(timeout=startup_timeout):
+                        stop_mpv(restart_splash=False)
                         raise HTTPException(
                             status_code=500,
                             detail="qt external mpv x11 fallback started but IPC not ready",
@@ -3627,6 +3653,7 @@ def start_mpv(
             ytdl_raw_options_override=ytdl_raw_options_override,
         )
         if not wait_for_ipc_ready(timeout=startup_timeout):
+            stop_mpv(restart_splash=False)
             raise HTTPException(status_code=500, detail="qt shell started but mpv IPC not ready")
         _set_mpv_process_start_option_active(process_start_option_active)
         _apply_startup_mpv_runtime_settings()
@@ -3650,6 +3677,7 @@ def start_mpv(
     if mode == "x11":
         MPV_PROC = _spawn("x11")
         if not wait_for_ipc_ready(timeout=startup_timeout):
+            stop_mpv(restart_splash=False)
             raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
         _set_mpv_process_start_option_active(process_start_option_active)
         _apply_startup_mpv_runtime_settings(settings)
@@ -3659,6 +3687,7 @@ def start_mpv(
     if mode == "drm":
         MPV_PROC = _spawn("drm")
         if not wait_for_ipc_ready(timeout=startup_timeout):
+            stop_mpv(restart_splash=False)
             raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
         _set_mpv_process_start_option_active(process_start_option_active)
         if not _video_output_healthy(timeout=2.0):
@@ -3668,6 +3697,7 @@ def start_mpv(
                 stop_mpv(restart_splash=False)
                 MPV_PROC = _spawn("x11")
                 if not wait_for_ipc_ready(timeout=startup_timeout):
+                    stop_mpv(restart_splash=False)
                     raise HTTPException(
                         status_code=500, detail="mpv x11 fallback started but IPC not ready"
                     )
@@ -3688,6 +3718,7 @@ def start_mpv(
         pass
 
     if not wait_for_ipc_ready(timeout=startup_timeout):
+        stop_mpv(restart_splash=False)
         raise HTTPException(status_code=500, detail="mpv started but IPC not ready")
 
     if not _video_output_healthy(timeout=2.0):
@@ -3697,6 +3728,7 @@ def start_mpv(
             stop_mpv(restart_splash=False)
             MPV_PROC = _spawn("x11")
             if not wait_for_ipc_ready(timeout=startup_timeout):
+                stop_mpv(restart_splash=False)
                 raise HTTPException(
                     status_code=500, detail="mpv x11 fallback started but IPC not ready"
                 )
@@ -4453,14 +4485,22 @@ def _fresh_prefetched_stream(item: object) -> tuple[str, str | None] | None:
         ts = float(item.get("_resolved_at") or 0.0)
     except Exception:
         ts = 0.0
-    if ts <= 0.0 or (time.time() - ts) > _queue_prefetch_ttl_sec():
+    now_ts = time.time()
+    if ts <= 0.0 or ts > (now_ts + 1.0) or (now_ts - ts) > _queue_prefetch_ttl_sec():
         return None
     if str(item.get("_resolved_source_url") or "").strip() != url:
         return None
     stream = str(item.get("_resolved_stream") or "").strip()
     if not stream:
         return None
-    audio = str(item.get("_resolved_audio") or "").strip() or None
+    try:
+        from .resolver import validate_resolved_stream_url
+
+        stream = validate_resolved_stream_url(stream)
+        raw_audio = str(item.get("_resolved_audio") or "").strip()
+        audio = validate_resolved_stream_url(raw_audio) if raw_audio else None
+    except Exception:
+        return None
     return stream, audio
 
 
@@ -4799,7 +4839,7 @@ def _mpv_up_next_load_target(item: object) -> tuple[list[object], str] | None:
     cmd: list[object] = ["loadfile", stream_url, "append-play"]
     if audio_url:
         audio_url = youtube_stream.proxy_url(audio_url)
-        cmd.extend(["-1", f"audio-files-append={str(audio_url)}"])
+        cmd.extend(["-1", _mpv_format_loadfile_opt("audio-files-append", audio_url)])
     return cmd, stream_url
 
 
@@ -6033,6 +6073,37 @@ def play_item(
             raise
         current = state.NOW_PLAYING
         return current if isinstance(current, dict) else {}
+    except Exception:
+        # If this play superseded an earlier play that had already loaded media
+        # into mpv (so its load was never published) and this play itself failed
+        # before publishing, tear down the uncommitted runtime so audio/video is
+        # never orphaned on screen without a NOW_PLAYING owner.
+        global _PLAYBACK_LOAD_STARTED_INTENT, _PLAYBACK_PUBLISHED_INTENT
+        try:
+            with MPV_LOCK:
+                with _INTENT_LOCK:
+                    still_current = intent == _PLAYBACK_INTENT
+                    uncommitted_load = (
+                        _PLAYBACK_LOAD_STARTED_INTENT is not None
+                        and _PLAYBACK_LOAD_STARTED_INTENT != _PLAYBACK_PUBLISHED_INTENT
+                    )
+                if still_current and (uncommitted_load or state.NOW_PLAYING is None):
+                    if uncommitted_load or is_playing():
+                        stop_mpv(restart_splash=True)
+                    with _INTENT_LOCK:
+                        if intent == _PLAYBACK_INTENT:
+                            _PLAYBACK_LOAD_STARTED_INTENT = None
+                            _PLAYBACK_PUBLISHED_INTENT = None
+                    if uncommitted_load and state.NOW_PLAYING is not None:
+                        state.update_session(
+                            now_playing=None,
+                            session_state="idle",
+                            pause_reason=None,
+                            session_position=None,
+                        )
+        except Exception:
+            pass
+        raise
 
 
 def _play_item_owned(
@@ -6396,6 +6467,7 @@ def _play_item_owned(
 
     _require_owned(
         "post_load",
+        relay_stream=stream if relay_playback else "",
         plex_stream=stream if plex_playback else "",
     )
 
@@ -6558,6 +6630,8 @@ def _play_item_owned(
     # history/session publication wins first and the terminal transition
     # overwrites it, or retirement wins and none of it lands.
     def _publish_playback() -> None:
+        global _PLAYBACK_PUBLISHED_INTENT
+        _PLAYBACK_PUBLISHED_INTENT = intent
         _add_history_entry(now)
         state.update_session(
             now_playing=now,
@@ -7535,9 +7609,6 @@ def _repair_orphan_runtime_playback(props: dict[str, Any] | None = None) -> bool
         return False
     if isinstance(getattr(state, "NOW_PLAYING", None), dict):
         return False
-    with state.QUEUE_LOCK:
-        if state.QUEUE:
-            return False
 
     if not isinstance(props, dict):
         try:

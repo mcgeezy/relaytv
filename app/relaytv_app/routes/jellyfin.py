@@ -4,11 +4,17 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import state
-from ..integrations import jellyfin_receiver, jellyfin_service
+from .. import playback_service, state
+from ..integrations import browse_service, jellyfin_receiver, jellyfin_service
 
 
 router = APIRouter()
+
+
+def _public_response(payload):
+    if isinstance(payload, (dict, list)):
+        return browse_service.public_browse_payload(payload)
+    return payload
 
 
 class JellyfinAudioSelectReq(BaseModel):
@@ -31,6 +37,9 @@ class JellyfinItemActionReq(BaseModel):
     item_id: str
     command: str = "play_now"  # play_now|play_next|play_last|resume
     resume_pos: float | None = None
+    media_source_id: str = ""
+    audio_stream_index: str = ""
+    subtitle_stream_index: str = ""
 
 
 class JellyfinConnectReq(BaseModel):
@@ -110,10 +119,12 @@ def _jellyfin_command_req(**kwargs):
     return JellyfinCommandReq(**kwargs)
 
 
-def _jellyfin_integration_command(req) -> dict[str, object]:
+def _jellyfin_integration_command(req, *, guard=None) -> dict[str, object]:
     from . import jellyfin_integration_command as command
 
-    return command(req)
+    if command is not jellyfin_integration_command:
+        return command(req)
+    return _jellyfin_integration_command_impl(req, guard=guard)
 
 
 def _jellyfin_should_suppress_duplicate_ui_action(
@@ -142,8 +153,16 @@ def _jellyfin_socket_command(action: str, payload: dict, *, guard=None) -> dict[
     Registered into the receiver so the socket reaches the same ingress the
     HTTP endpoint uses, rather than growing a second copy of command handling.
     """
+    payload_copy = dict(payload) if isinstance(payload, dict) else {}
+    start_pos = payload_copy.pop("_start_pos", None)
+    use_ytdlp = bool(payload_copy.pop("_use_ytdlp", True))
     return _jellyfin_integration_command_impl(
-        _jellyfin_command_req(action=action or None, payload=payload or {}),
+        _jellyfin_command_req(
+            action=action or None,
+            start_pos=start_pos,
+            use_ytdlp=use_ytdlp,
+            payload=payload_copy,
+        ),
         guard=guard,
     )
 
@@ -254,7 +273,7 @@ def jellyfin_integration_push():
 @router.post("/integrations/jellyfin/command")
 def jellyfin_integration_command(req: JellyfinCommandReq):
     """Normalized Jellyfin command ingress (v1: Play/Stop/Pause/Resume/Seek/Next)."""
-    return _jellyfin_integration_command_impl(req)
+    return _public_response(_jellyfin_integration_command_impl(req))
 
 
 @router.post("/integrations/jellyfin/heartbeat")
@@ -318,14 +337,16 @@ def jellyfin_home(limit: int = 24, refresh: bool = False):
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin home rows")
     refreshed = jellyfin_receiver.status()
-    return {
-        "ok": True,
-        "rows": payload.get("rows") if isinstance(payload, dict) else [],
-        "generated_ts": payload.get("generated_ts") if isinstance(payload, dict) else None,
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-        "device_name": st.get("device_name"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "rows": payload.get("rows") if isinstance(payload, dict) else [],
+            "generated_ts": payload.get("generated_ts") if isinstance(payload, dict) else None,
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+            "device_name": st.get("device_name"),
+        }
+    )
 
 
 @router.get("/jellyfin/search")
@@ -341,15 +362,17 @@ def jellyfin_search(q: str = "", limit: int = 30, refresh: bool = False):
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to search jellyfin catalog")
     refreshed = jellyfin_receiver.status()
-    return {
-        "ok": True,
-        "query": payload.get("query") if isinstance(payload, dict) else query,
-        "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "items": payload.get("items") if isinstance(payload, dict) else [],
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-        "device_name": st.get("device_name"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "query": payload.get("query") if isinstance(payload, dict) else query,
+            "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
+            "items": payload.get("items") if isinstance(payload, dict) else [],
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+            "device_name": st.get("device_name"),
+        }
+    )
 
 
 @router.get("/jellyfin/movies")
@@ -375,25 +398,29 @@ def jellyfin_movies(
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin movies")
     refreshed = jellyfin_receiver.status()
-    return {
-        "ok": True,
-        "sort": payload.get("sort")
-        if isinstance(payload, dict)
-        else str(sort or "added").strip().lower(),
-        "items": payload.get("items") if isinstance(payload, dict) else [],
-        "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "start_index": int(payload.get("start_index") or start_index)
-        if isinstance(payload, dict)
-        else start_index,
-        "limit": int(payload.get("limit") or lim) if isinstance(payload, dict) else lim,
-        "next_start_index": payload.get("next_start_index") if isinstance(payload, dict) else None,
-        "starts_with": str(payload.get("starts_with") or "")
-        if isinstance(payload, dict)
-        else str(starts_with or "").strip().upper(),
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-        "device_name": st.get("device_name"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "sort": payload.get("sort")
+            if isinstance(payload, dict)
+            else str(sort or "added").strip().lower(),
+            "items": payload.get("items") if isinstance(payload, dict) else [],
+            "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
+            "start_index": int(payload.get("start_index") or start_index)
+            if isinstance(payload, dict)
+            else start_index,
+            "limit": int(payload.get("limit") or lim) if isinstance(payload, dict) else lim,
+            "next_start_index": payload.get("next_start_index")
+            if isinstance(payload, dict)
+            else None,
+            "starts_with": str(payload.get("starts_with") or "")
+            if isinstance(payload, dict)
+            else str(starts_with or "").strip().upper(),
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+            "device_name": st.get("device_name"),
+        }
+    )
 
 
 @router.get("/jellyfin/tv/series")
@@ -419,25 +446,29 @@ def jellyfin_tv_series(
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin series")
     refreshed = jellyfin_receiver.status()
-    return {
-        "ok": True,
-        "sort": payload.get("sort")
-        if isinstance(payload, dict)
-        else str(sort or "title_asc").strip().lower(),
-        "items": payload.get("items") if isinstance(payload, dict) else [],
-        "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "start_index": int(payload.get("start_index") or start_index)
-        if isinstance(payload, dict)
-        else start_index,
-        "limit": int(payload.get("limit") or lim) if isinstance(payload, dict) else lim,
-        "next_start_index": payload.get("next_start_index") if isinstance(payload, dict) else None,
-        "starts_with": str(payload.get("starts_with") or "")
-        if isinstance(payload, dict)
-        else str(starts_with or "").strip().upper(),
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-        "device_name": st.get("device_name"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "sort": payload.get("sort")
+            if isinstance(payload, dict)
+            else str(sort or "title_asc").strip().lower(),
+            "items": payload.get("items") if isinstance(payload, dict) else [],
+            "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
+            "start_index": int(payload.get("start_index") or start_index)
+            if isinstance(payload, dict)
+            else start_index,
+            "limit": int(payload.get("limit") or lim) if isinstance(payload, dict) else lim,
+            "next_start_index": payload.get("next_start_index")
+            if isinstance(payload, dict)
+            else None,
+            "starts_with": str(payload.get("starts_with") or "")
+            if isinstance(payload, dict)
+            else str(starts_with or "").strip().upper(),
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+            "device_name": st.get("device_name"),
+        }
+    )
 
 
 @router.get("/jellyfin/tv/series/{series_id}/seasons")
@@ -452,14 +483,16 @@ def jellyfin_tv_series_seasons(series_id: str, refresh: bool = False):
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin seasons")
     refreshed = jellyfin_receiver.status()
-    return {
-        "ok": True,
-        "series_id": sid,
-        "seasons": payload.get("seasons") if isinstance(payload, dict) else [],
-        "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "series_id": sid,
+            "seasons": payload.get("seasons") if isinstance(payload, dict) else [],
+            "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+        }
+    )
 
 
 @router.get("/jellyfin/tv/series/{series_id}/episodes")
@@ -484,20 +517,22 @@ def jellyfin_tv_series_episodes(
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin episodes")
     refreshed = jellyfin_receiver.status()
-    return {
-        "ok": True,
-        "series_id": sid,
-        "season_id": payload.get("season_id")
-        if isinstance(payload, dict)
-        else str(season_id or "").strip(),
-        "season_number": payload.get("season_number")
-        if isinstance(payload, dict)
-        else season_number,
-        "episodes": payload.get("episodes") if isinstance(payload, dict) else [],
-        "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "series_id": sid,
+            "season_id": payload.get("season_id")
+            if isinstance(payload, dict)
+            else str(season_id or "").strip(),
+            "season_number": payload.get("season_number")
+            if isinstance(payload, dict)
+            else season_number,
+            "episodes": payload.get("episodes") if isinstance(payload, dict) else [],
+            "count": int(payload.get("count") or 0) if isinstance(payload, dict) else 0,
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+        }
+    )
 
 
 @router.get("/jellyfin/item/{item_id}")
@@ -523,12 +558,14 @@ def jellyfin_item_detail(item_id: str, refresh: bool = False):
             },
             status_code=404,
         )
-    return {
-        "ok": True,
-        "item": item,
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "item": item,
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+        }
+    )
 
 
 @router.get("/jellyfin/item/{item_id}/adjacent")
@@ -545,14 +582,16 @@ def jellyfin_item_adjacent(item_id: str, refresh: bool = False):
     refreshed = jellyfin_receiver.status()
     prev = nav.get("prev") if isinstance(nav, dict) and isinstance(nav.get("prev"), dict) else None
     nxt = nav.get("next") if isinstance(nav, dict) and isinstance(nav.get("next"), dict) else None
-    return {
-        "ok": True,
-        "item_id": iid,
-        "prev": prev,
-        "next": nxt,
-        "connected": bool(refreshed.get("connected")),
-        "last_error": refreshed.get("last_error"),
-    }
+    return _public_response(
+        {
+            "ok": True,
+            "item_id": iid,
+            "prev": prev,
+            "next": nxt,
+            "connected": bool(refreshed.get("connected")),
+            "last_error": refreshed.get("last_error"),
+        }
+    )
 
 
 @router.post("/jellyfin/tv/series/{series_id}/play_all")
@@ -561,47 +600,75 @@ def jellyfin_tv_series_play_all(series_id: str, refresh: bool = False):
     sid = str(series_id or "").strip()
     if not sid:
         raise HTTPException(status_code=400, detail="series_id is required")
-    try:
-        payload = jellyfin_receiver.list_series_episodes(sid, refresh=bool(refresh))
-    except Exception as e:
-        jellyfin_receiver.mark_error(str(e))
-        raise HTTPException(status_code=502, detail="failed to fetch jellyfin series episodes")
-    episodes = (
-        payload.get("episodes")
-        if isinstance(payload, dict) and isinstance(payload.get("episodes"), list)
-        else []
-    )
-    item_ids = [
-        str(ep.get("item_id") or "").strip()
-        for ep in episodes
-        if isinstance(ep, dict) and str(ep.get("item_id") or "").strip()
-    ]
-    if not item_ids:
-        raise HTTPException(status_code=404, detail="no episodes available for series")
-    first = next(
-        (
-            ep
-            for ep in episodes
-            if isinstance(ep, dict) and str(ep.get("item_id") or "").strip() == item_ids[0]
-        ),
-        {},
-    )
-    out = _jellyfin_integration_command(
-        _jellyfin_command_req(
-            action="Play",
-            payload={"ItemIds": item_ids, "PlayCommand": "PlayNow"},
-            play_command="PlayNow",
-            use_ytdlp=False,
+    generation = jellyfin_receiver.config_generation()
+
+    def still_current() -> bool:
+        return jellyfin_receiver.config_generation() == generation
+
+    with playback_service.queue_import():
+        try:
+            payload = jellyfin_receiver.list_series_episodes(sid, refresh=bool(refresh))
+        except Exception as e:
+            jellyfin_receiver.mark_error(str(e))
+            raise HTTPException(status_code=502, detail="failed to fetch jellyfin series episodes")
+        if not still_current():
+            raise HTTPException(status_code=409, detail="jellyfin series play_all cancelled")
+        with playback_service.queue_commit():
+            pass
+        episodes = (
+            payload.get("episodes")
+            if isinstance(payload, dict) and isinstance(payload.get("episodes"), list)
+            else []
         )
-    )
-    return {
-        "ok": bool(out.get("ok", True)),
-        "series_id": sid,
-        "series_title": str(first.get("series_name") or first.get("title") or "").strip(),
-        "queued_count": max(0, len(item_ids) - 1),
-        "started_item_id": item_ids[0],
-        "play_result": out,
-    }
+        item_ids = [
+            str(ep.get("item_id") or "").strip()
+            for ep in episodes
+            if isinstance(ep, dict) and str(ep.get("item_id") or "").strip()
+        ]
+        if not item_ids:
+            raise HTTPException(status_code=404, detail="no episodes available for series")
+        first = next(
+            (
+                ep
+                for ep in episodes
+                if isinstance(ep, dict) and str(ep.get("item_id") or "").strip() == item_ids[0]
+            ),
+            {},
+        )
+        out = _jellyfin_integration_command(
+            _jellyfin_command_req(
+                action="Play",
+                payload={"ItemIds": item_ids, "PlayCommand": "PlayNow"},
+                play_command="PlayNow",
+                use_ytdlp=False,
+            ),
+            guard=still_current,
+        )
+        if isinstance(out, dict) and out.get("reason") == "session_retired":
+            raise HTTPException(status_code=409, detail="jellyfin series play_all cancelled")
+        series_title = str(first.get("series_name") or first.get("title") or "").strip()
+        if isinstance(out, dict) and bool(out.get("cancelled")):
+            return _public_response(
+                {
+                    "ok": True,
+                    "cancelled": True,
+                    "series_id": sid,
+                    "series_title": series_title,
+                    "queued_count": 0,
+                    "started_item_id": item_ids[0],
+                    "play_result": out,
+                }
+            )
+        return _public_response(
+            {
+                "ok": bool(out.get("ok", True)) if isinstance(out, dict) else True,
+                "series_id": sid,
+                "series_title": series_title,
+                "queued_count": max(0, len(item_ids) - 1),
+                "started_item_id": item_ids[0],
+                "play_result": out,
+            }
+        )
 
 
 @router.post("/jellyfin/action")
@@ -621,6 +688,17 @@ def jellyfin_item_action(req: JellyfinItemActionReq):
         payload["PlayCommand"] = "PlayLast"
     elif command == "resume":
         payload["PlayCommand"] = "Resume"
+    mid = str(req.media_source_id or "").strip()
+    if mid:
+        payload["MediaSourceId"] = mid
+    aidx = str(req.audio_stream_index or "").strip()
+    if aidx:
+        payload["AudioStreamIndex"] = aidx
+    sidx = str(req.subtitle_stream_index or "").strip()
+    if sidx:
+        if sidx.lower() in {"off", "none", "disabled", "no"}:
+            sidx = "-1"
+        payload["SubtitleStreamIndex"] = sidx
 
     start_pos: float | None = None
     if command == "resume":
@@ -633,7 +711,7 @@ def jellyfin_item_action(req: JellyfinItemActionReq):
                 start_pos = None
         if start_pos is None:
             try:
-                meta = jellyfin_receiver.get_item_detail(item_id)
+                meta = jellyfin_service._get_item_detail_for_source(item_id, media_source_id=mid)
                 rp2 = (
                     float(meta.get("resume_pos"))
                     if isinstance(meta, dict) and meta.get("resume_pos") is not None
@@ -667,7 +745,7 @@ def jellyfin_item_action(req: JellyfinItemActionReq):
         out["ui_command"] = command
         out["item_id"] = item_id
         out["resolved_resume_pos"] = start_pos
-    return out
+    return _public_response(out)
 
 
 @router.get("/jellyfin/audio/options")
@@ -684,8 +762,16 @@ def jellyfin_audio_options(refresh: bool = False):
         raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
     if not item_id:
         raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+    media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            jellyfin_service.extract_media_source_id_from_url(str(now.get("url") or "")),
+        ]
+    )
     try:
-        detail = jellyfin_receiver.get_item_detail(item_id, refresh=bool(refresh))
+        detail = jellyfin_service._get_item_detail_for_source(
+            item_id, media_source_id=media_source_id, refresh=bool(refresh)
+        )
     except Exception as e:
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin stream options")
@@ -783,8 +869,16 @@ def jellyfin_subtitle_options(refresh: bool = False):
         raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
     if not item_id:
         raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
+    media_source_id = _first_nonempty_str(
+        [
+            str(now.get("jellyfin_media_source_id") or "").strip(),
+            jellyfin_service.extract_media_source_id_from_url(str(now.get("url") or "")),
+        ]
+    )
     try:
-        detail = jellyfin_receiver.get_item_detail(item_id, refresh=bool(refresh))
+        detail = jellyfin_service._get_item_detail_for_source(
+            item_id, media_source_id=media_source_id, refresh=bool(refresh)
+        )
     except Exception as e:
         jellyfin_receiver.mark_error(str(e))
         raise HTTPException(status_code=502, detail="failed to fetch jellyfin subtitle options")
@@ -891,10 +985,10 @@ def jellyfin_subtitle_options(refresh: bool = False):
 @router.post("/jellyfin/audio/select")
 def jellyfin_audio_select(req: JellyfinAudioSelectReq):
     st = _require_jellyfin_catalog_ready_for_playback()
-    return jellyfin_service.switch_audio_track(req.index, server_status=st)
+    return _public_response(jellyfin_service.switch_audio_track(req.index, server_status=st))
 
 
 @router.post("/jellyfin/subtitle/select")
 def jellyfin_subtitle_select(req: JellyfinSubtitleSelectReq):
     st = _require_jellyfin_catalog_ready_for_playback()
-    return jellyfin_service.switch_subtitle_track(req.index, server_status=st)
+    return _public_response(jellyfin_service.switch_subtitle_track(req.index, server_status=st))

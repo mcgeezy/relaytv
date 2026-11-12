@@ -47,7 +47,7 @@
         radial-gradient(900px 520px at 90% 10%, rgba(180,120,255,.08), transparent 60%),
         radial-gradient(800px 600px at 50% 110%, rgba(120,255,190,.06), transparent 55%),
         linear-gradient(180deg, var(--bg0), var(--bg1));
-      padding: 4px 14px max(16px, env(safe-area-inset-bottom));
+      padding: max(4px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
     }
 
     .wrap{
@@ -3083,11 +3083,11 @@
 }
 @media (max-width: 600px){
   #settingsBackdrop.modalBackdrop{
-    padding: 8px;
+    padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
     align-items: flex-end;
   }
   .modal.settingsModal{
-    max-height: calc(100dvh - 16px);
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom)));
     padding: 12px;
     border-radius: 20px;
   }

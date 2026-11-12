@@ -50,11 +50,26 @@ _SENSITIVE_QUERY_KEYS = {
 }
 
 _URL_FIELDS = {"art", "image", "input", "poster", "thumbnail", "thumbnail_local", "url"}
+_PLEX_PLACEHOLDER_URL = "https://plex.invalid/item"
 
 
 def _is_sensitive_query_key(key: str) -> bool:
     normalized = str(key or "").strip().lower()
     return normalized in _SENSITIVE_QUERY_KEYS or normalized.startswith("x-amz-")
+
+
+def _redacted_capability_stream_url(path: str) -> str | None:
+    if not path or not path.startswith("/"):
+        return None
+    collapsed = "/" + path.lstrip("/")
+    lowered = collapsed.lower()
+    if lowered == "/plex/stream" or lowered.startswith("/plex/stream/"):
+        return _PLEX_PLACEHOLDER_URL
+    if lowered == "/browse/stream" or lowered.startswith("/browse/stream/"):
+        return _PLEX_PLACEHOLDER_URL
+    if lowered == "/postlive" or lowered.startswith("/postlive/"):
+        return ""
+    return None
 
 
 def sanitize_public_url(value: object) -> str:
@@ -70,6 +85,9 @@ def sanitize_public_url(value: object) -> str:
     parsed = url_boundary.parse_url(raw)
     if parsed is None:
         return ""
+    redacted_stream = _redacted_capability_stream_url(parsed.path)
+    if redacted_stream is not None:
+        return redacted_stream
     # Preserved from the urlsplit version: a value with no scheme or no
     # authority is a relative reference or a non-network URL (file:, data:),
     # and is passed through untouched.
@@ -110,7 +128,9 @@ def public_media_item(item: object) -> object:
             if safe_url:
                 result[key] = safe_url
             continue
-        if isinstance(value, str) and value.strip().lower().startswith(("http://", "https://")):
+        if isinstance(value, str) and value.strip().lower().startswith(
+            ("http://", "https://", "/plex/stream", "/browse/stream", "/postlive")
+        ):
             # A failed metadata lookup can leave the signed stream URL in a
             # display field such as title. Public redaction is about the value,
             # not only the expected schema key.

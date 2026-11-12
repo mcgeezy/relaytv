@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
 import re
+import tempfile
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, public_media, state, upload_store, ytdlp_update
+from .. import player, public_media, state, upload_store, url_boundary, ytdlp_update
 from ..config import (
     SEERR_REQUEST_MODES,
     normalize_seerr_request_mode,
@@ -141,12 +142,131 @@ def _sync_upload_env_from_settings(updated: dict | None) -> None:
 
 
 def _youtube_cookie_target_path() -> str:
-    return (
-        os.getenv("RELAYTV_YTDLP_COOKIES_UPLOAD_PATH")
-        or runtime_config.snapshot().raw("RELAYTV_YTDLP_COOKIES")
-        or os.getenv("YTDLP_COOKIES")
-        or "/data/cookies.txt"
+    explicit = str(
+        os.getenv("RELAYTV_YTDLP_COOKIES_UPLOAD_PATH") or os.getenv("YTDLP_COOKIES") or ""
     ).strip()
+    if explicit:
+        return explicit
+    state_dir = str(getattr(state, "STATE_DIR", "/data") or "/data").strip() or "/data"
+    return os.path.join(state_dir, "cookies.txt")
+
+
+def is_allowed_youtube_cookies_path(value: object) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return True
+    if "\x00" in raw or "\n" in raw or "\r" in raw:
+        return False
+    norm = os.path.normpath(raw)
+    if not os.path.isabs(norm):
+        return False
+    if ".." in raw.replace("\\", "/").split("/"):
+        return False
+    allowed_files: set[str] = set()
+    for candidate in (
+        _youtube_cookie_target_path(),
+        os.getenv("RELAYTV_YTDLP_COOKIES_UPLOAD_PATH") or "",
+        os.getenv("YTDLP_COOKIES") or "",
+        "/data/cookies.txt",
+    ):
+        cand = str(candidate or "").strip()
+        if cand:
+            allowed_files.add(os.path.abspath(cand))
+            allowed_files.add(os.path.realpath(cand))
+    abs_raw = os.path.abspath(raw)
+    real_raw = os.path.realpath(raw)
+    if abs_raw in allowed_files and real_raw in allowed_files:
+        return True
+    if not real_raw.lower().endswith((".txt", ".cookies")):
+        return False
+    allowed_roots = [
+        os.path.realpath(str(getattr(state, "STATE_DIR", "/data") or "/data")),
+        os.path.realpath("/data"),
+    ]
+    for root in allowed_roots:
+        if not root:
+            continue
+        try:
+            if os.path.commonpath([real_raw, root]) == root and real_raw != root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _validate_netscape_cookies_text(normalized: str) -> None:
+    if "\x00" in normalized:
+        raise HTTPException(status_code=400, detail="cookies_text contains invalid null bytes")
+    cookie_rows = 0
+    for raw_line in normalized.split("\n"):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        line = raw_line
+        if stripped.startswith("#HttpOnly_"):
+            line = stripped[len("#HttpOnly_") :]
+        elif stripped.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 7:
+            raise HTTPException(
+                status_code=400,
+                detail="cookies.txt must be in Netscape format (7 tab-separated columns per row)",
+            )
+        domain, include_subdomains, path_val, secure_flag, expiry, name, _value = parts
+        if (
+            not domain.strip()
+            or any(ch.isspace() for ch in domain.strip())
+            or include_subdomains.strip().upper() not in {"TRUE", "FALSE"}
+            or not path_val.startswith("/")
+            or secure_flag.strip().upper() not in {"TRUE", "FALSE"}
+            or not name.strip()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="cookies.txt must be in Netscape format (invalid cookie row fields)",
+            )
+        try:
+            if int(expiry.strip()) < 0:
+                raise ValueError("negative expiry")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="cookies.txt must be in Netscape format (invalid cookie expiration)",
+            ) from None
+        cookie_rows += 1
+    if cookie_rows == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="cookies.txt must contain at least one Netscape cookie row",
+        )
+
+
+def _server_origin(value: object) -> tuple[str, str, int] | None:
+    parsed = url_boundary.parse_url(value)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme, parsed.hostname, port
+
+
+def _validate_configured_server_url(value: object, *, label: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = url_boundary.parse_url(raw)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail=f"{label} must be a valid http or https URL")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail=f"{label} must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise HTTPException(
+            status_code=400, detail=f"{label} must not contain a query or fragment"
+        )
+    if url_boundary.is_forbidden_ip_literal(parsed.hostname):
+        raise HTTPException(status_code=400, detail=f"{label} targets a forbidden address")
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
 def _normalize_invidious_base(value: object) -> str:
@@ -156,7 +276,20 @@ def _normalize_invidious_base(value: object) -> str:
     base = base.rstrip("/")
     if not re.match(r"^https?://", base, flags=re.IGNORECASE):
         return ""
-    return base
+    parsed = url_boundary.parse_url(base)
+    if (
+        parsed is None
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+    ):
+        return ""
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
 def _sync_idle_visual_surfaces_after_settings() -> None:
@@ -182,27 +315,35 @@ def upload_youtube_cookies(req: YouTubeCookiesUploadReq):
     if len(normalized.encode("utf-8")) > (3 * 1024 * 1024):
         raise HTTPException(status_code=400, detail="cookies_text too large (max 3MB)")
 
-    entries = [
-        ln for ln in normalized.split("\n") if ln.strip() and not ln.lstrip().startswith("#")
-    ]
-    if entries and not any("\t" in ln for ln in entries):
-        raise HTTPException(
-            status_code=400,
-            detail="cookies.txt must be in Netscape format (tab-separated cookie rows)",
-        )
+    _validate_netscape_cookies_text(normalized)
 
     target = _youtube_cookie_target_path()
-    if not target:
+    if not target or not is_allowed_youtube_cookies_path(target):
         raise HTTPException(status_code=400, detail="No youtube cookies target path configured")
+    tmp_path = ""
     try:
         parent = os.path.dirname(target) or "."
         os.makedirs(parent, exist_ok=True)
-        with open(target, "w", encoding="utf-8") as f:
+        fd, tmp_path = tempfile.mkstemp(prefix=".cookies-", suffix=".tmp", dir=parent)
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(normalized)
             if not normalized.endswith("\n"):
                 f.write("\n")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed writing cookies file: {exc}")
+        os.replace(tmp_path, target)
+        tmp_path = ""
+    except OSError as exc:
+        logger.warning("youtube_cookies_write_failed error=%s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Failed writing cookies file") from None
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     updated = (
         state.update_settings({"youtube_cookies_path": target})
@@ -218,6 +359,14 @@ def upload_youtube_cookies(req: YouTubeCookiesUploadReq):
 
 @router.post("/settings/youtube/cookies/clear")
 def clear_youtube_cookies():
+    target = _youtube_cookie_target_path()
+    if target and is_allowed_youtube_cookies_path(target):
+        try:
+            os.unlink(target)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("youtube_cookies_clear_unlink_failed error=%s", type(exc).__name__)
     updated = (
         state.update_settings({"youtube_cookies_path": ""})
         if hasattr(state, "update_settings")
@@ -288,11 +437,43 @@ def _update_settings(req: SettingsReq):
         if auth_mode not in {"shared_api_key", "user_login"}:
             raise HTTPException(status_code=400, detail="Invalid Jellyfin authentication mode")
         patch["jellyfin_auth_mode"] = auth_mode
+    if "youtube_cookies_path" in requested_keys:
+        candidate_cookie_path = str(patch.get("youtube_cookies_path") or "").strip()
+        if not is_allowed_youtube_cookies_path(candidate_cookie_path):
+            raise HTTPException(status_code=400, detail="Invalid youtube_cookies_path")
+        patch["youtube_cookies_path"] = candidate_cookie_path
+    if "jellyfin_server_url" in requested_keys:
+        patch["jellyfin_server_url"] = _validate_configured_server_url(
+            patch.get("jellyfin_server_url"),
+            label="Jellyfin server URL",
+        )
+        old_jf_url = str((existing or {}).get("jellyfin_server_url") or "").strip()
+        if old_jf_url and _server_origin(old_jf_url) != _server_origin(
+            patch["jellyfin_server_url"]
+        ):
+            if "jellyfin_api_key" not in requested_keys and (existing or {}).get(
+                "jellyfin_api_key"
+            ):
+                patch["jellyfin_api_key"] = ""
+                requested_keys.add("jellyfin_api_key")
+            if "jellyfin_password" not in requested_keys and (existing or {}).get(
+                "jellyfin_password"
+            ):
+                patch["jellyfin_password"] = ""
+                requested_keys.add("jellyfin_password")
     if "seerr_server_url" in requested_keys:
         try:
-            patch["seerr_server_url"] = normalize_server_url(patch.get("seerr_server_url"))
+            normalized_seerr_url = normalize_server_url(patch.get("seerr_server_url"))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+        if normalized_seerr_url:
+            _validate_configured_server_url(normalized_seerr_url, label="Seerr server URL")
+        patch["seerr_server_url"] = normalized_seerr_url
+        old_seerr_url = str((existing or {}).get("seerr_server_url") or "").strip()
+        if old_seerr_url and _server_origin(old_seerr_url) != _server_origin(normalized_seerr_url):
+            if "seerr_api_key" not in requested_keys and (existing or {}).get("seerr_api_key"):
+                patch["seerr_api_key"] = ""
+                requested_keys.add("seerr_api_key")
     candidate_seerr_enabled = bool(
         patch.get("seerr_enabled", (existing or {}).get("seerr_enabled", False))
     )

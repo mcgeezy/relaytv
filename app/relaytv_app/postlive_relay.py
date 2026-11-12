@@ -256,7 +256,7 @@ def _create_session_locked(page_url: str, ytdl_format: str, ytdlp_args=()) -> Re
             workdirs.append(workdir)
             ytdlp_procs.append(
                 subprocess.Popen(
-                    [*base, "-f", fmt, "--no-progress", "-o", "-", url],
+                    [*base, "-f", fmt, "--no-progress", "-o", "-", "--", url],
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

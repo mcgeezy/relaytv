@@ -21,6 +21,7 @@ import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from .. import (
+    api_auth,
     config,
     discovery_mdns,
     playback_service,
@@ -2009,6 +2010,12 @@ def _idle_html() -> str:
       return await __weatherInflight;
     }
 
+    function escIdleHtml(v){
+      return String(v ?? '').replace(/[&<>"']/g, (ch) => (
+        ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '"' ? '&quot;' : '&#39;'
+      ));
+    }
+
     function renderWeatherCard(heroCard, forecastCard, panel, settings, weatherData){
       const wset = settings?.weather || {};
       const unitSym = (wset.units === 'metric') ? '°C' : '°F';
@@ -2033,20 +2040,20 @@ def _idle_html() -> str:
       const winds = Array.isArray(daily.wind_speed_10m_max) ? daily.wind_speed_10m_max : [];
       const isDay = Number(cur.is_day) === 1;
       const icon = wxAssetImg(code, isDay, "wxCode");
-      const location = String(wset.location_name || '').trim();
+      const location = escIdleHtml(String(wset.location_name || '').trim());
       const windUnit = (wset.units === 'metric') ? 'km/h' : 'mph';
       const safeTemp = Number.isFinite(temp) ? `${Math.round(temp)}${unitSym}` : '--';
       const safeFeels = Number.isFinite(feelsLike) ? `${Math.round(feelsLike)}${unitSym}` : '--';
       const safeWind = Number.isFinite(windNow) ? `${Math.round(windNow)} ${windUnit}` : '--';
       const forecast = times.slice(0, days).map((t, i) => {
         const d = new Date(`${t}T00:00:00`);
-        const dow = Number.isFinite(d.getTime()) ? d.toLocaleDateString([], {weekday:'short'}) : '--';
+        const dow = escIdleHtml(Number.isFinite(d.getTime()) ? d.toLocaleDateString([], {weekday:'short'}) : '--');
         const lo = Number(mins[i]);
         const hi = Number(maxs[i]);
         const c = Number(codes[i]);
         const rain = Number(rainChance[i]);
         const wind = Number(winds[i]);
-        const condLabel = wxCodeToLabel(c);
+        const condLabel = escIdleHtml(wxCodeToLabel(c));
         const range = `${Number.isFinite(hi) ? Math.round(hi) : '--'}${unitSym}/${Number.isFinite(lo) ? Math.round(lo) : '--'}${unitSym}`;
         return `<div class="weatherDay"><div class="weatherDow">${dow}</div><div class="weatherCond">${wxAssetImg(c, true)}<div class="weatherLabel">${condLabel}</div></div><div class="weatherRange">${range}</div><div class="weatherDatapoint rain">Rain ${Number.isFinite(rain) ? Math.round(rain) + '%' : '--'}</div><div class="weatherDatapoint wind">Wind ${Number.isFinite(wind) ? Math.round(wind) + ' ' + windUnit : '--'}</div></div>`;
       }).join('');
@@ -2056,7 +2063,7 @@ def _idle_html() -> str:
             <div class="wxHero">${icon}</div>
             <div class="weatherCurrent">
               <div class="weatherTemp">${safeTemp}</div>
-              <div class="weatherSummary">${wxCodeToLabel(code)}</div>
+              <div class="weatherSummary">${escIdleHtml(wxCodeToLabel(code))}</div>
               <div class="cardDesc">${location || 'Open-Meteo local forecast'}</div>
               <div class="weatherMeta"><span><b>Feels</b> ${safeFeels}</span><span><b>Wind</b> ${safeWind}</span></div>
             </div>
@@ -2316,11 +2323,17 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     let _overlayReportedReason = '';
     const _overlayClientHeartbeatMs = 20000;
 
+    const _overlayClientToken = "__OVERLAY_CLIENT_TOKEN__";
+
     function _sendOverlayState(payload){
       try{
+        const headers = {'Content-Type':'application/json'};
+        if (_overlayClientToken) {
+          headers['X-RelayTV-Overlay-Token'] = _overlayClientToken;
+        }
         fetch('/x11/overlay/client_state', {
           method:'POST',
-          headers:{'Content-Type':'application/json'},
+          headers,
           body: JSON.stringify(payload)
         }).catch(()=>{});
       }catch(_e){}
@@ -2456,11 +2469,12 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         const ico = document.createElement('div'); ico.className='ico'; ico.textContent = iconMap[msg.icon] || iconMap[level] || '•';
         const txt = document.createElement('div'); txt.className='tTxt'; txt.textContent = msg.text || '';
         top.append(ico, txt); el.appendChild(top);
-        const linkUrl = msg.link_url;
-        const linkText = msg.link_text || msg.link_url;
-        if(linkUrl){
+        const rawLinkUrl = String(msg.link_url || '').trim();
+        const safeLinkUrl = /^(https?:\/\/|\/)/i.test(rawLinkUrl) && !/^\/\//.test(rawLinkUrl) ? rawLinkUrl : '';
+        const linkText = msg.link_text || rawLinkUrl;
+        if(safeLinkUrl){
           const a = document.createElement('a');
-          a.href = linkUrl;
+          a.href = safeLinkUrl;
           a.textContent = linkText;
           a.target = '_blank';
           a.rel = 'noopener noreferrer';
@@ -3067,6 +3081,7 @@ def x11_overlay_page():
     )
     html = html.replace("__OVERLAY_DEBUG_BG__", _overlay_debug_bg_css())
     html = html.replace("__OVERLAY_ALLOW_IMAGES__", "true" if _overlay_allow_images() else "false")
+    html = html.replace("__OVERLAY_CLIENT_TOKEN__", api_auth.overlay_client_token())
     html = html.replace("__IDLE_CACHE_BUSTER__", str(int(time.time() * 1000)))
     html = html.replace("__UI_ASSET_V__", _ui_asset_version())
     return HTMLResponse(

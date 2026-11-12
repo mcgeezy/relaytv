@@ -5404,6 +5404,7 @@ def test_postlive_relay_session_spawns_winning_strategy_pipeline(
             "--no-progress",
             "-o",
             "-",
+            "--",
             url,
         ]
         assert audio_proc.cmd[len(base) :] == [
@@ -5412,6 +5413,7 @@ def test_postlive_relay_session_spawns_winning_strategy_pipeline(
             "--no-progress",
             "-o",
             "-",
+            "--",
             url,
         ]
         # ffmpeg muxes both downloader stdouts (inherited via pass_fds) into

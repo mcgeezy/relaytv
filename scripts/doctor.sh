@@ -67,6 +67,43 @@ print_redacted_env() {
   done < "$file"
 }
 
+parse_dotenv_scalar() {
+  local raw="${1#*=}"
+  raw="${raw%$'\r'}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  local dq_pattern='^"(([^"\\]|\\.)*)"[[:space:]]*(#.*)?$'
+  if [[ "$raw" =~ $dq_pattern ]]; then
+    local inner="${BASH_REMATCH[1]}" out="" i=0 len="${#BASH_REMATCH[1]}" ch next
+    while (( i < len )); do
+      ch="${inner:i:1}"
+      if [[ "$ch" == "\\" ]] && (( i + 1 < len )); then
+        next="${inner:i+1:1}"
+        case "$next" in
+          \"|\\|\$|\`)
+            out+="$next"
+            (( i += 2 ))
+            continue
+            ;;
+        esac
+      fi
+      out+="$ch"
+      (( i += 1 ))
+    done
+    printf '%s' "$out"
+  elif [[ "$raw" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    if [[ "$raw" =~ ^#.*$ ]]; then
+      raw=""
+    elif [[ "$raw" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then
+      raw="${BASH_REMATCH[1]}"
+    else
+      raw="${raw%"${raw##*[![:space:]]}"}"
+    fi
+    printf '%s' "$raw"
+  fi
+}
+
 read_configured_port() {
   local port="${RELAYTV_PORT:-}" line matched_key raw
   if [[ -z "$port" && -f .env ]]; then
@@ -74,27 +111,17 @@ read_configured_port() {
       line="${line%$'\r'}"
       if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(RELAYTV_PORT|PORT)=(.*)$ ]]; then
         matched_key="${BASH_REMATCH[2]}"
-        raw="${BASH_REMATCH[3]}"
-        raw="${raw#"${raw%%[![:space:]]*}"}"
-        if [[ "$raw" =~ ^\"([^\"]*)\" ]]; then
-          raw="${BASH_REMATCH[1]}"
-        elif [[ "$raw" =~ ^\'([^\']*)\' ]]; then
-          raw="${BASH_REMATCH[1]}"
-        elif [[ "$raw" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then
-          raw="${BASH_REMATCH[1]}"
-        else
-          raw="${raw%"${raw##*[![:space:]]}"}"
-        fi
+        raw="$(parse_dotenv_scalar "$line")"
         if [[ "$matched_key" == "RELAYTV_PORT" || -z "$port" ]]; then
           port="$raw"
         fi
       fi
     done < .env
   fi
-  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
     port="8787"
   fi
-  printf "%s" "$port"
+  printf '%d\n' "$((10#$port))"
 }
 
 if [[ -f .env ]]; then
@@ -140,7 +167,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     echo "  ✓ docker compose config OK"
   else
     echo "  ✗ docker compose config FAILED"
-    docker compose config || true
+    docker compose config >/dev/null || true
   fi
 else
   echo "  (skipped)"
