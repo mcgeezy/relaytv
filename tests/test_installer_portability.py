@@ -1229,3 +1229,62 @@ def test_headless_mode_switches_preserve_vnc_tunables_and_disable_xvfb_on_releas
     assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in release_env
     assert "RELAYTV_HEADLESS_VNC_PORT=5901\n" in release_env
     assert "RELAYTV_HEADLESS_VNC_PASSWORD_FILE=/data/vnc.pass\n" in release_env
+
+
+@pytest.mark.parametrize(
+    "image_ref",
+    ["example/relaytv:with-xvfb", "ghcr.io/mcgeezy/relaytv@sha256:" + "a" * 64],
+)
+@pytest.mark.parametrize("remote_enabled", ["0", "1"])
+def test_custom_headless_image_preserves_remote_choice_on_rerun(
+    tmp_path: Path, image_ref: str, remote_enabled: str,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    first = _run_host_installer(
+        tmp_path,
+        args=["--mode", "headless"],
+        env_overrides={
+            "RELAYTV_IMAGE_REF": image_ref,
+            "RELAYTV_HEADLESS_REMOTE_ENABLED": remote_enabled,
+        },
+    )
+    assert first.returncode == 0, first.stderr
+    assert f"RELAYTV_HEADLESS_REMOTE_ENABLED={remote_enabled}\n" in (tmp_path / ".env").read_text()
+    shutil.rmtree(tmp_path / "scripts")
+
+    rerun = _run_host_installer(tmp_path, args=["--mode", "headless"])
+
+    assert rerun.returncode == 0, rerun.stderr
+    env_text = (tmp_path / ".env").read_text()
+    assert f"RELAYTV_IMAGE_REF={image_ref}\n" in env_text
+    assert f"RELAYTV_HEADLESS_REMOTE_ENABLED={remote_enabled}\n" in env_text
+    if remote_enabled == "1":
+        assert "RELAYTV_PLAYER_BACKEND=mpv\n" not in env_text
+        assert "RELAYTV_HEADLESS_VNC_ENABLED=0\n" not in env_text
+
+
+@pytest.mark.parametrize(
+    "image_tag",
+    ["latest", "main", "v0.12.2", "0.12.2", "0.12", "v0.12.2@sha256:" + "b" * 64],
+)
+def test_switch_to_standard_release_image_disables_saved_remote(
+    tmp_path: Path, image_tag: str,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    (tmp_path / ".env").write_text(
+        "RELAYTV_MODE=headless\n"
+        "RELAYTV_IMAGE_REF=example/relaytv:with-xvfb\n"
+        "RELAYTV_HEADLESS_REMOTE_ENABLED=1\n",
+        encoding="utf-8",
+    )
+
+    result = _run_host_installer(
+        tmp_path,
+        args=["--mode", "headless"],
+        env_overrides={"RELAYTV_IMAGE_REF": f"ghcr.io/mcgeezy/relaytv:{image_tag}"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    env_text = (tmp_path / ".env").read_text()
+    assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in env_text
+    assert "RELAYTV_PLAYER_BACKEND=mpv\n" in env_text

@@ -734,6 +734,20 @@ compose_supports_local_build() {
   grep -Eq '^[[:space:]]*build:[[:space:]]*$' "$compose_file"
 }
 
+uses_standard_release_image() {
+  # Official published tags are built without Xvfb (RELAYTV_INSTALL_HEADLESS=0).
+  # Custom images (including untagged digest references) may include it, so
+  # retain their saved remote choice.
+  local image="${IMAGE_REF_VAL:-ghcr.io/mcgeezy/relaytv:latest}"
+  local ref_without_digest="$image"
+  if [[ "$image" == *:*@sha256:* ]]; then
+    ref_without_digest="${image%%@*}"
+  fi
+  [[ "$ref_without_digest" = "ghcr.io/mcgeezy/relaytv:latest" ]] ||
+    [[ "$ref_without_digest" = "ghcr.io/mcgeezy/relaytv:main" ]] ||
+    [[ "$ref_without_digest" =~ ^ghcr\.io/mcgeezy/relaytv:v?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+}
+
 if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
   case "$MODE" in
     wayland) QT_QPA_PLATFORM_VAL="wayland" ;;
@@ -744,12 +758,12 @@ if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
 fi
 
 # The saved headless default must not follow a switch to a physical display,
-# or onto a release-only compose manifest whose published image omits Xvfb.
+# or onto a release-only compose manifest using a standard image without Xvfb.
 # Operators can still explicitly request remote helpers via env override.
 if [[ ! -v RELAYTV_HEADLESS_REMOTE_ENABLED ]]; then
   if [ "$MODE" != "headless" ] && [ "$(existing_env_value RELAYTV_MODE || true)" = "headless" ]; then
     HEADLESS_REMOTE_ENABLED_VAL="0"
-  elif [ "$MODE" = "headless" ] && ! compose_supports_local_build; then
+  elif [ "$MODE" = "headless" ] && ! compose_supports_local_build && uses_standard_release_image; then
     HEADLESS_REMOTE_ENABLED_VAL="0"
   fi
 fi
