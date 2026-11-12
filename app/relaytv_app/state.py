@@ -222,6 +222,7 @@ def _atomic_write_json(path: str, obj) -> bool:
         )
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2)
+        os.chmod(tmp, 0o600)
         os.replace(tmp, path)
         tmp = None
         return True
@@ -533,6 +534,8 @@ def _persistable_history_item(item: dict) -> dict | None:
     # Queue identity belongs to one queued instance, not to the media's
     # history/now-playing identity.
     out.pop(QUEUE_ITEM_ID_KEY, None)
+    # Preserve authenticated URLs for replay after restart. State files are
+    # private (0600); public payloads redact credentials at serialization time.
     ts = item.get("ts")
     if ts is not None:
         try:

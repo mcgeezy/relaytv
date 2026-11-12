@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import asyncio
+import html
 import mimetypes
 import os
 
@@ -62,7 +63,7 @@ def _resolve_static_asset(*parts: str) -> str | None:
 
 
 def _fallback_svg(label: str = "not available") -> str:
-    safe = (label or "not available").replace("<", "").replace(">", "")
+    safe = html.escape(str(label or "not available"), quote=True)
     return (
         "<?xml version='1.0' encoding='UTF-8'?>"
         "<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128' role='img' "
@@ -266,15 +267,15 @@ def _emby_svg(size: int = 128) -> str:
 @router.get("/thumbs/{filename}")
 async def thumbs(filename: str):
     # Security: only allow simple filenames like <hex>.jpg
-    if "/" in filename or "\\" in filename or ".." in filename:
+    if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or ".." in filename:
         return Response(status_code=400)
     path = os.path.join(THUMB_DIR, filename)
-    if os.path.exists(path):
+    if os.path.isfile(path):
         return FileResponse(path, media_type="image/jpeg", headers=_THUMBNAIL_HEADERS)
     # Try to materialize on-demand from the stored mapping (best effort).
     thumb_id = filename[:-4] if filename.lower().endswith(".jpg") else filename
     ok = await asyncio.to_thread(ensure_cached_sync, thumb_id)
-    if ok and os.path.exists(path):
+    if ok and os.path.isfile(path):
         return FileResponse(path, media_type="image/jpeg", headers=_THUMBNAIL_HEADERS)
     return Response(status_code=404)
 

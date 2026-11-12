@@ -9,7 +9,7 @@ import time
 import shutil
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from . import url_boundary
 
@@ -59,6 +59,7 @@ _Q: "queue.Queue[tuple[str, str]]" = queue.Queue(maxsize=THUMB_QUEUE_MAX)
 _STARTED = False
 _LOCK = threading.Lock()
 _PRUNE_LOCK = threading.Lock()
+_SRC_LOCK = threading.Lock()
 _SRC_BY_ID: dict[str, str] = {}
 _LAST_PRUNE_TS = 0.0
 # Ids queued or being fetched right now, and ids whose last fetch failed.
@@ -102,6 +103,7 @@ def reset_thumb_tracking_for_tests() -> None:
     with _INFLIGHT_LOCK:
         _INFLIGHT.clear()
         _FAILED_AT.clear()
+    with _SRC_LOCK:
         _SRC_BY_ID.clear()
 
 
@@ -127,29 +129,44 @@ def _touch(path: str) -> None:
 
 
 def _remember_src(tid: str, src: str) -> None:
-    _SRC_BY_ID[tid] = src
-    overflow = len(_SRC_BY_ID) - THUMB_SRC_MAP_MAX
-    if overflow > 0:
-        # dict preserves insertion order; trim oldest ids first.
-        for k in list(_SRC_BY_ID.keys())[:overflow]:
-            _SRC_BY_ID.pop(k, None)
+    with _SRC_LOCK:
+        _SRC_BY_ID[tid] = src
+        overflow = len(_SRC_BY_ID) - THUMB_SRC_MAP_MAX
+        if overflow > 0:
+            # dict preserves insertion order; trim oldest ids first.
+            for k in list(_SRC_BY_ID.keys())[:overflow]:
+                _SRC_BY_ID.pop(k, None)
 
 
 def _commit_file(src: str, dst: str) -> bool:
+    dst_dir = os.path.dirname(dst) or "."
     try:
-        os.replace(src, dst)
-        return os.path.exists(dst) and os.path.getsize(dst) > 0
-    except Exception:
+        os.makedirs(dst_dir, exist_ok=True)
+    except OSError:
         pass
     try:
-        shutil.copyfile(src, dst)
+        os.replace(src, dst)
+        return os.path.isfile(dst) and os.path.getsize(dst) > 0
+    except OSError:
+        pass
+    staging = ""
+    try:
+        fd, staging = tempfile.mkstemp(prefix=".thumb-", suffix=".tmp", dir=dst_dir)
+        os.close(fd)
+        shutil.copyfile(src, staging)
         try:
-            os.remove(src)
-        except Exception:
+            os.chmod(staging, 0o644)
+        except OSError:
             pass
-        return os.path.exists(dst) and os.path.getsize(dst) > 0
+        os.replace(staging, dst)
+        staging = ""
+        _safe_rm(src)
+        return os.path.isfile(dst) and os.path.getsize(dst) > 0
     except Exception:
         return False
+    finally:
+        if staging:
+            _safe_rm(staging)
 
 
 def _prune_thumb_dir(*, force: bool = False) -> None:
@@ -240,17 +257,15 @@ def _headers_for(url: str) -> dict[str, str]:
 
 
 def _is_allowed_thumb_url(url: object) -> bool:
-    parsed = url_boundary.parse_url(url)
-    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return False
-    return not url_boundary.is_forbidden_ip_literal(parsed.hostname)
+    return url_boundary.is_allowed_outbound_http_url(url)
 
 
 class _SafeThumbRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _is_allowed_thumb_url(newurl):
+        resolved = urljoin(req.full_url, str(newurl or ""))
+        if not _is_allowed_thumb_url(resolved):
             raise urllib.error.URLError("blocked thumbnail redirect target")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
 
 
 def _is_raster_image_file(path: str) -> bool:
@@ -275,7 +290,7 @@ def _download_to(url: str, fp: str) -> bool:
     if not _is_allowed_thumb_url(url):
         return False
     req = urllib.request.Request(url, headers=_headers_for(url))
-    opener = urllib.request.build_opener(_SafeThumbRedirectHandler)
+    opener = url_boundary.safe_http_opener(_SafeThumbRedirectHandler)
     with opener.open(req, timeout=15) as r:
         total = 0
         with open(fp, "wb") as f:
@@ -291,8 +306,11 @@ def _download_to(url: str, fp: str) -> bool:
 
 
 def _normalize_to_jpg(src_fp: str, dst_fp: str) -> bool:
+    if not _is_raster_image_file(src_fp):
+        return False
     # Use ffmpeg to normalize any input image type to a consistent jpg size.
     # -vf scale=WIDTH:-2 preserves aspect ratio and ensures even height.
+    # -frames:v 1 handles multi-frame GIF/WebP inputs cleanly into a single JPEG.
     w = max(64, int(THUMB_WIDTH))
     q = max(2, min(31, int(THUMB_JPEG_Q)))
     cmd = [
@@ -303,14 +321,20 @@ def _normalize_to_jpg(src_fp: str, dst_fp: str) -> bool:
         "-y",
         "-i",
         src_fp,
+        "-frames:v",
+        "1",
         "-vf",
         f"scale={w}:-2",
         "-q:v",
         str(q),
         dst_fp,
     ]
-    p = subprocess.run(cmd, capture_output=True)
-    return p.returncode == 0 and os.path.exists(dst_fp) and os.path.getsize(dst_fp) > 0
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        _safe_rm(dst_fp)
+        return False
+    return p.returncode == 0 and os.path.isfile(dst_fp) and os.path.getsize(dst_fp) > 0
 
 
 def _worker() -> None:
@@ -435,7 +459,8 @@ def sync_local_thumbnail(item: dict) -> dict:
 
 def get_thumb_src(thumb_id: str) -> str | None:
     """Return the original source URL for a cached thumbnail id, if known."""
-    return _SRC_BY_ID.get(thumb_id)
+    with _SRC_LOCK:
+        return _SRC_BY_ID.get(thumb_id)
 
 
 def thumb_path_for_id(thumb_id: str) -> str:
@@ -482,14 +507,16 @@ def ensure_cached_sync(thumb_id: str, timeout_s: float = 3.0) -> bool:
                 return False
             out_fp = os.path.join(td, "out.jpg")
             if _normalize_to_jpg(raw_fp, out_fp):
-                _commit_file(out_fp, p)
+                committed = _commit_file(out_fp, p)
             elif _is_raster_image_file(raw_fp):
-                _commit_file(raw_fp, p)
+                committed = _commit_file(raw_fp, p)
             else:
+                return False
+            if not committed:
                 return False
         _touch(p)
         _prune_thumb_dir()
-        failed = not (os.path.exists(p) and os.path.getsize(p) > 0)
+        failed = not (os.path.isfile(p) and os.path.getsize(p) > 0)
         return not failed
     except Exception:
         return False

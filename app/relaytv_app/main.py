@@ -52,9 +52,12 @@ def create_app(*, testing: bool = False) -> FastAPI:
             s = {}
         if not isinstance(s, dict):
             return
-        runtime_config.set_value(
-            "RELAYTV_YTDLP_COOKIES", str(s.get("youtube_cookies_path") or "").strip()
-        )
+        from .routes.settings import is_allowed_youtube_cookies_path
+
+        cookie_path = str(s.get("youtube_cookies_path") or "").strip()
+        if not is_allowed_youtube_cookies_path(cookie_path):
+            cookie_path = ""
+        runtime_config.set_value("RELAYTV_YTDLP_COOKIES", cookie_path)
         runtime_config.set_value(
             "RELAYTV_YTDLP_AUTO_UPDATE", "1" if bool(s.get("ytdlp_auto_update_enabled")) else "0"
         )
@@ -186,15 +189,28 @@ def create_app(*, testing: bool = False) -> FastAPI:
             plex_service.stop_all_transcodes()
 
     app = FastAPI(lifespan=_lifespan)
+    app.state.testing = bool(testing)
 
     # Registered before the slow-request logger so the logger middleware sits
     # outermost and rejected writes still show up in request logging.
     @app.middleware("http")
     async def _api_token_guard(request: Request, call_next):
-        if api_auth.cross_site_mutating_get(
+        auth_header = request.headers.get("authorization")
+        client_host = request.client.host if request.client else ""
+        has_valid_token = bool(
+            api_auth.configured_api_token()
+            and api_auth.bearer_token_from_header(auth_header)
+            and api_auth.write_request_allowed(
+                request.method,
+                auth_header,
+                path=request.url.path,
+            )
+        )
+        if not has_valid_token and api_auth.cross_site_write_request(
             request.method,
             request.url.path,
             sec_fetch_site=request.headers.get("sec-fetch-site"),
+            origin=request.headers.get("origin"),
             referer=request.headers.get("referer"),
             host=request.headers.get("host"),
         ):
@@ -204,8 +220,11 @@ def create_app(*, testing: bool = False) -> FastAPI:
             )
         if api_auth.write_request_allowed(
             request.method,
-            request.headers.get("authorization"),
+            auth_header,
             path=request.url.path,
+            overlay_token=request.headers.get(api_auth.OVERLAY_TOKEN_HEADER),
+            client_host=client_host,
+            testing=bool(getattr(app.state, "testing", False)),
         ):
             return await call_next(request)
         return JSONResponse(

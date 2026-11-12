@@ -26,13 +26,16 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
-from . import device_identity, discovery_mdns, public_media, state, upload_store
+from . import device_identity, discovery_mdns, public_media, state, upload_store, url_boundary
 from .config import env_str
 from .debug import get_logger
+
+_ORIG_URLOPEN = urllib.request.urlopen
 
 
 PEERS_FILE = "peers.json"
@@ -153,11 +156,21 @@ def normalize_base_url(value: object) -> str:
     # send; peers authenticate with a bearer token instead.
     if parsed.username or parsed.password:
         raise PeerError("device address must not contain credentials")
+    if url_boundary.is_forbidden_ip_literal(host):
+        raise PeerError("invalid_peer_url: forbidden device address")
 
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc = f"{netloc}:{port}"
     return urlunsplit((scheme, netloc, (parsed.path or "").rstrip("/"), "", ""))
+
+
+def _url_origin(value: object) -> tuple[str, str, int]:
+    parsed = url_boundary.parse_url(value)
+    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return ("", "", 0)
+    default_port = 443 if parsed.scheme == "https" else 80
+    return (parsed.scheme, parsed.hostname, int(parsed.port or default_port))
 
 
 def _clean_name(value: object, *, fallback: str = "") -> str:
@@ -330,7 +343,11 @@ def update_peer(
         if name is not None:
             target["name"] = _clean_name(name, fallback=str(target.get("name") or "RelayTV"))
         if base_url is not None:
-            target["base_url"] = normalize_base_url(base_url)
+            prev_origin = _url_origin(target.get("base_url"))
+            next_url = normalize_base_url(base_url)
+            target["base_url"] = next_url
+            if token is None and _url_origin(next_url) != prev_origin:
+                target["token"] = ""
         if token is not None:
             # An empty string is a deliberate "clear the token" instruction.
             target["token"] = str(token or "").strip()
@@ -396,6 +413,41 @@ def _build_request(url: str, token: str, payload: dict | None) -> urllib.request
     return urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
 
 
+class _SameOriginPeerRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, expected_origin: tuple[str, str, int]) -> None:
+        super().__init__()
+        self._expected_origin = expected_origin
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        resolved = urllib.parse.urljoin(req.full_url, str(newurl or ""))
+        parsed = url_boundary.parse_url(resolved)
+        if (
+            parsed is None
+            or parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+            or _url_origin(resolved) != self._expected_origin
+        ):
+            raise urllib.error.HTTPError(
+                resolved, code, "cross-origin peer redirect blocked", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
+
+
+def _open_peer_request(
+    request: urllib.request.Request,
+    *,
+    expected_origin: tuple[str, str, int],
+    timeout: float,
+):
+    if urllib.request.urlopen is not _ORIG_URLOPEN:
+        return urllib.request.urlopen(request, timeout=timeout)
+    opener = urllib.request.build_opener(_SameOriginPeerRedirectHandler(expected_origin))
+    return opener.open(request, timeout=timeout)
+
+
 def _request(
     base_url: str,
     path: str,
@@ -404,10 +456,14 @@ def _request(
     payload: dict | None = None,
     timeout: float = PROBE_TIMEOUT_SEC,
 ) -> dict:
-    url = f"{base_url}{path}"
+    normalized_base = normalize_base_url(base_url)
+    expected_origin = _url_origin(normalized_base)
+    url = f"{normalized_base}{path}"
     request = _build_request(url, token, payload)
     try:
-        with urllib.request.urlopen(request, timeout=float(timeout)) as response:
+        with _open_peer_request(
+            request, expected_origin=expected_origin, timeout=float(timeout)
+        ) as response:
             body = response.read(1_000_000)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):

@@ -441,7 +441,8 @@ function _plexRenderDetail(item){
   detail.replaceChildren();
   const hero = document.createElement('div');
   hero.className = 'plexDetailHero';
-  if (item.backdrop_url || item.poster_url) hero.style.backgroundImage = `url("${String(item.backdrop_url || item.poster_url)}")`;
+  const heroBgUrl = String(item.backdrop_url || item.poster_url || '').replace(/["')\\\r\n]/g, '').trim();
+  if (heroBgUrl) hero.style.backgroundImage = `url("${heroBgUrl}")`;
   const copy = document.createElement('div');
   copy.className = 'plexDetailCopy';
   const close = document.createElement('button');

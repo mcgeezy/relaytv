@@ -1515,13 +1515,90 @@ def _stream_language(value: object) -> str:
     return str(value or "").strip().lower().replace("_", "-")
 
 
+def _media_source_entry_id(entry: dict[str, object]) -> str:
+    return str(
+        entry.get("Id")
+        or entry.get("id")
+        or entry.get("MediaSourceId")
+        or entry.get("mediaSourceId")
+        or ""
+    ).strip()
+
+
+def _select_media_source_entry(
+    data: dict[str, object], *, media_source_id: str = ""
+) -> dict[str, object] | None:
+    raw_sources = data.get("MediaSources")
+    if not isinstance(raw_sources, list):
+        return None
+    sources = [ms for ms in raw_sources if isinstance(ms, dict)]
+    if not sources:
+        return None
+    wanted = str(media_source_id or "").strip()
+    if wanted:
+        for ms in sources:
+            if _media_source_entry_id(ms) == wanted:
+                return ms
+    return sources[0]
+
+
+def _extract_video_stream_fields(streams: object) -> dict[str, object]:
+    video_codec = ""
+    video_profile = ""
+    video_width: int | None = None
+    video_height: int | None = None
+    video_bit_depth: int | None = None
+    video_fps: float | None = None
+    video_bitrate: int | None = None
+    if isinstance(streams, list):
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            if str(stream.get("Type") or "").strip().lower() != "video":
+                continue
+            video_codec = str(stream.get("Codec") or "").strip().lower()
+            video_profile = str(stream.get("Profile") or "").strip()
+            video_width = _safe_int(stream.get("Width"))
+            video_height = _safe_int(stream.get("Height"))
+            video_bit_depth = _safe_int(stream.get("BitDepth"))
+            try:
+                rf = stream.get("RealFrameRate")
+                if rf is not None:
+                    video_fps = float(rf)
+            except Exception:
+                video_fps = None
+            video_bitrate = _safe_int(stream.get("BitRate"))
+            break
+    return {
+        "video_codec": video_codec,
+        "video_profile": video_profile,
+        "video_width": video_width,
+        "video_height": video_height,
+        "video_bit_depth": video_bit_depth,
+        "video_fps": video_fps,
+        "video_bitrate": video_bitrate,
+    }
+
+
 def _extract_stream_languages(
     data: dict[str, object],
+    *,
+    media_source_id: str = "",
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], str, str]:
-    raw = data.get("MediaStreams")
-    streams = raw if isinstance(raw, list) else []
-    default_audio_idx = _safe_int(data.get("DefaultAudioStreamIndex"))
-    default_sub_idx = _safe_int(data.get("DefaultSubtitleStreamIndex"))
+    selected_source = _select_media_source_entry(data, media_source_id=media_source_id)
+    if isinstance(selected_source, dict) and isinstance(selected_source.get("MediaStreams"), list):
+        streams = selected_source["MediaStreams"]
+        default_audio_idx = _safe_int(selected_source.get("DefaultAudioStreamIndex"))
+        if default_audio_idx is None:
+            default_audio_idx = _safe_int(data.get("DefaultAudioStreamIndex"))
+        default_sub_idx = _safe_int(selected_source.get("DefaultSubtitleStreamIndex"))
+        if default_sub_idx is None:
+            default_sub_idx = _safe_int(data.get("DefaultSubtitleStreamIndex"))
+    else:
+        raw = data.get("MediaStreams")
+        streams = raw if isinstance(raw, list) else []
+        default_audio_idx = _safe_int(data.get("DefaultAudioStreamIndex"))
+        default_sub_idx = _safe_int(data.get("DefaultSubtitleStreamIndex"))
 
     audio_streams: list[dict[str, object]] = []
     subtitle_streams: list[dict[str, object]] = []
@@ -1534,12 +1611,15 @@ def _extract_stream_languages(
         stype = str(s.get("Type") or "").strip().lower()
         if stype not in ("audio", "subtitle"):
             continue
+        codec = str(s.get("Codec") or "").strip().lower()
         entry: dict[str, object] = {
             "index": idx,
             "language": _stream_language(s.get("Language")),
             "display": str(s.get("DisplayTitle") or s.get("Title") or "").strip(),
             "is_default": bool(s.get("IsDefault")),
         }
+        if codec:
+            entry["codec"] = codec
         if stype == "audio":
             if default_audio_idx is not None and idx == default_audio_idx:
                 entry["is_default"] = True
@@ -1730,37 +1810,43 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
             progress_percent = max(0.0, min(100.0, (resume_pos / runtime_sec) * 100.0))
     except Exception:
         progress_percent = 0.0
+    selected_source = _select_media_source_entry(data)
     audio_streams, subtitle_streams, audio_language, subtitle_language = _extract_stream_languages(
         data
     )
-    video_codec = ""
-    video_profile = ""
-    video_width: int | None = None
-    video_height: int | None = None
-    video_bit_depth: int | None = None
-    video_fps: float | None = None
-    video_bitrate: int | None = None
-    media_streams = data.get("MediaStreams")
-    if isinstance(media_streams, list):
-        for stream in media_streams:
-            if not isinstance(stream, dict):
-                continue
-            if str(stream.get("Type") or "").strip().lower() != "video":
-                continue
-            video_codec = str(stream.get("Codec") or "").strip().lower()
-            video_profile = str(stream.get("Profile") or "").strip()
-            video_width = _safe_int(stream.get("Width"))
-            video_height = _safe_int(stream.get("Height"))
-            video_bit_depth = _safe_int(stream.get("BitDepth"))
-            try:
-                rf = stream.get("RealFrameRate")
-                if rf is not None:
-                    video_fps = float(rf)
-            except Exception:
-                video_fps = None
-            video_bitrate = _safe_int(stream.get("BitRate"))
-            break
+    active_streams = (
+        selected_source.get("MediaStreams")
+        if isinstance(selected_source, dict)
+        and isinstance(selected_source.get("MediaStreams"), list)
+        else data.get("MediaStreams")
+    )
+    video_fields = _extract_video_stream_fields(active_streams)
     media_source_id = _extract_media_source_id(data)
+    raw_media_sources = data.get("MediaSources")
+    normalized_media_sources: list[dict[str, object]] = []
+    if isinstance(raw_media_sources, list):
+        valid_sources = [ms for ms in raw_media_sources if isinstance(ms, dict)]
+        if len(valid_sources) > 1:
+            for idx_ms, ms in enumerate(valid_sources):
+                ms_id = _media_source_entry_id(ms) or f"source_{idx_ms}"
+                ms_audio, ms_subs, ms_alang, ms_slang = _extract_stream_languages(
+                    {"MediaSources": [ms], **{k: v for k, v in data.items() if k != "MediaSources"}},
+                    media_source_id=ms_id,
+                )
+                ms_video = _extract_video_stream_fields(ms.get("MediaStreams"))
+                normalized_media_sources.append(
+                    {
+                        "id": ms_id,
+                        "media_source_id": ms_id,
+                        "name": str(ms.get("Name") or f"Version {idx_ms + 1}").strip(),
+                        "container": str(ms.get("Container") or "").strip(),
+                        "audio_streams": ms_audio,
+                        "subtitle_streams": ms_subs,
+                        "audio_language": ms_alang,
+                        "subtitle_language": ms_slang,
+                        **ms_video,
+                    }
+                )
 
     out = {
         "item_id": iid,
@@ -1786,18 +1872,14 @@ def _normalize_catalog_item(data: dict[str, object], *, base: str, token: str) -
         "subtitle_streams": subtitle_streams,
         "audio_language": audio_language,
         "subtitle_language": subtitle_language,
-        "video_codec": video_codec,
-        "video_profile": video_profile,
-        "video_width": video_width,
-        "video_height": video_height,
-        "video_bit_depth": video_bit_depth,
-        "video_fps": video_fps,
-        "video_bitrate": video_bitrate,
+        **video_fields,
         "tmdb_id": _tmdb_provider_id(data),
         "library_name": _library_label_from_path(
             data.get("Path"), title=title, series_name=series_name
         ),
     }
+    if normalized_media_sources:
+        out["media_sources"] = normalized_media_sources
     _attach_thumb(out)
     if out.get("thumbnail_local"):
         out["poster_local"] = out["thumbnail_local"]
@@ -1830,8 +1912,47 @@ def _catalog_base_token_user() -> tuple[str, str, str]:
     return context.server_url, context.catalog_token, context.catalog_user_id
 
 
+def _project_item_media_source(
+    item: dict[str, object], *, media_source_id: str = ""
+) -> dict[str, object]:
+    wanted = str(media_source_id or "").strip()
+    if not wanted or not isinstance(item, dict):
+        return item
+    media_sources = item.get("media_sources")
+    if not isinstance(media_sources, list):
+        return item
+    for ms in media_sources:
+        if not isinstance(ms, dict):
+            continue
+        ms_id = str(ms.get("media_source_id") or ms.get("id") or "").strip()
+        if ms_id == wanted:
+            projected = dict(item)
+            projected["media_source_id"] = ms_id
+            for key in (
+                "audio_streams",
+                "subtitle_streams",
+                "audio_language",
+                "subtitle_language",
+                "video_codec",
+                "video_profile",
+                "video_width",
+                "video_height",
+                "video_bit_depth",
+                "video_fps",
+                "video_bitrate",
+            ):
+                if key in ms:
+                    projected[key] = ms[key]
+            return projected
+    return item
+
+
 def get_item_detail(
-    item_id: str, *, refresh: bool = False, user_id_override: str = ""
+    item_id: str,
+    *,
+    refresh: bool = False,
+    user_id_override: str = "",
+    media_source_id: str = "",
 ) -> dict[str, object]:
     iid = str(item_id or "").strip()
     base, token, user_id = _catalog_base_token_user()
@@ -1843,11 +1964,13 @@ def get_item_detail(
         cached = _catalog_cache_get(cache_key)
         if isinstance(cached, dict):
             _mark_catalog_ok()
-            return _attach_thumb(dict(cached))
+            return _attach_thumb(
+                _project_item_media_source(dict(cached), media_source_id=media_source_id)
+            )
     quoted = _urlparse.quote(iid)
     fields = (
         "Overview,ImageTags,BackdropImageTags,ProductionYear,PremiereDate,RunTimeTicks,UserData,SeriesId,"
-        "SeriesName,ParentIndexNumber,IndexNumber,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex,ProviderIds"
+        "SeriesName,ParentIndexNumber,IndexNumber,MediaSources,MediaStreams,DefaultAudioStreamIndex,DefaultSubtitleStreamIndex,ProviderIds"
     )
     candidates: list[str] = []
     if user_id:
@@ -1869,7 +1992,9 @@ def get_item_detail(
                 if str(item.get("item_id") or "").strip():
                     _catalog_cache_set(cache_key, dict(item), ttl_sec=_catalog_ttl_sec("detail"))
                     _mark_catalog_ok()
-                    return _attach_thumb(item)
+                    return _attach_thumb(
+                        _project_item_media_source(dict(item), media_source_id=media_source_id)
+                    )
         except Exception as e:
             _mark_catalog_error(str(e))
             continue
@@ -3073,8 +3198,14 @@ def bind_catalog_scope(fn):
     return _bound
 
 
-def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> object:
-    """Run a socket-sourced command through the registered ingress.
+def dispatch_command(
+    action: str,
+    payload: dict[str, object],
+    *,
+    guard=None,
+    cast_scope: bool = True,
+) -> object:
+    """Run a socket-sourced or service-dispatched command through the registered ingress.
 
     ``guard`` answers "is the connection that sent this still the live one?".
     It is re-checked at the point of effect because a command already running
@@ -3083,8 +3214,10 @@ def dispatch_command(action: str, payload: dict[str, object], *, guard=None) -> 
     sink = _COMMAND_SINK
     if sink is None:
         raise RuntimeError("no jellyfin command sink registered")
-    with cast_catalog_scope():
-        return sink(action, payload, guard=guard)
+    if cast_scope:
+        with cast_catalog_scope():
+            return sink(action, payload, guard=guard)
+    return sink(action, payload, guard=guard)
 
 
 def command_sink_registered() -> bool:

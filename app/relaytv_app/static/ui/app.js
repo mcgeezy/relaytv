@@ -1040,12 +1040,17 @@ function thumbUrl(item){
   return '';
 }
 
+function _safeCssUrlValue(rawUrl){
+  return String(rawUrl || '').replace(/["')\\\r\n]/g, '').trim();
+}
+
 function setBg(el, imgUrl){
   if (!el) return;
-  if (imgUrl) {
+  const safeUrl = _safeCssUrlValue(imgUrl);
+  if (safeUrl) {
     el.classList.add('hasBg');
     // Overlay gradient keeps text readable over busy thumbs
-    el.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,.45) 0%, rgba(0,0,0,.30) 40%, rgba(0,0,0,.10) 75%, rgba(0,0,0,.05) 100%), url('${imgUrl}')`;
+    el.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,.45) 0%, rgba(0,0,0,.30) 40%, rgba(0,0,0,.10) 75%, rgba(0,0,0,.05) 100%), url('${safeUrl}')`;
   } else {
     el.classList.remove('hasBg');
     el.style.backgroundImage = '';
@@ -1684,7 +1689,7 @@ function renderStatus(st) {
       if (titleEl) titleEl.textContent = nextItem.title || nextItem.url || '';
       const thumbEl = document.getElementById('upNextThumb');
       if (thumbEl) {
-        const tu = thumbUrl(nextItem);
+        const tu = _safeCssUrlValue(thumbUrl(nextItem));
         thumbEl.style.backgroundImage = tu ? `url('${tu}')` : '';
         thumbEl.classList.toggle('hasThumb', !!tu);
       }
@@ -1846,13 +1851,32 @@ function _applyUiQueueEvent(payload){
   }
 }
 
+var __settingsDirty = false;
+
+function _isSettingsControlFocused(settingsBd){
+  const bd = settingsBd || (typeof document !== 'undefined' ? document.getElementById('settingsBackdrop') : null);
+  const active = (typeof document !== 'undefined' && document) ? document.activeElement : null;
+  if (!bd || !active || active === bd) return false;
+  const tag = String(active.tagName || '').toUpperCase();
+  const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!active.isContentEditable;
+  if (!isEditable) return false;
+  if (typeof bd.contains === 'function') return !!bd.contains(active);
+  if (typeof active.closest === 'function') return !!active.closest('#settingsBackdrop');
+  let cur = active;
+  while (cur) {
+    if (cur === bd) return true;
+    cur = cur.parentNode || cur.parentElement || null;
+  }
+  return /^set(?:tings|[A-Z])/.test(String(active.id || ''));
+}
+
 function _applyUiJellyfinEvent(payload){
   if (!payload || typeof payload !== 'object') return;
   _uiEventMarkAlive();
 
   const settingsBd = document.getElementById('settingsBackdrop');
   const settingsOpen = !!(settingsBd && !settingsBd.classList.contains('hidden'));
-  if (payload.refresh_settings && settingsOpen) {
+  if (payload.refresh_settings && settingsOpen && !__settingsDirty && !_isSettingsControlFocused(settingsBd)) {
     loadSettingsUi().catch(console.warn);
   }
 
@@ -2546,11 +2570,17 @@ function _renderNowLanguageOptions(optionsBody){
     const suffix = [];
     if (row && row.is_default) suffix.push('default');
     if (row && row.is_current) suffix.push('active');
-    btn.innerHTML = `
-      <span class="langOptIdx">#${idx}</span>
-      <span>${lang ? lang.toUpperCase() : 'Unknown language'}${display ? ` — ${display}` : ''}</span>
-      <span class="langOptMeta">${suffix.join(' · ')}</span>
-    `;
+    const idxSpan = document.createElement('span');
+    idxSpan.className = 'langOptIdx';
+    idxSpan.textContent = `#${idx}`;
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = `${lang ? lang.toUpperCase() : 'Unknown language'}${display ? ` — ${display}` : ''}`;
+    const metaSpan = document.createElement('span');
+    metaSpan.className = 'langOptMeta';
+    metaSpan.textContent = suffix.join(' · ');
+    btn.appendChild(idxSpan);
+    btn.appendChild(labelSpan);
+    btn.appendChild(metaSpan);
     btn.disabled = !!(row && row.is_current);
     btn.onclick = async () => {
       const oldText = btn.textContent || '';
@@ -2690,11 +2720,17 @@ function _renderNowSubtitleOptions(optionsBody){
     const suffix = [];
     if (row && row.is_default) suffix.push('default');
     if (row && row.is_current) suffix.push('active');
-    btn.innerHTML = `
-      <span class="langOptIdx">${isOff ? 'OFF' : `#${idx}`}</span>
-      <span>${isOff ? 'Off' : (lang ? lang.toUpperCase() : 'Unknown language')}${display && !isOff ? ` — ${display}` : ''}</span>
-      <span class="langOptMeta">${suffix.join(' · ')}</span>
-    `;
+    const idxSpan = document.createElement('span');
+    idxSpan.className = 'langOptIdx';
+    idxSpan.textContent = isOff ? 'OFF' : `#${idx}`;
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = `${isOff ? 'Off' : (lang ? lang.toUpperCase() : 'Unknown language')}${display && !isOff ? ` — ${display}` : ''}`;
+    const metaSpan = document.createElement('span');
+    metaSpan.className = 'langOptMeta';
+    metaSpan.textContent = suffix.join(' · ');
+    btn.appendChild(idxSpan);
+    btn.appendChild(labelSpan);
+    btn.appendChild(metaSpan);
     btn.disabled = !!(row && row.is_current);
     btn.onclick = async () => {
       const oldText = btn.textContent || '';
@@ -2777,6 +2813,7 @@ function openSettings(){
   closeHeaderMenu();
   const bd = document.getElementById('settingsBackdrop');
   if (!bd || !bd.classList.contains('hidden')) return;
+  __settingsDirty = false;
   bd.classList.remove('hidden');
   _uiPushLayer();
   loadSettingsUi().catch(console.warn);
@@ -2789,6 +2826,7 @@ function closeSettings(opts){
     try { history.back(); } catch (_e) {}
     return;
   }
+  __settingsDirty = false;
   bd.classList.add('hidden');
 }
 
@@ -3037,6 +3075,7 @@ function _renderPlexSettings(cur, plexStatus, plexServers){
 
 let __browseServersCache = [];
 let __activeSettingsTab = 'device';
+var __settingsDirty = false;
 
 function _selectSettingsTab(tabName){
   const tab = String(tabName || 'device').trim().toLowerCase();
@@ -3616,6 +3655,7 @@ async function loadSettingsUi(){
   setWeatherLocationMeta(weatherLocationSummary(WEATHER_LOCATION_STATE.location_name, WEATHER_LOCATION_STATE.latitude, WEATHER_LOCATION_STATE.longitude));
 
   renderIdlePanelSettings(cur.idle_panels || {});
+  __settingsDirty = false;
 }
 
 function bindSettingsUi(){
@@ -3628,7 +3668,19 @@ function bindSettingsUi(){
   if (btn) btn.onclick = openSettings;
   if (closeBtn) closeBtn.onclick = closeSettings;
   if (cancelBtn) cancelBtn.onclick = closeSettings;
-  if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeSettings(); });
+  if (bd) {
+    bd.addEventListener('click', (e) => { if (e.target === bd) closeSettings(); });
+    const markSettingsDirty = (e) => {
+      const t = e && e.target;
+      if (t === bd) return;
+      const tag = String((t && t.tagName) || '').toUpperCase();
+      if (!tag || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!(t && t.isContentEditable)) {
+        __settingsDirty = true;
+      }
+    };
+    bd.addEventListener('input', markSettingsDirty);
+    bd.addEventListener('change', markSettingsDirty);
+  }
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       const open = bd && !bd.classList.contains('hidden');
@@ -4310,6 +4362,7 @@ function bindSettingsUi(){
       alert(_plexErrorMessage(settingsBody, r.status));
       return;
     }
+    __settingsDirty = false;
     // Server-type detection runs during apply; rebrand right away instead of
     // waiting for the next status poll.
     try {

@@ -126,7 +126,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_HISTORY_FILE` | `state.py` | - | static env |
 | `RELAYTV_HISTORY_LIMIT` | `state.py` | - | static env |
 | `RELAYTV_HOST_PROFILE` | `container_entrypoint.py` | - | pre-app entrypoint |
-| `RELAYTV_HOST_SESSION_TYPE` | `player.py`<br>`qt_shell_app.py`<br>`routes/__init__.py` | - | child process input |
+| `RELAYTV_HOST_SESSION_TYPE` | `container_entrypoint.py`<br>`player.py`<br>`qt_shell_app.py`<br>`routes/__init__.py` | - | child process input, entrypoint input |
 | `RELAYTV_IDLE_BROWSER` | `player.py` | - | static env |
 | `RELAYTV_IDLE_DASHBOARD_ENABLED` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py`<br>`x11_overlay.py` | `routes/settings.py` | settings bus |
 | `RELAYTV_IDLE_NOTIFICATIONS_ENABLED` | `config.py`<br>`player.py`<br>`routes/settings.py`<br>`state.py`<br>`x11_overlay.py` | `routes/settings.py` | settings bus |
@@ -348,7 +348,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_VIDEO_PROFILE_TTL_SEC` | `video_profile.py` | - | static env |
 | `RELAYTV_X11_OVERLAY` | `player.py`<br>`routes/__init__.py`<br>`x11_overlay.py` | - | static env |
 | `RELAYTV_YOUTUBE_PROGRESSIVE_FIRST` | `ytdlp_format_policy.py` | - | static env |
-| `RELAYTV_YTDLP_AUTO_UPDATE` | `container_entrypoint.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_update.py` | `main.py`<br>`routes/settings.py` | settings bus, entrypoint input |
+| `RELAYTV_YTDLP_AUTO_UPDATE` | `config.py`<br>`container_entrypoint.py`<br>`main.py`<br>`routes/settings.py`<br>`state.py`<br>`ytdlp_update.py` | `main.py`<br>`routes/settings.py` | settings bus, entrypoint input |
 | `RELAYTV_YTDLP_AUTO_UPDATE_INTERVAL_HOURS` | `container_entrypoint.py` | - | pre-app entrypoint |
 | `RELAYTV_YTDLP_AUTO_UPDATE_POLL_SEC` | `ytdlp_update.py` | - | static env |
 | `RELAYTV_YTDLP_AUTO_UPDATE_STATE_FILE` | `container_entrypoint.py` | - | pre-app entrypoint |

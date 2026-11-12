@@ -17,7 +17,7 @@ import uuid
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-from .. import config, playback_service, state, video_profile
+from .. import config, playback_service, public_media, state, video_profile
 from ..debug import get_logger
 from . import plex_auth
 from .plex_client import PlexBinaryResponse, PlexError, PlexStreamResponse
@@ -589,6 +589,12 @@ class PlexCatalogService:
                         "The Plex transcoded stream has expired",
                         status_code=404,
                     )
+                if registered.opened:
+                    raise PlexError(
+                        "plex_stream_expired",
+                        "The Plex transcoded stream has already been opened",
+                        status_code=404,
+                    )
                 # Mark before the request goes out: from here the reference is
                 # in use and the sweep must leave it alone however long the
                 # stream runs.
@@ -803,10 +809,20 @@ class PlexCatalogService:
         )
         if action == "play_next":
             queue_length, _snapshot = playback_service.queue_item_next(item)
-            return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
+            return {
+                "ok": True,
+                "action": action,
+                "queue_length": queue_length,
+                "item": public_media.public_media_item(item),
+            }
         if action == "play_last":
             queue_length, _snapshot = playback_service.queue_item(item)
-            return {"ok": True, "action": action, "queue_length": queue_length, "item": item}
+            return {
+                "ok": True,
+                "action": action,
+                "queue_length": queue_length,
+                "item": public_media.public_media_item(item),
+            }
         start_pos = None
         if action == "resume":
             resume_pos = resume_pos if resume_pos is not None else item.get("resume_pos")
@@ -819,7 +835,7 @@ class PlexCatalogService:
             mode="plex_play",
             start_pos=start_pos,
         )
-        return {"ok": True, "action": action, "now_playing": now}
+        return {"ok": True, "action": action, "now_playing": public_media.public_media_item(now)}
 
     def report_timeline(
         self,

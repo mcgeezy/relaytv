@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from .. import player, playback_service, state
+from .. import player, playback_service, resolver, state
 from .queue import maybe_queue_playlist
 
 
@@ -510,12 +510,22 @@ def play_now(req: PlayNowReq):
         if req.history_id:
             item["history_id"] = req.history_id
         if req.resolved_stream:
-            item["_resolved_source_url"] = (req.resolved_source_url or req.url or "").strip()
-            item["_resolved_stream"] = req.resolved_stream.strip()
-            if req.resolved_audio:
-                item["_resolved_audio"] = req.resolved_audio.strip()
+            validated_stream = resolver.validate_resolved_stream_url(req.resolved_stream)
+            validated_audio = (
+                resolver.validate_resolved_stream_url(req.resolved_audio)
+                if req.resolved_audio and req.resolved_audio.strip()
+                else ""
+            )
             if req.resolved_at is not None:
-                item["_resolved_at"] = req.resolved_at
+                resolved_at = float(req.resolved_at)
+                if resolved_at <= 0.0 or resolved_at > (time.time() + 1.0):
+                    raise HTTPException(status_code=400, detail="Invalid resolved_at timestamp")
+            item["_resolved_source_url"] = (req.resolved_source_url or req.url or "").strip()
+            item["_resolved_stream"] = validated_stream
+            if validated_audio:
+                item["_resolved_audio"] = validated_audio
+            if req.resolved_at is not None:
+                item["_resolved_at"] = float(req.resolved_at)
         item_or_text = item
     return _play_now_item(
         item_or_text,
@@ -892,62 +902,12 @@ def playback_play():
     # prefer resuming that item over consuming the queue.
     sess = str(getattr(state, "SESSION_STATE", "idle") or "idle").strip().lower()
     if sess in {"closed", "paused", "playing"} and state.NOW_PLAYING:
-        now = state.NOW_PLAYING
-        # Reuse resolved stream/audio where possible.
-        stream = now.get("stream")
-        audio = now.get("audio")
-        pos = now.get("resume_pos")
-        if pos is None:
-            pos = getattr(state, "SESSION_POSITION", None)
-        start_pos = None
-        try:
-            start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
-        except Exception:
-            start_pos = None
-        playback_service.suppress_auto_next(2.0)
-
-        if isinstance(stream, str) and stream.strip():
-            resume_result: dict[str, object] | None = None
-            with player.MPV_LOCK:
-                stream_url = stream.strip()
-                audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
-                if not player._load_stream_in_existing_mpv(
-                    stream_url, audio_url=audio_url, start_pos=start_pos
-                ):
-                    player.start_mpv(stream_url, audio_url=audio_url, start_pos=start_pos)
-            try:
-                resume_result = _control_result_or_raise(
-                    player.mpv_set_result("pause", False), action="resume_session"
-                )
-            except Exception:
-                resume_result = None
-            resumed = dict(now)
-            resumed["started"] = int(time.time())
-            resumed["mode"] = "resume"
-            resumed["closed"] = False
-            playback_service.mark_resumed_now_playing(resumed)
-            return {
-                "ok": True,
-                "action": "resume_session",
-                "now_playing": _annotate_upload_item(state.NOW_PLAYING),
-                **_control_ack_payload(resume_result),
-            }
-
-        # Fallback: re-resolve/play via play_item
-        resumed = playback_service.play_now(
-            now,
-            use_resolver=True,
-            cec=False,
-            clear_queue=False,
-            mode="resume",
-            start_pos=(float(pos) if pos is not None else None),
-        )
-        resumed["closed"] = False
-        playback_service.mark_resumed_now_playing(resumed)
+        resumed, resume_result = playback_service.resume_session()
         return {
             "ok": True,
             "action": "resume_session",
-            "now_playing": _annotate_upload_item(state.NOW_PLAYING),
+            "now_playing": _annotate_upload_item(state.NOW_PLAYING or resumed),
+            **(_control_ack_payload(resume_result) if resume_result else {}),
         }
 
     # Else: play next queue item.

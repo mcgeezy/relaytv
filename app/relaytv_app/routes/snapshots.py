@@ -69,11 +69,11 @@ def _wait_for_frame(path: str, timeout_sec: float) -> bool:
 
 @router.get("/snapshots/{filename}")
 async def get_snapshot(filename: str):
-    if "/" in filename or "\\" in filename or ".." in filename:
+    if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or ".." in filename:
         return Response(status_code=400)
     snap_dir = os.getenv("RELAYTV_SNAPSHOT_DIR", "/data/snapshots")
     path = os.path.join(snap_dir, filename)
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         return Response(status_code=404)
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 

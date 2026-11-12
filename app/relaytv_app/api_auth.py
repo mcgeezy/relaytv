@@ -27,6 +27,7 @@ persisted with settings, never returned by ``/settings``, never logged.
 """
 
 import hmac
+import secrets
 from urllib.parse import urlsplit
 
 from .config import runtime_config
@@ -42,6 +43,15 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # servers that predate ``POST /snapshot``; it leads with the POST and sends the
 # bearer token on both, so classifying the GET cannot degrade the integration.
 MUTATING_GET_PATHS = frozenset({"/snapshot"})
+
+OVERLAY_TOKEN_HEADER = "x-relaytv-overlay-token"
+_OVERLAY_CLIENT_TOKEN = secrets.token_urlsafe(24)
+_LOOPBACK_CLIENT_HOSTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"})
+
+
+def overlay_client_token() -> str:
+    """Return the per-process token embedded in ``/x11/overlay`` for local heartbeats."""
+    return _OVERLAY_CLIENT_TOKEN
 
 
 def configured_api_token() -> str:
@@ -107,16 +117,29 @@ def _is_cross_site(
     sec_fetch_site: str | None = None,
     referer: str | None = None,
     host: str | None = None,
+    origin: str | None = None,
 ) -> bool:
-    """Return True if the request headers indicate a cross-site context."""
+    """Return True if the request headers indicate a cross-site browser context."""
     fetch_site = str(sec_fetch_site or "").strip().lower()
-    if fetch_site in {"same-origin", "none"}:
-        return False
     if fetch_site in {"cross-site", "same-site"}:
         return True
 
-    source = _request_authority(str(referer or ""), absolute=True)
+    raw_origin = str(origin or "").strip()
+    if raw_origin.lower() == "null":
+        return True
     target = _request_authority(str(host or ""), absolute=False)
+    if raw_origin and target is not None:
+        origin_auth = _request_authority(raw_origin, absolute=True)
+        if origin_auth is None:
+            return True
+        cmp_target = (target[0], origin_auth[1]) if target[1] is None else target
+        if origin_auth != cmp_target:
+            return True
+
+    if fetch_site in {"same-origin", "none"}:
+        return False
+
+    source = _request_authority(str(referer or ""), absolute=True)
     if source is None or target is None:
         # Headerless non-browser API clients retain the local-first behavior.
         return False
@@ -127,6 +150,26 @@ def _is_cross_site(
     return source != target
 
 
+def cross_site_write_request(
+    method: str,
+    path: str,
+    *,
+    sec_fetch_site: str | None = None,
+    origin: str | None = None,
+    referer: str | None = None,
+    host: str | None = None,
+) -> bool:
+    """Reject cross-site browser write requests without changing headerless LAN clients."""
+    if not is_write_request(method, path):
+        return False
+    return _is_cross_site(
+        sec_fetch_site=sec_fetch_site,
+        referer=referer,
+        host=host,
+        origin=origin,
+    )
+
+
 def cross_site_mutating_get(
     method: str,
     path: str,
@@ -134,14 +177,9 @@ def cross_site_mutating_get(
     sec_fetch_site: str | None = None,
     referer: str | None = None,
     host: str | None = None,
+    origin: str | None = None,
 ) -> bool:
-    """Reject browser-forgeable write aliases without changing local API use.
-
-    The compatibility GET remains available to Home Assistant and direct LAN
-    clients when no API token is configured. Browsers, however, label an image
-    or prefetch issued by another origin with ``Sec-Fetch-Site``; older clients
-    commonly still send a Referer, which provides a second boundary check.
-    """
+    """Reject browser-forgeable write aliases without changing local API use."""
     if str(method or "").strip().upper() != "GET":
         return False
     if _normalized_path(path) not in MUTATING_GET_PATHS:
@@ -151,10 +189,44 @@ def cross_site_mutating_get(
         sec_fetch_site=sec_fetch_site,
         referer=referer,
         host=host,
+        origin=origin,
     )
 
 
-def write_request_allowed(method: str, authorization: str | None, *, path: str = "") -> bool:
+def overlay_client_state_allowed(
+    method: str,
+    path: str,
+    *,
+    overlay_token: str | None = None,
+    client_host: str | None = None,
+    testing: bool = False,
+) -> bool:
+    """Allow local ``/x11/overlay`` heartbeats without exposing ``RELAYTV_API_TOKEN``."""
+    if str(method or "").strip().upper() != "POST":
+        return False
+    if _normalized_path(path) != "/x11/overlay/client_state":
+        return False
+    presented = str(overlay_token or "").strip()
+    if not presented:
+        return False
+    host = str(client_host or "").strip().lower()
+    if host not in _LOOPBACK_CLIENT_HOSTS and not (testing and host == "testclient"):
+        return False
+    return hmac.compare_digest(
+        presented.encode("utf-8"),
+        _OVERLAY_CLIENT_TOKEN.encode("utf-8"),
+    )
+
+
+def write_request_allowed(
+    method: str,
+    authorization: str | None,
+    *,
+    path: str = "",
+    overlay_token: str | None = None,
+    client_host: str | None = None,
+    testing: bool = False,
+) -> bool:
     """Return True when a request may proceed under the token policy."""
     token = configured_api_token()
     if not token:
@@ -162,6 +234,12 @@ def write_request_allowed(method: str, authorization: str | None, *, path: str =
     if not is_write_request(method, path):
         return True
     presented = bearer_token_from_header(authorization)
-    if not presented:
-        return False
-    return hmac.compare_digest(presented.encode("utf-8"), token.encode("utf-8"))
+    if presented and hmac.compare_digest(presented.encode("utf-8"), token.encode("utf-8")):
+        return True
+    return overlay_client_state_allowed(
+        method,
+        path,
+        overlay_token=overlay_token,
+        client_host=client_host,
+        testing=testing,
+    )

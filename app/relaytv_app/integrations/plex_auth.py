@@ -145,6 +145,7 @@ class _LinkFlow:
     code: str
     expires_at: float
     generation: int
+    claimed_token: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,51 +271,80 @@ class PlexAuthManager:
         }
 
     def poll_link(self, flow_id: str, browser_secret: str) -> dict[str, object]:
-        flow = self._flow(flow_id, browser_secret)
-        auth_state = self.store.load()
-        device_jwt = self._signed_device_jwt(auth_state["device"], nonce=None)
-        response = self._cloud().get(
-            f"/api/v2/pins/{flow.pin_id}",
-            query={"deviceJWT": device_jwt},
-            auth=False,
-        )
-        if not isinstance(response, dict):
+        if playback_active():
             raise PlexAuthError(
-                "plex_invalid_response",
-                "Plex returned an unexpected account-link response",
-                status_code=502,
+                "plex_playback_active",
+                "Stop Plex playback before linking an account",
+                status_code=409,
             )
-        token = str(response.get("authToken") or response.get("auth_token") or "").strip()
-        if not token:
-            return {
-                "linked": False,
-                "pending": True,
-                "expires_in": max(0, int(flow.expires_at - self._clock())),
-            }
-
-        user = self._cloud(token).get("/api/v2/user")
-        account = self._account_record(token, user)
+        flow = self._flow(flow_id, browser_secret)
         with self._lock:
-            current = self._flows.get(flow.flow_id)
-            if current is not flow or flow.generation != self._generation:
+            token = str(flow.claimed_token or "").strip()
+        if not token:
+            auth_state = self.store.load()
+            device_jwt = self._signed_device_jwt(auth_state["device"], nonce=None)
+            response = self._cloud().get(
+                f"/api/v2/pins/{flow.pin_id}",
+                query={"deviceJWT": device_jwt},
+                auth=False,
+            )
+            if not isinstance(response, dict):
                 raise PlexAuthError(
-                    "plex_flow_cancelled",
-                    "Plex account linking was cancelled",
+                    "plex_invalid_response",
+                    "Plex returned an unexpected account-link response",
+                    status_code=502,
+                )
+            token = str(response.get("authToken") or response.get("auth_token") or "").strip()
+            if not token:
+                return {
+                    "linked": False,
+                    "pending": True,
+                    "expires_in": max(0, int(flow.expires_at - self._clock())),
+                }
+            with self._lock:
+                flow.claimed_token = token
+
+        try:
+            user = self._cloud(token).get("/api/v2/user")
+        except PlexError as exc:
+            if exc.status_code in {401, 403}:
+                with self._lock:
+                    flow.claimed_token = ""
+            raise
+        account = self._account_record(token, user)
+        if "list_servers" in self.__dict__:
+            servers = self.list_servers()
+        else:
+            servers = self._list_servers_for_token(token)
+
+        with PLEX_LIFECYCLE_LOCK:
+            if playback_active():
+                raise PlexAuthError(
+                    "plex_playback_active",
+                    "Stop Plex playback before linking an account",
                     status_code=409,
                 )
-            latest = self.store.load()
-            latest["account"] = account
-            latest["server"] = {}
-            self.store.save(latest)
-            self._flows.pop(flow.flow_id, None)
-            self._generation += 1
-            self._last_server_test = {}
-            self._unupgradable_server = None
+            with self._lock:
+                current = self._flows.get(flow.flow_id)
+                if current is not flow or flow.generation != self._generation:
+                    raise PlexAuthError(
+                        "plex_flow_cancelled",
+                        "Plex account linking was cancelled",
+                        status_code=409,
+                    )
+                latest = self.store.load()
+                latest["account"] = account
+                latest["server"] = {}
+                self.store.save(latest)
+                self._flows.pop(flow.flow_id, None)
+                self._generation += 1
+                self._last_server_test = {}
+                self._unupgradable_server = None
         return {
             "linked": True,
             "pending": False,
             "account": self._public_account(account),
-            "servers": self.list_servers(),
+            "servers": servers,
         }
 
     def cancel_link(self, flow_id: str, browser_secret: str) -> dict[str, bool]:
@@ -324,22 +354,23 @@ class PlexAuthManager:
         return {"cancelled": True}
 
     def disconnect(self) -> dict[str, bool]:
-        with self._lock:
-            try:
-                payload = self.store.load()
-            except PlexAuthError as exc:
-                if exc.code != "plex_auth_state_invalid":
-                    raise
-                payload = self.store._empty()
-            payload["account"] = {}
-            payload["server"] = {}
-            self.store.save(payload)
-            self._generation += 1
-            self._flows.clear()
-            self._last_server_test = {}
-            self._unupgradable_server = None
-        state.update_settings({"plex_server_machine_id": ""})
-        return {"linked": False}
+        with PLEX_LIFECYCLE_LOCK:
+            with self._lock:
+                try:
+                    payload = self.store.load()
+                except PlexAuthError as exc:
+                    if exc.code != "plex_auth_state_invalid":
+                        raise
+                    payload = self.store._empty()
+                payload["account"] = {}
+                payload["server"] = {}
+                self.store.save(payload)
+                self._generation += 1
+                self._flows.clear()
+                self._last_server_test = {}
+                self._unupgradable_server = None
+            state.update_settings({"plex_server_machine_id": ""})
+            return {"linked": False}
 
     def refresh_token(self, *, force: bool = False) -> bool:
         with self._refresh_lock:
@@ -399,16 +430,19 @@ class PlexAuthManager:
             self.store.save(latest)
         return True
 
-    def list_servers(self) -> list[dict[str, object]]:
-        self.refresh_token(force=False)
-        payload = self.store.load()
-        account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
-        token = str(account.get("auth_token") or "")
+    def _list_servers_for_token(self, token: str) -> list[dict[str, object]]:
         resources = self._cloud(token).get(
             "/api/v2/resources",
             query={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
         )
         return [self._public_server(resource) for resource in self._server_resources(resources)]
+
+    def list_servers(self) -> list[dict[str, object]]:
+        self.refresh_token(force=False)
+        payload = self.store.load()
+        account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
+        token = str(account.get("auth_token") or "")
+        return self._list_servers_for_token(token)
 
     @staticmethod
     def _looks_like_jwt(token: object) -> bool:
@@ -641,24 +675,25 @@ class PlexAuthManager:
                 "relay": bool(connection.get("relay")),
                 "secure": str(connection["uri"]).lower().startswith("https://"),
             }
-            with self._lock:
-                if generation != self._generation:
-                    raise PlexAuthError(
-                        "plex_credentials_changed",
-                        "Plex account changed while the server was being selected",
-                        status_code=409,
-                    )
-                latest = self.store.load()
-                latest["server"] = server_record
-                self.store.save(latest)
-                self._generation += 1
-                self._last_server_test = {
-                    "reachable": True,
-                    "version": str(container.get("version") or ""),
-                    "tested_at": int(self._clock()),
-                }
-            state.update_settings({"plex_server_machine_id": requested})
-            return self._public_selected_server(server_record)
+            with PLEX_LIFECYCLE_LOCK:
+                with self._lock:
+                    if generation != self._generation:
+                        raise PlexAuthError(
+                            "plex_credentials_changed",
+                            "Plex account changed while the server was being selected",
+                            status_code=409,
+                        )
+                    latest = self.store.load()
+                    latest["server"] = server_record
+                    self.store.save(latest)
+                    self._generation += 1
+                    self._last_server_test = {
+                        "reachable": True,
+                        "version": str(container.get("version") or ""),
+                        "tested_at": int(self._clock()),
+                    }
+                state.update_settings({"plex_server_machine_id": requested})
+                return self._public_selected_server(server_record)
         if last_error is not None:
             raise last_error
         raise PlexAuthError(

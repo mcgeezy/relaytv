@@ -11,6 +11,8 @@ let __jfActionBusy = false;
 let __jfConnected = false;
 let __jfActionStatusTimer = 0;
 let __jfDetailNavToken = 0;
+let __jfDetailReqSeq = 0;
+let __jfDetailController = null;
 let __jfUiVisible = false;
 let __jfLaunchVisible = false;
 let __jfActiveTab = 'dashboard';
@@ -137,6 +139,7 @@ function openJellyfinShell(){
 }
 
 function closeJellyfinShell(opts){
+  _jfCancelDetailRequest();
   const fromNav = !!(opts && opts.fromNav);
   const force = !!(opts && opts.force);
   if (!fromNav && !force && __jfUiVisible && __uiNavDepth > 0) {
@@ -301,7 +304,29 @@ function _jfSetDetailScrollLock(locked){
   document.body.classList.toggle('jfNoScroll', lock);
 }
 
+function _jfCancelDetailRequest(){
+  __jfDetailReqSeq += 1;
+  if (__jfDetailController) {
+    try { __jfDetailController.abort(); } catch (_e) {}
+    __jfDetailController = null;
+  }
+  return __jfDetailReqSeq;
+}
+
+function _jfDetailRequestIsCurrent(reqSeq, iid, shellWasVisible){
+  if (reqSeq !== __jfDetailReqSeq) return false;
+  if (__jfSelectedItemId !== iid) return false;
+  if (!_jfIsDetailOpen()) return false;
+  if (!__jfUiVisible) {
+    if (shellWasVisible) return false;
+    const shell = document.getElementById('jellyfinShell');
+    if (!shell || (shell.classList && shell.classList.contains('hidden'))) return false;
+  }
+  return true;
+}
+
 function _jfCloseDetailPanel(opts){
+  _jfCancelDetailRequest();
   const grid = document.getElementById('jfGrid');
   const fromNav = !!(opts && opts.fromNav);
   if (!fromNav && _jfIsDetailOpen() && __uiNavDepth > 0) {
@@ -338,7 +363,9 @@ function _jfOpenDetailPanel(){
 
 function _jfIsDetailOpen(){
   const grid = document.getElementById('jfGrid');
-  return !!(grid && grid.classList.contains('detailOpen'));
+  if (grid && grid.classList) return grid.classList.contains('detailOpen');
+  const detail = document.getElementById('jfDetail');
+  return !!(detail && typeof detail.getAttribute === 'function' && detail.getAttribute('aria-hidden') === 'false');
 }
 
 function _jfSeriesItemFromNode(node){
@@ -2024,6 +2051,11 @@ async function loadJellyfinDetail(itemId, opts){
   if (!iid) return;
   const keepDetail = !!(opts && opts.keepDetail);
   const preloadThumb = !!(opts && opts.preloadThumb);
+  if (keepDetail && !_jfIsDetailOpen()) return;
+  const shellWasVisible = __jfUiVisible;
+  const reqSeq = _jfCancelDetailRequest();
+  const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  __jfDetailController = controller;
   __jfSelectedItemId = iid;
   _jfApplySelectionUi();
   _jfKeepSelectedItemInView(iid);
@@ -2032,17 +2064,31 @@ async function loadJellyfinDetail(itemId, opts){
     _jfDetailPlaceholder('Loading details…');
   }
   try {
-    const j = await _jfFetchJson(`/browse/item/${encodeURIComponent(iid)}`);
-    __jfSelectedItem = (j && j.item) ? j.item : null;
-    if (preloadThumb && __jfSelectedItem) {
-      await _jfPreloadImage(__jfSelectedItem.thumbnail_local || __jfSelectedItem.thumbnail || '');
+    const fetchOpts = controller ? {signal: controller.signal} : undefined;
+    const j = await _jfFetchJson(`/browse/item/${encodeURIComponent(iid)}`, fetchOpts);
+    if (!_jfDetailRequestIsCurrent(reqSeq, iid, shellWasVisible)) return;
+    const nextItem = (j && j.item) ? j.item : null;
+    if (preloadThumb && nextItem) {
+      await _jfPreloadImage(nextItem.thumbnail_local || nextItem.thumbnail || '');
+      if (!_jfDetailRequestIsCurrent(reqSeq, iid, shellWasVisible)) return;
     }
+    __jfSelectedItem = nextItem;
     _jfRenderDetail(__jfSelectedItem || {});
-    requestAnimationFrame(() => _jfKeepSelectedItemInView(iid));
+    requestAnimationFrame(() => {
+      if (_jfDetailRequestIsCurrent(reqSeq, iid, shellWasVisible)) {
+        _jfKeepSelectedItemInView(iid);
+      }
+    });
   } catch (e) {
+    if (_jfIsAbortError(e)) return;
+    if (!_jfDetailRequestIsCurrent(reqSeq, iid, shellWasVisible)) return;
     __jfSelectedItem = null;
     _jfOpenDetailPanel();
     _jfDetailPlaceholder(`Failed to load detail: ${String(e?.message || e)}`);
+  } finally {
+    if (__jfDetailController === controller) {
+      __jfDetailController = null;
+    }
   }
 }
 

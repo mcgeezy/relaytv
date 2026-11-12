@@ -293,7 +293,7 @@ def validate_user_url(raw: str) -> str:
         raise HTTPException(status_code=400, detail="Unsupported URL scheme (http/https only)")
     if not parsed.hostname:
         raise HTTPException(status_code=400, detail="Invalid url host")
-    if url_boundary.is_forbidden_ip_literal(parsed.hostname):
+    if url_boundary.is_forbidden_ip_literal(parsed.hostname) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
         raise HTTPException(status_code=400, detail="Unsupported URL host")
     return u
 
@@ -312,6 +312,7 @@ def validate_resolved_stream_url(raw: object) -> str:
         or parsed.scheme not in ("http", "https")
         or not parsed.hostname
         or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+        or url_boundary.has_forbidden_resolved_address(parsed.hostname)
     ):
         raise HTTPException(status_code=400, detail="Resolver returned an unsupported stream URL")
     return u
@@ -987,7 +988,7 @@ def resolve_streams_invidious(youtube_url: str, base: str | None = None):
 
     api_url = f"{resolved_base}/api/v1/videos/{vid}?{urlencode({'local': 'true'})}"
     try:
-        with urllib.request.urlopen(api_url, timeout=15) as r:
+        with url_boundary.safe_urlopen(api_url, timeout=15) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invidious API error: {e}")
@@ -1097,7 +1098,7 @@ def title_from_invidious(youtube_url: str, base: str | None = None) -> str | Non
         return None
     api_url = f"{base}/api/v1/videos/{vid}"
     try:
-        with urllib.request.urlopen(api_url, timeout=10) as r:
+        with url_boundary.safe_urlopen(api_url, timeout=10) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
         t = data.get("title")
         return t.strip() if isinstance(t, str) and t.strip() else None
@@ -1133,7 +1134,7 @@ def youtube_oembed_info(youtube_url: str) -> dict | None:
         return None
     api_url = "https://www.youtube.com/oembed?" + urlencode({"url": u, "format": "json"})
     try:
-        with urllib.request.urlopen(api_url, timeout=10) as r:
+        with url_boundary.safe_urlopen(api_url, timeout=10) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
         if isinstance(data, dict) and data:
             return data

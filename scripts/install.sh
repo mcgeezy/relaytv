@@ -277,8 +277,25 @@ parse_dotenv_scalar() {
   local raw="${1#*=}"
   raw="${raw%$'\r'}"
   raw="${raw#"${raw%%[![:space:]]*}"}"
-  if [[ "$raw" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
+  local dq_pattern='^"(([^"\\]|\\.)*)"[[:space:]]*(#.*)?$'
+  if [[ "$raw" =~ $dq_pattern ]]; then
+    local inner="${BASH_REMATCH[1]}" out="" i=0 len="${#BASH_REMATCH[1]}" ch next
+    while (( i < len )); do
+      ch="${inner:i:1}"
+      if [[ "$ch" == "\\" ]] && (( i + 1 < len )); then
+        next="${inner:i+1:1}"
+        case "$next" in
+          \"|\\|\$)
+            out+="$next"
+            (( i += 2 ))
+            continue
+            ;;
+        esac
+      fi
+      out+="$ch"
+      (( i += 1 ))
+    done
+    printf '%s' "$out"
   elif [[ "$raw" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
   else
@@ -458,9 +475,20 @@ detect_from_session_leader() {
   local disp=""
   local wayland=""
   local xdg_runtime=""
-  disp="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="DISPLAY"{print $2; exit}')"
-  wayland="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="WAYLAND_DISPLAY"{print $2; exit}')"
-  xdg_runtime="$(tr '\0' '\n' < "/proc/${leader}/environ" | awk -F= '$1=="XDG_RUNTIME_DIR"{print $2; exit}')"
+  local entry=""
+  while IFS= read -r -d '' entry || [ -n "$entry" ]; do
+    case "$entry" in
+      DISPLAY=*)
+        if [ -z "$disp" ]; then disp="${entry#DISPLAY=}"; fi
+        ;;
+      WAYLAND_DISPLAY=*)
+        if [ -z "$wayland" ]; then wayland="${entry#WAYLAND_DISPLAY=}"; fi
+        ;;
+      XDG_RUNTIME_DIR=*)
+        if [ -z "$xdg_runtime" ]; then xdg_runtime="${entry#XDG_RUNTIME_DIR=}"; fi
+        ;;
+    esac
+  done < "/proc/${leader}/environ"
 
   apply_detected_session_vars "$disp" "$wayland" "$xdg_runtime"
 }
@@ -1131,6 +1159,7 @@ ensure_host_device_override() {
   local devices_block=""
   local group_block=""
   local nvidia_block=""
+  local environment_block=""
   local volumes_block=""
   local security_block=""
   local node
@@ -1211,17 +1240,31 @@ EOF
     fi
     group_block+="      - \"${gid}\""$'\n'
   done < <(detect_host_device_group_ids "$pi_enabled" "$cec_enabled" | sort -n -u)
+  if [ "$MODE" = "headless" ] || [ "$MODE" = "drm" ]; then
+    environment_block+="      DISPLAY: \"\""$'\n'
+    environment_block+="      WAYLAND_DISPLAY: \"\""$'\n'
+    if [ "$MODE" = "headless" ]; then
+      environment_block+="      XDG_SESSION_TYPE: \"\""$'\n'
+      environment_block+="      RELAYTV_HOST_SESSION_TYPE: \"\""$'\n'
+    fi
+  fi
   if [ "$nvidia_enabled" = "1" ]; then
-    nvidia_block=$(cat <<'EOF'
+    if [ -n "$environment_block" ]; then
+      nvidia_block="    gpus: all"
+      environment_block+="      NVIDIA_VISIBLE_DEVICES: all"$'\n'
+      environment_block+="      NVIDIA_DRIVER_CAPABILITIES: compute,video,graphics,utility"$'\n'
+    else
+      nvidia_block=$(cat <<'EOF'
     gpus: all
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,graphics,utility
 EOF
 )
+    fi
   fi
 
-  if [ -n "$volumes_block" ] || [ -n "$devices_block" ] || [ -n "$group_block" ] || [ -n "$nvidia_block" ] || [ -n "$security_block" ]; then
+  if [ -n "$volumes_block" ] || [ -n "$devices_block" ] || [ -n "$group_block" ] || [ -n "$nvidia_block" ] || [ -n "$environment_block" ] || [ -n "$security_block" ]; then
     override_tmp="$(mktemp "$ROOT/.docker-compose.override.yml.tmp.XXXXXX")"
     INSTALLER_TMP_FILES+=("$override_tmp")
     cat > "$override_tmp" <<EOF
@@ -1229,6 +1272,12 @@ $marker
 services:
   relaytv:
 EOF
+    if [ -n "$environment_block" ]; then
+      cat >> "$override_tmp" <<EOF
+    environment:
+${environment_block%$'\n'}
+EOF
+    fi
     if [ -n "$volumes_block" ]; then
       cat >> "$override_tmp" <<EOF
     volumes:
@@ -1377,14 +1426,19 @@ ensure_data_dir_ownership() {
 ensure_data_dir_ownership
 
 emit_env_line() {
-  local key="$1" val="$2"
+  local key="$1" val="$2" escaped=""
   val="${val//$'\r'/}"
   val="${val//$'\n'/}"
-  if [[ "$val" == *[#$'\"']* ]] || [[ "$val" =~ ^[[:space:]] ]] || [[ "$val" =~ [[:space:]]$ ]]; then
+  if [[ "$val" =~ [[:space:]] ]] || [[ "$val" == *[\#\$\"\'\\\`\;\&\|\(\)]* ]]; then
     if [[ "$val" != *"'"* ]]; then
       printf "%s='%s'\n" "$key" "$val"
       return 0
     fi
+    escaped="${val//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    escaped="${escaped//\$/\\\$}"
+    printf '%s="%s"\n' "$key" "$escaped"
+    return 0
   fi
   printf '%s=%s\n' "$key" "$val"
 }

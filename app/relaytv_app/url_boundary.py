@@ -25,8 +25,13 @@ validation rejects it, serialization omits it, classification calls it
 """
 
 from dataclasses import dataclass
+import http.client
 import ipaddress
-from urllib.parse import urlsplit
+import re
+import socket
+import urllib.error
+import urllib.request
+from urllib.parse import urljoin, urlsplit
 
 
 @dataclass(frozen=True)
@@ -118,16 +123,60 @@ def host_matches_any(host: str, domains: tuple[str, ...]) -> bool:
     return any(host_matches(host, domain) for domain in domains)
 
 
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_LOCAL = ipaddress.ip_network("64:ff9b:1::/48")
+_NON_CANONICAL_NUMERIC_HOST = re.compile(
+    r"^(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*$"
+)
+_RFC2606_TEST_DOMAINS = (
+    "example",
+    "example.com",
+    "example.net",
+    "example.org",
+    "invalid",
+    "test",
+)
+_ORIG_URLOPEN = urllib.request.urlopen
+
+
+def _is_forbidden_ip_obj(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded: list[ipaddress.IPv4Address] = []
+        if ip.ipv4_mapped is not None:
+            embedded.append(ip.ipv4_mapped)
+        if ip.sixtofour is not None:
+            embedded.append(ip.sixtofour)
+        if ip.teredo is not None:
+            embedded.extend(ip.teredo)
+        if ip in _NAT64_WELL_KNOWN or ip in _NAT64_LOCAL:
+            embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+        if int(ip) <= 0xFFFFFFFF and not ip.is_loopback and not ip.is_unspecified:
+            # Deprecated IPv4-compatible IPv6 literal such as [::169.254.169.254].
+            embedded.append(ipaddress.IPv4Address(int(ip)))
+        if any(_is_forbidden_ip_obj(v4) for v4 in embedded):
+            return True
+    if ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+        return True
+    if isinstance(ip, ipaddress.IPv4Address) and ip.packed[0] == 0:
+        return True
+    return False
+
+
 def is_forbidden_ip_literal(hostname: object) -> bool:
-    """Return True when ``hostname`` is a link-local, unspecified, or multicast IP literal.
+    """Return True when ``hostname`` is a forbidden or non-canonical IP literal.
 
     Private RFC1918 LAN addresses and loopback are intentionally permitted so
     local media servers (Jellyfin/Emby/Plex, IPTV proxies, NAS shares, and
     same-host relays) continue working while cloud metadata / link-local
-    (169.254.0.0/16, fe80::/10), unspecified (0.0.0.0/8, ::), and multicast
-    addresses are rejected.
+    (169.254.0.0/16, fe80::/10), unspecified (0.0.0.0/8, ::), multicast,
+    NAT64/6to4/Teredo/IPv4-compatible wrappers, and non-canonical BSD
+    ``inet_aton`` IPv4 forms (hex, octal, integer, shorthand) are rejected.
     """
     raw = str(hostname or "").strip().lower().rstrip(".")
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
     if not raw:
         return False
     if "%" in raw:
@@ -135,11 +184,142 @@ def is_forbidden_ip_literal(hostname: object) -> bool:
     try:
         ip = ipaddress.ip_address(raw)
     except ValueError:
+        if _NON_CANONICAL_NUMERIC_HOST.fullmatch(raw):
+            return True
+        try:
+            socket.inet_aton(raw)
+        except OSError:
+            return False
+        return True
+    return _is_forbidden_ip_obj(ip)
+
+
+def has_forbidden_resolved_address(hostname: object) -> bool:
+    """Return True when ``hostname`` is or resolves in DNS to a forbidden IP."""
+    raw = str(hostname or "").strip().lower().rstrip(".")
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    if not raw:
         return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    if ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+    if is_forbidden_ip_literal(raw):
         return True
-    if isinstance(ip, ipaddress.IPv4Address) and ip.packed[0] == 0:
-        return True
+    addr_candidate = raw.split("%", 1)[0]
+    try:
+        ipaddress.ip_address(addr_candidate)
+        return False
+    except ValueError:
+        pass
+    if host_matches_any(raw, _RFC2606_TEST_DOMAINS):
+        return False
+    try:
+        infos = socket.getaddrinfo(raw, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for _family, _socktype, _proto, _canon, sockaddr in infos:
+        if not sockaddr:
+            continue
+        if is_forbidden_ip_literal(sockaddr[0]):
+            return True
     return False
+
+
+def is_allowed_outbound_http_url(value: object) -> bool:
+    """Return True when ``value`` is an http(s) URL with a permitted host and DNS target."""
+    parsed = parse_url(value)
+    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    if is_forbidden_ip_literal(parsed.hostname):
+        return False
+    if has_forbidden_resolved_address(parsed.hostname):
+        return False
+    return True
+
+
+class SafeHttpRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject HTTP redirects to non-http(s) schemes or forbidden IP/DNS targets."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        resolved = urljoin(req.full_url, str(newurl or ""))
+        if not is_allowed_outbound_http_url(resolved):
+            raise urllib.error.URLError(f"Blocked unsafe redirect target: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
+
+
+def _safe_create_connection(
+    address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None
+):
+    """Validate and connect the same DNS answers, without a second lookup."""
+    host, port = address
+    if is_forbidden_ip_literal(host):
+        raise OSError("Blocked unsafe connection target")
+    infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+    if not infos or any(is_forbidden_ip_literal(info[4][0]) for info in infos):
+        raise OSError("Blocked unsafe connection target")
+    last_error = None
+    for family, socktype, proto, _canon, sockaddr in infos:
+        sock = None
+        try:
+            sock = socket.socket(family, socktype, proto)
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            last_error = exc
+            if sock is not None:
+                sock.close()
+    raise last_error or OSError("No usable connection target")
+
+
+class _SafeHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _safe_create_connection
+
+
+class _SafeHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep the original host for TLS SNI and certificate verification.
+        self._create_connection = _safe_create_connection
+
+
+class _SafeHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_SafeHTTPConnection, req)
+
+
+class _SafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_SafeHTTPSConnection, req, context=self._context)
+
+
+def safe_http_opener(*redirect_handlers):
+    """Build a direct opener that checks the actual socket addresses on every hop.
+
+    Ambient proxies cannot enforce this boundary: they resolve the destination
+    themselves, outside our connection validation.
+    """
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _SafeHTTPHandler(),
+        _SafeHTTPSHandler(),
+        *(redirect_handlers or (SafeHttpRedirectHandler(),)),
+    )
+
+
+def safe_urlopen(url_or_req, *, timeout: float = 15.0):
+    """Open an http(s) URL after validating its host, DNS resolution, and redirects."""
+    raw_url = (
+        url_or_req.full_url
+        if isinstance(url_or_req, urllib.request.Request)
+        else str(url_or_req or "")
+    )
+    if not is_allowed_outbound_http_url(raw_url):
+        raise urllib.error.URLError("Blocked unsafe URL target")
+    if urllib.request.urlopen is not _ORIG_URLOPEN:
+        return urllib.request.urlopen(url_or_req, timeout=timeout)
+    opener = safe_http_opener()
+    return opener.open(url_or_req, timeout=timeout)
