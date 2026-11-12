@@ -517,6 +517,7 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--term-playing-msg",
         "--osc",
         "--log-file",
+        "--load-scripts",
         "--msg-level",
         "--profile",
         "--ytdl",
@@ -653,6 +654,8 @@ def _build_mpv_args(
     # truncated on each launch, so it stays cheap on tmpfs.
     log_file = _effective_mpv_log_path()
     _truncate_mpv_log(log_file)
+    if not _has_opt(args + extra, "--load-scripts"):
+        args.append("--load-scripts=no")
     if not _has_opt(args + extra, "--log-file"):
         args.append(f"--log-file={log_file}")
     if debug and not _has_opt(args + extra, "--msg-level"):

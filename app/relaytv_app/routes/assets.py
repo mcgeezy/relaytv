@@ -16,6 +16,7 @@ _THUMBNAIL_HEADERS = {
     "Cache-Control": "public, max-age=86400",
     "Access-Control-Allow-Origin": "*",
     "Cross-Origin-Resource-Policy": "cross-origin",
+    "X-Content-Type-Options": "nosniff",
 }
 _STATIC_ROOT = os.getenv("RELAYTV_STATIC_DIR") or os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "static")

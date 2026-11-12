@@ -25,6 +25,7 @@ validation rejects it, serialization omits it, classification calls it
 """
 
 from dataclasses import dataclass
+import ipaddress
 from urllib.parse import urlsplit
 
 
@@ -115,3 +116,30 @@ def host_matches(host: str, domain: str) -> bool:
 def host_matches_any(host: str, domains: tuple[str, ...]) -> bool:
     """Return True when ``host`` matches any of ``domains`` at a dot boundary."""
     return any(host_matches(host, domain) for domain in domains)
+
+
+def is_forbidden_ip_literal(hostname: object) -> bool:
+    """Return True when ``hostname`` is a link-local, unspecified, or multicast IP literal.
+
+    Private RFC1918 LAN addresses and loopback are intentionally permitted so
+    local media servers (Jellyfin/Emby/Plex, IPTV proxies, NAS shares, and
+    same-host relays) continue working while cloud metadata / link-local
+    (169.254.0.0/16, fe80::/10), unspecified (0.0.0.0/8, ::), and multicast
+    addresses are rejected.
+    """
+    raw = str(hostname or "").strip().lower().rstrip(".")
+    if not raw:
+        return False
+    if "%" in raw:
+        raw = raw.split("%", 1)[0]
+    try:
+        ip = ipaddress.ip_address(raw)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+        return True
+    if isinstance(ip, ipaddress.IPv4Address) and ip.packed[0] == 0:
+        return True
+    return False

@@ -1804,6 +1804,7 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--demuxer-seekable-cache",
         "--demuxer-max-back-bytes",
         "--force-seekable",
+        "--load-scripts",
         "--msg-level",
         "--osd-level",
         "--osd-playing-msg",
@@ -3034,6 +3035,8 @@ def _build_mpv_args(
     ]
 
     # Enable file logging if requested.
+    if not _has_opt(mpv_args + extra, "--load-scripts"):
+        mpv_args.append("--load-scripts=no")
     if log_file and not _has_opt(mpv_args + extra, "--log-file"):
         mpv_args.append(f"--log-file={log_file}")
 
