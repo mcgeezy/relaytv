@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.3](https://github.com/mcgeezy/relaytv/compare/v0.12.2...v0.12.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* harden installer portability, .env persistence, and secret redaction ([#170](https://github.com/mcgeezy/relaytv/issues/170)) ([4af97d4](https://github.com/mcgeezy/relaytv/commit/4af97d4f9617dd4907626da79d43c187000d60e1))
+* harden resolved stream URLs, subprocess sentinels, and thumbnail cache ([#172](https://github.com/mcgeezy/relaytv/issues/172)) ([e8eaccb](https://github.com/mcgeezy/relaytv/commit/e8eaccb000108e1d542f6baf42f7d1c60c9bace9))
+* harden security boundaries, player lifecycle, integrations, installer, and UI ([#173](https://github.com/mcgeezy/relaytv/issues/173)) ([9210593](https://github.com/mcgeezy/relaytv/commit/9210593f08d6f24ba4050f6e0e0e8832ef2fd76b))
+* preserve custom headless image remote choice on installer reruns ([#171](https://github.com/mcgeezy/relaytv/issues/171)) ([b2bef96](https://github.com/mcgeezy/relaytv/commit/b2bef96121113f6b85aa3e8d0237c66e17be4228))
+* streamline mobile Settings layout, button sizing, and section grouping ([#168](https://github.com/mcgeezy/relaytv/issues/168)) ([cfde462](https://github.com/mcgeezy/relaytv/commit/cfde462a75de5c74cff50827fe5e1611bba09a66))
+
 ## [0.12.2](https://github.com/mcgeezy/relaytv/compare/v0.12.1...v0.12.2) (2026-10-24)
 
 
