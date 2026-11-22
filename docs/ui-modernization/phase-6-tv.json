@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-11-22T21:38:09.532Z",
+  "baseUrl": "http://127.0.0.1:8794",
+  "runner": {
+    "playwright": "1.65.0",
+    "browser": "chromium",
+    "browserVersion": "158.0.8127.18",
+    "platform": "linux/x64"
+  },
+  "idle": {
+    "720p": {
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "scroll": {
+        "width": 1280,
+        "height": 720
+      },
+      "horizontalOverflow": false,
+      "verticalOverflow": false,
+      "tokens": {
+        "background": "#0b1017",
+        "surface": "#151d28",
+        "textPrimary": "#f3f6fa",
+        "accent": "#60a5fa"
+      },
+      "clock": {
+        "text": "3:38 PM",
+        "fontSizePx": 96
+      },
+      "date": {
+        "text": "Sunday, November 22",
+        "fontSizePx": 26
+      },
+      "weather": {
+        "temp": "72°F",
+        "location": "Austin, TX",
+        "forecastDays": 7
+      },
+      "qr": {
+        "visible": true,
+        "hasQrClass": true,
+        "src": "/qr/connect.svg?logo=1&u=http%3A%2F%2F192.168.1.50%3A8787&ts=1795383489665",
+        "label": "192.168.1.50:8787",
+        "widthPx": 143,
+        "heightPx": 158,
+        "overlapsFooterStatus": false
+      }
+    },
+    "1080p": {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "scroll": {
+        "width": 1920,
+        "height": 1080
+      },
+      "horizontalOverflow": false,
+      "verticalOverflow": false,
+      "tokens": {
+        "background": "#0b1017",
+        "surface": "#151d28",
+        "textPrimary": "#f3f6fa",
+        "accent": "#60a5fa"
+      },
+      "clock": {
+        "text": "3:38 PM",
+        "fontSizePx": 128
+      },
+      "date": {
+        "text": "Sunday, November 22",
+        "fontSizePx": 34
+      },
+      "weather": {
+        "temp": "72°F",
+        "location": "Austin, TX",
+        "forecastDays": 7
+      },
+      "qr": {
+        "visible": true,
+        "hasQrClass": true,
+        "src": "/qr/connect.svg?logo=1&u=http%3A%2F%2F192.168.1.50%3A8787&ts=1795383489947",
+        "label": "192.168.1.50:8787",
+        "widthPx": 190,
+        "heightPx": 210,
+        "overlapsFooterStatus": false
+      }
+    },
+    "4k": {
+      "viewport": {
+        "width": 3840,
+        "height": 2160
+      },
+      "scroll": {
+        "width": 3840,
+        "height": 2160
+      },
+      "horizontalOverflow": false,
+      "verticalOverflow": false,
+      "tokens": {
+        "background": "#0b1017",
+        "surface": "#151d28",
+        "textPrimary": "#f3f6fa",
+        "accent": "#60a5fa"
+      },
+      "clock": {
+        "text": "3:38 PM",
+        "fontSizePx": 256
+      },
+      "date": {
+        "text": "Sunday, November 22",
+        "fontSizePx": 68
+      },
+      "weather": {
+        "temp": "72°F",
+        "location": "Austin, TX",
+        "forecastDays": 7
+      },
+      "qr": {
+        "visible": true,
+        "hasQrClass": true,
+        "src": "/qr/connect.svg?logo=1&u=http%3A%2F%2F192.168.1.50%3A8787&ts=1795383490325",
+        "label": "192.168.1.50:8787",
+        "widthPx": 378,
+        "heightPx": 418,
+        "overlapsFooterStatus": false
+      }
+    }
+  },
+  "overlay": {
+    "720p": {
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "transparentBackground": true,
+      "bodyPointerEvents": "none",
+      "stagePointerEvents": "none",
+      "idleActive": true,
+      "overlayScale": 0.75,
+      "toastWidthVar": "323px",
+      "positionClass": "toasts top-right",
+      "toastCount": 3,
+      "safeToastWidthPx": 317,
+      "safeLinkHref": "https://relaytv.example.test/details",
+      "unsafeJsLinkRendered": false,
+      "unsafeProtoRelLinkRendered": false
+    },
+    "1080p": {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "transparentBackground": true,
+      "bodyPointerEvents": "none",
+      "stagePointerEvents": "none",
+      "idleActive": true,
+      "overlayScale": 1,
+      "toastWidthVar": "430px",
+      "positionClass": "toasts top-right",
+      "toastCount": 3,
+      "safeToastWidthPx": 421,
+      "safeLinkHref": "https://relaytv.example.test/details",
+      "unsafeJsLinkRendered": false,
+      "unsafeProtoRelLinkRendered": false
+    },
+    "4k": {
+      "viewport": {
+        "width": 3840,
+        "height": 2160
+      },
+      "transparentBackground": true,
+      "bodyPointerEvents": "none",
+      "stagePointerEvents": "none",
+      "idleActive": true,
+      "overlayScale": 2,
+      "toastWidthVar": "860px",
+      "positionClass": "toasts top-right",
+      "toastCount": 3,
+      "safeToastWidthPx": 843,
+      "safeLinkHref": "https://relaytv.example.test/details",
+      "unsafeJsLinkRendered": false,
+      "unsafeProtoRelLinkRendered": false
+    }
+  },
+  "errors": []
+}

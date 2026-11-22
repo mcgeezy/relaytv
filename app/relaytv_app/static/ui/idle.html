@@ -6,28 +6,54 @@
   <title>RelayTV Idle</title>
   <style>
     :root{
-      --bg:#08111d;
-      --bg2:#0d1827;
-      --txt:#eef5ff;
-      --muted:#b9cbe4;
-      --panel:rgba(13,24,38,.36);
-      --panel-strong:rgba(13,24,38,.56);
-      --stroke:rgba(205,226,255,.18);
-      --stroke-strong:rgba(205,226,255,.28);
-      --accent:#57a3ff;
+      color-scheme:dark;
+      --background:#0b1017;
+      --background-secondary:#111824;
+      --surface:#151d28;
+      --surface-raised:#1c2735;
+      --text-primary:#f3f6fa;
+      --text-secondary:#a7b4c5;
+      --text-tertiary:#8999ad;
+      --border:#344256;
+      --border-subtle:rgba(167, 180, 197, .18);
+      --border-strong:rgba(167, 180, 197, .34);
+      --accent:#60a5fa;
+      --accent-soft:rgba(96, 165, 250, .16);
+      --accent-strong:#93c5fd;
+      --status-success:#34d399;
+      --status-warning:#fbbf24;
+      --status-danger:#fb7185;
+      --bg:var(--background);
+      --bg2:var(--background-secondary);
+      --txt:var(--text-primary);
+      --muted:var(--text-secondary);
+      --panel:rgba(21, 29, 40, .72);
+      --panel-strong:rgba(28, 39, 53, .88);
+      --stroke:var(--border-subtle);
+      --stroke-strong:var(--border-strong);
     }
     html{font-size:clamp(12px,1.4815vmin,32px)}
     *{box-sizing:border-box;cursor:none!important}
     html,body{margin:0;height:100%;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--txt);cursor:none!important}
     body{
       background:
-        radial-gradient(56.25rem 32.5rem at 18% 82%, rgba(25,75,138,.20), transparent 68%),
-        radial-gradient(68.75rem 40rem at 50% -12%, rgba(145,190,255,.12), transparent 60%),
+        radial-gradient(60rem 34rem at 18% 84%, rgba(28, 39, 53, .55), transparent 70%),
+        radial-gradient(64rem 36rem at 50% -14%, rgba(96, 165, 250, .09), transparent 62%),
         linear-gradient(180deg,var(--bg),var(--bg2));
       overflow:hidden;
       cursor:none!important
     }
-    .wrap{height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:1.125rem;padding:1.625rem 1.875rem 1.625rem}
+    .wrap{
+      height:100%;
+      display:grid;
+      grid-template-rows:auto 1fr auto;
+      gap:1.125rem;
+      padding:
+        max(1.625rem, env(safe-area-inset-top))
+        max(1.875rem, env(safe-area-inset-right))
+        max(1.625rem, env(safe-area-inset-bottom))
+        max(1.875rem, env(safe-area-inset-left))
+    }
     .top{display:flex;justify-content:center;align-items:flex-start;pointer-events:none;width:100%;overflow:visible}
     .heroLogo{
       display:block;
@@ -36,7 +62,6 @@
       height:auto;
       object-fit:contain;
       object-position:center;
-      filter:drop-shadow(0 0 1.75rem rgba(133,191,255,.12));
       opacity:.96;
       margin-top:.125rem
     }
@@ -92,17 +117,17 @@
       top:0;
       bottom:0;
       width:1px;
-      background:linear-gradient(180deg, transparent, rgba(235,242,255,.28), transparent)
+      background:linear-gradient(180deg, transparent, var(--border-strong), transparent)
     }
-    .time{font-size:8rem;font-weight:300;font-variant-numeric:tabular-nums;line-height:.88;letter-spacing:-.05em;text-shadow:0 .625rem 2.25rem rgba(0,0,0,.16)}
-    .date{margin-top:0;color:rgba(230,239,251,.86);font-size:2.125rem;letter-spacing:.01em}
+    .time{font-size:8rem;font-weight:300;font-variant-numeric:tabular-nums;line-height:.88;letter-spacing:-.05em;color:var(--text-primary);text-shadow:0 .5rem 1.75rem rgba(0,0,0,.22)}
+    .date{margin-top:0;color:var(--text-secondary);font-size:2.125rem;letter-spacing:.01em}
     .urls{display:none}
     .pill{
       padding:.625rem 1rem;
       border-radius:999px;
-      background:rgba(255,255,255,.04);
-      border:1px solid rgba(205,226,255,.16);
-      color:#e8f2ff;
+      background:var(--surface);
+      border:1px solid var(--border-subtle);
+      color:var(--text-primary);
       font:600 1.125rem/1.2 ui-monospace,Menlo,monospace
     }
     .forecastStrip{
@@ -122,9 +147,9 @@
       box-shadow:none;
       backdrop-filter:none
     }
-    .cardTitle{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:rgba(230,241,255,.44)}
-    .cardDesc{margin-top:.375rem;color:rgba(197,214,235,.66);font-size:.8125rem}
-    .cardValue{margin-top:.75rem;font-size:1.5rem;font-weight:750}
+    .cardTitle{font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-tertiary);font-weight:700}
+    .cardDesc{margin-top:.375rem;color:var(--text-secondary);font-size:.875rem}
+    .cardValue{margin-top:.75rem;font-size:1.5rem;font-weight:750;color:var(--text-primary)}
     .weatherNow{
       margin-top:0;
       position:relative;
@@ -137,10 +162,10 @@
     .weatherHeading{display:block}
     .weatherHeading .cardDesc{margin-top:.25rem}
     .weatherCurrent{display:block;margin-top:0}
-    .weatherTemp{font-size:3.625rem;font-weight:400;line-height:.9;letter-spacing:-.04em}
-    .weatherSummary{font-size:1.5rem;color:rgba(230,241,255,.90);margin-top:.25rem}
-    .weatherMeta{margin-top:.625rem;display:flex;flex-wrap:wrap;gap:.4375rem .75rem;font-size:.8125rem;color:#dce9ff}
-    .weatherMeta b{font-weight:760;color:#f3f8ff}
+    .weatherTemp{font-size:3.625rem;font-weight:400;font-variant-numeric:tabular-nums;line-height:.9;letter-spacing:-.04em;color:var(--text-primary)}
+    .weatherSummary{font-size:1.5rem;color:var(--text-primary);margin-top:.25rem}
+    .weatherMeta{margin-top:.625rem;display:flex;flex-wrap:wrap;gap:.4375rem .75rem;font-size:.8125rem;color:var(--text-secondary)}
+    .weatherMeta b{font-weight:700;color:var(--text-primary)}
     .wxHero{
       position:relative;
       top:auto;
@@ -159,7 +184,7 @@
       overflow:visible
     }
     .wxHero::before{content:none}
-    .wxCode{position:relative;width:7rem;height:7rem;object-fit:contain;filter:drop-shadow(0 .5rem 1rem rgba(0,0,0,.18))}
+    .wxCode{position:relative;width:7rem;height:7rem;object-fit:contain;filter:drop-shadow(0 .375rem .875rem rgba(0,0,0,.22))}
     .weatherDays{
       margin-top:0;
       padding-top:1.125rem;
@@ -176,7 +201,7 @@
       left:0;
       right:0;
       height:1px;
-      background:linear-gradient(90deg, transparent, rgba(235,242,255,.28), transparent)
+      background:linear-gradient(90deg, transparent, var(--border-strong), transparent)
     }
     .weatherDays::before{top:0}
     .weatherDays::after{bottom:0}
@@ -196,13 +221,13 @@
       top:1.125rem;
       bottom:1.125rem;
       width:1px;
-      background:linear-gradient(180deg, transparent, rgba(235,242,255,.28), transparent)
+      background:linear-gradient(180deg, transparent, var(--border-subtle), transparent)
     }
-    .weatherDow{font-size:.875rem;font-weight:700;color:#f0f6ff;text-transform:none;letter-spacing:.01em}
+    .weatherDow{font-size:.875rem;font-weight:700;color:var(--text-primary);text-transform:none;letter-spacing:.01em}
     .weatherCond{display:grid;justify-items:center;gap:.375rem;min-width:0}
     .weatherIcon{width:3.625rem;height:3.625rem;display:block;object-fit:contain}
-    .weatherLabel{font-size:.8125rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .weatherRange{font-size:1.125rem;color:#f1f6ff;font-weight:500;white-space:nowrap}
+    .weatherLabel{font-size:.8125rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .weatherRange{font-size:1.125rem;color:var(--text-primary);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
     .weatherDatapoint{display:none}
     .footer{
       display:flex;
@@ -215,8 +240,7 @@
       font-size:1.875rem;
       font-weight:700;
       letter-spacing:.01em;
-      color:#edf5ff;
-      text-shadow:0 .375rem 1.5rem rgba(0,0,0,.25)
+      color:var(--text-primary)
     }
     .statusWrap{
       display:grid;
@@ -226,9 +250,9 @@
       max-width:100%
     }
     .footerStatus{
-      color:rgba(221,233,248,.7);
+      color:var(--text-secondary);
       font-size:.875rem;
-      letter-spacing:.14em;
+      letter-spacing:.12em;
       text-transform:uppercase;
       max-width:100%;
       white-space:nowrap;
@@ -241,7 +265,7 @@
       body.hasQr .footer{padding-right:calc(var(--idleQrSizeMobilePx,7.25rem) + 1.25rem)}
     }
     .footerMeta{
-      color:rgba(197,214,235,.56);
+      color:var(--text-tertiary);
       font-size:.75rem;
       letter-spacing:.08em;
       text-transform:uppercase
@@ -271,17 +295,20 @@
     }
     .hidden{display:none !important}
     .idleQrWrap{
-      position:fixed;right:1.125rem;bottom:1.125rem;z-index:40;
+      position:fixed;
+      right:max(1.125rem, env(safe-area-inset-right));
+      bottom:max(1.125rem, env(safe-area-inset-bottom));
+      z-index:40;
       display:flex;flex-direction:column;align-items:center;gap:.5rem;
-      background:rgba(8,15,27,.84);border:1px solid rgba(116,162,230,.28);border-radius:.875rem;
-      padding:.625rem .625rem .5rem;box-shadow:0 .875rem 1.75rem rgba(0,0,0,.38);backdrop-filter:blur(.375rem)
+      background:rgba(21, 29, 40, .92);border:1px solid var(--border-strong);border-radius:.75rem;
+      padding:.625rem .625rem .5rem;box-shadow:0 .75rem 2rem rgba(0,0,0,.36)
     }
     .idleQrImg{
-      width:var(--idleQrSizePx,10.5rem);height:var(--idleQrSizePx,10.5rem);display:block;background:#fff;border-radius:.625rem;
-      border:1px solid rgba(116,162,230,.32)
+      width:var(--idleQrSizePx,10.5rem);height:var(--idleQrSizePx,10.5rem);display:block;background:#fff;border-radius:.5rem;
+      border:1px solid var(--border-subtle)
     }
     .idleQrLabel{
-      max-width:calc(var(--idleQrSizePx,10.5rem) + .25rem);color:#d8e8ff;font-size:.6875rem;line-height:1.2;text-align:center;
+      max-width:calc(var(--idleQrSizePx,10.5rem) + .25rem);color:var(--text-secondary);font-size:.6875rem;font-weight:600;line-height:1.25;text-align:center;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis
     }
     @media (max-width:760px){

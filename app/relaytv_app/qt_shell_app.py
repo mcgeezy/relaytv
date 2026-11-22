@@ -36,6 +36,7 @@ except Exception:
     app_state = None
 
 from .debug import get_logger
+from . import tv_theme
 
 
 logger = get_logger("qt_shell")
@@ -1730,10 +1731,7 @@ def main(argv: list[str] | None = None) -> int:
             frame = QFrame(self)
             frame.setObjectName("qt-native-toast")
             frame.setMaximumWidth(430)
-            frame.setStyleSheet(
-                "QFrame#qt-native-toast{background:rgba(9,16,28,210);border:1px solid rgba(42,168,255,68);"
-                "border-radius:15px;} QLabel{color:#eef4ff;font-size:16px;}"
-            )
+            frame.setStyleSheet(tv_theme.qt_toast_frame_qss(str(payload.get("level") or "info")))
             box = QVBoxLayout(frame)
             box.setContentsMargins(14, 13, 14, 13)
             box.setSpacing(10)
@@ -1751,16 +1749,14 @@ def main(argv: list[str] | None = None) -> int:
             if link_url:
                 link = QLabel(str(payload.get("link_text") or link_url), frame)
                 link.setWordWrap(True)
-                link.setStyleSheet("color:#b9d6ff;font-size:13px;")
+                link.setStyleSheet(tv_theme.qt_toast_link_qss())
                 box.addWidget(link)
             image_url = str(payload.get("image_url") or "").strip()
             if image_url:
                 img = QLabel(frame)
                 img.setFixedHeight(124)
                 img.setAlignment(Qt.AlignCenter)
-                img.setStyleSheet(
-                    "background:rgba(255,255,255,10); border:1px solid rgba(130,170,220,64); border-radius:11px;"
-                )
+                img.setStyleSheet(tv_theme.qt_toast_image_qss())
                 img.hide()
                 box.addWidget(img)
                 self._load_image(img, image_url)
@@ -1801,9 +1797,7 @@ def main(argv: list[str] | None = None) -> int:
             self._logo_label = QLabel(self)
             self._logo_label.setAlignment(Qt.AlignCenter)
             self._logo_label.setMinimumSize(180, 72)
-            self._logo_label.setStyleSheet(
-                "background:transparent;color:rgba(238,245,255,0.94);font-size:24px;font-weight:700;"
-            )
+            self._logo_label.setStyleSheet(tv_theme.qt_idle_logo_qss())
             top.addWidget(self._logo_label, 0, Qt.AlignCenter)
             top.addStretch(1)
             root.addLayout(top)
@@ -1815,10 +1809,7 @@ def main(argv: list[str] | None = None) -> int:
 
             rail = QFrame(self)
             rail.setObjectName("qt-native-idle-rail")
-            rail.setStyleSheet(
-                "QFrame#qt-native-idle-rail{background:transparent;border:none;}"
-                "QLabel{color:#eef4ff;}"
-            )
+            rail.setStyleSheet(tv_theme.qt_idle_rail_qss())
             rail.setMaximumWidth(580)
             rail.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
             rail_box = QVBoxLayout(rail)
@@ -1833,13 +1824,11 @@ def main(argv: list[str] | None = None) -> int:
             time_col.setSpacing(4)
             self._time_label = QLabel(rail)
             self._time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self._time_label.setStyleSheet(
-                "font-size:86px;font-weight:760;letter-spacing:-2px;color:rgba(240,247,255,0.98);"
-            )
+            self._time_label.setStyleSheet(tv_theme.qt_idle_clock_qss())
             self._time_label.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
             self._date_label = QLabel(rail)
             self._date_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self._date_label.setStyleSheet("font-size:28px;color:rgba(230,239,251,0.82);")
+            self._date_label.setStyleSheet(tv_theme.qt_idle_date_qss())
             self._date_label.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
             time_col.addWidget(self._time_label)
             time_col.addWidget(self._date_label)
@@ -1847,31 +1836,27 @@ def main(argv: list[str] | None = None) -> int:
 
             divider = QFrame(rail)
             divider.setFixedWidth(1)
-            divider.setStyleSheet("background:rgba(220,234,255,0.24);border:none;")
+            divider.setStyleSheet(tv_theme.qt_idle_divider_qss())
 
             self._weather_frame = QFrame(rail)
             self._weather_frame.setObjectName("qt-native-idle-weather")
             self._weather_frame.setMinimumWidth(240)
             self._weather_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-            self._weather_frame.setStyleSheet(
-                "QFrame#qt-native-idle-weather{background:transparent;border:none;}"
-            )
+            self._weather_frame.setStyleSheet(tv_theme.qt_idle_weather_panel_qss())
             weather_box = QVBoxLayout(self._weather_frame)
             weather_box.setContentsMargins(0, 0, 0, 0)
             weather_box.setSpacing(6)
             self._weather_location = QLabel("", self._weather_frame)
             self._weather_location.setWordWrap(True)
-            self._weather_location.setStyleSheet("font-size:13px;color:rgba(197,214,235,0.76);")
+            self._weather_location.setStyleSheet(tv_theme.qt_idle_weather_location_qss())
             self._weather_temp = QLabel("--", self._weather_frame)
-            self._weather_temp.setStyleSheet(
-                "font-size:58px;font-weight:780;letter-spacing:-2px;color:rgba(240,247,255,0.98);"
-            )
+            self._weather_temp.setStyleSheet(tv_theme.qt_idle_weather_temp_qss())
             self._weather_summary = QLabel("Weather unavailable", self._weather_frame)
             self._weather_summary.setWordWrap(True)
-            self._weather_summary.setStyleSheet("font-size:18px;color:rgba(230,241,255,0.82);")
+            self._weather_summary.setStyleSheet(tv_theme.qt_idle_weather_summary_qss())
             self._weather_meta = QLabel("", self._weather_frame)
             self._weather_meta.setWordWrap(True)
-            self._weather_meta.setStyleSheet("font-size:13px;color:rgba(220,233,255,0.88);")
+            self._weather_meta.setStyleSheet(tv_theme.qt_idle_weather_meta_qss())
             weather_box.addWidget(self._weather_location)
             weather_box.addSpacing(4)
             weather_box.addWidget(self._weather_temp)
@@ -1887,10 +1872,7 @@ def main(argv: list[str] | None = None) -> int:
             self._forecast_frame = QFrame(rail)
             self._forecast_frame.setObjectName("qt-native-idle-forecast")
             self._forecast_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-            self._forecast_frame.setStyleSheet(
-                "QFrame#qt-native-idle-forecast{background:rgba(255,255,255,10);"
-                "border:1px solid rgba(205,226,255,28);border-radius:20px;}"
-            )
+            self._forecast_frame.setStyleSheet(tv_theme.qt_idle_forecast_strip_qss())
             forecast_box = QHBoxLayout(self._forecast_frame)
             forecast_box.setContentsMargins(14, 12, 14, 12)
             forecast_box.setSpacing(10)
@@ -1904,31 +1886,24 @@ def main(argv: list[str] | None = None) -> int:
             footer.setSpacing(18)
             self._device_label = QLabel(self)
             self._device_label.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
-            self._device_label.setStyleSheet(
-                "font-size:28px;font-weight:700;color:rgba(237,245,255,0.98);"
-            )
+            self._device_label.setStyleSheet(tv_theme.qt_idle_device_footer_qss())
             self._device_label.setText(self._device_name)
             self._device_label.setVisible(bool(self._device_name))
             footer.addWidget(self._device_label, 1, Qt.AlignLeft | Qt.AlignBottom)
 
             self._qr_wrap = QFrame(self)
             self._qr_wrap.setObjectName("qt-native-idle-qr-wrap")
-            self._qr_wrap.setStyleSheet(
-                "QFrame#qt-native-idle-qr-wrap{background:rgba(8,15,27,214);"
-                "border:1px solid rgba(205,226,255,38);border-radius:16px;}"
-            )
+            self._qr_wrap.setStyleSheet(tv_theme.qt_idle_qr_frame_qss())
             qr_box = QVBoxLayout(self._qr_wrap)
             qr_box.setContentsMargins(10, 10, 10, 8)
             qr_box.setSpacing(8)
             self._qr_label = QLabel(self._qr_wrap)
             self._qr_label.setAlignment(Qt.AlignCenter)
-            self._qr_label.setStyleSheet(
-                "background:rgba(255,255,255,8); border:1px solid rgba(130,170,220,64); border-radius:14px;"
-            )
+            self._qr_label.setStyleSheet(tv_theme.qt_idle_qr_label_qss())
             self._qr_caption = QLabel(self._qr_wrap)
             self._qr_caption.setAlignment(Qt.AlignCenter)
             self._qr_caption.setWordWrap(True)
-            self._qr_caption.setStyleSheet("font-size:11px;color:rgba(214,229,255,0.78);")
+            self._qr_caption.setStyleSheet(tv_theme.qt_idle_qr_caption_qss())
             qr_box.addWidget(self._qr_label, 0, Qt.AlignCenter)
             qr_box.addWidget(self._qr_caption, 0, Qt.AlignCenter)
             footer.addWidget(self._qr_wrap, 0, Qt.AlignRight | Qt.AlignBottom)
@@ -2175,7 +2150,7 @@ def main(argv: list[str] | None = None) -> int:
                 return
             for idx in range(count):
                 col = QFrame(self._forecast_frame)
-                col.setStyleSheet("background:transparent;border:none;")
+                col.setStyleSheet(tv_theme.qt_idle_forecast_col_qss())
                 col_box = QVBoxLayout(col)
                 col_box.setContentsMargins(0, 0, 0, 0)
                 col_box.setSpacing(3)
@@ -2186,10 +2161,10 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception:
                     dow_text = "--"
                 dow.setText(dow_text)
-                dow.setStyleSheet("font-size:13px;font-weight:700;color:rgba(238,245,255,0.92);")
+                dow.setStyleSheet(tv_theme.qt_idle_forecast_dow_qss())
                 summary = QLabel(_native_idle_weather_code_label(codes[idx]), col)
                 summary.setWordWrap(True)
-                summary.setStyleSheet("font-size:12px;color:rgba(226,237,251,0.74);")
+                summary.setStyleSheet(tv_theme.qt_idle_forecast_summary_qss())
                 hi = _optional_float(maxs[idx])
                 lo = _optional_float(mins[idx])
                 rain = _optional_float(rains[idx]) if idx < len(rains) else None
@@ -2199,9 +2174,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"{int(round(lo)) if lo is not None else '--'}{unit_sym}",
                     col,
                 )
-                range_label.setStyleSheet(
-                    "font-size:14px;font-weight:700;color:rgba(243,248,255,0.98);"
-                )
+                range_label.setStyleSheet(tv_theme.qt_idle_forecast_range_qss())
                 details = []
                 if rain is not None:
                     details.append(f"Rain {int(round(rain))}%")
@@ -2209,7 +2182,7 @@ def main(argv: list[str] | None = None) -> int:
                     details.append(f"Wind {int(round(wind))} {wind_unit}")
                 meta = QLabel("  •  ".join(details), col)
                 meta.setWordWrap(True)
-                meta.setStyleSheet("font-size:11px;color:rgba(214,229,255,0.68);")
+                meta.setStyleSheet(tv_theme.qt_idle_forecast_meta_qss())
                 col_box.addWidget(dow)
                 col_box.addWidget(summary)
                 col_box.addWidget(range_label)
