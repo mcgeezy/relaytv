@@ -82,3 +82,15 @@ test('unmount removes dialog listeners', () => {
   assert.equal(state.windowListeners.has('keydown'), false);
   assert.equal(state.backdrop.listeners.has('click'), false);
 });
+
+test('open supports per-open opener/initialFocus overrides and skips hidden returnFocus', () => {
+  const state = fixture();
+  const customOpener = element('customOpener');
+  const customFocus = element('customFocus');
+  state.controller.open({opener:customOpener, initialFocus:customFocus});
+  assert.equal(customFocus.focused, true);
+
+  customOpener.classList.add('hidden');
+  state.controller.close();
+  assert.equal(customOpener.focused, undefined);
+});

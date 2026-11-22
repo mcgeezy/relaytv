@@ -760,6 +760,9 @@
         try { target.focus(); } catch (_e) {}
       }
     }
+    if (typeof __lastStatus !== 'undefined' && __lastStatus && typeof renderStatus === 'function') {
+      renderStatus(__lastStatus);
+    }
   }
 
   function playbackActive(){

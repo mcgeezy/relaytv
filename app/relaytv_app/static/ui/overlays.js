@@ -39,11 +39,12 @@
       });
     }
 
-    function open() {
+    function open(openOpts = {}) {
       if (!backdrop || isOpen()) return false;
-      returnFocus = opener || doc.activeElement;
+      const opts = openOpts && typeof openOpts === 'object' ? openOpts : {};
+      returnFocus = opts.opener || opener || doc.activeElement;
       backdrop.classList.remove('hidden');
-      const target = initialFocus || focusable()[0];
+      const target = opts.initialFocus || initialFocus || focusable()[0];
       if (target && target.focus) target.focus({preventScroll:true});
       return true;
     }
@@ -51,7 +52,11 @@
     function close({restoreFocus = true} = {}) {
       if (!backdrop || !isOpen()) return false;
       backdrop.classList.add('hidden');
-      if (restoreFocus && returnFocus && returnFocus.focus && returnFocus.isConnected !== false) {
+      const hiddenTarget = returnFocus && (
+        returnFocus.classList?.contains?.('hidden')
+        || returnFocus.closest?.('.hidden, [hidden]')
+      );
+      if (restoreFocus && returnFocus && returnFocus.focus && returnFocus.isConnected !== false && !hiddenTarget) {
         returnFocus.focus({preventScroll:true});
       }
       returnFocus = null;

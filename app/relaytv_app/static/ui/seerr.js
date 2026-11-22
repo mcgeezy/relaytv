@@ -296,7 +296,8 @@ function _seerrRenderDetail(item){
   detail.replaceChildren();
   const hero = document.createElement('div');
   hero.className = 'seerrDetailHero';
-  if (item.backdrop_url) hero.style.backgroundImage = `url("${String(item.backdrop_url).replaceAll('"', '%22')}")`;
+  const safeBackdrop = String(item.backdrop_url || '').replace(/[\r\n\f"'()\\]/g, '').trim();
+  if (safeBackdrop) hero.style.backgroundImage = `url("${safeBackdrop}")`;
   const copy = document.createElement('div');
   copy.className = 'seerrDetailCopy';
   const close = document.createElement('button');

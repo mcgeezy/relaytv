@@ -1,11 +1,12 @@
 # UI modernization and implementation plan
 
-Status: active; phases 0–3 are reconciled onto `main` at `a8bc5dc` (`v0.12.3`),
-with phases 4–7 and physical device evidence remaining. Created September 13,
-2026; resumed November 22, 2026. Planning branch: `docs/ui-modernization-plan`.
-Unified pull request: #99. Intended release: `0.13.0` (`feat:`). Intermediate
-plan/phase evidence files live in-tree only during development and are pruned in
-Phase 7 prior to merge.
+Status: Phases 0–7 code and automated browser/unit verification complete on
+`feat/pr99-resume-v013` (reconciled onto `main` at `a8bc5dc` / `v0.12.3`),
+awaiting physical device sign-off on NUC/Pi and pre-merge pruning of temporary
+phase docs. Created September 13, 2026; resumed and completed November 22,
+2026. Planning branch: `docs/ui-modernization-plan`. Unified pull request: #99.
+Intended release: `0.13.0` (`feat:`). Intermediate plan/phase evidence files
+live in-tree only during development and are pruned prior to merge.
 
 ## Outcome and scope
 
@@ -460,11 +461,31 @@ Stage A reconciliation onto `main` (`a8bc5dc`, `v0.12.3`, November 22, 2026):
 Phases 0–3 were cleanly reconciled onto `v0.12.3` preserving Unified Multi-Server
 Browse (`#157`/`#159`/`#161`/`#162`), YouTube Playlist Queueing (`#158`), Live
 DVR Rewind (`#147`/`#174`), Settings category tabs (`#168`), idle/overlay
-hardening (`#100`/`#173`), and UI XSS/CSS/safe-area fixes (`#173`). All quality
-gates passed with **1,737 Python tests**, **100 Node tests**, and Chromium 158
-Playwright verification across Phase 0 (17 states), Phase 1 (9 theme/a11y
-checks), Phase 2 (seams), Phase 3 (6 viewports + interaction matrix + share),
-and `playlist-ui-smoke.js`.
+hardening (`#100`/`#173`), and UI XSS/CSS/safe-area fixes (`#173`).
+
+Phases 4–7 completion (November 22, 2026):
+- [Phase 4 browse consistency](ui-modernization/PHASE_4_BROWSE.md): aligned
+  Jellyfin/Emby, Plex, IPTV, and Seerr stylesheets onto `foundation.css`
+  semantic tokens with full dark/light parity and zero undefined CSS custom
+  properties (`scripts/ui-phase4-browse.js` passed across all 4 providers).
+- [Phase 5 settings, auth, and peers](ui-modernization/PHASE_5_SETTINGS.md):
+  migrated Settings into an in-flow destination with dirty-state badge and
+  inline discard confirmation, replaced native `window.prompt` with the
+  first-party `#authTokenBackdrop` Bearer dialog (`setTokenPrompt` +
+  `forgetToken`), and aligned Peers (`peers.js`/`peers.css`) onto
+  `overlays.createDialogController` and semantic tokens
+  (`scripts/ui-phase5-settings.js` passed).
+- [Phase 6 TV presentation](ui-modernization/PHASE_6_TV.md): added pure-Python
+  `app/relaytv_app/tv_theme.py` aligned with `foundation.css`, wired native Qt
+  idle/toast QSS in `qt_shell_app.py`, and aligned `/idle` and `/x11/overlay`
+  (`tests/test_tv_theme.py` and `scripts/ui-phase6-tv.js` passed at 720p,
+  1080p, and 4K).
+- [Phase 7 hardening](ui-modernization/PHASE_7_HARDENING.md): all quality gates
+  passed with **1,741 Python tests**, **109 Node tests**, **0 undefined CSS
+  vars**, independent security/regression audit findings resolved, and
+  Playwright Chromium verification across Phases 0–7 + `playlist-ui-smoke.js`.
+  Remaining before merge: physical device sign-off on NUC/Pi and pruning
+  intermediate phase docs.
 
 The unified implementation PR uses a Conventional Commit title
 (`feat: modernize RelayTV interface`) and includes user impact,

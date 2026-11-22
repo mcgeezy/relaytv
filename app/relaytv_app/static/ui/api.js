@@ -43,6 +43,7 @@
   function storeToken(value) {
     try {
       const token = String(value || '').trim();
+      if (token) promptedThisLoad = false;
       if (!storage) return;
       if (token) storage.setItem(storageKey, token);
       else storage.removeItem(storageKey);
@@ -60,7 +61,12 @@
 
   function isSameOrigin(input) {
     try {
-      const raw = typeof input === 'string' ? input : ((input && input.url) || '');
+      const raw = typeof input === 'string'
+        ? input
+        : (input && typeof input.url === 'string'
+          ? input.url
+          : (input && typeof input.href === 'string' ? input.href : ''));
+      if (!raw) return false;
       return new URL(raw, win.location.href).origin === win.location.origin;
     } catch (_error) { return false; }
   }
@@ -121,7 +127,7 @@
       const sameOrigin = isSameOrigin(input);
       const token = sameOrigin ? storedToken() : '';
       let response = await nativeFetch(input, token ? withAuth(options, token) : options);
-      if (!sameOrigin || promptedThisLoad || !isBearerChallenge(response)) return response;
+      if (!sameOrigin || (promptedThisLoad && !activePromptPromise) || !isBearerChallenge(response)) return response;
       promptedThisLoad = true;
       const replacement = await requestReplacementToken(!!token);
       if (!replacement) return response;

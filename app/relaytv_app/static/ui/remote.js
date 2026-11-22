@@ -669,11 +669,6 @@ function _uiCloseTopLayerFromNav(){
     closeNowLanguageModal({fromNav:true});
     return true;
   }
-  const settingsBd = document.getElementById('settingsBackdrop');
-  if (!_isHiddenEl(settingsBd)) {
-    closeSettings({fromNav:true});
-    return true;
-  }
   const aboutBd = document.getElementById('aboutBackdrop');
   if (!_isHiddenEl(aboutBd)) {
     closeAbout({fromNav:true});
@@ -698,6 +693,11 @@ function _uiCloseTopLayerFromNav(){
   const addBd = document.getElementById('addBackdrop');
   if (!_isHiddenEl(addBd)) {
     closeAddUrl({fromNav:true});
+    return true;
+  }
+  const settingsBd = document.getElementById('settingsBackdrop');
+  if (!_isHiddenEl(settingsBd) && !settingsBd.classList.contains('isDestination')) {
+    closeSettings({fromNav:true});
     return true;
   }
   const menu = document.getElementById('hdrMenuPanel');
@@ -1435,6 +1435,7 @@ function _updateNowCardClasses(card, opts){
 
 function renderStatus(st) {
   if (!st) return;
+  if (window.relaytvPeers && window.relaytvPeers.syncPlayback) window.relaytvPeers.syncPlayback();
   if (_uiRefreshInteractionLockActive()) return;
   _jfSetLaunchVisible(_jfCanLaunchFromStatus(st));
   applyJfBranding(st.jellyfin_server_type, st.jellyfin_server_url_configured);
@@ -2835,4 +2836,3 @@ function bindAddUrlUi(){
     submitAddUrl('play');
   });
 }
-

@@ -177,6 +177,16 @@ body:has(.compactPlaybackBar:not(.hidden)) .seerrShellInner,
 body:has(.compactPlaybackBar:not(.hidden)) .plexDetail,
 body:has(.compactPlaybackBar:not(.hidden)) .seerrDetail{padding-bottom:150px}
 
+/* Keep modal provider details and connect sheets unobstructed by the floating playback bar. */
+body:has(#jfGrid.detailOpen) .compactPlaybackBar,
+body:has(#jellyfinShell.jfSeasonChooserOpen) .compactPlaybackBar,
+body:has(#plexDetail:not(.hidden)) .compactPlaybackBar,
+body:has(#seerrDetail:not(.hidden)) .compactPlaybackBar,
+body:has(#seerrConnectBackdrop:not(.hidden)) .compactPlaybackBar{
+  visibility:hidden;
+  pointer-events:none;
+}
+
 /* Keep the connection banner above dialogs and render Settings cleanly as a destination view. */
 .connBadge{z-index:10100}
 #settingsBackdrop.modalBackdrop{z-index:1230}
