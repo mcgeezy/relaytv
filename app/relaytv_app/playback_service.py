@@ -1068,6 +1068,7 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     else:
         player.retire_playback_intents("resume_session")
         with player.MPV_LOCK:
+            player.note_playback_started(start_pos)
             stream_url = stream.strip()
             audio_url = audio.strip() if isinstance(audio, str) and audio.strip() else None
             http_headers = player._item_http_headers(now)
@@ -1088,6 +1089,14 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
         resumed["started"] = int(time.time())
         resumed["mode"] = "resume"
         resumed["closed"] = False
+        if start_pos is not None:
+            try:
+                resumed["resume_pos"] = float(start_pos)
+                resumed["_playback_started_pos"] = max(0.0, float(start_pos))
+            except Exception:
+                pass
+        else:
+            resumed["_playback_started_pos"] = 0.0
         state.update_session(now_playing=resumed, session_state="playing", pause_reason=None)
         try:
             player._arm_playback_start_watchdog(resumed)

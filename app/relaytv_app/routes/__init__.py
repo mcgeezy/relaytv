@@ -3303,13 +3303,27 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
         raise HTTPException(status_code=422, detail="Seek offset must be finite")
     if math.isfinite(delta):
         try:
-            props = player.mpv_get_many(["time-pos", "duration", "demuxer-cache-state"])
+            try:
+                props = player.mpv_get_many(
+                    ["time-pos", "duration", "demuxer-cache-state"], fresh=True
+                )
+            except TypeError:
+                props = player.mpv_get_many(["time-pos", "duration", "demuxer-cache-state"])
         except Exception:
             props = {}
         try:
             current = float((props or {}).get("time-pos"))
         except Exception:
             current = None
+        if not is_live:
+            recent_seek = getattr(player, "active_playback_seek_baseline", lambda _n=None: None)(
+                now if isinstance(now, dict) else None
+            )
+            if recent_seek is not None:
+                seek_pos, seek_at = recent_seek
+                seek_age = max(0.0, time.time() - seek_at)
+                if seek_age < 1.5 and (current is None or abs(current - seek_pos) > 2.0):
+                    current = seek_pos + seek_age
         if is_live and (current is None or not math.isfinite(current)):
             raise HTTPException(status_code=409, detail="Live DVR playback position is unavailable")
         if current is not None and math.isfinite(current):
@@ -3780,7 +3794,14 @@ def _status_payload() -> dict[str, object]:
         elif (
             sess == "playing"
             and isinstance(state.NOW_PLAYING, dict)
-            and not bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)())
+            and not (
+                bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)())
+                and bool(
+                    getattr(player, "_runtime_gap_completion_plausible", lambda _n: False)(
+                        state.NOW_PLAYING
+                    )
+                )
+            )
             and (
                 str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "iptv"
                 or player._item_looks_like_live_stream(state.NOW_PLAYING)

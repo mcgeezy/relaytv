@@ -635,6 +635,7 @@ def previous():
                 pos = player.mpv_get("time-pos")
             if pos is not None and float(pos) > 5.0:
                 player.mpv_command(["seek", 0.0, "absolute"])
+                player.note_playback_seek(0.0)
                 return {"ok": True, "action": "restart"}
         except Exception:
             pass
