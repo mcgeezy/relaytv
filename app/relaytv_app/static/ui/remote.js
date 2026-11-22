@@ -494,6 +494,21 @@ function _queueTileFromPoint(x, y){
   return el.closest ? el.closest('.qTile') : null;
 }
 
+function _queueTileTargetForY(ol, x, y, dragTile, dragDy){
+  const tiles = ol && ol.querySelectorAll ? Array.from(ol.querySelectorAll('.qTile')) : [];
+  let measured = 0;
+  for (const tile of tiles) {
+    if (!tile || typeof tile.getBoundingClientRect !== 'function') continue;
+    const rect = tile.getBoundingClientRect();
+    if (!rect || !(rect.height > 0)) continue;
+    measured += 1;
+    const midY = (rect.top + rect.height * 0.5) - (tile === dragTile ? (dragDy || 0) : 0);
+    if (y <= midY) return tile;
+  }
+  if (measured > 0) return tiles[tiles.length - 1] || null;
+  return _queueTileFromPoint(x, y);
+}
+
 function bindQueuePointerDnD(){
   if (__queueDnDBound) return;
   __queueDnDBound = true;
@@ -507,22 +522,96 @@ function bindQueuePointerDnD(){
   let overQueueId = '';
   let startX = 0, startY = 0;
   let active = false;
+  let dragTile = null;
+  let dragPointerId = null;
+  let dragDy = 0;
+  let holdTimer = 0;
+  let holdTile = null;
+  let holdPointerId = null;
+  let suppressClickUntil = 0;
   const MOVE_PX = 4;
+  const HOLD_MS = 280;
+  const HOLD_CANCEL_PX = 10;
+
+  const clearIndicators = () => {
+    ol.querySelectorAll('.qTile.dragOver, .qTile.dragInsertBefore, .qTile.dragInsertAfter').forEach((x) => {
+      x.classList.remove('dragOver', 'dragInsertBefore', 'dragInsertAfter');
+    });
+  };
+
+  const cancelHold = () => {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = 0;
+    }
+    if (holdTile) {
+      holdTile.classList.remove('dragArming');
+      holdTile = null;
+    }
+    holdPointerId = null;
+  };
 
   const cleanup = () => {
+    cancelHold();
+    if (dragPointerId != null && typeof ol.releasePointerCapture === 'function') {
+      try { ol.releasePointerCapture(dragPointerId); } catch(_){}
+    }
+    if (dragTile) {
+      dragTile.style.transform = '';
+      dragTile.classList.remove('dragging');
+      dragTile = null;
+    }
     __draggingQueue = false;
     active = false;
     startFrom = null;
     overTo = null;
     startQueueId = '';
     overQueueId = '';
+    dragPointerId = null;
+    dragDy = 0;
     __dragStartTs = 0;
+    ol.classList.remove('isDraggingQueue');
     document.body.classList.remove('noScroll');
-    document.querySelectorAll('.qTile.dragging').forEach(x => x.classList.remove('dragging'));
-    document.querySelectorAll('.qTile.dragOver').forEach(x => x.classList.remove('dragOver'));
+    document.querySelectorAll('.qTile.dragging').forEach((x) => {
+      x.style.transform = '';
+      x.classList.remove('dragging');
+    });
+    document.querySelectorAll('.qTile.dragArming').forEach((x) => x.classList.remove('dragArming'));
+    clearIndicators();
   };
 
   __queueDnDCleanup = cleanup;
+
+  const beginDrag = (tile, pointerId, clientX, clientY, fromHandle) => {
+    const fromIdx = parseInt(tile.dataset.index || '', 10);
+    if (isNaN(fromIdx)) return false;
+
+    cancelHold();
+    startFrom = fromIdx;
+    overTo = fromIdx;
+    startQueueId = String(tile.dataset.queueId || '');
+    overQueueId = startQueueId;
+    startX = clientX || 0;
+    startY = clientY || 0;
+    active = !fromHandle;
+    dragTile = tile;
+    dragPointerId = pointerId != null ? pointerId : null;
+
+    __draggingQueue = true;
+    __dragStartTs = Date.now();
+
+    tile.classList.add('dragging');
+    ol.classList.add('isDraggingQueue');
+    document.body.classList.add('noScroll');
+
+    if (pointerId != null && typeof ol.setPointerCapture === 'function') {
+      try { ol.setPointerCapture(pointerId); } catch(_){}
+    }
+    if (!fromHandle && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try { navigator.vibrate(15); } catch(_){}
+    }
+    return true;
+  };
 
   const finish = async () => {
     const from = startFrom;
@@ -530,6 +619,7 @@ function bindQueuePointerDnD(){
     const fromQueueId = startQueueId;
     const toQueueId = overQueueId;
     const didDrag = active; // capture before cleanup() resets state
+    if (didDrag) suppressClickUntil = Date.now() + 350;
     cleanup();
     if (didDrag && from != null && to != null && from !== to) {
       await qMove(from, to, fromQueueId, toQueueId);
@@ -537,65 +627,139 @@ function bindQueuePointerDnD(){
   };
 
   ol.addEventListener('pointerdown', (e) => {
-    const handle = e.target && e.target.closest ? e.target.closest('.qHandle') : null;
-    if (!handle) return;
-    const tile = handle.closest('.qTile');
-    if (!tile) return;
-
+    if (__draggingQueue) return;
     // Only primary mouse button; touch/pen OK.
     if (e.button != null && e.button !== 0) return;
 
+    const handle = e.target && e.target.closest ? e.target.closest('.qHandle') : null;
+    if (handle) {
+      const tile = handle.closest('.qTile');
+      if (!tile || tile.classList.contains('qPendingRemove')) return;
+      if (beginDrag(tile, e.pointerId, e.clientX || 0, e.clientY || 0, true)) {
+        try { e.preventDefault(); } catch(_){}
+      }
+      return;
+    }
+
+    // Hold-to-drag anywhere on a queue item (excluding action buttons/links).
+    if (e.target && e.target.closest && e.target.closest('button, a, input, select, textarea, .qMenuBtn')) return;
+    const tile = e.target && e.target.closest ? e.target.closest('.qTile') : null;
+    if (!tile || tile.classList.contains('qPendingRemove')) return;
     const fromIdx = parseInt(tile.dataset.index || '', 10);
     if (isNaN(fromIdx)) return;
 
-    startFrom = fromIdx;
-    overTo = fromIdx;
-    startQueueId = String(tile.dataset.queueId || '');
-    overQueueId = startQueueId;
+    cancelHold();
+    holdTile = tile;
+    holdPointerId = e.pointerId != null ? e.pointerId : null;
     startX = e.clientX || 0;
     startY = e.clientY || 0;
-    active = false;
-
-    __draggingQueue = true;
-    __dragStartTs = Date.now();
-
-    tile.classList.add('dragging');
-    document.body.classList.add('noScroll');
-
-    try { ol.setPointerCapture(e.pointerId); } catch(_){}
-    try { e.preventDefault(); } catch(_){}
+    tile.classList.add('dragArming');
+    holdTimer = setTimeout(() => {
+      holdTimer = 0;
+      if (!holdTile || holdTile.isConnected === false || holdTile.classList.contains('qPendingRemove')) {
+        cancelHold();
+        return;
+      }
+      beginDrag(holdTile, holdPointerId, startX, startY, false);
+    }, HOLD_MS);
   }, {passive:false});
 
   ol.addEventListener('pointermove', (e) => {
-    if (!__draggingQueue || startFrom == null) return;
+    if (!__draggingQueue) {
+      if (!holdTimer) return;
+      if (holdPointerId != null && e.pointerId != null && e.pointerId !== holdPointerId) return;
+      const hdx = (e.clientX || 0) - startX;
+      const hdy = (e.clientY || 0) - startY;
+      if (Math.hypot(hdx, hdy) > HOLD_CANCEL_PX) cancelHold();
+      return;
+    }
+
+    if (startFrom == null) return;
+    if (dragPointerId != null && e.pointerId != null && e.pointerId !== dragPointerId) return;
 
     const dx = (e.clientX || 0) - startX;
     const dy = (e.clientY || 0) - startY;
     if (!active && (Math.abs(dx) + Math.abs(dy) < MOVE_PX)) return;
     active = true;
+    __dragStartTs = Date.now();
 
-    const tile = _queueTileFromPoint(e.clientX, e.clientY);
+    if (dragTile) {
+      dragDy = Math.round(dy);
+      dragTile.style.transform = `translate3d(0, ${dragDy}px, 0) scale(1.02)`;
+    }
+
+    const tile = _queueTileTargetForY(ol, e.clientX || 0, e.clientY || 0, dragTile, dragDy);
     if (!tile) return;
     const toIdx = parseInt(tile.dataset.index || '', 10);
     if (isNaN(toIdx)) return;
     overTo = toIdx;
     overQueueId = String(tile.dataset.queueId || '');
 
-    document.querySelectorAll('.qTile.dragOver').forEach(x => x.classList.remove('dragOver'));
-    tile.classList.add('dragOver');
+    clearIndicators();
+    if (toIdx !== startFrom) {
+      tile.classList.add('dragOver');
+      tile.classList.add(toIdx < startFrom ? 'dragInsertBefore' : 'dragInsertAfter');
+    }
 
     try { e.preventDefault(); } catch(_){}
   }, {passive:false});
 
-  ol.addEventListener('pointerup', async (e) => { try { e.preventDefault(); } catch(_){} await finish(); }, {passive:false});
-  ol.addEventListener('pointercancel', async (e) => { try { e.preventDefault(); } catch(_){} await finish(); }, {passive:false});
-  const __winUp = async (e) => {
+  ol.addEventListener('touchmove', (e) => {
     if (!__draggingQueue) return;
+    try { e.preventDefault(); } catch(_){}
+  }, {passive:false});
+
+  ol.addEventListener('contextmenu', (e) => {
+    if (__draggingQueue || holdTimer) {
+      try { e.preventDefault(); } catch(_){}
+    }
+  });
+
+  ol.addEventListener('click', (e) => {
+    if (Date.now() < suppressClickUntil) {
+      try { e.preventDefault(); e.stopPropagation(); } catch(_){}
+    }
+  }, true);
+
+  ol.addEventListener('pointerup', async (e) => {
+    if (!__draggingQueue) {
+      cancelHold();
+      return;
+    }
+    if (dragPointerId != null && e.pointerId != null && e.pointerId !== dragPointerId) return;
+    try { e.preventDefault(); } catch(_){}
+    await finish();
+  }, {passive:false});
+
+  ol.addEventListener('pointercancel', (e) => {
+    if (!__draggingQueue) {
+      cancelHold();
+      return;
+    }
+    if (dragPointerId != null && e.pointerId != null && e.pointerId !== dragPointerId) return;
+    cleanup();
+  }, {passive:false});
+
+  const __winUp = async (e) => {
+    if (!__draggingQueue) {
+      if (holdTimer) cancelHold();
+      return;
+    }
+    if (dragPointerId != null && e && e.pointerId != null && e.pointerId !== dragPointerId) return;
     try { e.preventDefault(); } catch(_){}
     await finish();
   };
+  const __winCancel = (e) => {
+    if (!__draggingQueue) {
+      if (holdTimer) cancelHold();
+      return;
+    }
+    if (dragPointerId != null && e && e.pointerId != null && e.pointerId !== dragPointerId) return;
+    cleanup();
+  };
   window.addEventListener('pointerup', __winUp, {passive:false});
-  window.addEventListener('pointercancel', __winUp, {passive:false});
+  window.addEventListener('pointercancel', __winCancel, {passive:false});
+  window.addEventListener('scroll', () => { if (holdTimer && !__draggingQueue) cancelHold(); }, {passive:true, capture:true});
   window.addEventListener('blur', () => cleanup(), {once:false});
 }
 

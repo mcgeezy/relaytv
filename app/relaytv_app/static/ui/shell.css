@@ -156,7 +156,51 @@
 .queueCard{padding:12px !important}
 .queueCard .qHead{min-height:44px;margin-bottom:8px;padding:0 0 8px}
 .queueCard .queueList{gap:7px}
-.queueCard .qTile{min-height:66px;gap:9px;padding:7px;border-radius:13px}
+.queueCard .queueList.isDraggingQueue{touch-action:none}
+.queueCard .qTile{
+  min-height:66px;
+  gap:9px;
+  padding:7px;
+  border-radius:13px;
+  -webkit-touch-callout:none;
+  -webkit-user-select:none;
+  user-select:none;
+  transition:transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+.queueCard .qTile.dragArming{
+  border-color:var(--border-strong);
+  background:var(--surface-hover);
+}
+.queueCard .qTile.dragging{
+  position:relative;
+  z-index:20;
+  border-color:var(--accent);
+  background:var(--surface-raised);
+  box-shadow:var(--shadow-md);
+  cursor:grabbing;
+  opacity:.96;
+  transition:none;
+  pointer-events:none;
+}
+.queueCard .qTile.dragOver{
+  border-color:var(--accent);
+  background:var(--accent-soft);
+  outline:none;
+}
+.queueCard .qTile.dragInsertBefore::before,
+.queueCard .qTile.dragInsertAfter::after{
+  content:"";
+  position:absolute;
+  left:10px;
+  right:10px;
+  height:3px;
+  border-radius:999px;
+  background:var(--accent);
+  pointer-events:none;
+  z-index:25;
+}
+.queueCard .qTile.dragInsertBefore::before{top:-5px}
+.queueCard .qTile.dragInsertAfter::after{bottom:-5px}
 .queueCard .qThumb{width:82px;border-radius:9px}
 .queueCard .qHandle,.queueCard .qMenuBtn{width:44px;height:44px;min-height:44px}
 .queueCard .qTitle{font-size:13px}
