@@ -256,3 +256,49 @@ test('pointercancel aborts an active drag without reordering', async () => {
   assert.equal(state.context.__draggingQueue, false);
   assert.deepEqual(state.moves, []);
 });
+
+test('touch hold-to-drag survives synthetic pointercancel and completes via touchmove + touchend', async () => {
+  const state = fixture();
+  let selectPrevented = false;
+  let touchMovePrevented = false;
+
+  await state.emitOl('selectstart', {
+    target: state.tiles[0].body,
+    preventDefault() { selectPrevented = true; },
+  });
+  assert.equal(selectPrevented, true);
+
+  await state.emitOl('pointerdown', {
+    target: state.tiles[0].body,
+    pointerType: 'touch',
+    button: 0,
+    pointerId: 11,
+    clientX: 120,
+    clientY: 130,
+    preventDefault() {},
+  });
+  state.flushTimers();
+  assert.equal(state.context.__draggingQueue, true);
+
+  // Mobile Chromium/WebKit can synthesize pointercancel during touch drag
+  await state.emitOl('pointercancel', {
+    pointerType: 'touch',
+    pointerId: 11,
+    preventDefault() {},
+  });
+  assert.equal(state.context.__draggingQueue, true);
+
+  await state.emitOl('touchmove', {
+    touches: [{clientX: 120, clientY: 280}],
+    preventDefault() { touchMovePrevented = true; },
+  });
+  assert.equal(touchMovePrevented, true);
+  assert.equal(state.tiles[2].tile.classList.contains('dragInsertAfter'), true);
+
+  await state.emitOl('touchend', {
+    touches: [],
+    preventDefault() {},
+  });
+  assert.equal(state.context.__draggingQueue, false);
+  assert.deepEqual(state.moves, [{from: 0, to: 2, fromId: 'q-0', toId: 'q-2'}]);
+});

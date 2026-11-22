@@ -157,15 +157,30 @@
 .queueCard .qHead{min-height:44px;margin-bottom:8px;padding:0 0 8px}
 .queueCard .queueList{gap:7px}
 .queueCard .queueList.isDraggingQueue{touch-action:none}
+.queueCard .qTile,
+.queueCard .qTile *{
+  -webkit-touch-callout:none !important;
+  -webkit-user-select:none !important;
+  user-select:none !important;
+  -webkit-user-drag:none;
+}
 .queueCard .qTile{
   min-height:66px;
   gap:9px;
   padding:7px;
   border-radius:13px;
-  -webkit-touch-callout:none;
-  -webkit-user-select:none;
-  user-select:none;
+  touch-action:pan-y;
   transition:transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+.queueCard .qTile .qThumb,
+.queueCard .qTile .qBody{
+  pointer-events:none;
+}
+body.noScroll,
+body.noScroll *{
+  -webkit-touch-callout:none !important;
+  -webkit-user-select:none !important;
+  user-select:none !important;
 }
 .queueCard .qTile.dragArming{
   border-color:var(--border-strong);
