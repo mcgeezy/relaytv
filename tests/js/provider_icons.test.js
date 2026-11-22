@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const APP_JS = fs.readFileSync(
-  path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'),
+  path.join(__dirname, '../../app/relaytv_app/static/ui/remote.js'),
   'utf8',
 );
 

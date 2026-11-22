@@ -1,0 +1,196 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-14T01:28:32.378Z",
+  "baseUrl": "http://127.0.0.1:8790",
+  "runner": {
+    "playwright": "1.62.0",
+    "browser": "chromium",
+    "browserVersion": "151.0.7922.34",
+    "platform": "linux/x64"
+  },
+  "modes": {
+    "auto": {
+      "tokens": {
+        "background": "#0b1017",
+        "surface": "#151d28",
+        "surfaceRaised": "#1c2735",
+        "textPrimary": "#f3f6fa",
+        "textSecondary": "#a7b4c5",
+        "accent": "#60a5fa",
+        "onAccent": "#07111f",
+        "focusRing": "#7dd3fc",
+        "bodyBackground": "rgb(11, 16, 23)"
+      },
+      "contrast": {
+        "primaryOnBackground": 17.6,
+        "primaryOnSurface": 15.65,
+        "secondaryOnSurface": 8.06,
+        "onAccent": 7.45,
+        "focusOnBackground": 11.44
+      },
+      "remoteHorizontalOverflow": false,
+      "providerItems": 3,
+      "dialog": {
+        "controls": [
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 73
+          }
+        ],
+        "focus": {
+          "outlineStyle": "solid",
+          "outlineWidth": "3px",
+          "transitionDuration": "1e-05s"
+        },
+        "metrics": {
+          "bottom": 844,
+          "viewportHeight": 844,
+          "role": "dialog",
+          "labelledBy": "aboutDialogTitle"
+        }
+      }
+    },
+    "dark": {
+      "tokens": {
+        "background": "#0b1017",
+        "surface": "#151d28",
+        "surfaceRaised": "#1c2735",
+        "textPrimary": "#f3f6fa",
+        "textSecondary": "#a7b4c5",
+        "accent": "#60a5fa",
+        "onAccent": "#07111f",
+        "focusRing": "#7dd3fc",
+        "bodyBackground": "rgb(11, 16, 23)"
+      },
+      "contrast": {
+        "primaryOnBackground": 17.6,
+        "primaryOnSurface": 15.65,
+        "secondaryOnSurface": 8.06,
+        "onAccent": 7.45,
+        "focusOnBackground": 11.44
+      },
+      "remoteHorizontalOverflow": false,
+      "providerItems": 3,
+      "dialog": {
+        "controls": [
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 73
+          }
+        ],
+        "focus": {
+          "outlineStyle": "solid",
+          "outlineWidth": "3px",
+          "transitionDuration": "1e-05s"
+        },
+        "metrics": {
+          "bottom": 844,
+          "viewportHeight": 844,
+          "role": "dialog",
+          "labelledBy": "aboutDialogTitle"
+        }
+      }
+    },
+    "light": {
+      "tokens": {
+        "background": "#f4f6f9",
+        "surface": "#ffffff",
+        "surfaceRaised": "#e9eef5",
+        "textPrimary": "#152033",
+        "textSecondary": "#526278",
+        "accent": "#1d4ed8",
+        "onAccent": "#ffffff",
+        "focusRing": "#075985",
+        "bodyBackground": "rgb(244, 246, 249)"
+      },
+      "contrast": {
+        "primaryOnBackground": 15.08,
+        "primaryOnSurface": 16.33,
+        "secondaryOnSurface": 6.22,
+        "onAccent": 6.7,
+        "focusOnBackground": 6.99
+      },
+      "remoteHorizontalOverflow": false,
+      "providerItems": 3,
+      "dialog": {
+        "controls": [
+          {
+            "width": 44,
+            "height": 44
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 85
+          },
+          {
+            "width": 330,
+            "height": 73
+          }
+        ],
+        "focus": {
+          "outlineStyle": "solid",
+          "outlineWidth": "3px",
+          "transitionDuration": "1e-05s"
+        },
+        "metrics": {
+          "bottom": 844,
+          "viewportHeight": 844,
+          "role": "dialog",
+          "labelledBy": "aboutDialogTitle"
+        }
+      }
+    }
+  },
+  "screenshots": [
+    "phase1-auto-remote-phone.png",
+    "phase1-auto-provider-desktop.png",
+    "phase1-auto-dialog-phone.png",
+    "phase1-dark-remote-phone.png",
+    "phase1-dark-provider-desktop.png",
+    "phase1-dark-dialog-phone.png",
+    "phase1-light-remote-phone.png",
+    "phase1-light-provider-desktop.png",
+    "phase1-light-dialog-phone.png"
+  ],
+  "errors": []
+}

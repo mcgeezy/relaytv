@@ -85,6 +85,7 @@
     if (!state.enabled || state.visible) return;
     state.lastFocus = document.activeElement;
     showShell(true);
+    if (typeof _uiPushLayer === 'function') _uiPushLayer();
     setStatus('Loading…');
     $('iptvBackBtn')?.focus();
     try {
@@ -98,7 +99,14 @@
     }
   }
 
-  function closeShell(){
+  function closeShell(options){
+    const fromNav = !!(options && options.fromNav);
+    const force = !!(options && options.force);
+    const depth = window.RelayTV?.runtime?.layerNavigation?.getDepth?.() || 0;
+    if (!fromNav && !force && state.visible && depth > 0) {
+      try { history.back(); } catch (_error) {}
+      return;
+    }
     closeMenu();
     showShell(false);
     const target = state.lastFocus && typeof state.lastFocus.focus === 'function' ? state.lastFocus : $('iptvOpenBtn');
@@ -578,4 +586,8 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
+  window.relaytvIptv = {
+    close:closeShell,
+    isOpen:() => state.visible,
+  };
 })();

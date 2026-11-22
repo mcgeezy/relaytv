@@ -1,0 +1,457 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-13T20:29:59.609Z",
+  "baseUrl": "http://127.0.0.1:8787",
+  "server": {
+    "version": "v0.11.0",
+    "revision": "2757075dfd3d7c7ca62919c16a4e8fd1a3bb38fb"
+  },
+  "runner": {
+    "playwright": "1.62.0",
+    "chromium": "151.0.7922.34",
+    "platform": "linux/x64"
+  },
+  "assets": [
+    {
+      "name": "app.css",
+      "sourceBytes": 79730,
+      "gzipBytes": 15263
+    },
+    {
+      "name": "app.js",
+      "sourceBytes": 164479,
+      "gzipBytes": 38873
+    },
+    {
+      "name": "iptv.css",
+      "sourceBytes": 16304,
+      "gzipBytes": 4279
+    },
+    {
+      "name": "iptv.js",
+      "sourceBytes": 30144,
+      "gzipBytes": 8105
+    },
+    {
+      "name": "jellyfin.css",
+      "sourceBytes": 44604,
+      "gzipBytes": 8995
+    },
+    {
+      "name": "jellyfin.js",
+      "sourceBytes": 92974,
+      "gzipBytes": 19434
+    },
+    {
+      "name": "peers.css",
+      "sourceBytes": 12797,
+      "gzipBytes": 3003
+    },
+    {
+      "name": "peers.js",
+      "sourceBytes": 28141,
+      "gzipBytes": 8109
+    },
+    {
+      "name": "plex.css",
+      "sourceBytes": 7437,
+      "gzipBytes": 2307
+    },
+    {
+      "name": "plex.js",
+      "sourceBytes": 29095,
+      "gzipBytes": 6779
+    },
+    {
+      "name": "realtime_transport.js",
+      "sourceBytes": 6297,
+      "gzipBytes": 1938
+    },
+    {
+      "name": "seerr.css",
+      "sourceBytes": 7145,
+      "gzipBytes": 2324
+    },
+    {
+      "name": "seerr.js",
+      "sourceBytes": 30094,
+      "gzipBytes": 7005
+    }
+  ],
+  "remotes": [
+    {
+      "name": "phone-dark",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "theme": "dark",
+      "filename": "current-phone-dark.png",
+      "metrics": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "document": {
+          "width": 390,
+          "height": 844
+        },
+        "regions": {
+          "app": {
+            "x": 14,
+            "y": 14,
+            "width": 362,
+            "height": 798
+          },
+          "header": {
+            "x": 14,
+            "y": 14,
+            "width": 362,
+            "height": 48
+          },
+          "remote": {
+            "x": 14,
+            "y": 74,
+            "width": 362,
+            "height": 738
+          },
+          "transport": {
+            "x": 14,
+            "y": 211,
+            "width": 362,
+            "height": 425
+          },
+          "queue": {
+            "x": 14,
+            "y": 648,
+            "width": 362,
+            "height": 164
+          }
+        },
+        "interactiveCount": 11,
+        "smallTargets": [
+          {
+            "id": "jellyfinOpenBtn",
+            "name": "Open Jellyfin",
+            "width": 36,
+            "height": 40
+          },
+          {
+            "id": "seerrOpenBtn",
+            "name": "Open Seerr",
+            "width": 35,
+            "height": 40
+          },
+          {
+            "id": "addUrlBtn",
+            "name": "Add URL",
+            "width": 47,
+            "height": 40
+          },
+          {
+            "id": "hdrMenuBtn",
+            "name": "Menu",
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "remoteVolSlider",
+            "name": "Volume",
+            "width": 216,
+            "height": 30
+          }
+        ],
+        "unnamed": [],
+        "menuAckMs": 8.3,
+        "domContentLoadedMs": 145,
+        "loadMs": 159,
+        "paint": {
+          "first-paint": 196,
+          "first-contentful-paint": 196
+        },
+        "resources": [
+          {
+            "name": "app.css",
+            "durationMs": 13.1,
+            "transferBytes": 80030,
+            "decodedBytes": 79730
+          },
+          {
+            "name": "jellyfin.css",
+            "durationMs": 15.8,
+            "transferBytes": 44904,
+            "decodedBytes": 44604
+          },
+          {
+            "name": "plex.css",
+            "durationMs": 19,
+            "transferBytes": 7737,
+            "decodedBytes": 7437
+          },
+          {
+            "name": "iptv.css",
+            "durationMs": 17.4,
+            "transferBytes": 16604,
+            "decodedBytes": 16304
+          },
+          {
+            "name": "seerr.css",
+            "durationMs": 18.7,
+            "transferBytes": 7445,
+            "decodedBytes": 7145
+          },
+          {
+            "name": "peers.css",
+            "durationMs": 18.4,
+            "transferBytes": 13097,
+            "decodedBytes": 12797
+          },
+          {
+            "name": "realtime_transport.js",
+            "durationMs": 37,
+            "transferBytes": 6597,
+            "decodedBytes": 6297
+          },
+          {
+            "name": "app.js",
+            "durationMs": 41.2,
+            "transferBytes": 164779,
+            "decodedBytes": 164479
+          },
+          {
+            "name": "seerr.js",
+            "durationMs": 38.5,
+            "transferBytes": 30394,
+            "decodedBytes": 30094
+          },
+          {
+            "name": "plex.js",
+            "durationMs": 40.5,
+            "transferBytes": 29395,
+            "decodedBytes": 29095
+          },
+          {
+            "name": "jellyfin.js",
+            "durationMs": 40.2,
+            "transferBytes": 93274,
+            "decodedBytes": 92974
+          },
+          {
+            "name": "iptv.js",
+            "durationMs": 40.8,
+            "transferBytes": 30444,
+            "decodedBytes": 30144
+          },
+          {
+            "name": "peers.js",
+            "durationMs": 44.7,
+            "transferBytes": 28441,
+            "decodedBytes": 28141
+          }
+        ],
+        "cls": 0.11529135775165739,
+        "longTasks": [
+          {
+            "start": 39,
+            "duration": 71
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "name": "desktop-light",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "theme": "light",
+      "filename": "current-desktop-light.png",
+      "metrics": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "document": {
+          "width": 1280,
+          "height": 890
+        },
+        "regions": {
+          "app": {
+            "x": 100,
+            "y": 14,
+            "width": 1080,
+            "height": 876
+          },
+          "header": {
+            "x": 100,
+            "y": 14,
+            "width": 1080,
+            "height": 52
+          },
+          "remote": {
+            "x": 100,
+            "y": 80,
+            "width": 1080,
+            "height": 810
+          },
+          "transport": {
+            "x": 100,
+            "y": 243,
+            "width": 640,
+            "height": 647
+          },
+          "queue": {
+            "x": 754,
+            "y": 80,
+            "width": 426,
+            "height": 810
+          }
+        },
+        "interactiveCount": 11,
+        "smallTargets": [
+          {
+            "id": "jellyfinOpenBtn",
+            "name": "Open Jellyfin",
+            "width": 97,
+            "height": 40
+          },
+          {
+            "id": "seerrOpenBtn",
+            "name": "Open Seerr",
+            "width": 88,
+            "height": 38
+          },
+          {
+            "id": "addUrlBtn",
+            "name": "Add URL",
+            "width": 47,
+            "height": 40
+          },
+          {
+            "id": "hdrMenuBtn",
+            "name": "Menu",
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "remoteVolSlider",
+            "name": "Volume",
+            "width": 486,
+            "height": 30
+          }
+        ],
+        "unnamed": [],
+        "menuAckMs": 83.1,
+        "domContentLoadedMs": 119,
+        "loadMs": 220,
+        "paint": {
+          "first-paint": 244,
+          "first-contentful-paint": 244
+        },
+        "resources": [
+          {
+            "name": "app.css",
+            "durationMs": 19.1,
+            "transferBytes": 80030,
+            "decodedBytes": 79730
+          },
+          {
+            "name": "jellyfin.css",
+            "durationMs": 19.1,
+            "transferBytes": 44904,
+            "decodedBytes": 44604
+          },
+          {
+            "name": "plex.css",
+            "durationMs": 18.6,
+            "transferBytes": 7737,
+            "decodedBytes": 7437
+          },
+          {
+            "name": "iptv.css",
+            "durationMs": 19.4,
+            "transferBytes": 16604,
+            "decodedBytes": 16304
+          },
+          {
+            "name": "seerr.css",
+            "durationMs": 17.7,
+            "transferBytes": 7445,
+            "decodedBytes": 7145
+          },
+          {
+            "name": "peers.css",
+            "durationMs": 18,
+            "transferBytes": 13097,
+            "decodedBytes": 12797
+          },
+          {
+            "name": "realtime_transport.js",
+            "durationMs": 35,
+            "transferBytes": 6597,
+            "decodedBytes": 6297
+          },
+          {
+            "name": "app.js",
+            "durationMs": 40.8,
+            "transferBytes": 164779,
+            "decodedBytes": 164479
+          },
+          {
+            "name": "seerr.js",
+            "durationMs": 37.4,
+            "transferBytes": 30394,
+            "decodedBytes": 30094
+          },
+          {
+            "name": "plex.js",
+            "durationMs": 40,
+            "transferBytes": 29395,
+            "decodedBytes": 29095
+          },
+          {
+            "name": "jellyfin.js",
+            "durationMs": 40.4,
+            "transferBytes": 93274,
+            "decodedBytes": 92974
+          },
+          {
+            "name": "iptv.js",
+            "durationMs": 39.5,
+            "transferBytes": 30444,
+            "decodedBytes": 30144
+          },
+          {
+            "name": "peers.js",
+            "durationMs": 44.6,
+            "transferBytes": 28441,
+            "decodedBytes": 28141
+          }
+        ],
+        "cls": 0.07998201189041138,
+        "longTasks": []
+      },
+      "errors": []
+    }
+  ],
+  "dialogs": [
+    {
+      "name": "settings",
+      "errors": []
+    },
+    {
+      "name": "add-media",
+      "errors": []
+    }
+  ],
+  "idle": {
+    "name": "tv-idle",
+    "errors": []
+  },
+  "notes": [
+    "Measurements are diagnostic snapshots, not benchmark guarantees.",
+    "Input and textarea values, the idle QR code, and location/device labels are hidden in screenshots.",
+    "Run against the same server, host, browser, and dataset for before/after comparisons."
+  ]
+}

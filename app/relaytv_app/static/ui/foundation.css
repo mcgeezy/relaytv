@@ -1,0 +1,321 @@
+:root {
+  color-scheme: dark;
+
+  --background: #0b1017;
+  --surface: #151d28;
+  --surface-raised: #1c2735;
+  --text-primary: #f3f6fa;
+  --text-secondary: #a7b4c5;
+  --text-tertiary: #8999ad;
+  --border: #344256;
+  --accent: #60a5fa;
+  --on-accent: #07111f;
+  --focus-ring: #7dd3fc;
+  --status-success: #34d399;
+  --status-warning: #fbbf24;
+  --status-danger: #fb7185;
+  --status-neutral: #94a3b8;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-dialog: 16px;
+  --motion-fast: 140ms;
+  --motion-standard: 180ms;
+  --shadow-floating: 0 18px 48px rgba(0, 0, 0, .36);
+
+  --layer-navigation: 40;
+  --layer-playback: 50;
+  --layer-popover: 60;
+  --layer-dialog: 1000;
+
+  /* Compatibility aliases keep current surfaces working during migration. */
+  --bg0: var(--background);
+  --bg1: var(--background);
+  --card: var(--surface);
+  --card2: var(--surface-raised);
+  --stroke: var(--border);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --muted2: var(--text-tertiary);
+  --shadow: var(--shadow-floating);
+  --radius: var(--radius-card);
+  --btn: var(--surface-raised);
+  --btnH: #263447;
+  --btnA: #304057;
+  --good: var(--status-success);
+  --warn: var(--status-warning);
+  --danger: var(--status-danger);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --background: #f4f6f9;
+    --surface: #ffffff;
+    --surface-raised: #e9eef5;
+    --text-primary: #152033;
+    --text-secondary: #526278;
+    --text-tertiary: #66758a;
+    --border: #cbd5e1;
+    --accent: #1d4ed8;
+    --on-accent: #ffffff;
+    --focus-ring: #075985;
+    --status-success: #047857;
+    --status-warning: #a16207;
+    --status-danger: #be123c;
+    --status-neutral: #64748b;
+    --shadow-floating: 0 18px 44px rgba(15, 23, 42, .16);
+    --btnH: #dde5ef;
+    --btnA: #d2dce8;
+  }
+}
+
+body {
+  color: var(--text-primary);
+  background: var(--background);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+html[data-theme] body {
+  background: var(--background);
+}
+
+.ui-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    background-color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+.ui-button:hover {
+  border-color: var(--accent);
+  background: var(--btnH);
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-button:active {
+  background: var(--btnA);
+  transform: none;
+}
+
+.ui-button--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ui-button--primary:hover,
+.ui-button--primary:active {
+  background: var(--accent);
+  color: var(--on-accent);
+  filter: brightness(1.06);
+}
+
+button.ui-button.ui-button--icon {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  justify-content: center;
+}
+
+#addQueueBtn.ui-button,
+#addPlayBtn.ui-button,
+#notifySendBtn.ui-button {
+  min-height: 44px;
+  border-radius: var(--radius-control);
+}
+
+.ui-field {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: none;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  transition:
+    background-color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+.ui-field::placeholder {
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+
+.ui-field:disabled,
+.ui-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  filter: none;
+  transform: none;
+}
+
+.ui-button:focus-visible,
+.ui-field:focus-visible,
+.ui-dialog a:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+.ui-status-text {
+  min-height: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.ui-status-text.ok { color: var(--status-success); }
+.ui-status-text.err { color: var(--status-danger); }
+
+.sectionStatus {
+  border-color: var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.sectionStatus.up {
+  border-color: var(--status-success);
+  background: transparent;
+  color: var(--status-success);
+}
+
+.sectionStatus.down {
+  border-color: var(--status-danger);
+  background: transparent;
+  color: var(--status-danger);
+}
+
+.sectionStatus.warn {
+  border-color: var(--status-warning);
+  background: transparent;
+  color: var(--status-warning);
+}
+
+.sectionStatus.unknown {
+  border-color: var(--status-neutral);
+  background: transparent;
+  color: var(--status-neutral);
+}
+
+.modalBackdrop.ui-dialog-backdrop {
+  z-index: var(--layer-dialog);
+  padding: var(--space-4);
+  background: rgba(3, 7, 18, .68);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.modal.ui-dialog {
+  width: min(640px, 100%);
+  max-height: min(84vh, 720px);
+  padding: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-dialog);
+  background: var(--surface);
+  box-shadow: var(--shadow-floating);
+}
+
+.ui-dialog__header {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.ui-dialog__title {
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.ui-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+.ui-dialog .aboutMeta {
+  padding: var(--space-4);
+  border-color: var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+.ui-dialog .aboutLink.ui-button {
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+}
+
+.ui-dialog .aboutLink.ui-button small {
+  color: var(--text-secondary);
+}
+
+.addModal .ui-field {
+  border-color: var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.addModal .ui-field:focus-visible {
+  border-color: var(--focus-ring);
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+@media (max-width: 767px) {
+  .modalBackdrop.ui-dialog-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal.ui-dialog {
+    width: 100%;
+    max-height: calc(100dvh - max(24px, env(safe-area-inset-top)));
+    padding: var(--space-4) var(--space-4) max(var(--space-4), env(safe-area-inset-bottom));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

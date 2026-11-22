@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-14T01:56:03.909Z",
+  "baseUrl": "http://127.0.0.1:8790",
+  "runner": {
+    "playwright": "1.62.0",
+    "browser": "chromium",
+    "browserVersion": "151.0.7922.34",
+    "platform": "linux/x64"
+  },
+  "assertions": {
+    "namespaces": [
+      "api",
+      "navigation",
+      "overlays",
+      "runtime",
+      "store",
+      "theme"
+    ],
+    "packagedAssets": [
+      "api.js",
+      "store.js",
+      "navigation.js",
+      "overlays.js",
+      "remote.js",
+      "settings.js"
+    ],
+    "statusTitle": "Current fixture episode",
+    "initialDialogFocus": "aboutCloseBtn",
+    "trappedDialogFocus": "aboutCloseBtn",
+    "restoredDialogFocus": "hdrMenuBtn",
+    "navigationDepth": 0,
+    "repeatDialogDepth": 0,
+    "settingsController": true
+  },
+  "errors": []
+}
