@@ -179,7 +179,7 @@ test('cancel sends DELETE for the current job and shows the terminal result', as
 });
 
 test('web individual-video actions explicitly bypass automatic playlist expansion', async() => {
-  const source = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/remote.js'), 'utf8');
   const start = source.indexOf('async function submitAddUrl(');
   const end = source.indexOf('\nfunction openNotifyModal(', start);
   assert.ok(start >= 0 && end > start);

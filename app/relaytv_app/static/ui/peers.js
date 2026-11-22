@@ -675,6 +675,25 @@
     }
   }
 
+  let dialogController = null;
+
+  function ensureDialogController(){
+    if (dialogController) return dialogController;
+    const bd = $('peersBackdrop');
+    const overlays = window.RelayTV?.overlays;
+    if (!bd || !overlays || typeof overlays.createDialogController !== 'function') return null;
+    dialogController = overlays.createDialogController({
+      document,
+      window,
+      backdrop: bd,
+      opener: $('queueSendBtn'),
+      initialFocus: $('peersCloseBtn'),
+      onRequestClose: () => close(),
+    });
+    dialogController.mount();
+    return dialogController;
+  }
+
   function isOpen(){
     const bd = $('peersBackdrop');
     return !!bd && !bd.classList.contains('hidden');
@@ -700,7 +719,12 @@
       });
     }
     state.lastFocus = document.activeElement;
-    bd.classList.remove('hidden');
+    const controller = typeof ensureDialogController === 'function' ? ensureDialogController() : null;
+    if (controller) {
+      controller.open({opener: state.lastFocus || $('queueSendBtn'), initialFocus: $('peersCloseBtn')});
+    } else {
+      bd.classList.remove('hidden');
+    }
     setStatus('');
     setAddHelper('');
     toggleAddForm(false);
@@ -708,22 +732,36 @@
     // Reuse the shared history-layer helper so Android back closes the sheet.
     if (typeof _uiPushLayer === 'function') _uiPushLayer();
     load().catch(() => null);
-    const close = $('peersCloseBtn');
-    if (close) close.focus();
+    if (!controller) {
+      const closeBtn = $('peersCloseBtn');
+      if (closeBtn) closeBtn.focus();
+    }
   }
 
   function close(opts){
     const bd = $('peersBackdrop');
     if (!bd || bd.classList.contains('hidden')) return;
     const fromNav = !!(opts && opts.fromNav);
-    if (!fromNav && typeof __uiNavDepth === 'number' && __uiNavDepth > 0){
-      try { history.back(); } catch (_e) {}
-      return;
+    if (!fromNav) {
+      const layerNav = window.RelayTV?.runtime?.layerNavigation;
+      if (layerNav && typeof layerNav.back === 'function') {
+        if (layerNav.back()) return;
+      } else if (typeof __uiNavDepth === 'number' && __uiNavDepth > 0){
+        try { history.back(); } catch (_e) {}
+        return;
+      }
     }
-    bd.classList.add('hidden');
-    const target = state.lastFocus && typeof state.lastFocus.focus === 'function' ? state.lastFocus : $('queueSendBtn');
-    if (target) {
-      try { target.focus(); } catch (_e) {}
+    if (typeof dialogController !== 'undefined' && dialogController && dialogController.isOpen()) {
+      dialogController.close({restoreFocus: true});
+    } else {
+      bd.classList.add('hidden');
+      const target = state.lastFocus && typeof state.lastFocus.focus === 'function' ? state.lastFocus : $('queueSendBtn');
+      if (target) {
+        try { target.focus(); } catch (_e) {}
+      }
+    }
+    if (typeof __lastStatus !== 'undefined' && __lastStatus && typeof renderStatus === 'function') {
+      renderStatus(__lastStatus);
     }
   }
 
@@ -737,6 +775,7 @@
   }
 
   function bind(){
+    const controller = ensureDialogController();
     $('queueSendBtn')?.addEventListener('click', () => open());
     document.querySelectorAll('.pmMode').forEach((button) => {
       button.addEventListener('click', () => setMode(button.dataset.peerMode || 'send'));
@@ -747,15 +786,17 @@
     $('peersAddToggle')?.addEventListener('click', () => toggleAddForm());
     $('peerTestBtn')?.addEventListener('click', testAddress);
     $('peerSaveBtn')?.addEventListener('click', saveAddress);
-    $('peersBackdrop')?.addEventListener('click', (event) => {
-      if (event.target === $('peersBackdrop')) close();
-    });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && isOpen()){
-        event.preventDefault();
-        close();
-      }
-    });
+    if (!controller) {
+      $('peersBackdrop')?.addEventListener('click', (event) => {
+        if (event.target === $('peersBackdrop')) close();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && isOpen()){
+          event.preventDefault();
+          close();
+        }
+      });
+    }
     $('peerUrlInput')?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter'){
         event.preventDefault();

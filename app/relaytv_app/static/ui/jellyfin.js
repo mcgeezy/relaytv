@@ -148,9 +148,13 @@ function closeJellyfinShell(opts){
   }
   _jfSetShellVisible(false);
   _jfCloseDetailPanel({fromNav:true});
-  const target =
-    (__jfLastFocus && typeof __jfLastFocus.focus === 'function') ? __jfLastFocus :
-    document.getElementById('jellyfinOpenBtn');
+  const fallback = !document.getElementById('browseDestination')?.classList.contains('hidden')
+    ? document.getElementById('browseJellyfinBtn')
+    : document.querySelector('[data-destination="remote"]');
+  const usable = __jfLastFocus && typeof __jfLastFocus.focus === 'function'
+    && __jfLastFocus.isConnected !== false
+    && !__jfLastFocus.closest?.('.hidden, [hidden]');
+  const target = usable ? __jfLastFocus : (fallback || document.getElementById('jellyfinOpenBtn'));
   if (target && typeof target.focus === 'function') {
     requestAnimationFrame(() => target.focus());
   }

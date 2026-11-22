@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/app.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/remote.js'), 'utf8');
 function functionSource(name, nextName){
   const start = source.indexOf(`function ${name}(`);
   const end = source.indexOf(`function ${nextName}(`, start + 1);

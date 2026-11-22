@@ -54,8 +54,9 @@ async function runScenario(browser, baseUrl, scenario, screenshotDir) {
 
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
-    await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('#jellyfinOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseJellyfinBtn:not(.isUnavailable)').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#browseJellyfinBtn').click();
     await page.locator('#jellyfinShell:not(.hidden)').waitFor();
     await waitForItems(page, 'continue_watching');
 
@@ -214,7 +215,10 @@ async function runRecoveryScenario(browser, baseUrl) {
   const page = await context.newPage();
   let outage = true;
   let homeCalls = 0;
-  await page.route('**/jellyfin/home*', async (route) => {
+  await page.route((url) => {
+    try { return /^\/(?:jellyfin|browse)\/home$/.test(new URL(url).pathname); }
+    catch (_error) { return false; }
+  }, async (route) => {
     homeCalls += 1;
     if (outage) {
       await route.fulfill({
@@ -233,8 +237,9 @@ async function runRecoveryScenario(browser, baseUrl) {
   }));
   try {
     await page.goto(`${baseUrl}/ui`, { waitUntil: 'domcontentloaded' });
-    await page.locator('#jellyfinOpenBtn').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('#jellyfinOpenBtn').click();
+    await page.locator('[data-destination="browse"]').click();
+    await page.locator('#browseJellyfinBtn:not(.isUnavailable)').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#browseJellyfinBtn').click();
     await page.waitForFunction(() => {
       const label = document.querySelector('#jfConnectionLabel');
       const unavailable = document.querySelector('.jfUnavailable');
