@@ -16,12 +16,13 @@ function closeSettings(opts){
   const bd = document.getElementById('settingsBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
-  const depth = (typeof __layerNavigation !== 'undefined' && __layerNavigation && typeof __layerNavigation.getDepth === 'function')
-    ? __layerNavigation.getDepth()
-    : (typeof __uiNavDepth !== 'undefined' ? __uiNavDepth : 0);
-  if (!fromNav && !bd.classList.contains('hidden') && depth > 0) {
-    try { history.back(); } catch (_e) {}
-    return;
+  if (!fromNav && !bd.classList.contains('hidden')) {
+    if (typeof __layerNavigation !== 'undefined' && __layerNavigation && typeof __layerNavigation.back === 'function') {
+      if (__layerNavigation.back()) return;
+    } else if (typeof __uiNavDepth !== 'undefined' && __uiNavDepth > 0) {
+      try { history.back(); } catch (_e) {}
+      return;
+    }
   }
   __settingsDirty = false;
   bd.classList.add('hidden');

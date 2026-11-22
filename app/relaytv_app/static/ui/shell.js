@@ -64,8 +64,11 @@
 
   function hasNowPlaying(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return false;
+    if (snapshot.playing || snapshot.paused) return true;
     const item = snapshot.now_playing;
-    return !!(item && typeof item === 'object' && (item.title || item.url));
+    const hasItem = !!(item && typeof item === 'object' && (item.title || item.url || item.stream));
+    if (typeof snapshot.has_now_playing === 'boolean') return snapshot.has_now_playing && hasItem;
+    return hasItem;
   }
 
   function playbackCopy(snapshot) {
@@ -101,6 +104,30 @@
       return providerShells.some((shell) => !shell.classList.contains('hidden'));
     }
 
+    function layerDepth() {
+      return Number(win.RelayTV?.runtime?.layerNavigation?.getDepth?.() || 0);
+    }
+
+    function closeOpenProviders() {
+      if (win.relaytvPlex?.isDetailOpen?.()) win.relaytvPlex.closeDetail({fromNav:true});
+      if (win.relaytvPlex?.isOpen?.()) win.relaytvPlex.close({fromNav:true, force:true});
+      if (win.relaytvSeerr?.isDetailOpen?.()) win.relaytvSeerr.closeDetail({fromNav:true});
+      if (win.relaytvSeerr?.isOpen?.()) win.relaytvSeerr.close({fromNav:true, force:true});
+      if (win.relaytvIptv?.isOpen?.()) win.relaytvIptv.close({fromNav:true, force:true});
+      if (typeof win._jfCloseDetailPanel === 'function' && typeof win._jfIsDetailOpen === 'function' && win._jfIsDetailOpen()) {
+        win._jfCloseDetailPanel({fromNav:true});
+      }
+      if (typeof win.closeJellyfinShell === 'function' && !doc.getElementById('jellyfinShell')?.classList.contains('hidden')) {
+        win.closeJellyfinShell({fromNav:true, force:true});
+      }
+    }
+
+    function returnToRemoteDestination() {
+      if (navigation.getCurrent() === 'remote') return;
+      if (win.history.state?.relaytv_previous_destination) win.history.back();
+      else navigation.navigate('remote', {replace:true});
+    }
+
     function syncBar() {
       if (!bar) return;
       const copy = playbackCopy(currentSnapshot);
@@ -120,7 +147,7 @@
         try {
           if (typeof win.thumbUrl === 'function') url = win.thumbUrl(currentSnapshot?.now_playing || {});
         } catch (_error) {}
-        const safeUrl = String(url || '').replace(/[\r\n\f"'()\\]/g, '');
+        const safeUrl = String(url || '').replace(/[\r\n\f"'()\\]/g, '').trim();
         art.style.backgroundImage = safeUrl ? `url("${safeUrl}")` : '';
         art.classList.toggle('hasArtwork', !!safeUrl);
       }
@@ -147,15 +174,30 @@
     const navigation = createDestinationState(win, (destination, source) => {
       render(destination);
       if (returnAfterProviderPop && source === 'popstate') {
+        if (providerIsOpen() || layerDepth() > 0) {
+          win.setTimeout(() => {
+            if (!returnAfterProviderPop) return;
+            if (providerIsOpen() || layerDepth() > 0) win.history.back();
+            else {
+              returnAfterProviderPop = false;
+              returnToRemoteDestination();
+            }
+          }, 0);
+          return;
+        }
         returnAfterProviderPop = false;
         win.setTimeout(() => {
-          if (destinationFromHash(win.location.hash) === 'browse') win.history.back();
-          else navigation.navigate('remote', {replace:true});
+          returnToRemoteDestination();
+          const active = doc.activeElement;
+          if (!active || active === doc.body || active.closest?.('.hidden, [hidden]')) {
+            doc.querySelector('[data-destination="remote"]')?.focus?.();
+          }
         }, 0);
       }
     });
 
     function useDestination(destination) {
+      if (providerIsOpen()) closeOpenProviders();
       navigation.navigate(destination);
     }
 
@@ -169,16 +211,27 @@
       if (!target) return;
       const ready = target.classList.contains('show') && !target.disabled;
       choice.classList.toggle('isUnavailable', !ready);
+      const labelEl = choice.querySelector('strong');
+      if (choice.dataset.providerTarget === 'jellyfinOpenBtn' && labelEl) {
+        const snap = currentSnapshot || {};
+        const browseCount = Number(snap.browse_connected_count || 0);
+        const jfConfigured = !!snap.jellyfin_server_url_configured;
+        if (browseCount > 1 || (snap.browse_connected && !jfConfigured)) {
+          labelEl.textContent = 'Libraries';
+        } else if (jfConfigured) {
+          labelEl.textContent = String(snap.jellyfin_server_type || '').toLowerCase() === 'emby' ? 'Emby' : 'Jellyfin';
+        } else {
+          labelEl.textContent = 'Libraries';
+        }
+      }
       if (ready) choice.removeAttribute('aria-label');
-      else choice.setAttribute('aria-label', `Configure ${choice.querySelector('strong')?.textContent || 'service'} in Settings`);
+      else choice.setAttribute('aria-label', `Configure ${labelEl?.textContent || 'service'} in Settings`);
       const status = choice.querySelector('[data-provider-status]');
       const remembered = win.localStorage.getItem('relaytv_browse_provider') === choice.dataset.providerTarget;
       choice.classList.toggle('isRecent', remembered);
       if (status) status.textContent = ready
         ? (remembered ? 'Ready · last used' : 'Ready to browse')
         : 'Set up in Settings';
-      const brand = target.querySelector('.jfBrand')?.textContent;
-      if (brand) choice.querySelector('.jfBrand').textContent = brand;
     }
 
     doc.querySelectorAll('[data-provider-target]').forEach((choice) => {
@@ -204,16 +257,21 @@
     });
     doc.getElementById('compactReturnBtn')?.addEventListener('click', () => {
       if (providerIsOpen()) {
-        returnAfterProviderPop = true;
-        win.history.back();
+        if (layerDepth() > 0) {
+          returnAfterProviderPop = true;
+          win.history.back();
+        } else {
+          closeOpenProviders();
+          returnToRemoteDestination();
+        }
         return;
       }
-      if (navigation.getCurrent() === 'remote') return;
-      win.history.back();
+      returnToRemoteDestination();
     });
 
     if (store?.subscribe) store.subscribe((snapshot) => {
       currentSnapshot = snapshot;
+      doc.querySelectorAll('[data-provider-target]').forEach(syncProviderChoice);
       syncBar();
     });
 

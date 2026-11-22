@@ -4,11 +4,16 @@
   --background: #0b1017;
   --surface: #151d28;
   --surface-raised: #1c2735;
+  --surface-hover: #223042;
   --text-primary: #f3f6fa;
   --text-secondary: #a7b4c5;
   --text-tertiary: #8999ad;
   --border: #344256;
+  --border-subtle: rgba(167, 180, 197, .18);
+  --border-strong: rgba(167, 180, 197, .34);
   --accent: #60a5fa;
+  --accent-soft: rgba(96, 165, 250, .16);
+  --accent-strong: #93c5fd;
   --on-accent: #07111f;
   --focus-ring: #7dd3fc;
   --status-success: #34d399;
@@ -26,15 +31,19 @@
 
   --radius-control: 8px;
   --radius-card: 12px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
   --radius-dialog: 16px;
   --motion-fast: 140ms;
   --motion-standard: 180ms;
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, .24);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, .34);
   --shadow-floating: 0 18px 48px rgba(0, 0, 0, .36);
 
-  --layer-navigation: 40;
-  --layer-playback: 50;
-  --layer-popover: 60;
-  --layer-dialog: 1000;
+  --layer-playback: 1240;
+  --layer-navigation: 1250;
+  --layer-popover: 1260;
+  --layer-dialog: 10050;
 
   /* Compatibility aliases keep current surfaces working during migration. */
   --bg0: var(--background);
@@ -61,17 +70,24 @@
     --background: #f4f6f9;
     --surface: #ffffff;
     --surface-raised: #e9eef5;
+    --surface-hover: #dde5ef;
     --text-primary: #152033;
     --text-secondary: #526278;
     --text-tertiary: #66758a;
     --border: #cbd5e1;
+    --border-subtle: rgba(21, 32, 51, .14);
+    --border-strong: rgba(21, 32, 51, .28);
     --accent: #1d4ed8;
+    --accent-soft: rgba(29, 78, 216, .12);
+    --accent-strong: #1e40af;
     --on-accent: #ffffff;
     --focus-ring: #075985;
     --status-success: #047857;
     --status-warning: #a16207;
     --status-danger: #be123c;
     --status-neutral: #64748b;
+    --shadow-sm: 0 4px 12px rgba(15, 23, 42, .08);
+    --shadow-md: 0 12px 28px rgba(15, 23, 42, .14);
     --shadow-floating: 0 18px 44px rgba(15, 23, 42, .16);
     --btnH: #dde5ef;
     --btnA: #d2dce8;

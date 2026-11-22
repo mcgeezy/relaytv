@@ -691,9 +691,13 @@ function closePlexShell(options){
     shell.setAttribute('aria-hidden', 'true');
   }
   document.body.classList.remove('plexNoScroll');
-  const focus = __plexLastFocus && typeof __plexLastFocus.focus === 'function'
-    ? __plexLastFocus
-    : document.getElementById('plexOpenBtn');
+  const fallback = !document.getElementById('browseDestination')?.classList.contains('hidden')
+    ? document.getElementById('browsePlexBtn')
+    : document.querySelector('[data-destination="remote"]');
+  const usable = __plexLastFocus && typeof __plexLastFocus.focus === 'function'
+    && __plexLastFocus.isConnected !== false
+    && !__plexLastFocus.closest?.('.hidden, [hidden]');
+  const focus = usable ? __plexLastFocus : (fallback || document.getElementById('plexOpenBtn'));
   if (focus) requestAnimationFrame(() => focus.focus());
   __plexLastFocus = null;
 }

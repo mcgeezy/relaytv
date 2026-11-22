@@ -86,4 +86,73 @@ test('compact playback copy derives from the shared status snapshot', () => {
     playing:false,
     title:'Nothing playing',
   });
+  assert.equal(hasNowPlaying({playing:false, has_now_playing:false, now_playing:{title:'Stale'}}), false);
+  assert.equal(hasNowPlaying({playing:false, has_now_playing:true, now_playing:{stream:'http://stream'}}), true);
+  assert.equal(hasNowPlaying({playing:true, now_playing:null}), true);
+});
+
+test('shell.css references only CSS custom properties defined in the UI stylesheets', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const uiDir = path.join(__dirname, '../../app/relaytv_app/static/ui');
+  const defined = new Set();
+  for (const file of fs.readdirSync(uiDir).filter((name) => name.endsWith('.css'))) {
+    const css = fs.readFileSync(path.join(uiDir, file), 'utf8');
+    for (const match of css.matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)) defined.add(match[1]);
+  }
+  const shellCss = fs.readFileSync(path.join(uiDir, 'shell.css'), 'utf8');
+  const missing = [];
+  for (const match of shellCss.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)\s*\)/g)) {
+    if (!defined.has(match[1])) missing.push(match[1]);
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('syncBrowseLaunchButtons clears jellyfinOpenBtn when Plex is disabled and Jellyfin is not ready', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const remoteSrc = fs.readFileSync(path.join(__dirname, '../../app/relaytv_app/static/ui/remote.js'), 'utf8');
+  const start = remoteSrc.indexOf('function syncBrowseLaunchButtons(');
+  let depth = 0;
+  let seen = false;
+  let end = start;
+  for (let i = start; i < remoteSrc.length; i += 1) {
+    if (remoteSrc[i] === '{') { depth += 1; seen = true; }
+    else if (remoteSrc[i] === '}') { depth -= 1; if (seen && depth === 0) { end = i + 1; break; } }
+  }
+  const fnSrc = remoteSrc.slice(start, end);
+  const makeBtn = () => {
+    const cls = new Set();
+    return {
+      disabled:true,
+      title:'',
+      attrs:new Map(),
+      classList:{
+        add:(c) => cls.add(c),
+        remove:(c) => cls.delete(c),
+        contains:(c) => cls.has(c),
+        toggle:(c, f) => (f ? cls.add(c) : cls.delete(c)),
+      },
+      setAttribute(k, v) { this.attrs.set(k, v); },
+    };
+  };
+  const jfBtn = makeBtn();
+  const plexBtn = makeBtn();
+  const ctx = vm.createContext({
+    __jfLaunchVisible:false,
+    __plexReady:true,
+    document:{
+      getElementById:(id) => (id === 'jellyfinOpenBtn' ? jfBtn : (id === 'plexOpenBtn' ? plexBtn : null)),
+    },
+  });
+  vm.runInContext(fnSrc, ctx);
+  ctx.syncBrowseLaunchButtons();
+  assert.equal(jfBtn.classList.contains('show'), true);
+  assert.equal(jfBtn.disabled, false);
+
+  ctx.__plexReady = false;
+  ctx.syncBrowseLaunchButtons();
+  assert.equal(jfBtn.classList.contains('show'), false);
+  assert.equal(jfBtn.disabled, true);
 });

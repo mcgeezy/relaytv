@@ -52,3 +52,33 @@ test('layer navigation owns depth and removes its pop listener cleanly', () => {
   unbind();
   assert.equal(listeners.has('popstate'), false);
 });
+
+test('layer navigation coalesces rapid duplicate back calls until popstate settles', () => {
+  const listeners = new Map();
+  let backCalls = 0;
+  const window = {
+    history:{
+      pushState(){},
+      back(){ backCalls += 1; },
+    },
+    setTimeout:() => 1,
+    clearTimeout(){},
+    addEventListener:(name, listener) => listeners.set(name, listener),
+    removeEventListener:(name, listener) => {
+      if (listeners.get(name) === listener) listeners.delete(name);
+    },
+  };
+  const navigation = createLayerNavigation(window);
+  navigation.bind(() => {});
+  navigation.push();
+  navigation.push();
+
+  assert.equal(navigation.back(), true);
+  assert.equal(navigation.back(), true);
+  assert.equal(backCalls, 1);
+
+  listeners.get('popstate')();
+  assert.equal(navigation.getDepth(), 1);
+  assert.equal(navigation.back(), true);
+  assert.equal(backCalls, 2);
+});

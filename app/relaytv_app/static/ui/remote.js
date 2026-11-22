@@ -60,10 +60,7 @@ function closeAddUrl(opts){
   const bd = document.getElementById('addBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
-  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.getDepth() > 0) {
-    try { history.back(); } catch (_e) {}
-    return;
-  }
+  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.back()) return;
   bd.classList.add('hidden');
 }
 
@@ -149,10 +146,7 @@ function closeNotifyModal(opts){
   const bd = document.getElementById('notifyBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
-  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.getDepth() > 0) {
-    try { history.back(); } catch (_e) {}
-    return;
-  }
+  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.back()) return;
   bd.classList.add('hidden');
 }
 
@@ -2122,10 +2116,7 @@ function closeHistory(opts){
   const bd = document.getElementById('histBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
-  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.getDepth() > 0) {
-    try { history.back(); } catch (_e) {}
-    return;
-  }
+  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.back()) return;
   bd.classList.add('hidden');
 }
 
@@ -2404,10 +2395,7 @@ function closeNowLanguageModal(opts){
   const bd = document.getElementById('langBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
-  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.getDepth() > 0) {
-    try { history.back(); } catch (_e) {}
-    return;
-  }
+  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.back()) return;
   bd.classList.add('hidden');
 }
 
@@ -2548,10 +2536,7 @@ function closeNowSubtitleModal(opts){
   const bd = document.getElementById('subLangBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
-  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.getDepth() > 0) {
-    try { history.back(); } catch (_e) {}
-    return;
-  }
+  if (!fromNav && !bd.classList.contains('hidden') && __layerNavigation.back()) return;
   bd.classList.add('hidden');
 }
 
@@ -2729,12 +2714,12 @@ async function consumeShareParam(){
 }
 
 
-const __BROWSE_PROVIDER_KEY = 'relaytv_library_provider';
+const __BROWSE_PROVIDER_KEY = 'relaytv_browse_provider';
 
 function _getPreferredBrowseProvider(){
   try {
     const v = localStorage.getItem(__BROWSE_PROVIDER_KEY);
-    return v === 'plex' ? 'plex' : 'jellyfin';
+    return (v === 'plex' || v === 'plexOpenBtn') ? 'plex' : 'jellyfin';
   } catch (_e) {
     return 'jellyfin';
   }
@@ -2742,15 +2727,19 @@ function _getPreferredBrowseProvider(){
 
 function _setPreferredBrowseProvider(provider){
   try {
-    localStorage.setItem(__BROWSE_PROVIDER_KEY, provider === 'plex' ? 'plex' : 'jellyfin');
+    localStorage.setItem(__BROWSE_PROVIDER_KEY, provider === 'plex' ? 'plexOpenBtn' : 'jellyfinOpenBtn');
   } catch (_e) {}
 }
 
 function syncBrowseLaunchButtons(){
   const jfBtn = document.getElementById('jellyfinOpenBtn');
   const plexBtn = document.getElementById('plexOpenBtn');
-  const jfReady = (typeof __jfLaunchVisible !== 'undefined' && !!__jfLaunchVisible) || !!(jfBtn && jfBtn.classList.contains('show'));
-  const plexReady = (typeof __plexReady !== 'undefined' && !!__plexReady) || !!(plexBtn && plexBtn.classList.contains('show'));
+  const jfReady = typeof __jfLaunchVisible !== 'undefined'
+    ? !!__jfLaunchVisible
+    : !!(jfBtn && jfBtn.classList.contains('show'));
+  const plexReady = typeof __plexReady !== 'undefined'
+    ? !!__plexReady
+    : !!(plexBtn && plexBtn.classList.contains('show'));
   const anyReady = jfReady || plexReady;
   if (jfBtn) {
     jfBtn.classList.toggle('show', anyReady);

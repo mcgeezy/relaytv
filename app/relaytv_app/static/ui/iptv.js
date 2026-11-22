@@ -69,7 +69,7 @@
       const count = Number(status && status.iptv_channel_count || 0);
       button.title = count ? `Watch live TV · ${count} channels` : 'Watch live TV';
     }
-    if (!state.enabled && state.visible) closeShell();
+    if (!state.enabled && state.visible) closeShell({fromNav:true, force:true});
   };
 
   function showShell(show){
@@ -102,15 +102,18 @@
   function closeShell(options){
     const fromNav = !!(options && options.fromNav);
     const force = !!(options && options.force);
-    const depth = window.RelayTV?.runtime?.layerNavigation?.getDepth?.() || 0;
-    if (!fromNav && !force && state.visible && depth > 0) {
-      try { history.back(); } catch (_error) {}
-      return;
-    }
+    const nav = window.RelayTV?.runtime?.layerNavigation;
+    if (!fromNav && !force && state.visible && nav?.back?.()) return;
     closeMenu();
     showShell(false);
-    const target = state.lastFocus && typeof state.lastFocus.focus === 'function' ? state.lastFocus : $('iptvOpenBtn');
+    const fallback = !$('browseDestination')?.classList.contains('hidden')
+      ? $('browseIptvBtn')
+      : document.querySelector('[data-destination="remote"]');
+    const last = state.lastFocus;
+    const usable = last && typeof last.focus === 'function' && last.isConnected !== false && !last.closest?.('.hidden, [hidden]');
+    const target = usable ? last : (fallback || $('iptvOpenBtn'));
     target?.focus();
+    state.lastFocus = null;
   }
 
   async function loadSources(){

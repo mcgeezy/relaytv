@@ -4,7 +4,7 @@
 
 .primaryNav{
   position:fixed;
-  z-index:10020;
+  z-index:var(--layer-navigation);
   right:0;
   bottom:0;
   left:0;
@@ -96,7 +96,7 @@
 
 .compactPlaybackBar{
   position:fixed;
-  z-index:10010;
+  z-index:var(--layer-playback);
   right:max(10px,env(safe-area-inset-right));
   bottom:max(80px,calc(env(safe-area-inset-bottom) + 72px));
   left:max(10px,env(safe-area-inset-left));
@@ -173,7 +173,27 @@
 body:has(.compactPlaybackBar:not(.hidden)) .iptvShellInner,
 body:has(.compactPlaybackBar:not(.hidden)) .jfShellInner,
 body:has(.compactPlaybackBar:not(.hidden)) .plexShellInner,
-body:has(.compactPlaybackBar:not(.hidden)) .seerrShellInner{padding-bottom:150px}
+body:has(.compactPlaybackBar:not(.hidden)) .seerrShellInner,
+body:has(.compactPlaybackBar:not(.hidden)) .plexDetail,
+body:has(.compactPlaybackBar:not(.hidden)) .seerrDetail{padding-bottom:150px}
+
+/* Keep the connection banner above dialogs and the settings destination clear of bottom chrome on phones. */
+.connBadge{z-index:10100}
+#settingsBackdrop.modalBackdrop{z-index:1230}
+@media (max-width:767px){
+  #settingsBackdrop.modalBackdrop{
+    padding-bottom:max(84px,calc(env(safe-area-inset-bottom) + 76px));
+  }
+  body:has(.compactPlaybackBar:not(.hidden)) #settingsBackdrop.modalBackdrop{
+    padding-bottom:max(156px,calc(env(safe-area-inset-bottom) + 148px));
+  }
+  .modal.settingsModal{
+    max-height:calc(100dvh - max(8px,env(safe-area-inset-top)) - max(92px,calc(env(safe-area-inset-bottom) + 84px)));
+  }
+  body:has(.compactPlaybackBar:not(.hidden)) .modal.settingsModal{
+    max-height:calc(100dvh - max(8px,env(safe-area-inset-top)) - max(164px,calc(env(safe-area-inset-bottom) + 156px)));
+  }
+}
 
 @media (max-width:520px){
   .hdrKicker{display:none}

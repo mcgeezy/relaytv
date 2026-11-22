@@ -550,7 +550,13 @@ function closeSeerrShell(options){
   const shell = document.getElementById('seerrShell');
   if (shell) { shell.classList.add('hidden'); shell.setAttribute('aria-hidden', 'true'); }
   document.body.classList.remove('seerrNoScroll');
-  const focus = __seerrLastFocus && typeof __seerrLastFocus.focus === 'function' ? __seerrLastFocus : document.getElementById('seerrOpenBtn');
+  const fallback = !document.getElementById('browseDestination')?.classList.contains('hidden')
+    ? document.getElementById('browseSeerrBtn')
+    : document.querySelector('[data-destination="remote"]');
+  const usable = __seerrLastFocus && typeof __seerrLastFocus.focus === 'function'
+    && __seerrLastFocus.isConnected !== false
+    && !__seerrLastFocus.closest?.('.hidden, [hidden]');
+  const focus = usable ? __seerrLastFocus : (fallback || document.getElementById('seerrOpenBtn'));
   if (focus) requestAnimationFrame(() => focus.focus());
   __seerrLastFocus = null;
 }
