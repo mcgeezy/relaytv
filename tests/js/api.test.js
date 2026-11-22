@@ -103,3 +103,97 @@ test('a non-Bearer rejection never opens token recovery', async() => {
   assert.equal(state.calls.length, 1);
   assert.equal(prompts, 0);
 });
+
+test('custom async token prompt replaces window.prompt and replays once on submit', async() => {
+  let nativePrompts = 0;
+  let dialogCalls = 0;
+  const state = fixture({
+    prompt:() => { nativePrompts += 1; return 'should-not-be-used'; },
+    responder:attempt => attempt === 1 ? response(401, 'Bearer realm="relaytv"') : response(200),
+  });
+  state.api.setTokenPrompt(async ({hasStoredToken, reason}) => {
+    dialogCalls += 1;
+    assert.equal(hasStoredToken, false);
+    assert.equal(reason, 'challenge');
+    return {action:'submit', token:'dialog-secret'};
+  });
+
+  const result = await state.window.fetch('/pause', {method:'POST'});
+  assert.equal(result.status, 200);
+  assert.equal(nativePrompts, 0);
+  assert.equal(dialogCalls, 1);
+  assert.equal(state.calls.length, 2);
+  assert.equal(state.calls[1].options.headers.get('authorization'), 'Bearer dialog-secret');
+  assert.equal(state.values.get('relaytv_api_token'), 'dialog-secret');
+});
+
+test('custom async token prompt cancel and forgetToken do not replay challenged writes', async() => {
+  let dialogCalls = 0;
+  const state = fixture({
+    token:'stale-secret',
+    responder:() => response(401, 'Bearer realm="relaytv"'),
+  });
+  state.api.setTokenPrompt(async ({hasStoredToken}) => {
+    dialogCalls += 1;
+    assert.equal(hasStoredToken, true);
+    return {action:'forget', token:''};
+  });
+
+  const first = await state.window.fetch('/next', {method:'POST'});
+  assert.equal(first.status, 401);
+  assert.equal(dialogCalls, 1);
+  assert.equal(state.calls.length, 1);
+  assert.equal(state.values.get('relaytv_api_token'), undefined);
+
+  state.api.setTokenPrompt(async () => {
+    dialogCalls += 1;
+    return {action:'cancel', token:''};
+  });
+  const second = await state.window.fetch('/next', {method:'POST'});
+  assert.equal(second.status, 401);
+  assert.equal(dialogCalls, 2);
+  assert.equal(state.calls.length, 2);
+});
+
+test('forgetToken clears stored credentials and allows a future Bearer challenge prompt', async() => {
+  let dialogCalls = 0;
+  const state = fixture({
+    token:'old-secret',
+    responder:attempt => attempt === 1 ? response(401, 'Bearer realm="relaytv"') : response(200),
+  });
+  state.api.setTokenPrompt(async () => {
+    dialogCalls += 1;
+    return {action:'cancel', token:''};
+  });
+  await state.window.fetch('/pause', {method:'POST'});
+  assert.equal(dialogCalls, 1);
+
+  state.api.forgetToken();
+  assert.equal(state.api.storedToken(), '');
+
+  state.api.setTokenPrompt(async () => {
+    dialogCalls += 1;
+    return {action:'submit', token:'fresh-secret'};
+  });
+  // Force next call to challenge once then succeed
+  let step = 0;
+  const state2 = fixture({
+    token:'old-secret',
+    responder:() => {
+      step += 1;
+      return step === 1 || step === 2 ? response(401, 'Bearer realm="relaytv"') : response(200);
+    },
+  });
+  let count2 = 0;
+  state2.api.setTokenPrompt(async () => {
+    count2 += 1;
+    return count2 === 1 ? {action:'cancel', token:''} : {action:'submit', token:'fresh-secret'};
+  });
+  const r1 = await state2.window.fetch('/pause', {method:'POST'});
+  assert.equal(r1.status, 401);
+  state2.api.forgetToken();
+  const r2 = await state2.window.fetch('/pause', {method:'POST'});
+  assert.equal(r2.status, 200);
+  assert.equal(count2, 2);
+  assert.equal(state2.api.storedToken(), 'fresh-secret');
+});

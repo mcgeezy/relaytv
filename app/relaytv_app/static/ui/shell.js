@@ -197,8 +197,17 @@
     });
 
     function useDestination(destination) {
+      const next = DESTINATIONS.has(destination) ? destination : 'remote';
+      const leaveGuard = win.RelayTV?.runtime?.requestLeaveSettings;
+      if (navigation.getCurrent() === 'settings' && next !== 'settings' && typeof leaveGuard === 'function') {
+        const allowed = leaveGuard(() => {
+          if (providerIsOpen()) closeOpenProviders();
+          navigation.navigate(next);
+        });
+        if (!allowed) return;
+      }
       if (providerIsOpen()) closeOpenProviders();
-      navigation.navigate(destination);
+      navigation.navigate(next);
     }
 
     doc.querySelectorAll('[data-destination]').forEach((button) => {

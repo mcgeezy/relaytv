@@ -1,0 +1,58 @@
+{
+  "phase": "phase-5-settings",
+  "timestamp": "2026-11-22T21:37:23.135Z",
+  "checks": {
+    "layout_desktop-dark": {
+      "isDestination": true,
+      "position": "static",
+      "overflow": false,
+      "bdLeft": 132,
+      "navRight": 110,
+      "navVisible": true,
+      "compactVisible": true
+    },
+    "dirtyGuard": {
+      "badgeShown": true,
+      "keepEditingWorked": true,
+      "discardLeftCleanly": true
+    },
+    "layout_phone-dark": {
+      "isDestination": true,
+      "position": "static",
+      "overflow": false,
+      "bdLeft": 14,
+      "navRight": 390,
+      "navVisible": true,
+      "compactVisible": true
+    },
+    "layout_phone-light": {
+      "isDestination": true,
+      "position": "static",
+      "overflow": false,
+      "bdLeft": 14,
+      "navRight": 390,
+      "navVisible": true,
+      "compactVisible": true
+    },
+    "authTokenDialog": {
+      "nativeDialogFired": false,
+      "cancelRejected": true,
+      "submitStored": true,
+      "forgetCleared": true
+    },
+    "peersOverlay": {
+      "initialFocus": "peersCloseBtn",
+      "copyHeading": "Copy to:",
+      "closedOnEscape": true,
+      "restoredFocus": "queueSendBtn"
+    }
+  },
+  "screenshots": [
+    "docs/images/ui-phase-5/phase5-settings-desktop-dark.png",
+    "docs/images/ui-phase-5/phase5-settings-phone-dark.png",
+    "docs/images/ui-phase-5/phase5-settings-phone-light.png",
+    "docs/images/ui-phase-5/phase5-auth-dialog-phone.png",
+    "docs/images/ui-phase-5/phase5-peers-phone.png"
+  ],
+  "errors": []
+}

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Send-to-device sheet. Follows the app's glass system: dark by default with
-   light styling in `prefers-color-scheme: light` blocks, which the manual
-   theme toggle rewrites at runtime (see theme.js). */
+/* Send-to-device sheet. Aligned to foundation.css semantic tokens so dark and
+   light themes share contrast, elevation, border, and focus semantics. */
 
 .peersModal{
   width: min(520px, 100%);
@@ -9,26 +8,23 @@
   gap: 12px;
 }
 
-/* The dark-glass modals restyle .iconBtn locally; match them so the close
-   control reads the same as History's and Send to TV's. */
 .peersModal .iconBtn{
-  background: linear-gradient(180deg, rgba(148,178,255,.14), rgba(96,130,255,.06));
-  border: 1px solid rgba(148,180,255,.30);
-  color: #dceaff;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
 }
 .peersModal .iconBtn:hover{
   transform: none;
-  border-color: rgba(148,180,255,.55);
-  background: linear-gradient(180deg, rgba(148,178,255,.20), rgba(96,130,255,.10));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 2px rgba(120,180,255,.14);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
 .pmHeadText{ min-width: 0; }
 .pmSub{
   margin-top: 3px;
   font-size: 12px;
-  color: rgba(198,216,246,.72);
+  color: var(--text-secondary);
 }
 
 .pmModes{
@@ -36,8 +32,8 @@
   gap: 4px;
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid rgba(140,190,255,.22);
-  background: rgba(12,22,46,.55);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
 }
 .pmMode{
   flex: 1 1 auto;
@@ -47,29 +43,28 @@
   font-size: 12px;
   font-weight: 700;
   letter-spacing: .04em;
-  color: rgba(203,222,252,.72);
+  color: var(--text-secondary);
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-.pmMode:hover{ color: #eaf3ff; background: rgba(34,60,120,.45); transform: none; }
+.pmMode:hover{ color: var(--text-primary); background: var(--surface-hover); transform: none; }
 .pmMode.on{
-  color: #eaf3ff;
-  border-color: rgba(96,170,255,.45);
-  background: linear-gradient(180deg, rgba(43,108,231,.75), rgba(22,56,142,.85));
-  box-shadow: inset 0 1px 0 rgba(200,228,255,.22);
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .pmStatus{
   font-size: 12px;
   min-height: 0;
-  color: rgba(198,216,246,.72);
+  color: var(--text-secondary);
 }
 .pmStatus:empty{ display:none; }
-.pmStatus.err{ color: #ff9aa8; }
-.pmStatus.ok{ color: #9df6b7; }
+.pmStatus.err{ color: var(--status-danger); }
+.pmStatus.ok{ color: var(--status-success); }
 
 .pmList{ display: grid; gap: 8px; }
 .pmList:empty{ display:none; }
@@ -80,13 +75,13 @@
   font-weight: 700;
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: rgba(190,212,248,.60);
+  color: var(--text-tertiary);
 }
 
 .pmNote{
   font-size: 11.5px;
   line-height: 1.45;
-  color: rgba(198,216,246,.58);
+  color: var(--text-tertiary);
 }
 .pmNote:empty{ display:none; }
 
@@ -96,12 +91,12 @@
   gap: 10px;
   width: 100%;
   padding: 11px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   text-align: left;
-  color: #eaf3ff;
-  border: 1px solid rgba(120,180,255,.24);
-  background: linear-gradient(180deg, rgba(31,45,82,.92), rgba(17,26,50,.96));
-  box-shadow: inset 0 1px 0 rgba(190,220,255,.10);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm);
 }
 
 .pmDevice{
@@ -127,16 +122,16 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: rgba(160,185,220,.45);
-  box-shadow: 0 0 0 3px rgba(160,185,220,.12);
+  background: var(--text-tertiary);
+  box-shadow: 0 0 0 3px var(--surface-hover);
 }
 .pmDot.isOnline{
-  background: #4ade80;
-  box-shadow: 0 0 0 3px rgba(74,222,128,.18);
+  background: var(--status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 20%, transparent);
 }
 .pmDot.isOffline{
-  background: #f87171;
-  box-shadow: 0 0 0 3px rgba(248,113,113,.16);
+  background: var(--status-danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-danger) 18%, transparent);
 }
 
 .pmDeviceText{ min-width: 0; display: grid; gap: 2px; }
@@ -149,12 +144,12 @@
 }
 .pmMeta{
   font-size: 11.5px;
-  color: rgba(198,216,246,.64);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pmMeta.err{ color: #ff9aa8; }
+.pmMeta.err{ color: var(--status-danger); }
 
 .pmRowBtn{
   flex: 0 0 auto;
@@ -165,38 +160,38 @@
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;
-  color: rgba(210,228,255,.80);
-  border: 1px solid rgba(140,190,255,.28);
-  background: rgba(20,32,62,.45);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 .pmRowBtn:hover{
-  color: #eaf3ff;
-  border-color: rgba(150,210,255,.55);
-  background: rgba(34,60,120,.60);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
   transform: none;
 }
 .pmRowBtn.danger{
-  color: rgba(226,214,220,.62);
-  border-color: rgba(180,150,160,.26);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
 }
 .pmRowBtn.danger:hover{
-  color: #fff;
-  border-color: rgba(248,113,113,.60);
-  background: rgba(120,32,44,.55);
+  color: var(--status-danger);
+  border-color: var(--status-danger);
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
 }
 
 .pmEmpty{
   padding: 18px 6px;
   text-align: center;
   font-size: 13px;
-  color: rgba(210,225,250,.50);
+  color: var(--text-tertiary);
 }
 
 .pmAdd{
-  border-top: 1px solid rgba(140,190,255,.16);
+  border-top: 1px solid var(--border-subtle);
   padding-top: 12px;
   display: grid;
   gap: 10px;
@@ -208,20 +203,20 @@
   justify-content: flex-start;
   min-height: 0;
   padding: 8px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   font-size: 13px;
   font-weight: 700;
-  color: rgba(210,228,255,.82);
-  border: 1px dashed rgba(140,190,255,.34);
-  background: rgba(20,32,62,.35);
+  color: var(--text-secondary);
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-raised);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 .pmAddToggle:hover{
-  color: #eaf3ff;
-  border-color: rgba(150,210,255,.58);
-  background: rgba(34,60,120,.50);
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--surface-hover);
   transform: none;
 }
 
@@ -230,30 +225,29 @@
 .pmFieldLabel{
   font-size: 12px;
   font-weight: 700;
-  color: rgba(214,229,252,.82);
+  color: var(--text-primary);
 }
 .pmFieldLabel small{
   font-weight: 500;
-  color: rgba(198,216,246,.58);
+  color: var(--text-tertiary);
 }
 
 .pmInput{
   width: 100%;
   min-height: 42px;
   padding: 0 13px;
-  border-radius: 12px;
-  border: 1px solid rgba(148,163,184,.30);
-  background: linear-gradient(180deg, rgba(15,23,42,.88), rgba(30,41,59,.68));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
-  color: #edf4ff;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
   font: inherit;
   font-size: 14px;
   outline: none;
 }
-.pmInput::placeholder{ color: rgba(219,228,245,.55); }
+.pmInput::placeholder{ color: var(--text-tertiary); }
 .pmInput:focus{
-  border-color: rgba(96,170,255,.70);
-  box-shadow: 0 0 0 3px rgba(56,130,246,.20);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .pmAddActions{
@@ -261,26 +255,26 @@
   gap: 10px;
   flex-wrap: wrap;
 }
-.pmAddActions button{ min-height: 40px; padding: 9px 14px; border-radius: 12px; }
+.pmAddActions button{ min-height: 40px; padding: 9px 14px; border-radius: var(--radius-control); }
 .pmGhostBtn{
-  color: rgba(210,228,255,.82);
-  border: 1px solid rgba(140,190,255,.30);
-  background: rgba(20,32,62,.45);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
   box-shadow: none;
 }
 
 .pmHelper{
   font-size: 12px;
   min-height: 16px;
-  color: rgba(198,216,246,.70);
+  color: var(--text-secondary);
 }
-.pmHelper.err{ color: #ff9aa8; }
-.pmHelper.ok{ color: #9df6b7; }
+.pmHelper.err{ color: var(--status-danger); }
+.pmHelper.ok{ color: var(--status-success); }
 
 /* What-to-send picker. Sits below the device list, so the header subtitle
    carries the selection to the point where a device is tapped. */
 .pmPickWrap{
-  border-top: 1px solid rgba(140,190,255,.16);
+  border-top: 1px solid var(--border-subtle);
   padding-top: 12px;
   display: grid;
   gap: 8px;
@@ -299,7 +293,7 @@
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: rgba(198,216,246,.66);
+  color: var(--text-secondary);
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
@@ -307,9 +301,9 @@
   -webkit-backdrop-filter: none;
 }
 .pmLinkBtn:hover{
-  color: #eaf3ff;
-  border-color: rgba(140,190,255,.34);
-  background: rgba(34,60,120,.45);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+  background: var(--surface-hover);
   transform: none;
 }
 
@@ -326,21 +320,21 @@
   width: 100%;
   min-height: 0;
   padding: 7px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   text-align: left;
   font: inherit;
-  color: #eaf3ff;
-  border: 1px solid rgba(120,180,255,.18);
-  background: rgba(16,26,50,.55);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   cursor: pointer;
 }
-.pmPickRow:hover{ border-color: rgba(150,210,255,.42); background: rgba(28,48,96,.62); transform: none; }
-.pmPickRow:not(.on):not(.blocked) .pmName{ color: rgba(210,228,255,.55); }
+.pmPickRow:hover{ border-color: var(--border-strong); background: var(--surface-hover); transform: none; }
+.pmPickRow:not(.on):not(.blocked) .pmName{ color: var(--text-tertiary); }
 .pmPickRow.blocked{ cursor: default; opacity: .55; }
-.pmPickRow.blocked:hover{ border-color: rgba(120,180,255,.18); background: rgba(16,26,50,.55); }
+.pmPickRow.blocked:hover{ border-color: var(--border-subtle); background: var(--surface-raised); }
 
 .pmCheck{
   flex: 0 0 auto;
@@ -354,18 +348,18 @@
   font-weight: 800;
   line-height: 1;
   color: transparent;
-  border: 1px solid rgba(160,185,220,.45);
+  border: 1px solid var(--border-strong);
   background: transparent;
 }
 .pmPickRow.on .pmCheck{
-  color: #06210f;
-  border-color: #4ade80;
-  background: #4ade80;
-  box-shadow: 0 0 0 3px rgba(74,222,128,.16);
+  color: #052e16;
+  border-color: var(--status-success);
+  background: var(--status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 18%, transparent);
 }
 .pmPickRow.blocked .pmCheck{
-  color: rgba(226,214,220,.70);
-  border-color: rgba(180,150,160,.40);
+  color: var(--text-tertiary);
+  border-color: var(--border-subtle);
   background: transparent;
 }
 
@@ -375,7 +369,7 @@
   height: 26px;
   border-radius: 5px;
   overflow: hidden;
-  background: rgba(10,16,32,.75);
+  background: var(--surface);
 }
 .pmPickThumb img{ width: 100%; height: 100%; object-fit: cover; display: block; }
 
@@ -392,21 +386,20 @@
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: rgba(210,228,255,.80);
-  border: 1px solid rgba(140,190,255,.28);
-  background: rgba(20,32,62,.45);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 .qSendBtn:hover{
-  color: #eaf3ff;
-  border-color: rgba(150,210,255,.55);
-  background: rgba(34,60,120,.60);
-  box-shadow: 0 0 12px rgba(72,150,255,.22);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
   transform: none;
 }
-.qSendBtn:active{ background: rgba(24,44,92,.70); transform: translateY(1px); }
+.qSendBtn:active{ transform: translateY(1px); }
 .qSendGlyph{ width: 15px; height: 15px; }
 
 @media (max-width: 560px){
@@ -415,72 +408,12 @@
 }
 
 @media (prefers-color-scheme: light){
-  .peersModal .iconBtn{
-    background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(223,238,255,.88));
-    border-color: rgba(37,99,235,.22);
-    color: #0c1324;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
-  }
-  .peersModal .iconBtn:hover{
-    background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(210,232,255,.95));
-    border-color: rgba(37,99,235,.40);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 0 0 2px rgba(56,140,248,.14);
-  }
-  .pmSub, .pmStatus, .pmMeta, .pmHelper{ color: rgba(23,52,120,.72); }
-  .pmModes{ border-color: rgba(37,99,235,.20); background: rgba(219,232,255,.45); }
-  .pmMode{ color: rgba(23,52,120,.78); }
-  .pmMode:hover{ color: #0c1f4d; background: rgba(199,220,255,.70); }
   .pmMode.on{
+    color: var(--text-primary);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .pmPickRow.on .pmCheck{
     color: #fff;
-    border-color: rgba(37,99,235,.45);
-    background: linear-gradient(180deg, rgba(59,130,246,.95), rgba(37,99,235,.98));
   }
-  .pmNote{ color: rgba(23,52,120,.62); }
-  .pmGroupHead{ color: rgba(23,52,120,.62); }
-  .pmRow{
-    color: #0c1f4d;
-    border-color: rgba(37,99,235,.22);
-    background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(233,241,255,.98));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.90);
-  }
-  .pmEmpty{ color: rgba(23,52,120,.55); }
-  .pmFieldLabel{ color: rgba(20,41,94,.88); }
-  .pmFieldLabel small{ color: rgba(23,52,120,.62); }
-  .pmInput{
-    color: #0c1f4d;
-    border-color: rgba(37,99,235,.28);
-    background: rgba(255,255,255,.92);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.90);
-  }
-  .pmInput::placeholder{ color: rgba(23,52,120,.50); }
-  .pmAdd{ border-top-color: rgba(37,99,235,.16); }
-  .qSendBtn, .pmRowBtn, .pmAddToggle, .pmGhostBtn{
-    color: rgba(23,52,120,.85);
-    border-color: rgba(37,99,235,.30);
-    background: rgba(219,232,255,.55);
-  }
-  .qSendBtn:hover, .pmRowBtn:hover, .pmAddToggle:hover{
-    color: #0c1f4d;
-    border-color: rgba(37,99,235,.50);
-    background: rgba(199,220,255,.80);
-  }
-  .pmPickWrap{ border-top-color: rgba(37,99,235,.16); }
-  .pmLinkBtn{ color: rgba(23,52,120,.70); }
-  .pmLinkBtn:hover{ color: #0c1f4d; border-color: rgba(37,99,235,.30); background: rgba(199,220,255,.70); }
-  .pmPickRow{
-    color: #0c1f4d;
-    border-color: rgba(37,99,235,.18);
-    background: rgba(255,255,255,.72);
-  }
-  .pmPickRow:hover{ border-color: rgba(37,99,235,.42); background: rgba(233,241,255,.95); }
-  .pmPickRow:not(.on):not(.blocked) .pmName{ color: rgba(23,52,120,.58); }
-  .pmPickRow.blocked:hover{ border-color: rgba(37,99,235,.18); background: rgba(255,255,255,.72); }
-  .pmCheck{ border-color: rgba(37,99,235,.35); }
-  .pmPickRow.on .pmCheck{ color: #052e16; border-color: #22c55e; background: #4ade80; }
-  .pmPickRow.blocked .pmCheck{ color: rgba(71,85,105,.80); border-color: rgba(100,116,139,.35); }
-  .pmPickThumb{ background: rgba(219,232,255,.75); }
-  .pmRowBtn.danger{ color: rgba(71,85,105,.78); border-color: rgba(100,116,139,.30); }
-  .pmRowBtn.danger:hover{ color: #7f1d1d; background: rgba(254,205,211,.75); }
-  .pmStatus.err, .pmHelper.err, .pmMeta.err{ color: #b91c1c; }
-  .pmStatus.ok, .pmHelper.ok{ color: #15803d; }
 }

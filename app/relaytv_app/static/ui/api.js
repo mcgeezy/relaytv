@@ -32,6 +32,8 @@
   let request = env && env.fetch;
   let promptedThisLoad = false;
   let installed = false;
+  let tokenPromptHandler = null;
+  let activePromptPromise = null;
 
   function storedToken() {
     try { return String((storage && storage.getItem(storageKey)) || '').trim(); }
@@ -45,6 +47,15 @@
       if (token) storage.setItem(storageKey, token);
       else storage.removeItem(storageKey);
     } catch (_error) {}
+  }
+
+  function forgetToken() {
+    storeToken('');
+    promptedThisLoad = false;
+  }
+
+  function setTokenPrompt(handler) {
+    tokenPromptHandler = typeof handler === 'function' ? handler : null;
   }
 
   function isSameOrigin(input) {
@@ -69,6 +80,39 @@
     } catch (_error) { return false; }
   }
 
+  async function requestReplacementToken(hasStoredToken) {
+    if (activePromptPromise) return await activePromptPromise;
+    activePromptPromise = (async () => {
+      try {
+        if (tokenPromptHandler) {
+          const result = await tokenPromptHandler({hasStoredToken, reason:'challenge'});
+          if (result && typeof result === 'object') {
+            if (result.action === 'forget') {
+              forgetToken();
+              return '';
+            }
+            return String(result.token || '').trim();
+          }
+          return String(result || '').trim();
+        }
+        if (typeof win.prompt === 'function') {
+          const entered = win.prompt(
+            'This RelayTV server requires an API token for control actions.\n'
+              + 'Enter the API token (RELAYTV_API_TOKEN):',
+            '',
+          );
+          return String(entered || '').trim();
+        }
+        return '';
+      } catch (_error) {
+        return '';
+      } finally {
+        activePromptPromise = null;
+      }
+    })();
+    return await activePromptPromise;
+  }
+
   function installAuthFetch() {
     if (installed || !win || !request || !HeadersClass) return false;
     installed = true;
@@ -79,12 +123,7 @@
       let response = await nativeFetch(input, token ? withAuth(options, token) : options);
       if (!sameOrigin || promptedThisLoad || !isBearerChallenge(response)) return response;
       promptedThisLoad = true;
-      const entered = win.prompt(
-        'This RelayTV server requires an API token for control actions.\n'
-          + 'Enter the API token (RELAYTV_API_TOKEN):',
-        '',
-      );
-      const replacement = String(entered || '').trim();
+      const replacement = await requestReplacementToken(!!token);
       if (!replacement) return response;
       storeToken(replacement);
       response = await nativeFetch(input, withAuth(options, replacement));
@@ -164,9 +203,11 @@
   return {
     commandErrorDetail,
     fetchWithTimeout,
+    forgetToken,
     installAuthFetch,
     isSameOrigin,
     post,
+    setTokenPrompt,
     storedToken,
     storeToken,
   };

@@ -3,11 +3,47 @@
 // Settings controller extracted from app.js. It retains the existing global
 // function bridge until the responsive settings destination lands in Phase 5.
 
+let __pendingSettingsLeave = null;
+
+function _syncSettingsDirtyUi(){
+  const badge = document.getElementById('settingsDirtyBadge');
+  if (badge) badge.classList.toggle('hidden', !__settingsDirty);
+  if (!__settingsDirty) {
+    const bar = document.getElementById('settingsDiscardBar');
+    if (bar) bar.classList.add('hidden');
+    __pendingSettingsLeave = null;
+  }
+}
+
+function _setSettingsDirty(dirty){
+  __settingsDirty = !!dirty;
+  _syncSettingsDirtyUi();
+}
+
+function _requestSettingsLeave(onProceed){
+  const bd = document.getElementById('settingsBackdrop');
+  if (!bd || bd.classList.contains('hidden') || !__settingsDirty) {
+    if (typeof onProceed === 'function') onProceed();
+    return true;
+  }
+  const bar = document.getElementById('settingsDiscardBar');
+  if (!bar) {
+    if (typeof onProceed === 'function') onProceed();
+    return true;
+  }
+  __pendingSettingsLeave = typeof onProceed === 'function' ? onProceed : null;
+  bar.classList.remove('hidden');
+  document.getElementById('settingsKeepEditingBtn')?.focus?.();
+  return false;
+}
+
 function openSettings(opts){
   closeHeaderMenu();
   const bd = document.getElementById('settingsBackdrop');
   if (!bd || !bd.classList.contains('hidden')) return;
-  __settingsDirty = false;
+  if (typeof _setSettingsDirty === 'function') _setSettingsDirty(false);
+  else __settingsDirty = false;
+  bd.classList.toggle('isDestination', !!(opts && opts.fromDestination));
   bd.classList.remove('hidden');
   if (!(opts && opts.fromDestination)) _uiPushLayer();
   loadSettingsUi().catch(console.warn);
@@ -16,6 +52,14 @@ function closeSettings(opts){
   const bd = document.getElementById('settingsBackdrop');
   if (!bd) return;
   const fromNav = !!(opts && opts.fromNav);
+  const force = !!(opts && opts.force);
+  if (!fromNav && !force && !bd.classList.contains('hidden') && __settingsDirty) {
+    const bar = document.getElementById('settingsDiscardBar');
+    if (bar && typeof _requestSettingsLeave === 'function') {
+      _requestSettingsLeave(() => closeSettings({force:true}));
+      return;
+    }
+  }
   if (!fromNav && !bd.classList.contains('hidden')) {
     if (typeof __layerNavigation !== 'undefined' && __layerNavigation && typeof __layerNavigation.back === 'function') {
       if (__layerNavigation.back()) return;
@@ -24,7 +68,9 @@ function closeSettings(opts){
       return;
     }
   }
-  __settingsDirty = false;
+  if (typeof _setSettingsDirty === 'function') _setSettingsDirty(false);
+  else __settingsDirty = false;
+  bd.classList.remove('isDestination');
   bd.classList.add('hidden');
 }
 
@@ -853,7 +899,113 @@ async function loadSettingsUi(){
   setWeatherLocationMeta(weatherLocationSummary(WEATHER_LOCATION_STATE.location_name, WEATHER_LOCATION_STATE.latitude, WEATHER_LOCATION_STATE.longitude));
 
   renderIdlePanelSettings(cur.idle_panels || {});
-  __settingsDirty = false;
+  _setSettingsDirty(false);
+}
+
+let __authTokenDialogController = null;
+let __authTokenPendingResolve = null;
+
+function _resolveAuthTokenDialog(result){
+  const resolver = __authTokenPendingResolve;
+  __authTokenPendingResolve = null;
+  if (__authTokenDialogController && __authTokenDialogController.isOpen()) {
+    __authTokenDialogController.close();
+  }
+  if (typeof resolver === 'function') resolver(result);
+}
+
+function openAuthTokenDialog(options){
+  const opts = (options && typeof options === 'object') ? options : {};
+  const bd = document.getElementById('authTokenBackdrop');
+  const titleEl = document.getElementById('authTokenDialogTitle');
+  const descEl = document.getElementById('authTokenDesc');
+  const inputEl = document.getElementById('authTokenInput');
+  const statusEl = document.getElementById('authTokenStatus');
+  const forgetBtn = document.getElementById('authTokenForgetBtn');
+  const submitBtn = document.getElementById('authTokenSubmitBtn');
+  const api = window.RelayTV?.api;
+  if (!bd || !__authTokenDialogController) return Promise.resolve('');
+  const isChallenge = opts.reason === 'challenge';
+  const hasStored = !!(opts.hasStoredToken || (api && api.storedToken && api.storedToken()));
+  if (titleEl) titleEl.textContent = isChallenge ? 'API token required' : 'Browser API token';
+  if (descEl) {
+    descEl.textContent = isChallenge
+      ? 'This RelayTV server rejected the action until an API token (RELAYTV_API_TOKEN) is provided. Stored only in this browser and sent only to this origin.'
+      : 'Manage the API token stored in this browser for protected RelayTV control actions. This stays local to your browser and never modifies server settings.';
+  }
+  if (inputEl) inputEl.value = '';
+  if (statusEl) {
+    statusEl.classList.remove('ok', 'err');
+    statusEl.textContent = hasStored ? 'A token is currently stored in this browser.' : 'No API token stored in this browser.';
+  }
+  if (forgetBtn) forgetBtn.classList.toggle('hidden', !hasStored);
+  if (submitBtn) submitBtn.textContent = isChallenge ? 'Save & retry' : 'Save token';
+  closeHeaderMenu();
+  __authTokenDialogController.open();
+  return new Promise((resolve) => {
+    __authTokenPendingResolve = resolve;
+  });
+}
+
+function bindAuthTokenUi(){
+  const bd = document.getElementById('authTokenBackdrop');
+  const form = document.getElementById('authTokenForm');
+  const inputEl = document.getElementById('authTokenInput');
+  const statusEl = document.getElementById('authTokenStatus');
+  const closeBtn = document.getElementById('authTokenCloseBtn');
+  const cancelBtn = document.getElementById('authTokenCancelBtn');
+  const forgetBtn = document.getElementById('authTokenForgetBtn');
+  const manageBtn = document.getElementById('authTokenManageBtn');
+  const api = window.RelayTV?.api;
+  const overlays = window.RelayTV?.overlays;
+  if (!bd || !form || !overlays || typeof overlays.createDialogController !== 'function') return;
+
+  __authTokenDialogController = overlays.createDialogController({
+    document,
+    window,
+    backdrop:bd,
+    opener:document.getElementById('hdrMenuBtn') || manageBtn,
+    initialFocus:inputEl || closeBtn,
+    onRequestClose:() => _resolveAuthTokenDialog({action:'cancel', token:''}),
+  });
+  __authTokenDialogController.mount();
+
+  if (closeBtn) closeBtn.onclick = () => _resolveAuthTokenDialog({action:'cancel', token:''});
+  if (cancelBtn) cancelBtn.onclick = () => _resolveAuthTokenDialog({action:'cancel', token:''});
+  if (forgetBtn) forgetBtn.onclick = () => {
+    if (api && typeof api.forgetToken === 'function') api.forgetToken();
+    _resolveAuthTokenDialog({action:'forget', token:''});
+  };
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const token = String(inputEl?.value || '').trim();
+    if (!token) {
+      if (statusEl) {
+        statusEl.classList.remove('ok');
+        statusEl.classList.add('err');
+        statusEl.textContent = 'Enter an API token or choose Cancel.';
+      }
+      inputEl?.focus?.();
+      return;
+    }
+    if (!__authTokenPendingResolve && api && typeof api.storeToken === 'function') {
+      api.storeToken(token);
+      if (__authTokenDialogController.isOpen()) __authTokenDialogController.close();
+      return;
+    }
+    _resolveAuthTokenDialog({action:'submit', token});
+  });
+  if (manageBtn) {
+    manageBtn.onclick = async () => {
+      const result = await openAuthTokenDialog({reason:'manage'});
+      if (result && result.action === 'submit' && result.token && api && typeof api.storeToken === 'function') {
+        api.storeToken(result.token);
+      }
+    };
+  }
+  if (api && typeof api.setTokenPrompt === 'function') {
+    api.setTokenPrompt((ctx) => openAuthTokenDialog(ctx));
+  }
 }
 
 function bindSettingsUi(){
@@ -861,11 +1013,38 @@ function bindSettingsUi(){
   const closeBtn = document.getElementById('settingsCloseBtn');
   const cancelBtn = document.getElementById('settingsCancelBtn');
   const saveBtn = document.getElementById('settingsSaveBtn');
+  const keepEditingBtn = document.getElementById('settingsKeepEditingBtn');
+  const discardBtn = document.getElementById('settingsDiscardBtn');
   const bd = document.getElementById('settingsBackdrop');
 
-  if (btn) btn.onclick = openSettings;
-  if (closeBtn) closeBtn.onclick = closeSettings;
-  if (cancelBtn) cancelBtn.onclick = closeSettings;
+  if (typeof bindAuthTokenUi === 'function') bindAuthTokenUi();
+  if (typeof window !== 'undefined' && window.RelayTV?.runtime && typeof _requestSettingsLeave === 'function') {
+    window.RelayTV.runtime.requestLeaveSettings = _requestSettingsLeave;
+  }
+
+  if (btn) btn.onclick = () => {
+    const shellNav = typeof window !== 'undefined' ? window.RelayTV?.runtime?.shell?.navigation : null;
+    if (shellNav && typeof shellNav.navigate === 'function') {
+      closeHeaderMenu();
+      shellNav.navigate('settings');
+      return;
+    }
+    openSettings();
+  };
+  if (closeBtn) closeBtn.onclick = () => closeSettings();
+  if (cancelBtn) cancelBtn.onclick = () => closeSettings();
+  if (keepEditingBtn) keepEditingBtn.onclick = () => {
+    const bar = document.getElementById('settingsDiscardBar');
+    if (bar) bar.classList.add('hidden');
+    if (typeof __pendingSettingsLeave !== 'undefined') __pendingSettingsLeave = null;
+  };
+  if (discardBtn) discardBtn.onclick = () => {
+    const next = typeof __pendingSettingsLeave !== 'undefined' ? __pendingSettingsLeave : null;
+    if (typeof _setSettingsDirty === 'function') _setSettingsDirty(false);
+    else __settingsDirty = false;
+    if (typeof next === 'function') next();
+    else closeSettings({force:true});
+  };
   if (bd) {
     bd.addEventListener('click', (e) => { if (e.target === bd) closeSettings(); });
     const markSettingsDirty = (e) => {
@@ -873,7 +1052,8 @@ function bindSettingsUi(){
       if (t === bd) return;
       const tag = String((t && t.tagName) || '').toUpperCase();
       if (!tag || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!(t && t.isContentEditable)) {
-        __settingsDirty = true;
+        if (typeof _setSettingsDirty === 'function') _setSettingsDirty(true);
+        else __settingsDirty = true;
       }
     };
     bd.addEventListener('input', markSettingsDirty);
@@ -1560,7 +1740,8 @@ function bindSettingsUi(){
       alert(_plexErrorMessage(settingsBody, r.status));
       return;
     }
-    __settingsDirty = false;
+    if (typeof _setSettingsDirty === 'function') _setSettingsDirty(false);
+    else __settingsDirty = false;
     // Server-type detection runs during apply; rebrand right away instead of
     // waiting for the next status poll.
     try {
@@ -1570,7 +1751,7 @@ function bindSettingsUi(){
         applyJfBranding(jf.server_type, !!jfServer);
       }
     } catch (_e) {}
-    closeSettings();
+    closeSettings({force:true});
   };
 }
 

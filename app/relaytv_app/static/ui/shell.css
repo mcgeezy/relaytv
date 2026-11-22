@@ -177,21 +177,88 @@ body:has(.compactPlaybackBar:not(.hidden)) .seerrShellInner,
 body:has(.compactPlaybackBar:not(.hidden)) .plexDetail,
 body:has(.compactPlaybackBar:not(.hidden)) .seerrDetail{padding-bottom:150px}
 
-/* Keep the connection banner above dialogs and the settings destination clear of bottom chrome on phones. */
+/* Keep the connection banner above dialogs and render Settings cleanly as a destination view. */
 .connBadge{z-index:10100}
 #settingsBackdrop.modalBackdrop{z-index:1230}
+#settingsBackdrop.isDestination{
+  position:static;
+  inset:auto;
+  display:block;
+  padding:0;
+  background:transparent;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+  z-index:auto;
+}
+#settingsBackdrop.isDestination .modal.settingsModal{
+  width:100%;
+  max-width:none;
+  max-height:none;
+  overflow:visible;
+  border-radius:var(--radius-lg);
+  border:1px solid var(--border-subtle);
+  background:var(--surface);
+  box-shadow:var(--shadow-md);
+}
+#settingsBackdrop.isDestination .settingsStickyHead{
+  top:0;
+  border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+}
+#settingsBackdrop.isDestination .modalBottom{
+  position:static;
+  margin:14px 0 0;
+  padding:12px 0 0;
+  background:transparent;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+.settingsTitleWrap{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.settingsDirtyBadge{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 9px;
+  border-radius:999px;
+  border:1px solid var(--status-warning);
+  color:var(--status-warning);
+  font-size:11px;
+  font-weight:750;
+  letter-spacing:.03em;
+}
+.settingsDiscardBar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top:10px;
+  padding:10px 12px;
+  border-radius:var(--radius-control);
+  border:1px solid var(--status-warning);
+  background:var(--surface-raised);
+  color:var(--text-primary);
+  font-size:13px;
+  font-weight:650;
+}
+.settingsDiscardActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.authTokenBody{display:grid;gap:12px;padding-top:14px}
+.authTokenField{display:grid;gap:6px;margin-top:0}
+.authTokenActions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:4px}
+#authTokenForgetBtn{margin-right:auto}
 @media (max-width:767px){
-  #settingsBackdrop.modalBackdrop{
+  #settingsBackdrop.modalBackdrop:not(.isDestination){
     padding-bottom:max(84px,calc(env(safe-area-inset-bottom) + 76px));
   }
-  body:has(.compactPlaybackBar:not(.hidden)) #settingsBackdrop.modalBackdrop{
+  body:has(.compactPlaybackBar:not(.hidden)) #settingsBackdrop.modalBackdrop:not(.isDestination){
     padding-bottom:max(156px,calc(env(safe-area-inset-bottom) + 148px));
   }
-  .modal.settingsModal{
+  #settingsBackdrop:not(.isDestination) .modal.settingsModal{
     max-height:calc(100dvh - max(8px,env(safe-area-inset-top)) - max(92px,calc(env(safe-area-inset-bottom) + 84px)));
   }
-  body:has(.compactPlaybackBar:not(.hidden)) .modal.settingsModal{
+  body:has(.compactPlaybackBar:not(.hidden)) #settingsBackdrop:not(.isDestination) .modal.settingsModal{
     max-height:calc(100dvh - max(8px,env(safe-area-inset-top)) - max(164px,calc(env(safe-area-inset-bottom) + 156px)));
+  }
+  body:has(.compactPlaybackBar:not(.hidden)) #settingsBackdrop.isDestination{
+    padding-bottom:84px;
   }
 }
 
@@ -223,7 +290,7 @@ body:has(.compactPlaybackBar:not(.hidden)) .seerrDetail{padding-bottom:150px}
     padding-bottom:0;
   }
   .wrap > header{grid-area:header}
-  #remoteDestination,.browseDestination{grid-area:content}
+  #remoteDestination,.browseDestination,#settingsBackdrop.isDestination{grid-area:content}
   .primaryNav{grid-area:navigation}
   .primaryNav{
     position:sticky;

@@ -50,6 +50,7 @@
               <button id="notifyMenuBtn" class="hdrMenuItem" role="menuitem" title="Send notification"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>Notification</button>
               <button id="histBtn" class="hdrMenuItem" role="menuitem" title="History"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5v4H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5.2 9a8 8 0 1 1-1.1 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M12 8.5V12l2.6 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>History</button>
               <button id="aboutBtn" class="hdrMenuItem" role="menuitem" title="About RelayTV"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 11.2v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="12" cy="7.9" r="1.15" fill="currentColor"/></svg>About</button>
+              <button id="authTokenManageBtn" class="hdrMenuItem" role="menuitem" title="Manage browser API token"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="12" r="3.5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 12h8m-3 0v3m3-3v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>API token</button>
               <button id="settingsBtn" class="hdrMenuItem" role="menuitem" title="Settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m6 0h2M4 12h2m6 0h8M4 17h10m6 0h0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="9" cy="12" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="17" r="2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>Settings</button>
               <div class="hdrMenuTheme" role="group" aria-label="Theme">
                 <span class="mtLabel">Theme</span>
@@ -374,6 +375,30 @@
       </div>
     </div>
 
+    <div id="authTokenBackdrop" class="modalBackdrop ui-dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="authTokenDialogTitle">
+      <div class="modal ui-dialog authTokenDialog">
+        <div class="modalTop ui-dialog__header">
+          <div id="authTokenDialogTitle" class="modalTitle ui-dialog__title">API token required</div>
+          <div class="modalBtns">
+            <button id="authTokenCloseBtn" class="iconBtn sm ui-button ui-button--icon" type="button" title="Close" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <form id="authTokenForm" class="settingsBody authTokenBody">
+          <p id="authTokenDesc" class="hint">Control actions on this RelayTV server require the operator API token (<code>RELAYTV_API_TOKEN</code>). It is stored only in this browser and sent only to this origin.</p>
+          <div class="fieldRow authTokenField">
+            <label class="fieldLbl" for="authTokenInput">API token</label>
+            <input id="authTokenInput" class="ui-field" type="password" autocomplete="off" spellcheck="false" placeholder="Enter RELAYTV_API_TOKEN…" />
+          </div>
+          <div id="authTokenStatus" class="ui-status-text" role="status" aria-live="polite"></div>
+          <div class="authTokenActions">
+            <button id="authTokenForgetBtn" class="ui-button hidden" type="button">Forget token</button>
+            <button id="authTokenCancelBtn" class="ui-button" type="button">Cancel</button>
+            <button id="authTokenSubmitBtn" class="ui-button ui-button--primary" type="submit">Save &amp; retry</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div id="remoteDestination" class="topgrid">
       <div class="nowCol">
       <section id="nowTopCard" class="card nowCard">
@@ -667,14 +692,25 @@
       <button id="compactPlayPauseBtn" class="compactPlayPauseBtn" type="button" aria-label="Pause">Ⅱ</button>
     </aside>
 
-    <!-- Settings modal -->
+    <!-- Settings destination / modal -->
     <div id="settingsBackdrop" class="modalBackdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
       <div class="modal settingsModal">
         <div class="settingsStickyHead">
           <div class="modalTop">
-            <div id="settingsModalTitle" class="modalTitle">Settings</div>
+            <div class="settingsTitleWrap">
+              <div id="settingsModalTitle" class="modalTitle">Settings</div>
+              <span id="settingsDirtyBadge" class="settingsDirtyBadge hidden" role="status" aria-live="polite">Unsaved changes</span>
+            </div>
             <div class="modalBtns">
               <button id="settingsCloseBtn" class="iconBtn sm" title="Close" aria-label="Close">✕</button>
+            </div>
+          </div>
+
+          <div id="settingsDiscardBar" class="settingsDiscardBar hidden" role="alert">
+            <span>You have unsaved changes in Settings.</span>
+            <div class="settingsDiscardActions">
+              <button type="button" id="settingsKeepEditingBtn" class="btn sm">Keep editing</button>
+              <button type="button" id="settingsDiscardBtn" class="btn sm danger">Discard changes</button>
             </div>
           </div>
 

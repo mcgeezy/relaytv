@@ -469,16 +469,25 @@ async function exerciseAuthorization(browser, baseUrl, report, accept) {
     }
     await route.fulfill({json:{ok:true}});
   });
-  page.once('dialog', async (dialog) => {
-    if (accept) await dialog.accept('fixture-token');
-    else await dialog.dismiss();
+  let nativeDialogFired = false;
+  page.on('dialog', async (dialog) => {
+    nativeDialogFired = true;
+    await dialog.dismiss();
   });
   try {
     await page.goto(`${baseUrl}/ui`, {waitUntil:'domcontentloaded'});
     await page.locator('#playPauseBtn').click();
-    await page.waitForTimeout(250);
+    await page.locator('#authTokenBackdrop:not(.hidden)').waitFor({timeout: 5000});
+    if (accept) {
+      await page.locator('#authTokenInput').fill('fixture-token');
+      await page.locator('#authTokenSubmitBtn').click();
+    } else {
+      await page.locator('#authTokenCancelBtn').click();
+    }
+    await page.locator('#authTokenBackdrop').waitFor({state: 'hidden', timeout: 5000});
+    await page.waitForTimeout(200);
     const stored = await page.evaluate(() => localStorage.getItem('relaytv_api_token') || '');
-    return {accept, attempts, authorized, stored:stored ? '[stored]' : ''};
+    return {accept, attempts, authorized, nativeDialogFired, stored:stored ? '[stored]' : ''};
   } finally { await context.close(); }
 }
 
