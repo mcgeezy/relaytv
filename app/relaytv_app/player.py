@@ -1924,6 +1924,7 @@ def _item_http_headers(item: object) -> dict[str, str]:
 
 
 _ACTIVE_HTTP_HEADERS: dict[str, str] = {}
+_ACTIVE_YTDL_OVERRIDES: dict[str, str] = {}
 
 
 def _redacted_mpv_args(args: list[str]) -> str:
@@ -2757,6 +2758,8 @@ def stop_mpv(*, restart_splash: bool = True):
     _persist_runtime_volume_before_stop()
     _stop_qt_shell()
     _reset_mpv_up_next_state()
+    _reset_live_stream_stall_state()
+    _ACTIVE_YTDL_OVERRIDES.clear()
     _set_mpv_process_start_option_active(False)
     if MPV_PROC and MPV_PROC.poll() is None:
         MPV_PROC.terminate()
@@ -3397,7 +3400,7 @@ def _load_stream_in_existing_mpv(
     ytdl_raw_options_override: str | None = None,
 ) -> bool:
     """Try seamless in-process stream replacement on an already-running mpv."""
-    global _ACTIVE_HTTP_HEADERS
+    global _ACTIVE_HTTP_HEADERS, _ACTIVE_YTDL_OVERRIDES
     if not _env_bool("RELAYTV_MPV_SEAMLESS_REPLACE", True):
         return False
     if (
@@ -3481,9 +3484,26 @@ def _load_stream_in_existing_mpv(
         return False
 
     if ytdl_format_override is not None or ytdl_raw_options_override is not None:
+        next_ytdl_overrides = {
+            "ytdl-format": ytdl_format_override or "",
+            "ytdl-raw-options": ytdl_raw_options_override or "",
+        }
+        for prop, value in next_ytdl_overrides.items():
+            try:
+                response = mpv_command(["set_property", prop, value])
+            except Exception:
+                return False
+            if not isinstance(response, dict) or response.get("error") != "success":
+                return False
+        _ACTIVE_YTDL_OVERRIDES = next_ytdl_overrides
+    elif _ACTIVE_YTDL_OVERRIDES:
+        settings = getattr(state, "get_settings", lambda: {})()
+        provider_hint = _provider_hint_for_stream(stream_url, fallback_now_playing=False)
+        default_ytdl_format = _effective_ytdl_format(settings, provider=provider_hint)
+        default_ytdl_raw = (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
         for prop, value in (
-            ("ytdl-format", ytdl_format_override or ""),
-            ("ytdl-raw-options", ytdl_raw_options_override or ""),
+            ("ytdl-format", default_ytdl_format),
+            ("ytdl-raw-options", default_ytdl_raw),
         ):
             try:
                 response = mpv_command(["set_property", prop, value])
@@ -3491,6 +3511,7 @@ def _load_stream_in_existing_mpv(
                 return False
             if not isinstance(response, dict) or response.get("error") != "success":
                 return False
+        _ACTIVE_YTDL_OVERRIDES = {}
 
     headers = http_headers or {}
     if headers or _ACTIVE_HTTP_HEADERS:
@@ -3535,6 +3556,7 @@ def _load_stream_in_existing_mpv(
 
     # Existing "up-next armed" state points at the old timeline.
     _reset_mpv_up_next_state()
+    _reset_live_stream_stall_state()
     return True
 
 
@@ -3554,7 +3576,7 @@ def start_mpv(
       - RELAYTV_VIDEO_MODE=x11: force X11 mode.
       - RELAYTV_VIDEO_MODE=drm: force DRM/KMS mode.
     """
-    global MPV_PROC, _ACTIVE_HTTP_HEADERS
+    global MPV_PROC, _ACTIVE_HTTP_HEADERS, _ACTIVE_YTDL_OVERRIDES
     _ACTIVE_HTTP_HEADERS = dict(http_headers or {})
     stream_url = youtube_stream.proxy_url(stream_url)
     audio_url = youtube_stream.proxy_url(audio_url)
@@ -3572,6 +3594,13 @@ def start_mpv(
         except Exception:
             pass
     stop_mpv(restart_splash=False)
+    if ytdl_format_override is not None or ytdl_raw_options_override is not None:
+        _ACTIVE_YTDL_OVERRIDES = {
+            "ytdl-format": str(ytdl_format_override or "").strip(),
+            "ytdl-raw-options": str(ytdl_raw_options_override or "").strip(),
+        }
+    else:
+        _ACTIVE_YTDL_OVERRIDES = {}
     _reset_mpv_up_next_state()
 
     # Remove stale socket
@@ -4398,11 +4427,21 @@ def extract_dvr_status(
     }
 
 
+_QUEUE_PREFETCH_DEFER_COOLDOWN_SEC = 300.0
+_QUEUE_PREFETCH_ERROR_COOLDOWN_SEC = 120.0
+
+
 def _item_should_prefetch_stream(item: object) -> bool:
     url = _queue_item_play_url(item)
     if not url:
         return False
     if isinstance(item, dict):
+        try:
+            skip_until = float(item.get("_prefetch_skip_until") or 0.0)
+        except (TypeError, ValueError):
+            skip_until = 0.0
+        if skip_until > time.time():
+            return False
         provider = str(item.get("provider") or "").strip().lower()
         if _item_http_headers(item):
             return False
@@ -4511,6 +4550,7 @@ def _store_prefetched_stream(
     audio: str | None,
     available_at: object = None,
 ) -> None:
+    item.pop("_prefetch_skip_until", None)
     item["_resolved_source_url"] = str(url or "").strip()
     item["_resolved_stream"] = str(stream or "").strip()
     item["_resolved_audio"] = str(audio or "").strip() if audio else ""
@@ -4557,6 +4597,7 @@ def _resolved_playback_source(
         item.pop("_playback_available_at", None)
     if str(getattr(result, "transport", "direct") or "direct") == "mpv_ytdl":
         _clear_prefetched_stream(item)
+        item["_prefetch_skip_until"] = float(time.time()) + _QUEUE_PREFETCH_DEFER_COOLDOWN_SEC
         ytdl_format = str(getattr(result, "ytdl_format", "") or "").strip()
         ytdl_raw = str(getattr(result, "ytdl_raw_options", "") or "").strip()
         operator_raw = (os.getenv("RELAYTV_MPV_YTDL_RAW_OPTIONS") or "").strip()
@@ -4577,6 +4618,7 @@ def _prefetch_queue_item_worker(item: dict[str, Any], url: str) -> None:
             f"queue prefetch resolved provider={item.get('provider') or provider_from_url(url)} url={url!r}",
         )
     except Exception as exc:
+        item["_prefetch_skip_until"] = float(time.time()) + _QUEUE_PREFETCH_ERROR_COOLDOWN_SEC
         debug_log("player", f"queue prefetch failed url={url!r} err={exc}")
     finally:
         with _QUEUE_PREFETCH_LOCK:
@@ -5436,7 +5478,11 @@ def advance_queue_playback(
 
             update_history_progress(
                 prev_now,
-                completed=_history_item_completed(prev_now),
+                completed=(
+                    _natural_end_item_completed(prev_now)
+                    if mode == "auto_next"
+                    else _history_item_completed(prev_now)
+                ),
                 force=True,
             )
             _emit_jellyfin_stopped_from_now(prev_now)
@@ -5715,7 +5761,15 @@ def _consume_mpv_queued_next_if_started(
             pass
         return False
 
-    update_history_progress(prev_now, completed=_history_item_completed(prev_now), force=True)
+    update_history_progress(
+        prev_now,
+        completed=(
+            _natural_end_item_completed(prev_now)
+            if not force_playlist_advance
+            else _history_item_completed(prev_now)
+        ),
+        force=True,
+    )
     _emit_jellyfin_stopped_from_now(prev_now)
     _emit_plex_timeline_from_now(prev_now, "stopped")
 
@@ -5976,8 +6030,76 @@ def _history_item_completed(now: dict | None) -> bool:
     return position >= (duration * 0.98) or (duration - position) <= 10.0
 
 
+def _unbounded_stream_completion_plausible(now: dict | None) -> bool:
+    """Return true when a live or durationless stream plausibly ended naturally."""
+    if not isinstance(now, dict):
+        return False
+    try:
+        started_at = float(now.get("started"))
+    except Exception:
+        started_at = 0.0
+    elapsed = max(0.0, time.time() - started_at) if started_at > 0.0 else None
+    try:
+        raw_pos = now.get("resume_pos")
+        pos = float(raw_pos) if raw_pos is not None else None
+    except Exception:
+        pos = None
+    if pos is not None and not math.isfinite(pos):
+        pos = None
+    live_status = str(now.get("live_status") or "").strip().lower()
+    is_live = _item_looks_like_live_stream(now) or live_status in {"is_live", "live"}
+    if is_live:
+        return bool((pos is not None and pos >= 0.0) or elapsed is None or elapsed >= 2.0)
+
+    try:
+        raw_duration = now.get("duration_sec")
+        duration = float(raw_duration) if raw_duration is not None else None
+    except Exception:
+        duration = None
+    if duration is not None and math.isfinite(duration) and duration > 0.0:
+        return False
+    if pos is None or pos < 0.0:
+        return False
+    if elapsed is not None and elapsed < 2.0:
+        return False
+    is_post_live_relay = bool(_relay_token_from_url(str(now.get("stream") or ""))) or (
+        live_status == "post_live"
+    )
+    if is_post_live_relay:
+        return True
+    try:
+        started_pos = max(0.0, float(now.get("_playback_started_pos") or 0.0))
+    except Exception:
+        started_pos = 0.0
+    return (pos - started_pos) >= 2.0
+
+
+def _natural_end_item_completed(now: dict | None) -> bool:
+    """Return true when a naturally ended item should be marked completed in history."""
+    return _history_item_completed(now) or _unbounded_stream_completion_plausible(now)
+
+
+def note_playback_seek(target_sec: float | None) -> None:
+    """Record an explicit user seek baseline on the active playback item."""
+    if target_sec is None:
+        return
+    try:
+        pos = float(target_sec)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(pos) or pos < 0.0:
+        return
+    with state.SESSION_LOCK:
+        now = state.NOW_PLAYING
+        if isinstance(now, dict):
+            now["_playback_seek_pos"] = pos
+            now["_playback_seek_at"] = time.time()
+
+
 def _runtime_gap_completion_plausible(now: dict | None) -> bool:
     """Return true when a dead runtime plausibly represents natural completion."""
+    if _unbounded_stream_completion_plausible(now):
+        return True
     if not _history_item_completed(now):
         return False
     if not isinstance(now, dict):
@@ -5998,10 +6120,30 @@ def _runtime_gap_completion_plausible(now: dict | None) -> bool:
         started_pos = float(now.get("_playback_started_pos") or 0.0)
     except Exception:
         started_pos = 0.0
-    expected_runtime = max(0.0, duration - max(0.0, started_pos))
+    baseline_at = started_at
+    baseline_pos = max(0.0, started_pos)
+    try:
+        seek_pos_raw = now.get("_playback_seek_pos")
+        seek_at_raw = now.get("_playback_seek_at")
+        seek_pos = float(seek_pos_raw) if seek_pos_raw is not None else None
+        seek_at = float(seek_at_raw) if seek_at_raw is not None else None
+    except (TypeError, ValueError):
+        seek_pos = None
+        seek_at = None
+    if (
+        seek_pos is not None
+        and seek_at is not None
+        and math.isfinite(seek_pos)
+        and math.isfinite(seek_at)
+        and seek_pos >= 0.0
+        and seek_at >= started_at
+    ):
+        baseline_pos = seek_pos
+        baseline_at = seek_at
+    expected_runtime = max(0.0, duration - baseline_pos)
     if expected_runtime <= 0.0:
         return True
-    elapsed = max(0.0, time.time() - started_at)
+    elapsed = max(0.0, time.time() - baseline_at)
     required_elapsed = min(max(0.0, expected_runtime - 10.0), expected_runtime * 0.75)
     return elapsed >= required_elapsed
 
@@ -6874,7 +7016,7 @@ def _handle_playback_idle_no_queue() -> None:
     global _NATURAL_IDLE_RESET_UNTIL, _NATURAL_IDLE_ENSURE_TIMER
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     note_playback_failure_if_no_progress(now)
-    update_history_progress(now, completed=_history_item_completed(now), force=True)
+    update_history_progress(now, completed=_natural_end_item_completed(now), force=True)
     _emit_jellyfin_stopped_from_now(now)
     _emit_plex_timeline_from_now(now, "stopped")
     # Only clear now-playing when not in a user-closed resumable session.
@@ -6932,6 +7074,124 @@ def _session_already_idle_without_queue() -> bool:
     )
 
 
+_LIVE_STREAM_END_STALL_SEC = 45.0
+_LIVE_STREAM_STALL_LOCK = threading.Lock()
+_LIVE_STREAM_STALL_STATE: dict[str, object] = {
+    "identity": None,
+    "time_pos": None,
+    "since_monotonic": 0.0,
+}
+
+
+def _reset_live_stream_stall_state() -> None:
+    with _LIVE_STREAM_STALL_LOCK:
+        _LIVE_STREAM_STALL_STATE.update(
+            {
+                "identity": None,
+                "time_pos": None,
+                "since_monotonic": 0.0,
+            }
+        )
+
+
+def _live_stream_end_stalled(
+    now_item: dict | None, props: dict[str, Any] | None = None
+) -> bool:
+    """Detect non-IPTV live streams stuck at core-idle on an unclosed manifest."""
+    if not isinstance(now_item, dict) or not _item_looks_like_live_stream(now_item):
+        _reset_live_stream_stall_state()
+        return False
+    if str(now_item.get("provider") or "").strip().lower() == "iptv":
+        _reset_live_stream_stall_state()
+        return False
+    if props is None:
+        try:
+            props = mpv_get_many(["core-idle", "eof-reached", "pause", "path", "time-pos"])
+        except Exception:
+            _reset_live_stream_stall_state()
+            return False
+    if not isinstance(props, dict):
+        _reset_live_stream_stall_state()
+        return False
+    core_idle = props.get("core-idle")
+    eof_reached = props.get("eof-reached")
+    paused = props.get("pause")
+    path = str(props.get("path") or "").strip()
+    if core_idle is not True or paused is True or eof_reached is True or not path:
+        _reset_live_stream_stall_state()
+        return False
+    try:
+        raw_pos = props.get("time-pos")
+        pos = float(raw_pos) if raw_pos is not None else None
+    except Exception:
+        pos = None
+    if pos is not None and not math.isfinite(pos):
+        pos = None
+    try:
+        raw_resume = now_item.get("resume_pos")
+        resume_pos = float(raw_resume) if raw_resume is not None else None
+    except Exception:
+        resume_pos = None
+    if resume_pos is not None and not math.isfinite(resume_pos):
+        resume_pos = None
+    pos_sample = pos if (pos is not None and pos >= 0.0) else resume_pos
+    if pos_sample is None or pos_sample < 0.0:
+        # Leave streams that never produced playback to _arm_playback_start_watchdog.
+        _reset_live_stream_stall_state()
+        return False
+
+    now_mono = time.monotonic()
+    identity = (
+        str(now_item.get("history_id") or ""),
+        now_item.get("started"),
+        str(now_item.get("url") or ""),
+        path,
+    )
+    with _LIVE_STREAM_STALL_LOCK:
+        prev_identity = _LIVE_STREAM_STALL_STATE.get("identity")
+        prev_pos_raw = _LIVE_STREAM_STALL_STATE.get("time_pos")
+        try:
+            prev_pos = float(prev_pos_raw) if prev_pos_raw is not None else None
+        except Exception:
+            prev_pos = None
+        since_mono = float(_LIVE_STREAM_STALL_STATE.get("since_monotonic") or 0.0)
+        if (
+            prev_identity != identity
+            or prev_pos is None
+            or abs(pos_sample - prev_pos) >= _QT_SHELL_PLAYBACK_STALL_EPSILON_SEC
+            or since_mono <= 0.0
+        ):
+            _LIVE_STREAM_STALL_STATE.update(
+                {
+                    "identity": identity,
+                    "time_pos": pos_sample,
+                    "since_monotonic": now_mono,
+                }
+            )
+            return False
+        stalled_for = now_mono - since_mono
+        if stalled_for < _LIVE_STREAM_END_STALL_SEC:
+            return False
+        _LIVE_STREAM_STALL_STATE.update(
+            {
+                "identity": None,
+                "time_pos": None,
+                "since_monotonic": 0.0,
+            }
+        )
+
+    logger.info(
+        "live_stream_end_stall_detected stalled_sec=%.1f title=%r",
+        stalled_for,
+        str(now_item.get("title") or "")[:80],
+    )
+    try:
+        mpv_command(["stop"])
+    except Exception:
+        pass
+    return True
+
+
 def _playback_runtime_idle_or_ended() -> bool:
     """Return True when playback should be treated as ended/idle for auto-next."""
     global _PLAYBACK_IDLE_CANDIDATE_SINCE
@@ -6945,13 +7205,16 @@ def _playback_runtime_idle_or_ended() -> bool:
     now_item = getattr(state, "NOW_PLAYING", None) if has_now else None
     live_stream = _item_looks_like_live_stream(now_item)
     if sess == "paused":
+        _reset_live_stream_stall_state()
         _clear_idle_candidate()
         return False
     if playback_transitioning() or auto_next_transitioning():
+        _reset_live_stream_stall_state()
         _clear_idle_candidate()
         return False
     if not _is_playing():
         if has_now and sess == "paused":
+            _reset_live_stream_stall_state()
             _clear_idle_candidate()
             return False
         if has_now and sess == "playing":
@@ -6961,8 +7224,14 @@ def _playback_runtime_idle_or_ended() -> bool:
                 and _qt_shell_running()
                 and not native_qt_playback_explicitly_ended()
             ):
+                if _live_stream_end_stalled(now_item) and _runtime_gap_completion_plausible(
+                    now_item
+                ):
+                    _clear_idle_candidate()
+                    return True
                 _clear_idle_candidate()
                 return False
+            _reset_live_stream_stall_state()
             now = getattr(state, "NOW_PLAYING", None)
             if not _runtime_gap_completion_plausible(now if isinstance(now, dict) else None):
                 _clear_idle_candidate()
@@ -6980,12 +7249,22 @@ def _playback_runtime_idle_or_ended() -> bool:
                 return False
             _clear_idle_candidate()
             return True
+        _reset_live_stream_stall_state()
         _clear_idle_candidate()
         return True
     if not _qt_shell_backend_enabled():
+        if (
+            live_stream
+            and os.path.exists(IPC_PATH)
+            and _live_stream_end_stalled(now_item)
+            and _runtime_gap_completion_plausible(now_item)
+        ):
+            _clear_idle_candidate()
+            return True
         _clear_idle_candidate()
         return False
     if native_qt_playback_explicitly_ended():
+        _reset_live_stream_stall_state()
         now = getattr(state, "NOW_PLAYING", None)
         if isinstance(now, dict) and not _runtime_gap_completion_plausible(now):
             _clear_idle_candidate()
@@ -6995,6 +7274,7 @@ def _playback_runtime_idle_or_ended() -> bool:
     try:
         props = mpv_get_many(["core-idle", "eof-reached", "pause", "path", "time-pos", "duration"])
     except Exception:
+        _reset_live_stream_stall_state()
         _clear_idle_candidate()
         return False
     core_idle = props.get("core-idle")
@@ -7002,6 +7282,7 @@ def _playback_runtime_idle_or_ended() -> bool:
     paused = props.get("pause")
     path = str(props.get("path") or "").strip()
     if core_idle is not True or paused is True:
+        _reset_live_stream_stall_state()
         _clear_idle_candidate()
         return False
 
@@ -7022,7 +7303,10 @@ def _playback_runtime_idle_or_ended() -> bool:
         margin = max(0.2, min(10.0, margin))
         near_end = pos >= max(0.0, dur - margin)
 
-    candidate = bool(eof_reached is True or not path or (near_end and not live_stream))
+    live_stalled = _live_stream_end_stalled(now_item, props) if live_stream else False
+    candidate = bool(
+        eof_reached is True or not path or (near_end and not live_stream) or live_stalled
+    )
     if not candidate:
         _clear_idle_candidate()
         return False
@@ -7030,6 +7314,9 @@ def _playback_runtime_idle_or_ended() -> bool:
     if isinstance(now, dict) and not _runtime_gap_completion_plausible(now):
         _clear_idle_candidate()
         return False
+    if live_stalled:
+        _clear_idle_candidate()
+        return True
 
     now_ts = time.time()
     if _PLAYBACK_IDLE_CANDIDATE_SINCE <= 0.0:

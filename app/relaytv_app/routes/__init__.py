@@ -3259,7 +3259,9 @@ def _qt_runtime_seek_via_time_pos(target_sec: float) -> dict[str, object] | None
         target = min(max(0.0, target), duration)
     else:
         target = max(0.0, target)
-    return _control_result_or_raise(player.mpv_set_result("time-pos", target), action="seek")
+    result = _control_result_or_raise(player.mpv_set_result("time-pos", target), action="seek")
+    player.note_playback_seek(target)
+    return result
 
 
 def _seek_live_cache_result(target_sec: float | None = None) -> dict[str, object]:
@@ -3320,9 +3322,26 @@ def _seek_relative_result(delta_sec: float) -> dict[str, object]:
             result = _qt_runtime_seek_via_time_pos(current + delta)
             if isinstance(result, dict):
                 return result
-    return _control_result_or_raise(
+    result = _control_result_or_raise(
         player.mpv_command(["seek", float(delta_sec), "relative"]), action="seek"
     )
+    if not is_live and math.isfinite(delta):
+        base_pos = None
+        for candidate in (
+            locals().get("current"),
+            getattr(state, "SESSION_POSITION", None),
+            now.get("resume_pos") if isinstance(now, dict) else None,
+        ):
+            try:
+                val = float(candidate) if candidate is not None else None
+            except Exception:
+                val = None
+            if val is not None and math.isfinite(val) and val >= 0.0:
+                base_pos = val
+                break
+        if base_pos is not None:
+            player.note_playback_seek(max(0.0, base_pos + delta))
+    return result
 
 
 def _seek_absolute_result(target_sec: float) -> dict[str, object]:
@@ -3334,9 +3353,11 @@ def _seek_absolute_result(target_sec: float) -> dict[str, object]:
     result = _qt_runtime_seek_via_time_pos(target_sec)
     if isinstance(result, dict):
         return result
-    return _control_result_or_raise(
+    result = _control_result_or_raise(
         player.mpv_command(["seek", float(target_sec), "absolute"]), action="seek_abs"
     )
+    player.note_playback_seek(max(0.0, float(target_sec)))
+    return result
 
 
 def _session_playing_fast() -> tuple[str, bool, bool]:
@@ -3759,6 +3780,7 @@ def _status_payload() -> dict[str, object]:
         elif (
             sess == "playing"
             and isinstance(state.NOW_PLAYING, dict)
+            and not bool(getattr(player, "native_qt_playback_explicitly_ended", lambda: False)())
             and (
                 str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "iptv"
                 or player._item_looks_like_live_stream(state.NOW_PLAYING)
