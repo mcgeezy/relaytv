@@ -3558,16 +3558,31 @@ async function loadSettingsUi(){
     audioDev.innerHTML = '';
     const optAuto = document.createElement('option');
     optAuto.value = '';
-    optAuto.textContent = 'Auto';
+    optAuto.textContent = 'Auto (System Default)';
     audioDev.appendChild(optAuto);
 
-    (dev.alsa_devices || []).forEach(d => {
+    const audioList = Array.isArray(dev.audio_devices) && dev.audio_devices.length
+      ? dev.audio_devices
+      : (dev.alsa_devices || []);
+    const seenAudioIds = new Set(['']);
+    audioList.forEach(d => {
+      if (!d || !d.id || seenAudioIds.has(d.id)) return;
+      seenAudioIds.add(d.id);
       const o = document.createElement('option');
       o.value = d.id;
-      o.textContent = d.desc ? `${d.id} — ${d.desc}` : d.id;
+      o.textContent = d.label || (d.desc ? `${d.desc}` : d.id);
+      o.title = d.id;
       audioDev.appendChild(o);
     });
-    audioDev.value = (cur.audio_device || '');
+    const curAudioVal = String(cur.audio_device || '').trim();
+    if (curAudioVal && !seenAudioIds.has(curAudioVal)) {
+      const oCur = document.createElement('option');
+      oCur.value = curAudioVal;
+      oCur.textContent = `${curAudioVal} (current)`;
+      oCur.title = curAudioVal;
+      audioDev.appendChild(oCur);
+    }
+    audioDev.value = curAudioVal;
   }
 
   // Quality dropdown from quality_mode/quality_cap (fallback: ytdlp_format heuristic)
