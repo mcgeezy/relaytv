@@ -304,6 +304,7 @@ def test_drm_override_blanks_display_and_stays_valid_with_nvidia(
             "WAYLAND_DISPLAY": "wayland-0",
             "XDG_SESSION_TYPE": "wayland",
             "RELAYTV_NVIDIA_DOCKER_TOOLKIT": "1",
+            "RELAYTV_NVIDIA_CDI": "0",
         }
     )
     res = subprocess.run(
@@ -339,6 +340,59 @@ def test_drm_override_blanks_display_and_stays_valid_with_nvidia(
         assert cfg.returncode == 0, cfg.stderr
         assert 'DISPLAY: ""' in cfg.stdout
         assert 'WAYLAND_DISPLAY: ""' in cfg.stdout
+
+
+def test_nvidia_cdi_override_emits_cdi_reservation_and_validates(
+    tmp_path: Path,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    installer = _copy_host_installer(tmp_path)
+    text = installer.read_text(encoding="utf-8")
+    text = text.replace(
+        'NVIDIA_DEVICE_DETECTED="$(detect_nvidia_device)"',
+        'NVIDIA_DEVICE_DETECTED="1"',
+        1,
+    )
+    installer.write_text(text, encoding="utf-8")
+
+    env = _clean_installer_env(
+        {
+            "DISPLAY": ":0",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_SESSION_TYPE": "wayland",
+            "RELAYTV_NVIDIA_DOCKER_TOOLKIT": "1",
+            "RELAYTV_NVIDIA_CDI": "1",
+        }
+    )
+    res = subprocess.run(
+        [str(installer), "--mode", "wayland", "--use-shell-env"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+
+    assert "driver: cdi" in override
+    assert "nvidia.com/gpu=all" in override
+    assert "capabilities: [gpu]" in override
+    assert "gpus: all" not in override
+    assert override.count("environment:") == 1
+
+    if shutil.which("docker") is not None:
+        cfg = subprocess.run(
+            ["docker", "compose", "config"],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert cfg.returncode == 0, cfg.stderr
+        assert "driver: cdi" in cfg.stdout
+        assert "nvidia.com/gpu=all" in cfg.stdout
 
 
 def test_entrypoint_clears_inherited_display_vars_in_drm_and_non_remote_headless(
