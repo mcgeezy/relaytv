@@ -95,6 +95,35 @@ def test_curate_audio_devices_disambiguates_duplicate_labels() -> None:
     ]
 
 
+def test_curate_audio_devices_raspi_supplements_connected_hdmi_and_hides_disconnected() -> None:
+    mpv_entries = [
+        ("auto", "Autoselect device"),
+        ("pulse/alsa_output.platform-fe00b840.mailbox.pro-output-0", "Built-in Audio Pro"),
+        ("alsa", "Default (alsa)"),
+        ("alsa/plughw:CARD=vc4hdmi0,DEV=0", "vc4-hdmi-0, MAI PCM i2s-hifi-0/Hardware device with all software conversions"),
+        ("alsa/hdmi:CARD=vc4hdmi0,DEV=0", "vc4-hdmi-0, MAI PCM i2s-hifi-0/HDMI Audio Output"),
+        ("alsa/dmix:CARD=vc4hdmi0,DEV=0", "vc4-hdmi-0, MAI PCM i2s-hifi-0/Direct sample mixing device"),
+        ("alsa/hdmi:CARD=vc4hdmi1,DEV=0", "vc4-hdmi-1, MAI PCM i2s-hifi-0/HDMI Audio Output"),
+        ("alsa/plughw:CARD=Headphones,DEV=0", "bcm2835 Headphones, bcm2835 Headphones/Hardware device with all software conversions"),
+        ("jack", "Default (jack)"),
+        ("sdl", "Default (sdl)"),
+    ]
+    drm_connectors = [
+        {"connector": "HDMI-A-1", "status": "connected"},
+        {"connector": "HDMI-A-2", "status": "disconnected"},
+    ]
+
+    result = devices._curate_audio_devices(mpv_entries, drm_connectors=drm_connectors)
+    assert [d["id"] for d in result] == [
+        "alsa/hdmi:CARD=vc4hdmi0,DEV=0",
+        "pulse/alsa_output.platform-fe00b840.mailbox.pro-output-0",
+    ]
+    assert [d["label"] for d in result] == [
+        "HDMI 1",
+        "Built-in Audio (Analog / Headphones)",
+    ]
+
+
 def test_normalize_for_mpv_preserves_pulse_and_pipewire() -> None:
     assert (
         devices._normalize_for_mpv("pulse/alsa_output.pci-0000_00_1f.3.analog-stereo")

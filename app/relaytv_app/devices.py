@@ -138,9 +138,10 @@ def _normalize_for_mpv(dev_id: str) -> str:
     return d
 
 
-_GENERIC_HDMI_RE = re.compile(r"^hdmi\s*\d*$", re.IGNORECASE)
+_GENERIC_HDMI_RE = re.compile(r"^(?:hdmi\s*\d*|mai\s+pcm\b.*)$", re.IGNORECASE)
 _MPV_AUDIO_LINE_RE = re.compile(r"^\s*'([^']+)'\s*\((.+)\)\s*$")
 _ALSA_CARD_DEV_RE = re.compile(r"CARD=([^,\s]+)(?:,DEV=(\d+))?", re.IGNORECASE)
+_VC4_HDMI_CARD_RE = re.compile(r"^vc4hdmi(\d+)$", re.IGNORECASE)
 
 
 def _extract_hdmi_monitor_names(entries: list[tuple[str, str]]) -> list[str]:
@@ -187,8 +188,12 @@ def _human_label_for_pulse(dev_id: str, raw_desc: str, hdmi_monitors: list[str])
             return f"HDMI — {cleaned}"
         return "HDMI Audio"
 
-    # Built-in analog / headphone jack
-    if "analog" in low_id or "analog" in low_desc:
+    # Built-in analog / headphone jack (including Raspberry Pi mailbox 3.5mm jack)
+    if (
+        "analog" in low_id
+        or "analog" in low_desc
+        or ("mailbox" in low_id and "built-in audio" in low_desc)
+    ):
         if "built-in audio" in low_desc:
             return "Built-in Audio (Analog / Headphones)"
         cleaned = re.sub(r"\s*Analog\s+Stereo\s*$", "", desc, flags=re.IGNORECASE).strip(" -")
@@ -221,6 +226,10 @@ def _human_label_for_alsa(dev_id: str, raw_desc: str) -> str:
         if sub_label and not _GENERIC_HDMI_RE.match(sub_label):
             return f"HDMI — {sub_label}"
         m = _ALSA_CARD_DEV_RE.search(dev_id)
+        card = (m.group(1) if m else "").strip()
+        vc4_m = _VC4_HDMI_CARD_RE.match(card)
+        if vc4_m:
+            return f"HDMI {int(vc4_m.group(1)) + 1}"
         dev_num = m.group(2) if m and m.group(2) is not None else "0"
         return f"HDMI {dev_num} ({card_label})" if card_label else f"HDMI {dev_num}"
 
@@ -260,7 +269,87 @@ def _probe_mpv_audio_devices() -> list[tuple[str, str]]:
     return out
 
 
-def _curate_audio_devices(entries: list[tuple[str, str]]) -> list[dict[str, str]]:
+def _connected_hdmi_indices(drm_connectors: list[dict[str, Any]] | None) -> tuple[set[int], set[int]]:
+    """Return (connected_zero_based_indices, disconnected_zero_based_indices) for HDMI DRM connectors."""
+    connected: set[int] = set()
+    disconnected: set[int] = set()
+    for c in drm_connectors or []:
+        name = str(c.get("connector") or "").strip()
+        if "hdmi" not in name.lower():
+            continue
+        idx = _connector_index(name)
+        if idx is None or idx <= 0:
+            continue
+        status = str(c.get("status") or "").strip().lower()
+        if status == "connected":
+            connected.add(idx - 1)
+        elif status == "disconnected":
+            disconnected.add(idx - 1)
+    return connected, disconnected
+
+
+def _curate_alsa_hdmi_entries(
+    entries: list[tuple[str, str]],
+    *,
+    drm_connectors: list[dict[str, Any]] | None = None,
+    require_confirmed: bool = False,
+) -> list[dict[str, str]]:
+    """Extract curated ALSA HDMI outputs, filtering disconnected ports when known."""
+    conn_hdmi, disc_hdmi = _connected_hdmi_indices(drm_connectors)
+
+    named_hdmi_cards: set[str] = set()
+    for dev_id, desc in entries:
+        norm = _normalize_for_mpv(dev_id)
+        if not norm.lower().startswith("alsa/hdmi:"):
+            continue
+        m = _ALSA_CARD_DEV_RE.search(norm)
+        card = (m.group(1) if m else "").lower()
+        head = desc.split("/", 1)[0]
+        sub = head.split(",", 1)[1].strip() if "," in head else ""
+        if card and sub and not _GENERIC_HDMI_RE.match(sub):
+            named_hdmi_cards.add(card)
+
+    out: list[dict[str, str]] = []
+    seen_hw: set[tuple[str, str]] = set()
+    seen_ids: set[str] = set()
+    for dev_id, desc in entries:
+        norm = _normalize_for_mpv(dev_id)
+        if not norm.lower().startswith("alsa/hdmi:"):
+            continue
+        m = _ALSA_CARD_DEV_RE.search(norm)
+        card = (m.group(1) if m else "").lower()
+        dev_num = m.group(2) if m and m.group(2) is not None else "0"
+        head = desc.split("/", 1)[0]
+        sub = head.split(",", 1)[1].strip() if "," in head else ""
+        has_monitor_name = bool(sub and not _GENERIC_HDMI_RE.match(sub))
+
+        vc4_m = _VC4_HDMI_CARD_RE.match(card)
+        vc4_idx = int(vc4_m.group(1)) if vc4_m else None
+        vc4_connected = vc4_idx is not None and vc4_idx in conn_hdmi
+        vc4_disconnected = vc4_idx is not None and vc4_idx in disc_hdmi
+
+        if vc4_disconnected:
+            continue
+        if card in named_hdmi_cards and not has_monitor_name:
+            continue
+        if require_confirmed and not (has_monitor_name or vc4_connected):
+            continue
+
+        hw_key = (card, f"hdmi:{dev_num}")
+        if hw_key in seen_hw or norm in seen_ids:
+            continue
+        seen_hw.add(hw_key)
+        seen_ids.add(norm)
+        label = _human_label_for_alsa(norm, desc)
+        out.append({"id": norm, "label": label, "desc": label, "backend": "alsa", "kind": "hdmi"})
+    return out
+
+
+def _curate_audio_devices(
+    entries: list[tuple[str, str]],
+    *,
+    drm_connectors: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
     """Filter raw mpv/ALSA entries to only viable playback outputs with clean labels."""
     hdmi_monitors = _extract_hdmi_monitor_names(entries)
 
@@ -284,52 +373,33 @@ def _curate_audio_devices(entries: list[tuple[str, str]]) -> list[dict[str, str]
         seen_ids.add(dev_id)
         label = _human_label_for_pulse(dev_id, desc, hdmi_monitors)
         kind = "hdmi" if ("hdmi" in low_id or "(hdmi)" in low_desc or label.startswith("HDMI")) else (
-            "analog" if ("analog" in low_id or "analog" in low_desc) else "other"
+            "analog" if ("analog" in low_id or "analog" in low_desc or "mailbox" in low_id) else "other"
         )
         pulse_out.append({"id": dev_id, "label": label, "desc": label, "backend": "pulse", "kind": kind})
 
     if pulse_out:
+        # On hosts like Raspberry Pi where PipeWire only exposes the 3.5mm jack while
+        # HDMI audio lives on ALSA (`vc4hdmi0`), supplement with confirmed connected HDMI outputs.
+        if not any(d["kind"] == "hdmi" for d in pulse_out):
+            pulse_out.extend(
+                _curate_alsa_hdmi_entries(
+                    entries,
+                    drm_connectors=drm_connectors,
+                    require_confirmed=True,
+                )
+            )
         order = {"hdmi": 0, "analog": 1, "other": 2}
         pulse_out.sort(key=lambda d: (order.get(d["kind"], 9), d["label"].lower()))
         return _disambiguate_labels(pulse_out)
 
     # 2. ALSA-only fallback (headless, DRM, Raspberry Pi without PipeWire/Pulse)
-    # Track which cards have at least one named/connected HDMI display so we can hide
-    # generic disconnected HDMI 1/2/3 placeholders on the same card.
-    named_hdmi_cards: set[str] = set()
-    for dev_id, desc in entries:
-        norm = _normalize_for_mpv(dev_id)
-        if not norm.lower().startswith("alsa/hdmi:"):
-            continue
-        m = _ALSA_CARD_DEV_RE.search(norm)
-        card = (m.group(1) if m else "").lower()
-        head = desc.split("/", 1)[0]
-        sub = head.split(",", 1)[1].strip() if "," in head else ""
-        if card and sub and not _GENERIC_HDMI_RE.match(sub):
-            named_hdmi_cards.add(card)
-
-    alsa_out: list[dict[str, str]] = []
+    alsa_out: list[dict[str, str]] = _curate_alsa_hdmi_entries(
+        entries,
+        drm_connectors=drm_connectors,
+        require_confirmed=False,
+    )
     seen_hw: set[tuple[str, str]] = set()
-
-    # Pass A: HDMI outputs
-    for dev_id, desc in entries:
-        norm = _normalize_for_mpv(dev_id)
-        if not norm.lower().startswith("alsa/hdmi:"):
-            continue
-        m = _ALSA_CARD_DEV_RE.search(norm)
-        card = (m.group(1) if m else "").lower()
-        dev_num = m.group(2) if m and m.group(2) is not None else "0"
-        head = desc.split("/", 1)[0]
-        sub = head.split(",", 1)[1].strip() if "," in head else ""
-        if card in named_hdmi_cards and (not sub or _GENERIC_HDMI_RE.match(sub)):
-            continue
-        hw_key = (card, f"hdmi:{dev_num}")
-        if hw_key in seen_hw or norm in seen_ids:
-            continue
-        seen_hw.add(hw_key)
-        seen_ids.add(norm)
-        label = _human_label_for_alsa(norm, desc)
-        alsa_out.append({"id": norm, "label": label, "desc": label, "backend": "alsa", "kind": "hdmi"})
+    seen_ids = {d["id"] for d in alsa_out}
 
     # Pass B: Physical analog / USB / digital outputs via iec958 or plughw (skip HDMI plughw duplicates)
     # Process iec958 before plughw so dedicated S/PDIF PCMs win over generic digital plughw entries
@@ -383,16 +453,17 @@ def _disambiguate_labels(devices: list[dict[str, str]]) -> list[dict[str, str]]:
     return devices
 
 
-def list_audio_devices() -> list[dict[str, str]]:
+def list_audio_devices(drm_connectors: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
     """Return curated, viable playback outputs with human-readable labels."""
+    connectors = drm_connectors if drm_connectors is not None else list_drm_connectors()
     mpv_entries = _probe_mpv_audio_devices()
     if mpv_entries:
-        curated = _curate_audio_devices(mpv_entries)
+        curated = _curate_audio_devices(mpv_entries, drm_connectors=connectors)
         if curated:
             return curated
     # Fallback to `aplay -L` if mpv probe is unavailable
     alsa_entries = [(d.get("id", ""), d.get("desc", "")) for d in list_alsa_devices() if d.get("id")]
-    return _curate_audio_devices(alsa_entries)
+    return _curate_audio_devices(alsa_entries, drm_connectors=connectors)
 
 
 def _get_active_drm_connector() -> str:
@@ -451,9 +522,10 @@ def discover() -> dict:
         profile = video_profile.get_profile()
     except Exception:
         profile = {}
+    drm_connectors = list_drm_connectors()
     return {
-        "drm_connectors": list_drm_connectors(),
-        "audio_devices": list_audio_devices(),
+        "drm_connectors": drm_connectors,
+        "audio_devices": list_audio_devices(drm_connectors=drm_connectors),
         "alsa_devices": list_alsa_devices(),
         "auto_audio_device": detect_audio_device(),
         "cec_devices": list_cec_devices(),
