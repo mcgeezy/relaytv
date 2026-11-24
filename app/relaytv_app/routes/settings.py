@@ -749,7 +749,7 @@ def _update_settings(req: SettingsReq):
             live_apply_failed.append("volume")
         try:
             if "audio_device" in requested_keys and updated.get("audio_device") is not None:
-                cur_audio = devices._normalize_for_mpv(
+                cur_audio = devices.normalize_audio_device_for_mpv(
                     str(runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip()
                 )
                 if not cur_audio:

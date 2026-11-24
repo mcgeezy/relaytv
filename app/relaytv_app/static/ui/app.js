@@ -3347,7 +3347,7 @@ function _populateAudioDeviceSelect(audioDev, dev, curAudioDevice){
 
   const audioList = Array.isArray(dev?.audio_devices) && dev.audio_devices.length
     ? dev.audio_devices
-    : (dev?.alsa_devices || []);
+    : (Array.isArray(dev?.alsa_devices) ? dev.alsa_devices : []);
   const seenAudioIds = new Map([['', '']]);
   audioList.forEach(d => {
     const id = String(d?.id || '').trim();
@@ -3356,7 +3356,7 @@ function _populateAudioDeviceSelect(audioDev, dev, curAudioDevice){
     seenAudioIds.set(normKey, id);
     const o = document.createElement('option');
     o.value = id;
-    o.textContent = d.label || (d.desc ? `${d.desc}` : id);
+    o.textContent = d.label || (d.desc ? `${id} — ${d.desc}` : id);
     o.title = id;
     audioDev.appendChild(o);
   });

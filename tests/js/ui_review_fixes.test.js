@@ -553,3 +553,66 @@ test('_populateAudioDeviceSelect matches legacy unprefixed ALSA device IDs witho
   assert.equal(selectEl.children.length, 3);
   assert.equal(selectEl.value, '');
 });
+
+test('_populateAudioDeviceSelect falls back to alsa_devices with visible IDs and guards missing/non-array payloads', () => {
+  const elements = new Map();
+  const context = vm.createContext({
+    Array,
+    Map,
+    String,
+    document: {
+      createElement: (tag) => createFakeElement(tag, elements),
+    },
+  });
+  vm.runInContext(extractFunction(APP_JS, '_normalizeAudioSelectionKey'), context);
+  vm.runInContext(extractFunction(APP_JS, '_populateAudioDeviceSelect'), context);
+
+  const selectEl = createFakeElement('select', elements);
+
+  // 1. Empty audio_devices falls back to alsa_devices with `${id} — ${desc}` (or `${id}`)
+  context._populateAudioDeviceSelect(
+    selectEl,
+    {
+      audio_devices: [],
+      alsa_devices: [
+        {id: 'hdmi:CARD=PCH,DEV=0', desc: 'HDA Intel PCH, E601i-A3'},
+        {id: 'plughw:CARD=PCH,DEV=0', desc: ''},
+      ],
+    },
+    'alsa/hdmi:CARD=PCH,DEV=0',
+  );
+  assert.deepEqual(
+    selectEl.children.map((o) => ({value: o.value, text: o.textContent})),
+    [
+      {value: '', text: 'Auto (System Default)'},
+      {value: 'hdmi:CARD=PCH,DEV=0', text: 'hdmi:CARD=PCH,DEV=0 — HDA Intel PCH, E601i-A3'},
+      {value: 'plughw:CARD=PCH,DEV=0', text: 'plughw:CARD=PCH,DEV=0'},
+    ],
+  );
+  assert.equal(selectEl.value, 'hdmi:CARD=PCH,DEV=0');
+
+  // 2. Missing or non-array audio_devices & alsa_devices do not throw
+  for (const badPayload of [null, undefined, {}, {audio_devices: 'bad', alsa_devices: {id: 'x'}}]) {
+    context._populateAudioDeviceSelect(selectEl, badPayload, '');
+    assert.deepEqual(
+      selectEl.children.map((o) => ({value: o.value, text: o.textContent})),
+      [{value: '', text: 'Auto (System Default)'}],
+    );
+    assert.equal(selectEl.value, '');
+  }
+
+  // 3. Non-array payload with saved device still appends (current)
+  context._populateAudioDeviceSelect(
+    selectEl,
+    {audio_devices: null, alsa_devices: 'not-an-array'},
+    'alsa/hdmi:CARD=vc4hdmi0,DEV=0',
+  );
+  assert.deepEqual(
+    selectEl.children.map((o) => ({value: o.value, text: o.textContent})),
+    [
+      {value: '', text: 'Auto (System Default)'},
+      {value: 'alsa/hdmi:CARD=vc4hdmi0,DEV=0', text: 'alsa/hdmi:CARD=vc4hdmi0,DEV=0 (current)'},
+    ],
+  );
+  assert.equal(selectEl.value, 'alsa/hdmi:CARD=vc4hdmi0,DEV=0');
+});

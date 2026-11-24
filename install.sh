@@ -417,6 +417,13 @@ install_docker_engine() {
 DOCKER_CMD=(docker)
 NVIDIA_TOOLKIT_HINT="${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-0}"
 NVIDIA_CDI_HINT="${RELAYTV_NVIDIA_CDI:-}"
+case "$NVIDIA_CDI_HINT" in
+  ""|0|1) ;;
+  *)
+    printf "WARN: RELAYTV_NVIDIA_CDI must be 0 or 1. Falling back to auto-detection.\n" >&2
+    NVIDIA_CDI_HINT=""
+    ;;
+esac
 ensure_docker_ready() {
   local direct_error="" sudo_docker_info=""
   if ! command -v docker >/dev/null 2>&1; then
@@ -452,7 +459,7 @@ ensure_docker_ready() {
     if [[ "${sudo_docker_info,,}" == *"nvidia"* ]]; then
       NVIDIA_TOOLKIT_HINT="1"
     fi
-    if [ -z "${RELAYTV_NVIDIA_CDI:-}" ] && [ -n "$sudo_docker_info" ]; then
+    if [ -z "$NVIDIA_CDI_HINT" ] && [ -n "$sudo_docker_info" ]; then
       if [[ "${sudo_docker_info,,}" == *"nvidia.com/gpu"* ]]; then
         NVIDIA_CDI_HINT="1"
       else

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from fastapi.testclient import TestClient
 import pytest
 
-from relaytv_app import devices, player
+from relaytv_app import devices, player, routes
 from relaytv_app.config import runtime_config
+from relaytv_app.main import create_app
 
 
 def test_curate_audio_devices_prefers_pulse_with_human_labels() -> None:
@@ -131,11 +133,19 @@ def test_curate_audio_devices_raspi_supplements_connected_hdmi_and_hides_disconn
 
 def test_normalize_for_mpv_preserves_pulse_and_pipewire() -> None:
     assert (
-        devices._normalize_for_mpv("pulse/alsa_output.pci-0000_00_1f.3.analog-stereo")
+        devices.normalize_audio_device_for_mpv("pulse/alsa_output.pci-0000_00_1f.3.analog-stereo")
         == "pulse/alsa_output.pci-0000_00_1f.3.analog-stereo"
     )
-    assert devices._normalize_for_mpv("pipewire/my:sink") == "pipewire/my:sink"
-    assert devices._normalize_for_mpv("hdmi:CARD=NVidia,DEV=0") == "alsa/hdmi:CARD=NVidia,DEV=0"
+    assert devices.normalize_audio_device_for_mpv("pipewire/my:sink") == "pipewire/my:sink"
+    assert devices.normalize_audio_device_for_mpv("jack/system:playback_1") == "jack/system:playback_1"
+    assert devices.normalize_audio_device_for_mpv("openal/OpenAL Soft:0") == "openal/OpenAL Soft:0"
+    assert devices.normalize_audio_device_for_mpv("sdl/Built-in:0") == "sdl/Built-in:0"
+    assert (
+        devices.normalize_audio_device_for_mpv("hdmi:CARD=NVidia,DEV=0")
+        == "alsa/hdmi:CARD=NVidia,DEV=0"
+    )
+    # Backward-compatible private alias remains intact
+    assert devices._normalize_for_mpv is devices.normalize_audio_device_for_mpv
 
 
 def test_probe_mpv_audio_devices_parses_help_output_and_handles_errors(
@@ -149,17 +159,20 @@ def test_probe_mpv_audio_devices_parses_help_output_and_handles_errors(
         "  'alsa/hdmi:CARD=NVidia,DEV=0' (HDA NVidia, 27G2G8/HDMI Audio Output)\n"
         "\n"
     )
-    monkeypatch.setattr(
-        devices.subprocess,
-        "run",
-        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=sample_stdout, stderr=""),
-    )
+    seen_cmds: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **_kw: object) -> object:
+        seen_cmds.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout=sample_stdout, stderr="")
+
+    monkeypatch.setattr(devices.subprocess, "run", _fake_run)
     assert devices._probe_mpv_audio_devices() == [
         ("auto", "Autoselect device"),
         ("pulse/alsa_output.pci-0000_00_1f.3.analog-stereo", "Built-in Audio Analog Stereo"),
         ("pipewire/alsa_output.usb-DAC-00.analog-stereo", "USB DAC Analog Stereo"),
         ("alsa/hdmi:CARD=NVidia,DEV=0", "HDA NVidia, 27G2G8/HDMI Audio Output"),
     ]
+    assert seen_cmds == [["mpv", "--no-config", "--audio-device=help"]]
 
     def _boom(*_a: object, **_kw: object) -> object:
         raise FileNotFoundError("mpv")
@@ -322,7 +335,6 @@ def test_detect_audio_device_and_effective_audio_device_behavior(
         lambda: [{"connector": "HDMI-A-1", "status": "connected"}],
     )
     assert devices.detect_audio_device() == ""
-    monkeypatch.setattr(runtime_config, "set_value", runtime_config.set_value)
     prev_mpv_audio = runtime_config.snapshot().raw("MPV_AUDIO_DEVICE")
     try:
         runtime_config.set_value("MPV_AUDIO_DEVICE", "")
@@ -416,5 +428,231 @@ def test_detect_audio_device_and_effective_audio_device_behavior(
             ],
         )
         assert devices.detect_audio_device() == ""
+    finally:
+        runtime_config.set_value("MPV_AUDIO_DEVICE", prev_mpv_audio or "")
+
+
+def test_curate_audio_devices_deduplicates_simultaneous_pipewire_and_pulse_sinks() -> None:
+    # PipeWire + pipewire-pulse host emits both pulse/ and pipewire/ for every sink
+    mpv_entries = [
+        ("auto", "Autoselect device"),
+        ("pulse/alsa_output.pci-0000_00_1f.3.analog-stereo", "Built-in Audio Analog Stereo"),
+        (
+            "pulse/alsa_output.pci-0000_01_00.1.hdmi-stereo",
+            "TU104 HD Audio Controller Digital Stereo (HDMI)",
+        ),
+        ("pipewire/alsa_output.pci-0000_00_1f.3.analog-stereo", "Built-in Audio Analog Stereo"),
+        (
+            "pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo",
+            "TU104 HD Audio Controller Digital Stereo (HDMI)",
+        ),
+        ("alsa/hdmi:CARD=NVidia,DEV=0", "HDA NVidia, 27G2G8/HDMI Audio Output"),
+    ]
+
+    result = devices._curate_audio_devices(mpv_entries)
+    assert [d["id"] for d in result] == [
+        "pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo",
+        "pipewire/alsa_output.pci-0000_00_1f.3.analog-stereo",
+    ]
+    assert [d["label"] for d in result] == [
+        "HDMI — 27G2G8",
+        "Built-in Audio (Analog / Headphones)",
+    ]
+    assert [d["backend"] for d in result] == ["pipewire", "pipewire"]
+
+    # If pipewire/ only exposes auto_null, viable pulse/ sinks are preserved
+    fallback_entries = [
+        ("pipewire/auto_null", "Dummy Output"),
+        (
+            "pulse/alsa_output.pci-0000_01_00.1.hdmi-stereo",
+            "TU104 HD Audio Controller Digital Stereo (HDMI)",
+        ),
+        ("alsa/hdmi:CARD=NVidia,DEV=0", "HDA NVidia, 27G2G8/HDMI Audio Output"),
+    ]
+    fallback = devices._curate_audio_devices(fallback_entries)
+    assert [(d["id"], d["label"], d["backend"]) for d in fallback] == [
+        ("pulse/alsa_output.pci-0000_01_00.1.hdmi-stereo", "HDMI — 27G2G8", "pulse"),
+    ]
+
+
+def test_detect_audio_device_alsa_only_dual_hdmi_pi_and_multi_gpu() -> None:
+    # 1. Dual-HDMI Pi where only HDMI-A-2 (vc4hdmi1) is connected:
+    #    explicit HDMI-A-1 must resolve to vc4hdmi0, NEVER vc4hdmi1 (even though vc4hdmi1 has DEV=0).
+    pi_entries = [
+        ("alsa/hdmi:CARD=vc4hdmi0,DEV=0", "vc4-hdmi-0, MAI PCM i2s-hifi-0/HDMI Audio Output"),
+        ("alsa/hdmi:CARD=vc4hdmi1,DEV=0", "vc4-hdmi-1, MAI PCM i2s-hifi-0/HDMI Audio Output"),
+    ]
+    pi_connectors = [
+        {"connector": "HDMI-A-1", "status": "disconnected"},
+        {"connector": "HDMI-A-2", "status": "connected"},
+    ]
+    assert (
+        devices.detect_audio_device(
+            "HDMI-A-1",
+            drm_connectors=pi_connectors,
+            mpv_entries=pi_entries,
+        )
+        == "alsa/hdmi:CARD=vc4hdmi0,DEV=0"
+    )
+    assert (
+        devices.detect_audio_device(
+            "HDMI-A-2",
+            drm_connectors=pi_connectors,
+            mpv_entries=pi_entries,
+        )
+        == "alsa/hdmi:CARD=vc4hdmi1,DEV=0"
+    )
+    assert (
+        devices.detect_audio_device(
+            "",
+            drm_connectors=pi_connectors,
+            mpv_entries=pi_entries,
+        )
+        == "alsa/hdmi:CARD=vc4hdmi1,DEV=0"
+    )
+
+    # 2. Multi-GPU ALSA-only host: PCH DEV=0 is disconnected/unconfirmed while NVidia DEV=1 is
+    #    confirmed via ELD. Connected HDMI-A-1 must NOT let unconfirmed PCH DEV=0 override NVidia DEV=1.
+    multi_gpu_entries = [
+        ("alsa/hdmi:CARD=PCH,DEV=0", "HDA Intel PCH, HDMI 0/HDMI Audio Output"),
+        ("alsa/hdmi:CARD=NVidia,DEV=0", "HDA NVidia, HDMI 0/HDMI Audio Output"),
+        ("alsa/hdmi:CARD=NVidia,DEV=1", "HDA NVidia, 27G2G8/HDMI Audio Output"),
+    ]
+    multi_gpu_connectors = [
+        {"connector": "HDMI-A-1", "status": "connected"},
+    ]
+    assert (
+        devices.detect_audio_device(
+            "",
+            drm_connectors=multi_gpu_connectors,
+            mpv_entries=multi_gpu_entries,
+        )
+        == "alsa/hdmi:CARD=NVidia,DEV=1"
+    )
+
+
+def test_curate_audio_devices_alsa_only_skips_intel_pch_eld_plughw_duplicate() -> None:
+    mpv_entries = [
+        ("auto", "Autoselect device"),
+        ("alsa", "Default (alsa)"),
+        (
+            "alsa/plughw:CARD=PCH,DEV=0",
+            "HDA Intel PCH, ALC1220 Analog/Hardware device with all software conversions",
+        ),
+        ("alsa/hdmi:CARD=PCH,DEV=0", "HDA Intel PCH, E601i-A3/HDMI Audio Output"),
+        (
+            "alsa/plughw:CARD=PCH,DEV=3",
+            "HDA Intel PCH, E601i-A3/Hardware device with all software conversions",
+        ),
+        ("alsa/hdmi:CARD=PCH,DEV=1", "HDA Intel PCH, HDMI 1/HDMI Audio Output"),
+        (
+            "alsa/plughw:CARD=PCH,DEV=7",
+            "HDA Intel PCH, HDMI 1/Hardware device with all software conversions",
+        ),
+    ]
+    result = devices._curate_audio_devices(mpv_entries)
+    assert [d["id"] for d in result] == [
+        "alsa/hdmi:CARD=PCH,DEV=0",
+        "alsa/plughw:CARD=PCH,DEV=0",
+    ]
+    assert [d["label"] for d in result] == [
+        "HDMI — E601i-A3",
+        "Built-in Audio (Analog / Headphones)",
+    ]
+
+
+def test_connected_hdmi_indices_prefers_connected_across_multiple_drm_cards() -> None:
+    drm_connectors = [
+        {"sys_name": "card0-HDMI-A-1", "connector": "HDMI-A-1", "status": "disconnected"},
+        {"sys_name": "card1-HDMI-A-1", "connector": "HDMI-A-1", "status": "connected"},
+        {"sys_name": "card0-HDMI-A-2", "connector": "HDMI-A-2", "status": "disconnected"},
+    ]
+    connected, disconnected = devices._connected_hdmi_indices(drm_connectors)
+    assert connected == {0}
+    assert disconnected == {1}
+
+    mpv_entries = [
+        ("pulse/alsa_output.platform-fe00b840.mailbox.pro-output-0", "Built-in Audio Pro"),
+        ("alsa/hdmi:CARD=vc4hdmi0,DEV=0", "vc4-hdmi-0, MAI PCM i2s-hifi-0/HDMI Audio Output"),
+        ("alsa/hdmi:CARD=vc4hdmi1,DEV=0", "vc4-hdmi-1, MAI PCM i2s-hifi-0/HDMI Audio Output"),
+    ]
+    curated = devices._curate_audio_devices(mpv_entries, drm_connectors=drm_connectors)
+    assert [d["id"] for d in curated] == [
+        "alsa/hdmi:CARD=vc4hdmi0,DEV=0",
+        "pulse/alsa_output.platform-fe00b840.mailbox.pro-output-0",
+    ]
+
+
+def test_discover_probes_mpv_audio_devices_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    mpv_calls = 0
+    alsa_calls = 0
+
+    def _fake_probe() -> list[tuple[str, str]]:
+        nonlocal mpv_calls
+        mpv_calls += 1
+        return [
+            ("alsa/hdmi:CARD=NVidia,DEV=0", "HDA NVidia, 27G2G8/HDMI Audio Output"),
+            (
+                "alsa/plughw:CARD=PCH,DEV=0",
+                "HDA Intel PCH, ALC1220 Analog/Hardware device with all software conversions",
+            ),
+        ]
+
+    def _fake_alsa() -> list[dict[str, str]]:
+        nonlocal alsa_calls
+        alsa_calls += 1
+        return [{"id": "hdmi:CARD=NVidia,DEV=0", "desc": "HDA NVidia, 27G2G8"}]
+
+    monkeypatch.setattr(devices, "_probe_mpv_audio_devices", _fake_probe)
+    monkeypatch.setattr(devices, "list_alsa_devices", _fake_alsa)
+    monkeypatch.setattr(
+        devices,
+        "list_drm_connectors",
+        lambda: [{"connector": "HDMI-A-1", "status": "connected"}],
+    )
+    monkeypatch.setattr(
+        devices,
+        "cec_client_probe",
+        lambda: {"cec_client_available": False, "adapters_reported": [], "raw": ""},
+    )
+    monkeypatch.setattr(devices, "list_cec_devices", lambda: [])
+
+    info = devices.discover()
+    assert mpv_calls == 1
+    assert alsa_calls == 1
+    assert [d["id"] for d in info["audio_devices"]] == [
+        "alsa/hdmi:CARD=NVidia,DEV=0",
+        "alsa/plughw:CARD=PCH,DEV=0",
+    ]
+    assert info["auto_audio_device"] == "alsa/hdmi:CARD=NVidia,DEV=0"
+
+
+def test_update_settings_live_apply_normalizes_legacy_alsa_audio_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prev_mpv_audio = runtime_config.snapshot().raw("MPV_AUDIO_DEVICE")
+    mpv_sets: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(routes.state, "get_settings", lambda: {"audio_device": ""})
+    monkeypatch.setattr(routes.state, "update_settings", lambda patch: dict(patch))
+    monkeypatch.setattr(routes.player, "is_playing", lambda: True)
+    monkeypatch.setattr(
+        routes.player,
+        "mpv_set",
+        lambda prop, val: mpv_sets.append((prop, val)),
+    )
+    monkeypatch.setattr(routes, "_sync_idle_visual_surfaces_after_settings", lambda: None)
+
+    try:
+        client = TestClient(create_app(testing=True))
+        response = client.post(
+            "/settings",
+            json={"audio_device": "hdmi:CARD=vc4hdmi0,DEV=0"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert "audio_device" in body["live_applied"]
+        assert ("audio-device", "alsa/hdmi:CARD=vc4hdmi0,DEV=0") in mpv_sets
     finally:
         runtime_config.set_value("MPV_AUDIO_DEVICE", prev_mpv_audio or "")

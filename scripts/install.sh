@@ -1130,13 +1130,21 @@ detect_nvidia_docker_toolkit() {
 }
 
 detect_nvidia_cdi() {
-  if [ "${RELAYTV_NVIDIA_CDI:-}" = "1" ]; then
-    printf "1"
-    return 0
-  fi
-  if [ "${RELAYTV_NVIDIA_CDI:-}" = "0" ]; then
-    printf "0"
-    return 0
+  local override="${RELAYTV_NVIDIA_CDI:-}"
+  if [ -n "$override" ]; then
+    case "$override" in
+      1)
+        printf "1"
+        return 0
+        ;;
+      0)
+        printf "0"
+        return 0
+        ;;
+      *)
+        printf "WARN: RELAYTV_NVIDIA_CDI must be 0 or 1. Falling back to auto-detection.\n" >&2
+        ;;
+    esac
   fi
   local docker_info=""
   if command -v docker >/dev/null 2>&1 && docker_info="$(docker info 2>/dev/null)" && [ -n "$docker_info" ]; then
@@ -1152,7 +1160,7 @@ detect_nvidia_cdi() {
   local spec=""
   for spec in "$cdi_var_dir"/*.yaml "$cdi_var_dir"/*.json "$cdi_etc_dir"/*.yaml "$cdi_etc_dir"/*.json; do
     [ -r "$spec" ] || continue
-    if grep -q 'nvidia\.com/gpu' "$spec" 2>/dev/null; then
+    if grep -qi 'nvidia\.com/gpu' "$spec" 2>/dev/null; then
       printf "1"
       return 0
     fi
@@ -1390,7 +1398,7 @@ NVIDIA_DEVICE_DETECTED="$(detect_nvidia_device)"
 NVIDIA_DOCKER_TOOLKIT_AVAILABLE="$(detect_nvidia_docker_toolkit)"
 NVIDIA_CDI_AVAILABLE="$(detect_nvidia_cdi)"
 NVIDIA_PASSTHROUGH_ENABLED="0"
-if [ "$NVIDIA_DEVICE_DETECTED" = "1" ] && [ "$NVIDIA_DOCKER_TOOLKIT_AVAILABLE" = "1" ]; then
+if [ "$NVIDIA_DEVICE_DETECTED" = "1" ] && { [ "$NVIDIA_DOCKER_TOOLKIT_AVAILABLE" = "1" ] || [ "$NVIDIA_CDI_AVAILABLE" = "1" ]; }; then
   NVIDIA_PASSTHROUGH_ENABLED="1"
 fi
 
@@ -1866,6 +1874,6 @@ if [ "$HEADLESS_REMOTE_ENABLED_VAL" = "1" ] && ! compose_supports_local_build; t
   say "  WARN: RELAYTV_HEADLESS_REMOTE_ENABLED=1 requires an image built with RELAYTV_INSTALL_HEADLESS=1 (published GHCR images omit Xvfb/x11vnc)."
 fi
 if [ "$NVIDIA_DEVICE_DETECTED" = "1" ] && [ "$NVIDIA_PASSTHROUGH_ENABLED" != "1" ]; then
-  say "  WARN: NVIDIA decoder passthrough disabled; NVIDIA playback acceleration will not be used unless both an NVIDIA device and Docker NVIDIA toolkit are detected."
+  say "  WARN: NVIDIA decoder passthrough disabled; NVIDIA playback acceleration will not be used unless both an NVIDIA device and Docker NVIDIA toolkit or CDI support are detected."
 fi
 say "  MPV_AUDIO_DEVICE: ${AUDIO_DEVICE_VAL:-<auto>}"
