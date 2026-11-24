@@ -415,9 +415,10 @@ install_docker_engine() {
 }
 
 DOCKER_CMD=(docker)
-NVIDIA_TOOLKIT_HINT="0"
+NVIDIA_TOOLKIT_HINT="${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-0}"
+NVIDIA_CDI_HINT="${RELAYTV_NVIDIA_CDI:-}"
 ensure_docker_ready() {
-  local direct_error=""
+  local direct_error="" sudo_docker_info=""
   if ! command -v docker >/dev/null 2>&1; then
     install_docker_engine
   fi
@@ -446,10 +447,17 @@ ensure_docker_ready() {
   if [ "$(id -u)" -eq 0 ]; then
     die "Docker Engine is installed but its daemon is unavailable. Start the docker service and rerun RelayTV."
   fi
-  if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1 && sudo_docker_info="$(sudo docker info 2>/dev/null)"; then
     DOCKER_CMD=(sudo docker)
-    if sudo docker info 2>/dev/null | grep -qi 'nvidia'; then
+    if [[ "${sudo_docker_info,,}" == *"nvidia"* ]]; then
       NVIDIA_TOOLKIT_HINT="1"
+    fi
+    if [ -z "${RELAYTV_NVIDIA_CDI:-}" ] && [ -n "$sudo_docker_info" ]; then
+      if [[ "${sudo_docker_info,,}" == *"nvidia.com/gpu"* ]]; then
+        NVIDIA_CDI_HINT="1"
+      else
+        NVIDIA_CDI_HINT="0"
+      fi
     fi
     say "Docker requires administrator access; RelayTV will use sudo for this installation."
     say "No users were added to the docker group."
@@ -603,7 +611,7 @@ say "Generating RelayTV runtime configuration..."
   else
     unset RELAYTV_CEC_ENABLED
   fi
-  RELAYTV_NVIDIA_DOCKER_TOOLKIT="$NVIDIA_TOOLKIT_HINT" RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
+  RELAYTV_NVIDIA_DOCKER_TOOLKIT="$NVIDIA_TOOLKIT_HINT" RELAYTV_NVIDIA_CDI="$NVIDIA_CDI_HINT" RELAYTV_IMAGE_REF="$IMAGE_REF" RELAYTV_INSTALL_YES="$ASSUME_YES" ./scripts/install.sh "${INSTALL_ARGS[@]}"
 )
 
 if [ "$DO_PULL" = "1" ]; then

@@ -6,7 +6,7 @@ import tempfile
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import player, public_media, state, upload_store, url_boundary, ytdlp_update
+from .. import devices, player, public_media, state, upload_store, url_boundary, ytdlp_update
 from ..config import (
     SEERR_REQUEST_MODES,
     normalize_seerr_request_mode,
@@ -749,7 +749,9 @@ def _update_settings(req: SettingsReq):
             live_apply_failed.append("volume")
         try:
             if "audio_device" in requested_keys and updated.get("audio_device") is not None:
-                cur_audio = str(runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip()
+                cur_audio = devices._normalize_for_mpv(
+                    str(runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or "").strip()
+                )
                 if not cur_audio:
                     try:
                         cur_audio = str(

@@ -1138,12 +1138,19 @@ detect_nvidia_cdi() {
     printf "0"
     return 0
   fi
-  if command -v docker >/dev/null 2>&1 && docker info 2>/dev/null | grep -qi 'nvidia\.com/gpu'; then
-    printf "1"
+  local docker_info=""
+  if command -v docker >/dev/null 2>&1 && docker_info="$(docker info 2>/dev/null)" && [ -n "$docker_info" ]; then
+    if [[ "${docker_info,,}" == *"nvidia.com/gpu"* ]]; then
+      printf "1"
+    else
+      printf "0"
+    fi
     return 0
   fi
+  local cdi_var_dir="${RELAYTV_CDI_VAR_DIR:-/var/run/cdi}"
+  local cdi_etc_dir="${RELAYTV_CDI_ETC_DIR:-/etc/cdi}"
   local spec=""
-  for spec in /var/run/cdi/*.yaml /var/run/cdi/*.json /etc/cdi/*.yaml /etc/cdi/*.json; do
+  for spec in "$cdi_var_dir"/*.yaml "$cdi_var_dir"/*.json "$cdi_etc_dir"/*.yaml "$cdi_etc_dir"/*.json; do
     [ -r "$spec" ] || continue
     if grep -q 'nvidia\.com/gpu' "$spec" 2>/dev/null; then
       printf "1"
