@@ -1102,3 +1102,154 @@ def test_bootstrap_invalid_nvidia_cdi_warns_and_falls_back_to_sudo_autodetect(
     override = (install_dir / "docker-compose.override.yml").read_text(encoding="utf-8")
     assert "driver: cdi" in override
     assert "nvidia.com/gpu=all" in override
+
+
+def test_detect_nvidia_docker_toolkit_is_tristate_and_authoritative_on_docker_info(
+    tmp_path: Path,
+) -> None:
+    detect_fn = _extract_bash_function(
+        ROOT_DIR / "scripts" / "install.sh", "detect_nvidia_docker_toolkit"
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_cli = fake_bin / "nvidia-container-cli"
+    fake_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_cli.chmod(0o755)
+
+    def _run_detect(extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        env = {"PATH": f"{fake_bin}:/usr/bin:/bin"}
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(
+            ["bash", "-c", f"set -euo pipefail\n{detect_fn}\ndetect_nvidia_docker_toolkit"],
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    # 1. docker info succeeds WITH Runtimes: ... nvidia -> "1"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'Server Version: 26.0\\nRuntimes: io.containerd.runc.v2 nvidia runc\\n'\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    assert _run_detect().stdout == "1"
+
+    # 2. docker info succeeds WITHOUT nvidia runtime (even with CDI nvidia.com/gpu and
+    #    working nvidia-container-cli) -> "0" authoritatively without falling through
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'Server Version: 29.0\\nOperating System: NVIDIA Jetson\\n"
+        "Runtimes: io.containerd.runc.v2 runc\\nDiscovered Devices:\\n  cdi: nvidia.com/gpu=all\\n'\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    assert _run_detect().stdout == "0"
+
+    # 3. docker info fails (e.g. permission denied) -> falls back to nvidia-container-cli -> "1"
+    fake_docker.write_text(
+        "#!/bin/sh\nprintf 'permission denied\\n' >&2\nexit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    assert _run_detect().stdout == "1"
+
+    # 4. Explicit RELAYTV_NVIDIA_DOCKER_TOOLKIT=0 / 1 overrides auto-detection
+    assert _run_detect({"RELAYTV_NVIDIA_DOCKER_TOOLKIT": "0"}).stdout == "0"
+    fake_cli.unlink()
+    assert _run_detect({"RELAYTV_NVIDIA_DOCKER_TOOLKIT": "1"}).stdout == "1"
+
+    # 5. Invalid value warns on stderr and falls back to auto-detection
+    fake_docker.write_text(
+        "#!/bin/sh\nprintf 'Runtimes: nvidia runc\\n'\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    warn_res = _run_detect({"RELAYTV_NVIDIA_DOCKER_TOOLKIT": "maybe"})
+    assert warn_res.returncode == 0, warn_res.stderr
+    assert warn_res.stdout == "1"
+    assert "WARN: RELAYTV_NVIDIA_DOCKER_TOOLKIT must be 0 or 1" in warn_res.stderr
+
+
+def test_bootstrap_sudo_docker_info_checks_nvidia_runtime_specifically(
+    tmp_path: Path,
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("sudo fallback path only runs for non-root users")
+
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+
+    # sudo docker info mentions "NVIDIA" in OS string, NOT in Runtimes, and has no CDI
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then\n'
+        "  printf 'Docker Compose version v2.29.0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "${FAKE_SUDO_ACTIVE:-0}" = "1" ] && [ "$1" = "info" ]; then\n'
+        "  printf 'Operating System: NVIDIA Jetson\\nRuntimes: io.containerd.runc.v2 runc\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'permission denied\\n' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    fake_sudo = fake_bin / "sudo"
+    fake_sudo.write_text('#!/bin/sh\nFAKE_SUDO_ACTIVE=1 exec "$@"\n', encoding="utf-8")
+    fake_sudo.chmod(0o755)
+
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_systemctl.chmod(0o755)
+
+    fake_nvidia_smi = fake_bin / "nvidia-smi"
+    fake_nvidia_smi.write_text("#!/bin/sh\nprintf 'GPU 0: NVIDIA\\n'\n", encoding="utf-8")
+    fake_nvidia_smi.chmod(0o755)
+
+    fake_cli = fake_bin / "nvidia-container-cli"
+    fake_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_cli.chmod(0o755)
+
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/bin/bash\n"
+        'url="${@: -1}"\n'
+        'rel="${url#*/main/}"\n'
+        f'cat {shlex.quote(str(ROOT_DIR))}/"$rel"\n',
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    env = _clean_installer_env({"PATH": f"{fake_bin}:{os.environ.get('PATH', '')}"})
+    res = subprocess.run(
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(install_dir),
+            "--yes",
+            "--no-pull",
+            "--no-start",
+            "--mode",
+            "headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "NVIDIA Docker toolkit available: 0" in res.stdout
+    override = (install_dir / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "gpus: all" not in override
+    assert "driver: cdi" not in override

@@ -148,26 +148,34 @@ for p in /dev/dri /dev/dri/renderD128 /dev/snd /dev/cec0 /sys/class/drm /dev/tty
 done
 
 say "Docker"
+DOCKER_CMD=(docker)
 if command -v docker >/dev/null 2>&1; then
   kv "docker:" "$(docker --version 2>/dev/null || true)"
+  if ! docker info >/dev/null 2>&1; then
+    docker_info_err="$(docker info 2>&1 || true)"
+    if [[ "${docker_info_err,,}" == *"permission denied"* ]] && command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+      DOCKER_CMD=(sudo -n docker)
+      kv "docker access:" "via sudo -n docker"
+    fi
+  fi
 else
   kv "docker:" "NOT FOUND"
 fi
 if command -v docker >/dev/null 2>&1; then
-  if docker compose version >/dev/null 2>&1; then
-    kv "docker compose:" "$(docker compose version 2>/dev/null | head -n 1)"
+  if "${DOCKER_CMD[@]}" compose version >/dev/null 2>&1; then
+    kv "docker compose:" "$("${DOCKER_CMD[@]}" compose version 2>/dev/null | head -n 1)"
   else
     kv "docker compose:" "NOT FOUND (use docker-compose v1 or install plugin)"
   fi
 fi
 
 say "Compose config sanity"
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  if docker compose config >/dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1 && "${DOCKER_CMD[@]}" compose version >/dev/null 2>&1; then
+  if "${DOCKER_CMD[@]}" compose config >/dev/null 2>&1; then
     echo "  ✓ docker compose config OK"
   else
     echo "  ✗ docker compose config FAILED"
-    docker compose config >/dev/null || true
+    "${DOCKER_CMD[@]}" compose config >/dev/null || true
   fi
 else
   echo "  (skipped)"
@@ -175,14 +183,14 @@ fi
 
 say "Container status"
 if command -v docker >/dev/null 2>&1; then
-  docker ps --filter "name=relaytv" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+  "${DOCKER_CMD[@]}" ps --filter "name=relaytv" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
 else
   echo "  (docker not installed)"
 fi
 
+port="$(read_configured_port)"
 say "HTTP health checks"
 if command -v curl >/dev/null 2>&1; then
-  port="$(read_configured_port)"
   base="${RELAYTV_BASE:-http://127.0.0.1:${port}}"
   for ep in /health /status /ui /x11/overlay; do
     code="$(curl -s -o /dev/null -w "%{http_code}" "$base$ep" || true)"
@@ -196,7 +204,7 @@ say "Overlay runtime hints"
 if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]; then
   echo "  X11 session detected."
   echo "  Host X11 overlay fallback is available if explicitly enabled (RELAYTV_X11_OVERLAY=1):"
-  echo "    - Host overlay app: python3 app/relaytv_app/overlay_app.py --url http://127.0.0.1:8787/x11/overlay"
+  echo "    - Host overlay app: python3 app/relaytv_app/overlay_app.py --url http://127.0.0.1:${port}/x11/overlay"
   echo "    - In-container overlay requires X11 socket + Xauthority passthrough."
 else
   echo "  Not an X11 session. Host X11 overlay fallback will not be active."

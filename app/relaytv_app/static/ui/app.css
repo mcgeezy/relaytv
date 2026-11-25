@@ -16,6 +16,7 @@
       --good: rgba(120,255,190,.85);
       --warn: rgba(255,210,120,.90);
       --danger: rgba(255,120,140,.90);
+      --safe-top: max(env(safe-area-inset-top, 0px), var(--relaytv-android-top, 0px));
     }
 
     /* Respect system light mode if you want; comment this block if you want always-dark */
@@ -89,7 +90,7 @@
       transition: transform .15s ease, color .15s ease;
     }
     html.android-app body{
-      padding-top: max(10px, env(safe-area-inset-top), calc(var(--relaytv-android-top, 0px) + 6px));
+      padding-top: max(10px, var(--safe-top), calc(var(--relaytv-android-top, 0px) + 6px));
     }
     html.android-app .hdrBrand{
       cursor: pointer;
@@ -703,7 +704,7 @@
       display:flex;
       align-items: center;
       justify-content: center;
-      padding: 18px;
+      padding: max(18px, var(--safe-top)) 18px max(18px, env(safe-area-inset-bottom, 0px));
       z-index: 9999;
     }
     .modal{
@@ -1386,7 +1387,7 @@
     /* ===== Connection indicator ===== */
     .connBadge{
       position: fixed;
-      top: max(10px, env(safe-area-inset-top));
+      top: max(10px, var(--safe-top));
       left: 50%;
       transform: translateX(-50%);
       z-index: 10000;
@@ -3147,10 +3148,12 @@
 @media (max-width: 600px){
   #settingsBackdrop.modalBackdrop{
     padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+    padding-top: max(8px, var(--safe-top));
     align-items: flex-end;
   }
   .modal.settingsModal{
     max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom)));
+    max-height: calc(100dvh - max(8px, var(--safe-top)) - max(8px, env(safe-area-inset-bottom)));
     padding: 12px;
     border-radius: 20px;
   }

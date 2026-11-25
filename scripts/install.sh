@@ -1110,12 +1110,29 @@ detect_nvidia_device() {
 }
 
 detect_nvidia_docker_toolkit() {
-  if [ "${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-}" = "1" ]; then
-    printf "1"
-    return 0
+  local override="${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-}"
+  if [ -n "$override" ]; then
+    case "$override" in
+      1)
+        printf "1"
+        return 0
+        ;;
+      0)
+        printf "0"
+        return 0
+        ;;
+      *)
+        printf "WARN: RELAYTV_NVIDIA_DOCKER_TOOLKIT must be 0 or 1. Falling back to auto-detection.\n" >&2
+        ;;
+    esac
   fi
-  if command -v docker >/dev/null 2>&1 && docker info 2>/dev/null | grep -qi 'nvidia'; then
-    printf "1"
+  local docker_info=""
+  if command -v docker >/dev/null 2>&1 && docker_info="$(docker info 2>/dev/null)" && [ -n "$docker_info" ]; then
+    if printf '%s\n' "$docker_info" | grep -qiE '^[[:space:]]*Runtimes:.*(^|[[:space:]])nvidia([[:space:]]|$)'; then
+      printf "1"
+    else
+      printf "0"
+    fi
     return 0
   fi
   if command -v nvidia-container-cli >/dev/null 2>&1 && nvidia-container-cli info >/dev/null 2>&1; then

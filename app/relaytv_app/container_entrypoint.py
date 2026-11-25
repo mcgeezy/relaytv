@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -29,11 +30,20 @@ def _is_true(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on", "enable", "enabled")
 
 
-def _wait_for_socket(path: Path, timeout_sec: float = 12.0) -> bool:
+_TEMP_VNC_PASSWORD_FILES: list[Path] = []
+
+
+def _wait_for_socket(
+    path: Path,
+    timeout_sec: float = 12.0,
+    proc: subprocess.Popen | None = None,
+) -> bool:
     deadline = time.monotonic() + max(0.1, float(timeout_sec))
     while time.monotonic() < deadline:
         if path.exists():
             return True
+        if proc is not None and proc.poll() is not None:
+            return False
         time.sleep(0.1)
     return path.exists()
 
@@ -522,26 +532,26 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
     if (not socket_path.exists()) or (not _display_alive(display)):
         screen = (env.get("RELAYTV_HEADLESS_REMOTE_RESOLUTION") or "1920x1080x24").strip()
         _eprint(f"entrypoint: starting Xvfb display={display} screen={screen}")
-        xvfb_log = open("/tmp/xvfb.log", "ab")
-        xvfb = subprocess.Popen(
-            [
-                "Xvfb",
-                display,
-                "-screen",
-                "0",
-                screen,
-                "-ac",
-                "+extension",
-                "GLX",
-                "+render",
-                "-noreset",
-            ],
-            stdout=xvfb_log,
-            stderr=subprocess.STDOUT,
-            env=env,
-        )
+        with open("/tmp/xvfb.log", "ab") as xvfb_log:
+            xvfb = subprocess.Popen(
+                [
+                    "Xvfb",
+                    display,
+                    "-screen",
+                    "0",
+                    screen,
+                    "-ac",
+                    "+extension",
+                    "GLX",
+                    "+render",
+                    "-noreset",
+                ],
+                stdout=xvfb_log,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
         procs.append(xvfb)
-        if not _wait_for_socket(socket_path, timeout_sec=12.0):
+        if not _wait_for_socket(socket_path, timeout_sec=12.0, proc=xvfb):
             raise RuntimeError(f"Xvfb socket did not appear at {socket_path}")
     else:
         _eprint(f"entrypoint: reusing existing X display at {display}")
@@ -551,6 +561,7 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
         port = (env.get("RELAYTV_HEADLESS_VNC_PORT") or "5900").strip()
         vnc_pw = (env.get("RELAYTV_HEADLESS_VNC_PASSWORD_FILE") or "").strip()
         pass_file = vnc_pw
+        plain_pass_file = ""
 
         if vnc_pw and not _usable_vnc_password_file(vnc_pw):
             _eprint(
@@ -562,14 +573,22 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
         if not pass_file:
             raw_pass = (env.get("RELAYTV_HEADLESS_VNC_PASSWORD") or "").strip()
             if raw_pass:
-                pass_file = "/tmp/relaytv-x11vnc.pass"
-                subprocess.run(
-                    ["x11vnc", "-storepasswd", raw_pass, pass_file],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                fd, plain_pass_file = tempfile.mkstemp(
+                    prefix="relaytv-x11vnc-",
+                    suffix=".pass",
+                    dir="/tmp",
                 )
-                os.chmod(pass_file, 0o600)
+                try:
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, "wb") as fh:
+                        fh.write(f"{raw_pass}\n".encode("utf-8"))
+                except Exception:
+                    try:
+                        os.unlink(plain_pass_file)
+                    except OSError:
+                        pass
+                    raise
+                _TEMP_VNC_PASSWORD_FILES.append(Path(plain_pass_file))
 
         cmd = [
             "x11vnc",
@@ -588,13 +607,15 @@ def _start_headless_remote(env: dict[str, str]) -> list[subprocess.Popen]:
         ]
         if pass_file and _usable_vnc_password_file(pass_file):
             cmd.extend(["-rfbauth", pass_file])
+        elif plain_pass_file and _usable_vnc_password_file(plain_pass_file):
+            cmd.extend(["-passwdfile", plain_pass_file])
         else:
             cmd.append("-nopw")
         vnc_env = dict(env)
         vnc_env.pop("WAYLAND_DISPLAY", None)
         _eprint(f"entrypoint: starting x11vnc listen={listen} port={port}")
-        vnc_log = open("/tmp/x11vnc.log", "ab")
-        x11vnc = subprocess.Popen(cmd, stdout=vnc_log, stderr=subprocess.STDOUT, env=vnc_env)
+        with open("/tmp/x11vnc.log", "ab") as vnc_log:
+            x11vnc = subprocess.Popen(cmd, stdout=vnc_log, stderr=subprocess.STDOUT, env=vnc_env)
         procs.append(x11vnc)
 
     return procs
@@ -680,6 +701,12 @@ def main(argv: list[str] | None = None) -> int:
         _terminate(main_proc)
         for proc in reversed(helper_procs):
             _terminate(proc)
+        while _TEMP_VNC_PASSWORD_FILES:
+            tmp_path = _TEMP_VNC_PASSWORD_FILES.pop()
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

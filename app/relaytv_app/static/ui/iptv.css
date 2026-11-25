@@ -6,7 +6,7 @@ body.iptvNoScroll{overflow:hidden}
 .iptvLaunch.show{display:inline-flex}
 
 /* Shell — a glass overlay tinted with the brand sky/blue, not green. */
-.iptvShell{position:fixed;inset:0;z-index:1210;overflow:auto;padding:max(14px,env(safe-area-inset-top)) 14px max(18px,env(safe-area-inset-bottom));
+.iptvShell{position:fixed;inset:0;z-index:1210;overflow:auto;padding:max(14px,var(--safe-top)) 14px max(18px,env(safe-area-inset-bottom));
   background:
     radial-gradient(1100px 620px at 6% -4%,rgba(56,189,248,.16),transparent 58%),
     radial-gradient(950px 560px at 104% 8%,rgba(37,99,235,.16),transparent 60%),

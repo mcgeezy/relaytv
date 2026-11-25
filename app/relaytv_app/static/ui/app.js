@@ -19,7 +19,9 @@
   }
   function isSameOrigin(input){
     try {
-      const url = typeof input === 'string' ? input : ((input && input.url) || '');
+      const url = typeof input === 'string'
+        ? input
+        : (input instanceof URL ? input.href : ((input && input.url) || ''));
       return new URL(url, window.location.href).origin === window.location.origin;
     } catch(_e) { return false; }
   }
@@ -45,7 +47,13 @@
         const v = String(entered || '').trim();
         if (v){
           storeToken(v);
-          res = await nativeFetch(input, withAuth(opts, v));
+          const retryOpts = Object.assign({}, opts || {});
+          delete retryOpts.signal;
+          res = await nativeFetch(input, withAuth(retryOpts, v));
+          if (res.status === 401){
+            storeToken('');
+            promptedThisLoad = false;
+          }
         }
       }
     }
@@ -469,6 +477,10 @@ function _uiEventHealthy(){
 }
 
 function _closeUiEventStream(reason='closed_by_client'){
+  if (__uiEventReconnectTimer) {
+    try { window.clearTimeout(__uiEventReconnectTimer); } catch (_e) {}
+    __uiEventReconnectTimer = 0;
+  }
   const active = __uiEventSource;
   __uiEventSource = null;
   __uiEventGeneration += 1;
@@ -481,6 +493,8 @@ function _closeUiEventStream(reason='closed_by_client'){
 // Android screen-off/Doze or an AP roam often die without ever firing onerror,
 // leaving a zombie EventSource that would otherwise block reconnects forever.
 function _ensureUiEventStream(){
+  if (__uiEventConnectInFlight) return;
+  if (!__uiEventSource && __uiEventReconnectTimer) return;
   if (__uiEventSource){
     if (_uiEventHealthy()) return;
     // A fresh stream gets time to connect and deliver its first event before
@@ -687,7 +701,7 @@ function _uiRefreshInteractionLockActive(){
   if (__draggingQueue) return true;
   if (__queueMenuEl) return true;
   if (__pendingRemove) return true;
-  const modalIds = ['addBackdrop', 'notifyBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'peersBackdrop'];
+  const modalIds = ['addBackdrop', 'notifyBackdrop', 'histBackdrop', 'aboutBackdrop', 'settingsBackdrop', 'langBackdrop', 'subLangBackdrop', 'peersBackdrop'];
   for (const id of modalIds) {
     const el = document.getElementById(id);
     if (!_isHiddenEl(el)) return true;
@@ -725,6 +739,10 @@ function _uiCloseTopLayerFromNav(){
     window.relaytvSeerr.close({fromNav:true, force:true});
     return true;
   }
+  if (window.relaytvIptv && window.relaytvIptv.isOpen()) {
+    window.relaytvIptv.close({fromNav:true});
+    return true;
+  }
   if (_jfIsDetailOpen()) {
     _jfCloseDetailPanel({fromNav:true});
     return true;
@@ -736,6 +754,11 @@ function _uiCloseTopLayerFromNav(){
   const langBd = document.getElementById('langBackdrop');
   if (!_isHiddenEl(langBd)) {
     closeNowLanguageModal({fromNav:true});
+    return true;
+  }
+  const subLangBd = document.getElementById('subLangBackdrop');
+  if (!_isHiddenEl(subLangBd)) {
+    closeNowSubtitleModal({fromNav:true});
     return true;
   }
   const settingsBd = document.getElementById('settingsBackdrop');
@@ -865,7 +888,10 @@ function _providerIconKey(provider, host){
 function _letterFaviconDataUri(host){
   const clean = String(host || '').replace(/^www\./, '');
   const letter = (clean[0] || '?').toUpperCase();
-  let color = __favBrandColors[clean] || __favBrandColors[clean.split('.').slice(-2).join('.')] || '';
+  const rootDomain = clean.split('.').slice(-2).join('.');
+  let color = Object.hasOwn(__favBrandColors, clean)
+    ? __favBrandColors[clean]
+    : (Object.hasOwn(__favBrandColors, rootDomain) ? __favBrandColors[rootDomain] : '');
   if (!color) {
     let h = 0;
     for (let i = 0; i < clean.length; i++) h = (h * 31 + clean.charCodeAt(i)) >>> 0;
@@ -1501,6 +1527,7 @@ function renderStatus(st) {
   const brand = document.getElementById('appBrandName');
   const sess = st.state || (st.playing ? (st.paused ? 'paused' : 'playing') : 'idle');
   if (brand) brand.textContent = st.device_name || 'RelayTV';
+  _syncAndroidBrandAriaLabel();
   const menuDev = document.getElementById('menuDeviceName');
   if (menuDev) menuDev.textContent = st.device_name || 'RelayTV';
   if (dot) {
@@ -1870,24 +1897,40 @@ function _isSettingsControlFocused(settingsBd){
   return /^set(?:tings|[A-Z])/.test(String(active.id || ''));
 }
 
-function _applyUiJellyfinEvent(payload){
+function _applyUiJellyfinEvent(payload, opts){
   if (!payload || typeof payload !== 'object') return;
-  _uiEventMarkAlive();
+  const isDeferred = !!(opts && opts.deferred);
+  if (!isDeferred) {
+    _uiEventMarkAlive();
 
-  const settingsBd = document.getElementById('settingsBackdrop');
-  const settingsOpen = !!(settingsBd && !settingsBd.classList.contains('hidden'));
-  if (payload.refresh_settings && settingsOpen && !__settingsDirty && !_isSettingsControlFocused(settingsBd)) {
-    loadSettingsUi().catch(console.warn);
+    const settingsBd = document.getElementById('settingsBackdrop');
+    const settingsOpen = !!(settingsBd && !settingsBd.classList.contains('hidden'));
+    if (payload.refresh_settings && settingsOpen && !__settingsDirty && !_isSettingsControlFocused(settingsBd)) {
+      loadSettingsUi().catch(console.warn);
+    }
   }
 
   if (!payload.refresh_active_tab || !__jfUiVisible) {
-    if (payload.refresh_status) refresh().catch(() => {});
+    if (!isDeferred && payload.refresh_status) refresh().catch(() => {});
     return;
   }
 
   if (__jfBusy) {
-    window.setTimeout(() => _applyUiJellyfinEvent(payload), 700);
+    _applyUiJellyfinEvent._pendingPayload = payload;
+    if (!_applyUiJellyfinEvent._retryTimer) {
+      _applyUiJellyfinEvent._retryTimer = window.setTimeout(() => {
+        _applyUiJellyfinEvent._retryTimer = 0;
+        const pending = _applyUiJellyfinEvent._pendingPayload;
+        _applyUiJellyfinEvent._pendingPayload = null;
+        if (pending) _applyUiJellyfinEvent(pending, {deferred: true});
+      }, 700);
+    }
     return;
+  }
+  if (_applyUiJellyfinEvent._retryTimer) {
+    try { window.clearTimeout(_applyUiJellyfinEvent._retryTimer); } catch (_e) {}
+    _applyUiJellyfinEvent._retryTimer = 0;
+    _applyUiJellyfinEvent._pendingPayload = null;
   }
 
   if (__jfLastMode === 'search' && __jfLastQuery) {
@@ -1997,7 +2040,12 @@ function _openUiWebSocketTransport(capabilities, generation){
     socket = new WebSocket(socketUrl.toString(), 'relaytv.realtime.v1');
   } catch (_e) {
     __uiRealtimePolicy.retire('websocket', 'open_error', null);
-    _openUiSseTransport(capabilities, generation);
+    if (capabilities?.sse?.enabled !== false) {
+      _openUiSseTransport(capabilities, generation);
+    } else {
+      window.__relaytvRealtimeTransport = 'poll';
+      _scheduleUiEventReconnect();
+    }
     return;
   }
   const active = {
@@ -2035,13 +2083,20 @@ async function _connectUiRealtimeGeneration(generation){
   });
   if (selected === 'websocket') {
     _openUiWebSocketTransport(capabilities, generation);
-  } else {
+  } else if (selected === 'sse') {
     _openUiSseTransport(capabilities, generation);
+  } else {
+    window.__relaytvRealtimeTransport = 'poll';
+    _scheduleUiEventReconnect();
   }
 }
 
 function connectUiEventStream(){
   if (__uiEventSource || __uiEventConnectInFlight) return;
+  if (__uiEventReconnectTimer) {
+    try { window.clearTimeout(__uiEventReconnectTimer); } catch (_e) {}
+    __uiEventReconnectTimer = 0;
+  }
   const generation = ++__uiEventGeneration;
   __uiEventConnectInFlight = true;
   // Birth is only a connection grace clock. Health starts with a real message.
@@ -2110,6 +2165,23 @@ function _themeEffective(mode){
   } catch (_e) { return 'dark'; }
 }
 
+var __androidBridgeReady = false;
+
+function _reportAndroidTheme(effective, bgColorHex){
+  if (typeof __androidBridgeReady === 'undefined' || !__androidBridgeReady) return;
+  const plexOpen = !!(window.relaytvPlex && typeof window.relaytvPlex.isOpen === 'function' && window.relaytvPlex.isOpen());
+  const seerrOpen = !!(window.relaytvSeerr && typeof window.relaytvSeerr.isOpen === 'function' && window.relaytvSeerr.isOpen());
+  const reportTheme = (plexOpen || seerrOpen) ? 'dark' : effective;
+  const reportHex = plexOpen ? '#0b0b0c' : (seerrOpen ? '#090815' : bgColorHex);
+  try { window.RelayTVAndroid?.onThemeChanged?.(reportTheme, reportHex); } catch (_e) {}
+}
+
+function syncAndroidStatusBarTheme(){
+  const effective = _themeEffective(_themeStoredMode());
+  const bgColorHex = effective === 'light' ? '#edf2ff' : '#05070d';
+  _reportAndroidTheme(effective, bgColorHex);
+}
+
 function applyTheme(mode){
   _themeApplyToSheets(mode);
   try { document.documentElement.style.colorScheme = (mode === 'auto') ? '' : mode; } catch (_e) {}
@@ -2117,7 +2189,7 @@ function applyTheme(mode){
   const bgColorHex = effective === 'light' ? '#edf2ff' : '#05070d';
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', bgColorHex);
-  try { window.RelayTVAndroid?.onThemeChanged?.(effective, bgColorHex); } catch (_e) {}
+  _reportAndroidTheme(effective, bgColorHex);
   document.querySelectorAll('.mtBtn').forEach((b) => {
     const on = (b.dataset.themeMode || 'auto') === mode;
     b.classList.toggle('on', on);
@@ -2194,6 +2266,14 @@ function bindHeaderMenu(){
   });
 }
 
+function _syncAndroidBrandAriaLabel(){
+  if (!document.documentElement || !document.documentElement.classList || !document.documentElement.classList.contains('android-app')) return;
+  const hdrBrand = document.getElementById('hdrBrand');
+  if (!hdrBrand) return;
+  const brandName = String(document.getElementById('appBrandName')?.textContent || '').trim();
+  hdrBrand.setAttribute('aria-label', brandName ? `${brandName} — Switch RelayTV server` : 'Switch RelayTV server');
+}
+
 function bindAndroidBridge(){
   const bridge = window.RelayTVAndroid;
   if (!bridge || typeof bridge !== 'object') return false;
@@ -2204,7 +2284,7 @@ function bindAndroidBridge(){
   if (brand) {
     brand.setAttribute('role', 'button');
     brand.setAttribute('tabindex', '0');
-    brand.setAttribute('aria-label', 'Switch RelayTV server');
+    _syncAndroidBrandAriaLabel();
     brand.setAttribute('title', 'Switch RelayTV server');
     const openServers = () => {
       closeHeaderMenu();
@@ -2239,6 +2319,7 @@ function bindAndroidBridge(){
   }
 
   try { bridge.onBridgeReady?.(); } catch (_e) {}
+  __androidBridgeReady = true;
   try { applyTheme(_themeStoredMode()); } catch (_e) {}
   return true;
 }
@@ -2480,7 +2561,8 @@ function _aboutSetText(id, text){
 
 function _aboutSetHref(id, href){
   const el = document.getElementById(id);
-  if (el && href) el.href = href;
+  const raw = String(href || '').trim();
+  if (el && /^https?:\/\//i.test(raw)) el.href = raw;
 }
 
 function _aboutSetUpdateState(text, cls){
@@ -3397,7 +3479,7 @@ function _populateAudioDeviceSelect(audioDev, dev, curAudioDevice){
   optAuto.textContent = 'Auto (System Default)';
   audioDev.appendChild(optAuto);
 
-  const audioList = Array.isArray(dev?.audio_devices) && dev.audio_devices.length
+  const audioList = Array.isArray(dev?.audio_devices)
     ? dev.audio_devices
     : (Array.isArray(dev?.alsa_devices) ? dev.alsa_devices : []);
   const seenAudioIds = new Map([['', '']]);
@@ -3412,7 +3494,8 @@ function _populateAudioDeviceSelect(audioDev, dev, curAudioDevice){
     o.title = id;
     audioDev.appendChild(o);
   });
-  const curAudioVal = String(curAudioDevice || '').trim();
+  const rawCurAudioVal = String(curAudioDevice || '').trim();
+  const curAudioVal = rawCurAudioVal.toLowerCase() === 'auto' ? '' : rawCurAudioVal;
   const curNormKey = _normalizeAudioSelectionKey(curAudioVal);
   if (curAudioVal && !seenAudioIds.has(curNormKey)) {
     seenAudioIds.set(curNormKey, curAudioVal);
@@ -3425,9 +3508,12 @@ function _populateAudioDeviceSelect(audioDev, dev, curAudioDevice){
   audioDev.value = curAudioVal ? (seenAudioIds.get(curNormKey) || curAudioVal) : '';
 }
 
+var __settingsLoadSeq = 0;
+
 async function loadSettingsUi(){
+  const seq = ++__settingsLoadSeq;
   const [devRes, setRes, tvRes, jfRes, plexRes, seerrRes, seerrUsersRes] = await Promise.all([
-    fetch('/devices'),
+    fetch('/devices').catch(() => null),
     fetch('/settings'),
     fetch('/tv/status').catch(() => null),
     fetch('/integrations/jellyfin/status').catch(() => null),
@@ -3436,7 +3522,7 @@ async function loadSettingsUi(){
     fetch('/integrations/seerr/users').catch(() => null)
   ]);
   _refreshBrowseServersSettings();
-  const dev = await devRes.json();
+  const dev = (devRes && devRes.ok) ? await devRes.json().catch(() => ({})) : {};
   const cur = await setRes.json();
   const tvStatus = (tvRes && tvRes.ok) ? await tvRes.json() : null;
   const jfStatus = (jfRes && jfRes.ok) ? await jfRes.json() : null;
@@ -3448,6 +3534,7 @@ async function loadSettingsUi(){
   }
   const seerrStatus = (seerrRes && seerrRes.ok) ? await seerrRes.json() : null;
   const seerrUsers = (seerrUsersRes && seerrUsersRes.ok) ? await seerrUsersRes.json() : null;
+  if (seq !== __settingsLoadSeq || __settingsDirty) return;
   const deviceName = document.getElementById('setDeviceName');
   const audioDev = document.getElementById('setAudioDev');
   const qual = document.getElementById('setQuality');
@@ -4126,9 +4213,10 @@ function bindSettingsUi(){
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(_plexErrorMessage(body, response.status));
       __plexLinkFlowId = String(body.flow_id || '');
-      if (!__plexLinkFlowId || !body.link_url) throw new Error('Plex returned an incomplete link response.');
+      const linkUrl = String(body.link_url || '').trim();
+      if (!__plexLinkFlowId || !/^https?:\/\//i.test(linkUrl)) throw new Error('Plex returned an incomplete link response.');
       if (plexLinkUrl) {
-        plexLinkUrl.href = String(body.link_url);
+        plexLinkUrl.href = linkUrl;
         plexLinkUrl.classList.remove('hidden');
       }
       if (plexPollBtn) plexPollBtn.classList.remove('hidden');

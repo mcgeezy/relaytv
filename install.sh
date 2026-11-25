@@ -415,7 +415,14 @@ install_docker_engine() {
 }
 
 DOCKER_CMD=(docker)
-NVIDIA_TOOLKIT_HINT="${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-0}"
+NVIDIA_TOOLKIT_HINT="${RELAYTV_NVIDIA_DOCKER_TOOLKIT:-}"
+case "$NVIDIA_TOOLKIT_HINT" in
+  ""|0|1) ;;
+  *)
+    printf "WARN: RELAYTV_NVIDIA_DOCKER_TOOLKIT must be 0 or 1. Falling back to auto-detection.\n" >&2
+    NVIDIA_TOOLKIT_HINT=""
+    ;;
+esac
 NVIDIA_CDI_HINT="${RELAYTV_NVIDIA_CDI:-}"
 case "$NVIDIA_CDI_HINT" in
   ""|0|1) ;;
@@ -456,8 +463,12 @@ ensure_docker_ready() {
   fi
   if command -v sudo >/dev/null 2>&1 && sudo_docker_info="$(sudo docker info 2>/dev/null)"; then
     DOCKER_CMD=(sudo docker)
-    if [[ "${sudo_docker_info,,}" == *"nvidia"* ]]; then
-      NVIDIA_TOOLKIT_HINT="1"
+    if [ -z "$NVIDIA_TOOLKIT_HINT" ] && [ -n "$sudo_docker_info" ]; then
+      if printf '%s\n' "$sudo_docker_info" | grep -qiE '^[[:space:]]*Runtimes:.*(^|[[:space:]])nvidia([[:space:]]|$)'; then
+        NVIDIA_TOOLKIT_HINT="1"
+      else
+        NVIDIA_TOOLKIT_HINT="0"
+      fi
     fi
     if [ -z "$NVIDIA_CDI_HINT" ] && [ -n "$sudo_docker_info" ]; then
       if [[ "${sudo_docker_info,,}" == *"nvidia.com/gpu"* ]]; then

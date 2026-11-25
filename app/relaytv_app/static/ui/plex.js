@@ -607,7 +607,7 @@ async function _plexRunAction(item, command, source, versionId, audioId, subtitl
     if (command === 'play_next' || command === 'play_last') {
       if (result) result.textContent = command === 'play_next' ? 'Added next.' : 'Added to queue.';
     } else {
-      closePlexShell();
+      closePlexShell({force: true});
     }
   } catch (error) {
     if (result) result.textContent = error && error.message ? error.message : 'Plex action failed.';
@@ -635,13 +635,14 @@ async function openPlexDetail(itemId, fallbackTitle, source){
   const detail = document.getElementById('plexDetail');
   const backdrop = document.getElementById('plexDetailBackdrop');
   if (!detail || !backdrop || !itemId) return;
+  const wasOpen = !detail.classList.contains('hidden');
   __plexDetailFocus = source && typeof source.focus === 'function' ? source : document.activeElement;
   detail.classList.remove('hidden');
   detail.setAttribute('aria-hidden', 'false');
   detail.textContent = `Loading ${String(fallbackTitle || 'details')}…`;
   backdrop.classList.remove('hidden');
   backdrop.setAttribute('aria-hidden', 'false');
-  _uiPushLayer();
+  if (!wasOpen) _uiPushLayer();
   try {
     const controller = new AbortController();
     const payload = await _plexFetchJson(`/plex/items/${encodeURIComponent(itemId)}`, controller);
@@ -660,6 +661,7 @@ async function openPlexShell(){
   if (typeof syncBrowseLaunchButtons === 'function') syncBrowseLaunchButtons();
   __plexLastFocus = document.activeElement;
   __plexVisible = true;
+  if (typeof syncAndroidStatusBarTheme === 'function') syncAndroidStatusBarTheme();
   const shell = document.getElementById('plexShell');
   if (shell) {
     shell.classList.remove('hidden');
@@ -676,7 +678,9 @@ async function openPlexShell(){
 function closePlexShell(options){
   const fromNav = !!(options && options.fromNav);
   const force = !!(options && options.force);
-  if (!fromNav && !force && __plexVisible && __uiNavDepth > 0) {
+  const wasVisible = __plexVisible;
+  const wasDetailOpen = !!(window.relaytvPlex && window.relaytvPlex.isDetailOpen());
+  if (!fromNav && !force && wasVisible && __uiNavDepth > 0) {
     try { history.back(); } catch (_error) {}
     return;
   }
@@ -691,6 +695,18 @@ function closePlexShell(options){
     shell.setAttribute('aria-hidden', 'true');
   }
   document.body.classList.remove('plexNoScroll');
+  if (typeof syncAndroidStatusBarTheme === 'function') syncAndroidStatusBarTheme();
+  if (!fromNav && force && wasVisible && __uiNavDepth > 0) {
+    const layersToPop = Math.min(__uiNavDepth, wasDetailOpen ? 2 : 1);
+    try {
+      if (layersToPop > 1 && typeof history.go === 'function') {
+        __uiNavDepth = Math.max(0, __uiNavDepth - (layersToPop - 1));
+        history.go(-layersToPop);
+      } else if (layersToPop >= 1) {
+        history.back();
+      }
+    } catch (_error) {}
+  }
   const focus = __plexLastFocus && typeof __plexLastFocus.focus === 'function'
     ? __plexLastFocus
     : document.getElementById('plexOpenBtn');
@@ -700,7 +716,7 @@ function closePlexShell(options){
 
 function bindPlexUi(){
   document.getElementById('plexOpenBtn')?.addEventListener('click', openPlexShell);
-  document.getElementById('plexBackBtn')?.addEventListener('click', () => closePlexShell());
+  document.getElementById('plexBackBtn')?.addEventListener('click', () => closePlexShell({force: true}));
   document.getElementById('plexDetailBackdrop')?.addEventListener('click', () => closePlexDetail());
   document.getElementById('plexMoreBtn')?.addEventListener('click', () => loadPlexLibraryPage(true));
   document.querySelectorAll('.plexTab').forEach(button => button.addEventListener('click', () => {
