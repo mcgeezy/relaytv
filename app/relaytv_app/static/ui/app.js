@@ -2113,8 +2113,11 @@ function _themeEffective(mode){
 function applyTheme(mode){
   _themeApplyToSheets(mode);
   try { document.documentElement.style.colorScheme = (mode === 'auto') ? '' : mode; } catch (_e) {}
+  const effective = _themeEffective(mode);
+  const bgColorHex = effective === 'light' ? '#edf2ff' : '#05070d';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', _themeEffective(mode) === 'light' ? '#edf2ff' : '#05070d');
+  if (meta) meta.setAttribute('content', bgColorHex);
+  try { window.RelayTVAndroid?.onThemeChanged?.(effective, bgColorHex); } catch (_e) {}
   document.querySelectorAll('.mtBtn').forEach((b) => {
     const on = (b.dataset.themeMode || 'auto') === mode;
     b.classList.toggle('on', on);
@@ -2189,6 +2192,55 @@ function bindHeaderMenu(){
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeHeaderMenu();
   });
+}
+
+function bindAndroidBridge(){
+  const bridge = window.RelayTVAndroid;
+  if (!bridge || typeof bridge !== 'object') return false;
+
+  try { document.documentElement.classList.add('android-app'); } catch (_e) {}
+
+  const brand = document.getElementById('hdrBrand');
+  if (brand) {
+    brand.setAttribute('role', 'button');
+    brand.setAttribute('tabindex', '0');
+    brand.setAttribute('aria-label', 'Switch RelayTV server');
+    brand.setAttribute('title', 'Switch RelayTV server');
+    const openServers = () => {
+      closeHeaderMenu();
+      try { window.RelayTVAndroid?.openServers?.(); } catch (_e) {}
+    };
+    brand.onclick = openServers;
+    brand.onkeydown = (e) => {
+      if (!e) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        try { e.preventDefault(); } catch (_err) {}
+        openServers();
+      }
+    };
+  }
+
+  const androidSection = document.getElementById('hdrMenuAndroidSection');
+  if (androidSection) androidSection.classList.remove('hidden');
+
+  const menuBindings = [
+    ['androidServersBtn', 'openServers'],
+    ['androidSettingsBtn', 'openSettings'],
+    ['androidReloadBtn', 'reload'],
+    ['androidPrivacyBtn', 'openPrivacy'],
+  ];
+  for (const [id, method] of menuBindings) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.onclick = () => {
+      closeHeaderMenu();
+      try { window.RelayTVAndroid?.[method]?.(); } catch (_e) {}
+    };
+  }
+
+  try { bridge.onBridgeReady?.(); } catch (_e) {}
+  try { applyTheme(_themeStoredMode()); } catch (_e) {}
+  return true;
 }
 
 function _fmtTs(ts){
@@ -4560,6 +4612,7 @@ window.addEventListener('DOMContentLoaded', () => {
   primeRemoteVolumeSlider().catch(() => {});
   bindHeaderMenu();
   bindThemeUi();
+  bindAndroidBridge();
   bindHistoryUi();
   bindAboutUi();
   bindNowLanguageUi();
