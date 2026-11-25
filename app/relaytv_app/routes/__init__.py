@@ -4341,9 +4341,12 @@ def ui():
 <body>
   <div class="wrap">
     <header>
-      <div class="hdrBrand">
+      <div id="hdrBrand" class="hdrBrand">
         <span class="hdrKicker" aria-hidden="true">RelayTV</span>
-        <h1 id="appBrandName">RelayTV</h1>
+        <div class="hdrBrandTitleRow">
+          <h1 id="appBrandName">RelayTV</h1>
+          <svg class="hdrBrandChevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 9.5L12 15l5.5-5.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        </div>
       </div>
       <div class="hdrRight">
         <div id="hdrActions" class="hdrActions" role="toolbar" aria-label="Quick actions">
@@ -4373,6 +4376,12 @@ def ui():
                   <button type="button" class="mtBtn" data-theme-mode="dark" role="menuitemradio" aria-checked="false">Dark</button>
                   <button type="button" class="mtBtn" data-theme-mode="light" role="menuitemradio" aria-checked="false">Light</button>
                 </div>
+              </div>
+              <div id="hdrMenuAndroidSection" class="hdrMenuAndroid hidden" role="group" aria-label="Android app">
+                <button id="androidServersBtn" type="button" class="hdrMenuItem" role="menuitem" title="Switch server"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="6" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><rect x="3.5" y="13.5" width="17" height="6" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="7.5" cy="7.5" r="1" fill="currentColor"/><circle cx="7.5" cy="16.5" r="1" fill="currentColor"/></svg>Switch server</button>
+                <button id="androidSettingsBtn" type="button" class="hdrMenuItem" role="menuitem" title="App settings"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="3.5" width="11" height="17" rx="2.4" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M10.5 17.5h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>App settings</button>
+                <button id="androidReloadBtn" type="button" class="hdrMenuItem" role="menuitem" title="Reload"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 6.5v4.5H15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 11a7.5 7.5 0 1 0-1.6 5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>Reload</button>
+                <button id="androidPrivacyBtn" type="button" class="hdrMenuItem" role="menuitem" title="Privacy policy"><svg class="miIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 3v5.2c0 4.4-3 7.5-7 8.8-4-1.3-7-4.4-7-8.8V6.5l7-3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none"/></svg>Privacy policy</button>
               </div>
               <div class="hdrMenuFoot"><span id="menuDeviceName">RelayTV</span><span id="menuAppVersion"></span></div>
             </div>

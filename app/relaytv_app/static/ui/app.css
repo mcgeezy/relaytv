@@ -73,6 +73,51 @@
       gap: 1px;
       min-width: 0;
     }
+    .hdrBrandTitleRow{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .hdrBrandChevron{
+      display: none;
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      margin-top: 2px;
+      color: rgba(165, 205, 255, .86);
+      transition: transform .15s ease, color .15s ease;
+    }
+    html.android-app body{
+      padding-top: max(10px, env(safe-area-inset-top), calc(var(--relaytv-android-top, 0px) + 6px));
+    }
+    html.android-app .hdrBrand{
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      padding: 4px 8px 4px 6px;
+      margin: -4px -8px -4px -6px;
+      border-radius: 12px;
+      transition: background .14s ease;
+    }
+    html.android-app .hdrBrand:hover{
+      background: rgba(148, 180, 255, .12);
+    }
+    html.android-app .hdrBrand:active{
+      background: rgba(148, 180, 255, .20);
+    }
+    html.android-app .hdrBrand:focus-visible{
+      outline: 2px solid rgba(120, 180, 255, .72);
+      outline-offset: 2px;
+    }
+    html.android-app .hdrBrandChevron{
+      display: block;
+    }
+    html.android-app .hdrBrand:hover .hdrBrandChevron,
+    html.android-app .hdrBrand:active .hdrBrandChevron{
+      color: #dbeafe;
+    }
     .hdrKicker{
       font-size: 10px;
       font-weight: 800;
@@ -82,6 +127,8 @@
     }
     h1{
       margin: 0;
+      min-width: 0;
+      flex: 0 1 auto;
       font-weight: 800;
       letter-spacing: .2px;
       font-size: clamp(19px, 2.6vw, 26px);
@@ -306,6 +353,15 @@
       background: linear-gradient(180deg, rgba(56,189,248,.75), rgba(37,99,235,.68));
       color: #f0f9ff;
       box-shadow: inset 0 1px 0 rgba(255,255,255,.25) !important;
+    }
+    .hdrMenuAndroid{
+      display: none;
+      margin-top: 2px;
+      padding-top: 2px;
+      border-top: 1px solid rgba(148,180,255,.16);
+    }
+    html.android-app .hdrMenuAndroid{
+      display: grid;
     }
     .hdrMenuFoot{
       display: flex;
@@ -2433,6 +2489,12 @@
 }
 @media (prefers-color-scheme: light){
   .hdrKicker{ color: rgba(37, 99, 235, .60); }
+  html.android-app .hdrBrand:hover{ background: rgba(37, 99, 235, .08); }
+  html.android-app .hdrBrand:active{ background: rgba(37, 99, 235, .14); }
+  html.android-app .hdrBrand:focus-visible{ outline-color: rgba(37, 99, 235, .55); }
+  html.android-app .hdrBrandChevron{ color: rgba(37, 99, 235, .74); }
+  html.android-app .hdrBrand:hover .hdrBrandChevron,
+  html.android-app .hdrBrand:active .hdrBrandChevron{ color: #1d4ed8; }
   h1{
     background: linear-gradient(180deg, #111c38, #31456f);
     -webkit-background-clip: text;
@@ -2462,6 +2524,7 @@
   .hdrMenuItem + .hdrMenuItem{ border-top-color: rgba(37, 99, 235, .12); }
   .hdrMenuItem .miIcon{ color: rgba(37, 99, 235, .72); }
   .hdrMenuItem:hover{ background: rgba(56, 140, 248, .12); }
+  .hdrMenuAndroid{ border-top-color: rgba(37, 99, 235, .14); }
   .hdrMenuFoot{
     border-top-color: rgba(37, 99, 235, .14);
     color: rgba(37, 99, 235, .58);
