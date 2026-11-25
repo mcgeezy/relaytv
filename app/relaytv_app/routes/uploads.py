@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import contextvars
 import os
 import tempfile
 import time
@@ -27,6 +28,31 @@ logger = get_logger("routes.uploads")
 # routine progress heartbeat is coarser.
 _DURABLE_SYNC_BYTES = 64 * 1024 * 1024
 _DURABLE_SYNC_SEC = 5.0
+_PRE_REGISTERED_UPLOAD_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_PRE_REGISTERED_UPLOAD_ID", default=None
+)
+
+
+def _open_temp_upload_file(target_dir: str) -> tuple[object, str]:
+    """Create and open an exclusive upload temp file off the event loop."""
+    fd, tmp_path = tempfile.mkstemp("relaytv-upload-", ".part", target_dir)
+    try:
+        return os.fdopen(fd, "wb"), tmp_path
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _open_binary_write(path: str):
+    """Open an upload destination file for writing off the event loop."""
+    return open(path, "wb")
+
+
+def _close_file_handle(handle: object | None) -> None:
+    """Close an open upload file handle off the event loop."""
+    if handle is None:
+        return
+    handle.close()
 
 
 def _write_chunk(handle, chunk: bytes, *, sync: bool) -> None:
@@ -198,33 +224,41 @@ async def ingest_media(
         )
 
     max_bytes = upload_store.max_upload_bytes(settings_snapshot)
-    upload_id = upload_store.new_upload_id()
+    pre_registered_id = _PRE_REGISTERED_UPLOAD_ID.get()
+    owns_active_upload = not pre_registered_id
+    upload_id = pre_registered_id or upload_store.new_upload_id()
+    if owns_active_upload:
+        upload_store.register_active_upload(upload_id)
     public_name = upload_store.sanitize_upload_filename(filename, content_type=content_type)
     target_dir = upload_store.upload_dir(upload_id)
-    await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
-    fd, tmp_path = await run_in_threadpool(tempfile.mkstemp, "relaytv-upload-", ".part", target_dir)
-    os.close(fd)
-    final_path = os.path.join(target_dir, public_name)
+    out = None
+    tmp_path = ""
     size_bytes = 0
+    stored_ok = False
     try:
-        with open(tmp_path, "wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                size_bytes += len(chunk)
-                if size_bytes > max_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail="Uploaded media exceeds configured storage size limit",
-                    )
-                await run_in_threadpool(_write_chunk, out, chunk, sync=False)
-            # One sync at the end: the file is not readable by anything until
-            # the os.replace below publishes it.
-            await run_in_threadpool(_write_chunk, out, b"", sync=True)
+        await run_in_threadpool(os.makedirs, target_dir, 0o777, True)
+        out, tmp_path = await run_in_threadpool(_open_temp_upload_file, target_dir)
+        final_path = os.path.join(target_dir, public_name)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            size_bytes += len(chunk)
+            if size_bytes > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Uploaded media exceeds configured storage size limit",
+                )
+            await run_in_threadpool(_write_chunk, out, chunk, sync=False)
+        # One sync at the end: the file is not readable by anything until
+        # the os.replace below publishes it.
+        await run_in_threadpool(_write_chunk, out, b"", sync=True)
+        await run_in_threadpool(_close_file_handle, out)
+        out = None
         if size_bytes <= 0:
             raise HTTPException(status_code=400, detail="Uploaded media is empty")
         await run_in_threadpool(os.replace, tmp_path, final_path)
+        tmp_path = ""
         media_title = (
             str(title or "").strip() or os.path.basename(filename or public_name) or public_name
         )
@@ -242,8 +276,9 @@ async def ingest_media(
         media_url = str(
             request.url_for("get_uploaded_media", upload_id=upload_id, filename=public_name)
         )
-        item = upload_store.build_item(meta, absolute_url=media_url)
         cleanup_result = await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
+        item = await run_in_threadpool(upload_store.build_item, meta, absolute_url=media_url)
+        stored_ok = True
         return {
             "ok": True,
             "media_id": upload_id,
@@ -259,24 +294,46 @@ async def ingest_media(
         raise HTTPException(status_code=500, detail="Failed storing uploaded media") from exc
     finally:
         try:
-            await file.close()
-        except Exception:
-            pass
-        await run_in_threadpool(_cleanup_tmp_file, tmp_path)
+            if out is not None:
+                try:
+                    await run_in_threadpool(_close_file_handle, out)
+                except Exception:
+                    pass
+            try:
+                await file.close()
+            except Exception:
+                pass
+            if tmp_path:
+                await run_in_threadpool(_cleanup_tmp_file, tmp_path)
+            if not stored_ok:
+                try:
+                    await run_in_threadpool(upload_store.delete_upload, upload_id)
+                except Exception:
+                    pass
+        finally:
+            if owns_active_upload:
+                upload_store.unregister_active_upload(upload_id)
 
 
 @router.post("/ingest/media/enqueue")
 async def ingest_media_enqueue(
     request: Request, file: UploadFile = File(...), title: str | None = Form(None)
 ):
-    created = await ingest_media(request, file=file, title=title)
-    media_url = str(created.get("url") or "").strip() if isinstance(created, dict) else ""
-    if not media_url:
-        raise HTTPException(status_code=500, detail="Uploaded media missing playback URL")
-    result = await run_in_threadpool(_enqueue_uploaded_media_url, media_url)
-    out = dict(created)
-    out.update({"action": "enqueue", "result": result})
-    return out
+    upload_id = upload_store.new_upload_id()
+    upload_store.register_active_upload(upload_id)
+    token = _PRE_REGISTERED_UPLOAD_ID.set(upload_id)
+    try:
+        created = await ingest_media(request, file=file, title=title)
+        media_url = str(created.get("url") or "").strip() if isinstance(created, dict) else ""
+        if not media_url:
+            raise HTTPException(status_code=500, detail="Uploaded media missing playback URL")
+        result = await run_in_threadpool(_enqueue_uploaded_media_url, media_url)
+        out = dict(created)
+        out.update({"action": "enqueue", "result": result})
+        return out
+    finally:
+        _PRE_REGISTERED_UPLOAD_ID.reset(token)
+        upload_store.unregister_active_upload(upload_id)
 
 
 @router.post("/ingest/media/play")
@@ -335,80 +392,85 @@ async def ingest_media_play(
     stored_ok = False
     synced_bytes = 0
     synced_at = time.monotonic()
+    out = None
     try:
-        with open(final_path, "wb") as out:
-            while True:
-                chunk_started = time.time()
-                chunk = await file.read(1024 * 1024)
-                chunk_finished = time.time()
-                if not chunk:
-                    break
-                size_bytes += len(chunk)
-                if size_bytes > max_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail="Uploaded media exceeds configured storage size limit",
-                    )
-                # Progressive playback reads this file while it is being
-                # written, so the bytes must reach the filesystem every chunk.
-                # Forcing them all the way to the platter every chunk is what
-                # was expensive, and is not what the reader needs.
-                now_mono = time.monotonic()
-                due = (
-                    size_bytes - synced_bytes >= _DURABLE_SYNC_BYTES
-                    or now_mono - synced_at >= _DURABLE_SYNC_SEC
+        out = await run_in_threadpool(_open_binary_write, final_path)
+        while True:
+            chunk_started = time.time()
+            chunk = await file.read(1024 * 1024)
+            chunk_finished = time.time()
+            if not chunk:
+                break
+            size_bytes += len(chunk)
+            if size_bytes > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Uploaded media exceeds configured storage size limit",
                 )
-                await run_in_threadpool(_write_chunk, out, chunk, sync=due)
+            # Progressive playback reads this file while it is being
+            # written, so the bytes must reach the filesystem every chunk.
+            # Forcing them all the way to the platter every chunk is what
+            # was expensive, and is not what the reader needs.
+            now_mono = time.monotonic()
+            due = (
+                size_bytes - synced_bytes >= _DURABLE_SYNC_BYTES
+                or now_mono - synced_at >= _DURABLE_SYNC_SEC
+            )
+            await run_in_threadpool(_write_chunk, out, chunk, sync=due)
 
-                session = upload_store.mark_session_progress(
-                    session,
-                    bytes_received=size_bytes,
-                    chunk_size=len(chunk),
-                    chunk_started_unix=chunk_started,
-                    chunk_finished_unix=chunk_finished,
-                    path=final_path,
+            session = upload_store.mark_session_progress(
+                session,
+                bytes_received=size_bytes,
+                chunk_size=len(chunk),
+                chunk_started_unix=chunk_started,
+                chunk_finished_unix=chunk_finished,
+                path=final_path,
+            )
+            if due:
+                # The in-memory session is exact either way; this is the
+                # durable heartbeat, and it rides along with the sync.
+                synced_bytes = size_bytes
+                synced_at = now_mono
+                await run_in_threadpool(upload_store.write_session, upload_id, session)
+
+            if progressive_started or session.get("fallback_to_full_upload") is True:
+                continue
+
+            ready, reason = await run_in_threadpool(
+                upload_store.progressive_start_ready,
+                meta,
+                session,
+            )
+            if ready:
+                item = await run_in_threadpool(
+                    upload_store.build_item, meta, absolute_url=media_url
                 )
-                if due:
-                    # The in-memory session is exact either way; this is the
-                    # durable heartbeat, and it rides along with the sync.
-                    synced_bytes = size_bytes
-                    synced_at = now_mono
+                item["_local_stream_path"] = final_path
+                try:
+                    now_playing = await _play_uploaded_item(item, mode="ingest_media_play")
+                    progressive_started = True
+                    playback_mode = "progressive"
+                    session = upload_store.mark_session_progressive_started(session)
                     await run_in_threadpool(upload_store.write_session, upload_id, session)
-
-                if progressive_started or session.get("fallback_to_full_upload") is True:
-                    continue
-
-                ready, reason = await run_in_threadpool(
-                    upload_store.progressive_start_ready,
-                    meta,
-                    session,
-                )
-                if ready:
-                    item = upload_store.build_item(meta, absolute_url=media_url)
-                    item["_local_stream_path"] = final_path
-                    try:
-                        now_playing = await _play_uploaded_item(item, mode="ingest_media_play")
-                        progressive_started = True
-                        playback_mode = "progressive"
-                        session = upload_store.mark_session_progressive_started(session)
-                        await run_in_threadpool(upload_store.write_session, upload_id, session)
-                    except Exception as exc:
-                        logger.warning(
-                            "progressive_upload_start_failed id=%s error=%s", upload_id, exc
-                        )
-                        fallback_reason = "start_failed"
-                        session = upload_store.mark_session_fallback(session, fallback_reason)
-                        await run_in_threadpool(upload_store.write_session, upload_id, session)
-                elif reason not in ("buffering", "warming_up", "waiting_for_upload"):
-                    fallback_reason = str(reason or "").strip() or "fallback_full_upload"
+                except Exception as exc:
+                    logger.warning(
+                        "progressive_upload_start_failed id=%s error=%s", upload_id, exc
+                    )
+                    fallback_reason = "start_failed"
                     session = upload_store.mark_session_fallback(session, fallback_reason)
                     await run_in_threadpool(upload_store.write_session, upload_id, session)
-                    _progressive_fallback_toast()
-                    fallback_toast_sent = True
+            elif reason not in ("buffering", "warming_up", "waiting_for_upload"):
+                fallback_reason = str(reason or "").strip() or "fallback_full_upload"
+                session = upload_store.mark_session_fallback(session, fallback_reason)
+                await run_in_threadpool(upload_store.write_session, upload_id, session)
+                _progressive_fallback_toast()
+                fallback_toast_sent = True
 
-            # Final durable sync: the file is complete and playback may still
-            # be reading it.
-            await run_in_threadpool(_write_chunk, out, b"", sync=True)
+        # Final durable sync: the file is complete and playback may still
+        # be reading it.
+        await run_in_threadpool(_write_chunk, out, b"", sync=True)
+        await run_in_threadpool(_close_file_handle, out)
+        out = None
 
         if size_bytes <= 0:
             raise HTTPException(status_code=400, detail="Uploaded media is empty")
@@ -418,7 +480,7 @@ async def ingest_media_play(
         session = upload_store.mark_session_complete(session)
         await run_in_threadpool(upload_store.write_session, upload_id, session)
 
-        item = upload_store.build_item(meta, absolute_url=media_url)
+        item = await run_in_threadpool(upload_store.build_item, meta, absolute_url=media_url)
         if not progressive_started:
             if session.get("fallback_to_full_upload") is True and not fallback_toast_sent:
                 _progressive_fallback_toast()
@@ -430,13 +492,14 @@ async def ingest_media_play(
             await run_in_threadpool(upload_store.write_session, upload_id, session)
 
         cleanup_result = await run_in_threadpool(upload_store.cleanup_uploads, settings_snapshot)
+        final_item = await run_in_threadpool(upload_store.build_item, meta, absolute_url=media_url)
         stored_ok = True
         return {
             "ok": True,
             "media_id": upload_id,
             "media_path": upload_store.upload_public_path(upload_id, public_name),
             "url": media_url,
-            "item": upload_store.build_item(meta, absolute_url=media_url),
+            "item": final_item,
             "now_playing": now_playing,
             "playback_mode": playback_mode,
             "fallback_reason": fallback_reason,
@@ -451,12 +514,19 @@ async def ingest_media_play(
         ) from exc
     finally:
         try:
-            await file.close()
-        except Exception:
-            pass
-        if not stored_ok:
+            if out is not None:
+                try:
+                    await run_in_threadpool(_close_file_handle, out)
+                except Exception:
+                    pass
             try:
-                await run_in_threadpool(upload_store.delete_upload, upload_id)
+                await file.close()
             except Exception:
                 pass
-        upload_store.unregister_active_upload(upload_id)
+            if not stored_ok:
+                try:
+                    await run_in_threadpool(upload_store.delete_upload, upload_id)
+                except Exception:
+                    pass
+        finally:
+            upload_store.unregister_active_upload(upload_id)

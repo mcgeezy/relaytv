@@ -241,7 +241,7 @@ class SafeHttpRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         resolved = urljoin(req.full_url, str(newurl or ""))
         if not is_allowed_outbound_http_url(resolved):
-            raise urllib.error.URLError(f"Blocked unsafe redirect target: {newurl}")
+            raise urllib.error.URLError("Blocked unsafe redirect target")
         return super().redirect_request(req, fp, code, msg, headers, resolved)
 
 

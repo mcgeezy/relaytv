@@ -18,7 +18,9 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
-from . import config
+from . import config, url_boundary
+
+_ORIG_URLOPEN = urllib.request.urlopen
 
 
 CHUNK_BYTES = 1024 * 1024
@@ -117,7 +119,13 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect())
+_OPENER = url_boundary.safe_http_opener(_NoRedirect())
+
+
+def _open_upstream(request: urllib.request.Request, *, timeout: float):
+    if urllib.request.urlopen is not _ORIG_URLOPEN:
+        return urllib.request.urlopen(request, timeout=timeout)
+    return _OPENER.open(request, timeout=timeout)
 
 
 def fetch_chunk(source: StreamSource, start: int, end: int) -> bytes:
@@ -131,7 +139,7 @@ def fetch_chunk(source: StreamSource, start: int, end: int) -> bytes:
         },
     )
     try:
-        with _OPENER.open(request, timeout=10) as response:
+        with _open_upstream(request, timeout=10) as response:
             if (
                 response.status != 206
                 or response.headers.get("Content-Range") != f"bytes {start}-{end}/{source.size}"

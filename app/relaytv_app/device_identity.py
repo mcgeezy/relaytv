@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import socket
+import tempfile
 import threading
 import uuid
 
@@ -54,13 +55,38 @@ def _read_persisted_id() -> str:
 
 def _write_persisted_id(value: str) -> None:
     path = _identity_path()
+    fd: int | None = None
+    tmp: str | None = None
     try:
         state._ensure_state_dir()
-        with open(path, "w", encoding="utf-8") as handle:
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+            dir=parent,
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
             handle.write(value)
-        os.chmod(path, 0o600)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        tmp = None
     except Exception as exc:
         logger.warning("device_id_write_failed path=%s error=%s", path, exc)
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def device_id() -> str:

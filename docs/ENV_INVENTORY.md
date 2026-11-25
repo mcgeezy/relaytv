@@ -312,6 +312,8 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_SHELL_V2_NATIVE_PLAYING_GRACE_SEC` | `player.py` | - | static env |
 | `RELAYTV_SLOW_REQUEST_MS` | `debug.py` | - | static env |
 | `RELAYTV_SNAPSHOT_DIR` | `routes/snapshots.py` | - | static env |
+| `RELAYTV_SNAPSHOT_MAX_BYTES` | `routes/snapshots.py` | - | static env |
+| `RELAYTV_SNAPSHOT_MAX_FILES` | `routes/snapshots.py` | - | static env |
 | `RELAYTV_SNAPSHOT_TIMEOUT_SEC` | `routes/snapshots.py` | - | static env |
 | `RELAYTV_SPLASH` | `player.py` | - | static env |
 | `RELAYTV_SPLASH_ARGS` | `player.py` | - | static env |

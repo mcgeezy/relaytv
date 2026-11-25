@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 import urllib.error
@@ -92,24 +93,36 @@ def _load_payload() -> dict:
 def _save_payload(peers: list[dict]) -> None:
     path = peers_path()
     payload = {"version": SCHEMA_VERSION, "peers": peers, "saved_at": time.time()}
-    tmp = None
+    fd: int | None = None
+    tmp: str | None = None
     try:
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        tmp = f"{path}.{uuid.uuid4().hex[:8]}.tmp"
-        with open(tmp, "w", encoding="utf-8") as handle:
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+            dir=parent,
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
             json.dump(payload, handle, ensure_ascii=False, indent=2)
-        os.chmod(tmp, 0o600)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
         tmp = None
     except Exception as exc:
         logger.warning("peers_write_failed path=%s error=%s", path, exc)
     finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         if tmp and os.path.exists(tmp):
             try:
                 os.unlink(tmp)
-            except Exception:
+            except OSError:
                 pass
 
 
@@ -156,7 +169,9 @@ def normalize_base_url(value: object) -> str:
     # send; peers authenticate with a bearer token instead.
     if parsed.username or parsed.password:
         raise PeerError("device address must not contain credentials")
-    if url_boundary.is_forbidden_ip_literal(host):
+    if url_boundary.is_forbidden_ip_literal(host) or url_boundary.has_forbidden_resolved_address(
+        host
+    ):
         raise PeerError("invalid_peer_url: forbidden device address")
 
     netloc = f"[{host}]" if ":" in host else host
@@ -427,7 +442,7 @@ class _SameOriginPeerRedirectHandler(urllib.request.HTTPRedirectHandler):
             or not parsed.hostname
             or parsed.username
             or parsed.password
-            or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+            or not url_boundary.is_allowed_outbound_http_url(resolved)
             or _url_origin(resolved) != self._expected_origin
         ):
             raise urllib.error.HTTPError(
@@ -444,7 +459,7 @@ def _open_peer_request(
 ):
     if urllib.request.urlopen is not _ORIG_URLOPEN:
         return urllib.request.urlopen(request, timeout=timeout)
-    opener = urllib.request.build_opener(_SameOriginPeerRedirectHandler(expected_origin))
+    opener = url_boundary.safe_http_opener(_SameOriginPeerRedirectHandler(expected_origin))
     return opener.open(request, timeout=timeout)
 
 
