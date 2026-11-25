@@ -3291,7 +3291,7 @@ def _effective_audio_device(settings: dict[str, Any] | None = None) -> str:
         s.get("audio_device") or runtime_config.snapshot().raw("MPV_AUDIO_DEVICE") or ""
     ).strip()
     if explicit:
-        return explicit
+        return devices.normalize_audio_device_for_mpv(explicit)
 
     connector = (
         s.get("drm_connector") or runtime_config.snapshot().raw("RELAYTV_DRM_CONNECTOR") or ""

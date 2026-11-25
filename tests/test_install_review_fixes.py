@@ -304,6 +304,7 @@ def test_drm_override_blanks_display_and_stays_valid_with_nvidia(
             "WAYLAND_DISPLAY": "wayland-0",
             "XDG_SESSION_TYPE": "wayland",
             "RELAYTV_NVIDIA_DOCKER_TOOLKIT": "1",
+            "RELAYTV_NVIDIA_CDI": "0",
         }
     )
     res = subprocess.run(
@@ -339,6 +340,59 @@ def test_drm_override_blanks_display_and_stays_valid_with_nvidia(
         assert cfg.returncode == 0, cfg.stderr
         assert 'DISPLAY: ""' in cfg.stdout
         assert 'WAYLAND_DISPLAY: ""' in cfg.stdout
+
+
+def test_nvidia_cdi_override_emits_cdi_reservation_and_validates(
+    tmp_path: Path,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    installer = _copy_host_installer(tmp_path)
+    text = installer.read_text(encoding="utf-8")
+    text = text.replace(
+        'NVIDIA_DEVICE_DETECTED="$(detect_nvidia_device)"',
+        'NVIDIA_DEVICE_DETECTED="1"',
+        1,
+    )
+    installer.write_text(text, encoding="utf-8")
+
+    env = _clean_installer_env(
+        {
+            "DISPLAY": ":0",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_SESSION_TYPE": "wayland",
+            "RELAYTV_NVIDIA_DOCKER_TOOLKIT": "1",
+            "RELAYTV_NVIDIA_CDI": "1",
+        }
+    )
+    res = subprocess.run(
+        [str(installer), "--mode", "wayland", "--use-shell-env"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+
+    assert "driver: cdi" in override
+    assert "nvidia.com/gpu=all" in override
+    assert "capabilities: [gpu]" in override
+    assert "gpus: all" not in override
+    assert override.count("environment:") == 1
+
+    if shutil.which("docker") is not None:
+        cfg = subprocess.run(
+            ["docker", "compose", "config"],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert cfg.returncode == 0, cfg.stderr
+        assert "driver: cdi" in cfg.stdout
+        assert "nvidia.com/gpu=all" in cfg.stdout
 
 
 def test_entrypoint_clears_inherited_display_vars_in_drm_and_non_remote_headless(
@@ -693,3 +747,358 @@ def test_start_headless_remote_starts_x11vnc_with_valid_password_file(
     assert "-rfbauth" in spawned[0]
     assert str(pw_path) in spawned[0]
     assert "-nopw" not in spawned[0]
+
+
+# --- Finding 7: detect_nvidia_cdi authoritative docker info & bootstrap ------
+
+
+def test_detect_nvidia_cdi_treats_successful_docker_info_as_authoritative_and_falls_back_only_on_failure(
+    tmp_path: Path,
+) -> None:
+    detect_fn = _extract_bash_function(ROOT_DIR / "scripts" / "install.sh", "detect_nvidia_cdi")
+    cdi_etc = tmp_path / "etc-cdi"
+    cdi_var = tmp_path / "var-cdi"
+    cdi_etc.mkdir()
+    cdi_var.mkdir()
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+
+    def _run_detect(extra_env: dict[str, str] | None = None) -> str:
+        env = {
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "RELAYTV_CDI_ETC_DIR": str(cdi_etc),
+            "RELAYTV_CDI_VAR_DIR": str(cdi_var),
+        }
+        if extra_env:
+            env.update(extra_env)
+        res = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail\n{detect_fn}\ndetect_nvidia_cdi"],
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, res.stderr
+        return res.stdout
+
+    # 1. docker info succeeds WITH nvidia.com/gpu -> "1"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'Server Version: 29.0\\nCDI spec directories:\\n  /etc/cdi\\nDiscovered Devices:\\n  cdi: nvidia.com/gpu=all\\n'\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    assert _run_detect() == "1"
+
+    # 2. docker info succeeds WITHOUT nvidia.com/gpu even when /etc/cdi/nvidia.yaml exists -> "0"
+    (cdi_etc / "nvidia.yaml").write_text(
+        "cdiVersion: 0.5.0\nkind: nvidia.com/gpu\n",
+        encoding="utf-8",
+    )
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'Server Version: 24.0\\nRuntimes: io.containerd.runc.v2 nvidia runc\\n'\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    assert _run_detect() == "0"
+
+    # 3. docker info fails (e.g. permission denied on socket) -> falls back to CDI spec file -> "1"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'permission denied while trying to connect to the Docker daemon socket\\n' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    assert _run_detect() == "1"
+
+    # 4. docker info fails and no CDI spec file exists -> "0"
+    (cdi_etc / "nvidia.yaml").unlink()
+    assert _run_detect() == "0"
+
+    # 5. Case-insensitive CDI spec file matching when docker info fails -> "1"
+    (cdi_etc / "nvidia-upper.yaml").write_text(
+        "cdiVersion: 0.5.0\nkind: NVIDIA.COM/GPU\n",
+        encoding="utf-8",
+    )
+    assert _run_detect() == "1"
+
+    # 6. Explicit RELAYTV_NVIDIA_CDI=0 / 1 overrides auto-detection
+    assert _run_detect({"RELAYTV_NVIDIA_CDI": "0"}) == "0"
+    (cdi_etc / "nvidia-upper.yaml").unlink()
+    assert _run_detect({"RELAYTV_NVIDIA_CDI": "1"}) == "1"
+
+    # 7. Invalid non-0|1 RELAYTV_NVIDIA_CDI warns on stderr and falls back to auto-detection
+    (cdi_etc / "nvidia.yaml").write_text(
+        "cdiVersion: 0.5.0\nkind: nvidia.com/gpu\n",
+        encoding="utf-8",
+    )
+    warn_res = subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\n{detect_fn}\ndetect_nvidia_cdi"],
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "RELAYTV_CDI_ETC_DIR": str(cdi_etc),
+            "RELAYTV_CDI_VAR_DIR": str(cdi_var),
+            "RELAYTV_NVIDIA_CDI": "yes",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert warn_res.returncode == 0, warn_res.stderr
+    assert warn_res.stdout == "1"
+    assert "WARN: RELAYTV_NVIDIA_CDI must be 0 or 1" in warn_res.stderr
+
+
+def test_nvidia_cdi_only_host_enables_passthrough_without_legacy_toolkit(
+    tmp_path: Path,
+) -> None:
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", tmp_path / "docker-compose.yml")
+    installer = _copy_host_installer(tmp_path)
+    text = installer.read_text(encoding="utf-8")
+    text = (
+        text.replace(
+            'NVIDIA_DEVICE_DETECTED="$(detect_nvidia_device)"',
+            'NVIDIA_DEVICE_DETECTED="1"',
+            1,
+        )
+        .replace(
+            'NVIDIA_DOCKER_TOOLKIT_AVAILABLE="$(detect_nvidia_docker_toolkit)"',
+            'NVIDIA_DOCKER_TOOLKIT_AVAILABLE="0"',
+            1,
+        )
+    )
+    installer.write_text(text, encoding="utf-8")
+
+    env = _clean_installer_env({"RELAYTV_NVIDIA_CDI": "1"})
+    res = subprocess.run(
+        [str(installer), "--mode", "headless"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "NVIDIA passthrough enabled: 1" in res.stdout
+    override = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "driver: cdi" in override
+    assert "nvidia.com/gpu=all" in override
+    assert "capabilities: [gpu]" in override
+    assert "gpus: all" not in override
+
+    # Explicit RELAYTV_NVIDIA_CDI=0 with toolkit unavailable disables passthrough
+    env_off = _clean_installer_env({"RELAYTV_NVIDIA_CDI": "0"})
+    res_off = subprocess.run(
+        [str(installer), "--mode", "headless"],
+        cwd=tmp_path,
+        env=env_off,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res_off.returncode == 0, res_off.stderr
+    assert "NVIDIA passthrough enabled: 0" in res_off.stdout
+    override_off = (tmp_path / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "driver: cdi" not in override_off
+    assert "gpus: all" not in override_off
+
+
+@pytest.mark.parametrize(
+    ("sudo_info_body", "expect_cdi"),
+    [
+        (
+            "Runtimes: io.containerd.runc.v2 runc\\nDiscovered Devices:\\n  cdi: nvidia.com/gpu=all\\n",
+            True,
+        ),
+        (
+            "Runtimes: io.containerd.runc.v2 nvidia runc\\n",
+            False,
+        ),
+    ],
+)
+def test_bootstrap_sudo_docker_info_propagates_nvidia_cdi_hint(
+    tmp_path: Path,
+    sudo_info_body: str,
+    expect_cdi: bool,
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("sudo fallback path only runs for non-root users")
+
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    cdi_etc = tmp_path / "etc-cdi"
+    cdi_var = tmp_path / "var-cdi"
+    cdi_etc.mkdir()
+    cdi_var.mkdir()
+    # Populate a CDI file on disk so the False case proves authoritative `sudo docker info`
+    # propagates RELAYTV_NVIDIA_CDI=0 rather than letting scripts/install.sh fall back to disk.
+    (cdi_etc / "nvidia.yaml").write_text(
+        "cdiVersion: 0.5.0\nkind: nvidia.com/gpu\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+
+    # Direct `docker` fails `info` with permission denied unless invoked via our fake `sudo`
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then\n'
+        "  printf 'Docker Compose version v2.29.0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "${FAKE_SUDO_ACTIVE:-0}" = "1" ] && [ "$1" = "info" ]; then\n'
+        f"  printf '{sudo_info_body}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'permission denied\\n' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    fake_sudo = fake_bin / "sudo"
+    fake_sudo.write_text(
+        "#!/bin/sh\n"
+        'FAKE_SUDO_ACTIVE=1 exec "$@"\n',
+        encoding="utf-8",
+    )
+    fake_sudo.chmod(0o755)
+
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_systemctl.chmod(0o755)
+
+    fake_nvidia_smi = fake_bin / "nvidia-smi"
+    fake_nvidia_smi.write_text("#!/bin/sh\nprintf 'GPU 0: NVIDIA\\n'\n", encoding="utf-8")
+    fake_nvidia_smi.chmod(0o755)
+
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/bin/bash\n"
+        'url="${@: -1}"\n'
+        'rel="${url#*/main/}"\n'
+        f'cat {shlex.quote(str(ROOT_DIR))}/"$rel"\n',
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    env = _clean_installer_env(
+        {
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+            "RELAYTV_CDI_ETC_DIR": str(cdi_etc),
+            "RELAYTV_CDI_VAR_DIR": str(cdi_var),
+        }
+    )
+    res = subprocess.run(
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(install_dir),
+            "--yes",
+            "--no-pull",
+            "--no-start",
+            "--mode",
+            "headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    override = (install_dir / "docker-compose.override.yml").read_text(encoding="utf-8")
+    if expect_cdi:
+        assert "driver: cdi" in override
+        assert "nvidia.com/gpu=all" in override
+        assert "gpus: all" not in override
+    else:
+        assert "gpus: all" in override
+        assert "driver: cdi" not in override
+
+
+def test_bootstrap_invalid_nvidia_cdi_warns_and_falls_back_to_sudo_autodetect(
+    tmp_path: Path,
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("sudo fallback path only runs for non-root users")
+
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then\n'
+        "  printf 'Docker Compose version v2.29.0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "${FAKE_SUDO_ACTIVE:-0}" = "1" ] && [ "$1" = "info" ]; then\n'
+        "  printf 'Runtimes: io.containerd.runc.v2 runc\\nDiscovered Devices:\\n  cdi: nvidia.com/gpu=all\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'permission denied\\n' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    fake_sudo = fake_bin / "sudo"
+    fake_sudo.write_text("#!/bin/sh\nFAKE_SUDO_ACTIVE=1 exec \"$@\"\n", encoding="utf-8")
+    fake_sudo.chmod(0o755)
+
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_systemctl.chmod(0o755)
+
+    fake_nvidia_smi = fake_bin / "nvidia-smi"
+    fake_nvidia_smi.write_text("#!/bin/sh\nprintf 'GPU 0: NVIDIA\\n'\n", encoding="utf-8")
+    fake_nvidia_smi.chmod(0o755)
+
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/bin/bash\n"
+        'url="${@: -1}"\n'
+        'rel="${url#*/main/}"\n'
+        f'cat {shlex.quote(str(ROOT_DIR))}/"$rel"\n',
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    env = _clean_installer_env(
+        {
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+            "RELAYTV_NVIDIA_CDI": "invalid",
+        }
+    )
+    res = subprocess.run(
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(install_dir),
+            "--yes",
+            "--no-pull",
+            "--no-start",
+            "--mode",
+            "headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "WARN: RELAYTV_NVIDIA_CDI must be 0 or 1" in res.stderr
+    override = (install_dir / "docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "driver: cdi" in override
+    assert "nvidia.com/gpu=all" in override

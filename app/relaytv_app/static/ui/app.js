@@ -3331,6 +3331,48 @@ function _renderBrowseServersSettings(data){
   });
 }
 
+function _normalizeAudioSelectionKey(rawId){
+  const s = String(rawId || '').trim();
+  if (!s) return '';
+  return s.replace(/^alsa\//i, '');
+}
+
+function _populateAudioDeviceSelect(audioDev, dev, curAudioDevice){
+  if (!audioDev) return;
+  audioDev.innerHTML = '';
+  const optAuto = document.createElement('option');
+  optAuto.value = '';
+  optAuto.textContent = 'Auto (System Default)';
+  audioDev.appendChild(optAuto);
+
+  const audioList = Array.isArray(dev?.audio_devices) && dev.audio_devices.length
+    ? dev.audio_devices
+    : (Array.isArray(dev?.alsa_devices) ? dev.alsa_devices : []);
+  const seenAudioIds = new Map([['', '']]);
+  audioList.forEach(d => {
+    const id = String(d?.id || '').trim();
+    const normKey = _normalizeAudioSelectionKey(id);
+    if (!id || seenAudioIds.has(normKey)) return;
+    seenAudioIds.set(normKey, id);
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = d.label || (d.desc ? `${id} — ${d.desc}` : id);
+    o.title = id;
+    audioDev.appendChild(o);
+  });
+  const curAudioVal = String(curAudioDevice || '').trim();
+  const curNormKey = _normalizeAudioSelectionKey(curAudioVal);
+  if (curAudioVal && !seenAudioIds.has(curNormKey)) {
+    seenAudioIds.set(curNormKey, curAudioVal);
+    const oCur = document.createElement('option');
+    oCur.value = curAudioVal;
+    oCur.textContent = `${curAudioVal} (current)`;
+    oCur.title = curAudioVal;
+    audioDev.appendChild(oCur);
+  }
+  audioDev.value = curAudioVal ? (seenAudioIds.get(curNormKey) || curAudioVal) : '';
+}
+
 async function loadSettingsUi(){
   const [devRes, setRes, tvRes, jfRes, plexRes, seerrRes, seerrUsersRes] = await Promise.all([
     fetch('/devices'),
@@ -3554,21 +3596,7 @@ async function loadSettingsUi(){
   }
   if (window.relaytvSeerr) window.relaytvSeerr.updateStatus(seerrStatus || {enabled:!!cur.seerr_enabled, configured:!!cur.seerr_api_key_configured});
 
-  if (audioDev){
-    audioDev.innerHTML = '';
-    const optAuto = document.createElement('option');
-    optAuto.value = '';
-    optAuto.textContent = 'Auto';
-    audioDev.appendChild(optAuto);
-
-    (dev.alsa_devices || []).forEach(d => {
-      const o = document.createElement('option');
-      o.value = d.id;
-      o.textContent = d.desc ? `${d.id} — ${d.desc}` : d.id;
-      audioDev.appendChild(o);
-    });
-    audioDev.value = (cur.audio_device || '');
-  }
+  _populateAudioDeviceSelect(audioDev, dev, cur.audio_device);
 
   // Quality dropdown from quality_mode/quality_cap (fallback: ytdlp_format heuristic)
   if (qual){
