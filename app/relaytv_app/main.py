@@ -17,6 +17,8 @@ from .player import (
     start_qt_shell_supervisor_worker,
     start_session_tracker_worker,
     start_splash_screen,
+    stop_cec_monitor,
+    stop_mpv,
     stop_splash_screen,
 )
 from .x11_overlay import start_overlay as start_x11_overlay, stop_overlay as stop_x11_overlay
@@ -58,6 +60,65 @@ def create_app(*, testing: bool = False) -> FastAPI:
         if not is_allowed_youtube_cookies_path(cookie_path):
             cookie_path = ""
         runtime_config.set_value("RELAYTV_YTDLP_COOKIES", cookie_path)
+        if "device_name" in s and s.get("device_name") is not None:
+            clean_name = str(s.get("device_name") or "RelayTV").strip() or "RelayTV"
+            runtime_config.set_value("RELAYTV_DEVICE_NAME", clean_name)
+            runtime_config.set_value("RELAYTV_JELLYFIN_DEVICE_NAME", clean_name)
+            runtime_config.set_value("RELAYTV_JELLYFIN_CLIENT_NAME", clean_name)
+        configured_audio = str(s.get("audio_device") or "").strip()
+        if configured_audio:
+            runtime_config.set_value("MPV_AUDIO_DEVICE", configured_audio)
+        if "video_mode" in s and s.get("video_mode") is not None:
+            runtime_config.set_value(
+                "RELAYTV_VIDEO_MODE",
+                str(s.get("video_mode") or "auto").strip().lower() or "auto",
+            )
+        if "drm_connector" in s and s.get("drm_connector") is not None:
+            runtime_config.set_value(
+                "RELAYTV_DRM_CONNECTOR", str(s.get("drm_connector") or "").strip()
+            )
+        if "sub_lang" in s and s.get("sub_lang") is not None:
+            runtime_config.set_value("RELAYTV_SUB_LANG", str(s.get("sub_lang") or "").strip())
+        if "cec_enabled" in s and s.get("cec_enabled") is not None:
+            cec_raw = s.get("cec_enabled")
+            cec_on = (
+                cec_raw
+                if isinstance(cec_raw, bool)
+                else str(cec_raw).strip().lower() in ("1", "true", "yes", "on")
+            )
+            runtime_config.set_value("RELAYTV_CEC", "1" if cec_on else "0")
+            runtime_config.set_value("RELAYTV_CEC_ENABLED", "1" if cec_on else "0")
+        if "idle_dashboard_enabled" in s and s.get("idle_dashboard_enabled") is not None:
+            runtime_config.set_value(
+                "RELAYTV_IDLE_DASHBOARD_ENABLED",
+                "1" if bool(s.get("idle_dashboard_enabled")) else "0",
+            )
+        if "idle_notifications_enabled" in s and s.get("idle_notifications_enabled") is not None:
+            runtime_config.set_value(
+                "RELAYTV_IDLE_NOTIFICATIONS_ENABLED",
+                "1" if bool(s.get("idle_notifications_enabled")) else "0",
+            )
+        if "idle_qr_enabled" in s and s.get("idle_qr_enabled") is not None:
+            runtime_config.set_value(
+                "RELAYTV_IDLE_QR_ENABLED", "1" if bool(s.get("idle_qr_enabled")) else "0"
+            )
+        if "idle_qr_size" in s and s.get("idle_qr_size") is not None:
+            try:
+                runtime_config.set_value("RELAYTV_IDLE_QR_SIZE", str(int(s.get("idle_qr_size"))))
+            except Exception:
+                pass
+        if "jellyfin_server_type" in s and s.get("jellyfin_server_type") is not None:
+            runtime_config.set_value(
+                "RELAYTV_JELLYFIN_SERVER_TYPE",
+                str(s.get("jellyfin_server_type") or "jellyfin").strip().lower() or "jellyfin",
+            )
+        if "ytdlp_format" in s and s.get("ytdlp_format") is not None:
+            qmode = str(s.get("quality_mode") or "").strip().lower()
+            if qmode in ("auto", "auto_profile", "profile"):
+                if not (runtime_config.snapshot().raw("YTDLP_FORMAT") or "").strip():
+                    runtime_config.set_value("YTDLP_FORMAT", "")
+            else:
+                runtime_config.set_value("YTDLP_FORMAT", str(s.get("ytdlp_format") or "").strip())
         runtime_config.set_value(
             "RELAYTV_YTDLP_AUTO_UPDATE", "1" if bool(s.get("ytdlp_auto_update_enabled")) else "0"
         )
@@ -185,6 +246,15 @@ def create_app(*, testing: bool = False) -> FastAPI:
             discovery_mdns.stop()
             stop_x11_overlay()
             stop_splash_screen()
+            if workers_enabled:
+                try:
+                    stop_mpv(restart_splash=False)
+                except Exception:
+                    pass
+                try:
+                    stop_cec_monitor()
+                except Exception:
+                    pass
             postlive_relay.close_all(reason="server shutdown")
             plex_service.stop_all_transcodes()
 

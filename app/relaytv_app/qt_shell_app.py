@@ -21,6 +21,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -497,10 +498,41 @@ def _atomic_write_json(path: str, payload: dict[str, object]) -> None:
         return
     parent = os.path.dirname(path) or "."
     os.makedirs(parent, exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=True, separators=(",", ":"))
-    os.replace(tmp, path)
+    tmp = ""
+    try:
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+            dir=parent,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=True, separators=(",", ":"))
+        os.replace(tmp, path)
+        tmp = ""
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _ensure_private_log_file(path: str) -> None:
+    target = str(path or "").strip()
+    if not target:
+        return
+    try:
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(target, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 def _first_wins_dedupe(args: list[str]) -> list[str]:
@@ -662,6 +694,7 @@ def _build_mpv_args(
     # truncated on each launch, so it stays cheap on tmpfs.
     log_file = _effective_mpv_log_path()
     _truncate_mpv_log(log_file)
+    _ensure_private_log_file(log_file)
     if not _has_opt(args + extra, "--load-scripts"):
         args.append("--load-scripts=no")
     if not _has_opt(args + extra, "--log-file"):
@@ -1166,7 +1199,9 @@ class _QtLibMpvPlayer:
     def runtime_snapshot(self) -> dict[str, object]:
         # The libmpv player is long-lived too, and its log had no size check at
         # all — only the external-mpv launch path did.
-        _rotate_mpv_log_if_needed(lambda p: self.set_property("log-file", p))
+        _rotate_mpv_log_if_needed(
+            lambda p: (_ensure_private_log_file(p), self.set_property("log-file", p))
+        )
         out: dict[str, object] = {
             "mpv_runtime_initialized": True,
             "mpv_runtime_error": "",
@@ -1208,9 +1243,11 @@ class _QtLibMpvPlayer:
             pass
 
         playback_active = bool(path) and (core_idle is not True) and (eof_reached is not True)
-        playback_started = playback_active and (
-            (isinstance(time_pos, (int, float)) and float(time_pos) > 0.0)
-            or (isinstance(duration, (int, float)) and float(duration) > 0.0)
+        playback_started = bool(
+            playback_active
+            and isinstance(time_pos, (int, float))
+            and not isinstance(time_pos, bool)
+            and float(time_pos) >= 0.0
         )
 
         out.update(
@@ -1283,7 +1320,8 @@ class _QtLibMpvPlayer:
         )
         self._set_opt_best_effort("demuxer-max-back-bytes", back_bytes)
 
-        log_file = (os.getenv("MPV_LOG_FILE") or "").strip() or "/tmp/mpv.log"
+        log_file = _effective_mpv_log_path()
+        _ensure_private_log_file(log_file)
         self._set_opt_best_effort("log-file", log_file)
         if self.debug:
             self._set_opt_best_effort("msg-level", "all=debug")
@@ -3375,7 +3413,10 @@ def main(argv: list[str] | None = None) -> int:
         ):
             return cached
         _rotate_mpv_log_if_needed(
-            lambda p: _subprocess_mpv_ipc_request(["set_property", "log-file", p])
+            lambda p: (
+                _ensure_private_log_file(p),
+                _subprocess_mpv_ipc_request(["set_property", "log-file", p]),
+            )
         )
         try:
             props = _subprocess_mpv_get_props(
@@ -3398,7 +3439,12 @@ def main(argv: list[str] | None = None) -> int:
         path = str(props.get("path") or "").strip()
         demuxer_cache_state = props.get("demuxer-cache-state") if isinstance(props.get("demuxer-cache-state"), dict) else None
         playback_active = bool(path) and (core_idle is not True) and (eof_reached is not True)
-        playback_started = playback_active and ((time_pos or 0.0) > 0.0 or (duration or 0.0) > 0.0)
+        playback_started = bool(
+            playback_active
+            and isinstance(time_pos, (int, float))
+            and not isinstance(time_pos, bool)
+            and float(time_pos) >= 0.0
+        )
         out: dict[str, object] = {
             "mpv_runtime_initialized": True,
             "mpv_runtime_error": "",
@@ -3479,6 +3525,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if mpv_proc and mpv_proc.poll() is None:
                     mpv_proc.kill()
+                    mpv_proc.wait(timeout=1)
             except Exception:
                 pass
         try:
