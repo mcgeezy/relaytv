@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import tomllib
 
 
@@ -43,6 +44,19 @@ from relaytv_app.routes import _notification_capabilities, _overlay_prefers_nati
 
 pytestmark = pytest.mark.native
 ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+def _patch_thread_local_sleep(monkeypatch: pytest.MonkeyPatch, fn) -> None:
+    caller_thread = threading.current_thread()
+    real_sleep = time.sleep
+
+    def _wrapped(seconds: float) -> None:
+        if threading.current_thread() is caller_thread:
+            fn(seconds)
+            return
+        real_sleep(seconds)
+
+    monkeypatch.setattr(player.time, "sleep", _wrapped)
 
 
 def test_ui_smoke() -> None:
@@ -4215,7 +4229,7 @@ def test_auto_next_worker_prefers_mpv_playlist_handoff(monkeypatch: pytest.Monke
         calls.append(dict(kwargs))
         raise RuntimeError("stop worker")
 
-    monkeypatch.setattr(player.time, "sleep", fake_sleep)
+    _patch_thread_local_sleep(monkeypatch, fake_sleep)
     monkeypatch.setattr(player, "_SESSION_RESTORE_ATTEMPTED", True, raising=False)
     monkeypatch.setattr(player.state, "AUTO_NEXT_SUPPRESS_UNTIL", 0.0, raising=False)
     monkeypatch.setattr(player.state, "SESSION_STATE", "playing", raising=False)
@@ -5832,7 +5846,7 @@ def test_resolved_media_wait_honors_extractor_availability(
 ) -> None:
     slept: list[float] = []
     monkeypatch.setattr(player.time, "time", lambda: 1000.4)
-    monkeypatch.setattr(player.time, "sleep", lambda seconds: slept.append(seconds))
+    _patch_thread_local_sleep(monkeypatch, lambda seconds: slept.append(seconds))
 
     player._wait_for_resolved_media_availability({"_playback_available_at": 1004.0})
 
@@ -5844,7 +5858,7 @@ def test_resolved_media_wait_ignores_expired_or_invalid_availability(
 ) -> None:
     slept: list[float] = []
     monkeypatch.setattr(player.time, "time", lambda: 1000.4)
-    monkeypatch.setattr(player.time, "sleep", lambda seconds: slept.append(seconds))
+    _patch_thread_local_sleep(monkeypatch, lambda seconds: slept.append(seconds))
 
     player._wait_for_resolved_media_availability({"_resolved_available_at": 999.0})
     player._wait_for_resolved_media_availability({"_resolved_available_at": "invalid"})
@@ -6219,9 +6233,8 @@ def test_play_item_reuses_fresh_resolved_stream_without_ytdlp(
         lambda url: (_ for _ in ()).throw(AssertionError("yt-dlp should not run")),
     )
     monkeypatch.setattr(player.time, "time", lambda: 1000.0)
-    monkeypatch.setattr(
-        player.time,
-        "sleep",
+    _patch_thread_local_sleep(
+        monkeypatch,
         lambda seconds: events.append(("sleep", seconds)),
     )
 

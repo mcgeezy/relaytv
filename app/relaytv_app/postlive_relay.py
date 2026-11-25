@@ -72,7 +72,9 @@ _SESSIONS: dict[str, "RelaySession"] = {}
 # finished cleanly; kept so the player can upgrade onto the local file
 # after the session itself has closed.
 _COMPLETED_SPOOLS: dict[str, tuple[str, float]] = {}
-_REAPER_STARTED = False
+_CLOSING_SESSIONS = 0
+_REAPER_THREAD: threading.Thread | None = None
+_REAPER_STOP: threading.Event | None = None
 
 
 class RelayError(Exception):
@@ -490,19 +492,26 @@ def _log_session_closure(session: RelaySession, reason: str, spool_kept: bool) -
 
 
 def close_session(token: str, *, reason: str) -> None:
+    global _CLOSING_SESSIONS
     with _LOCK:
         session = _SESSIONS.pop(str(token or ""), None)
-    if session is None or session.closed:
-        return
-    session.closed = True
-    session.close_reason = reason
-    _terminate_session_processes(session)
-    _remove_workdirs(session.workdirs)
-    spool_kept = _finalize_session_spool(session)
-    _log_session_closure(session, reason, spool_kept)
+        if session is None or session.closed:
+            return
+        _CLOSING_SESSIONS += 1
+    try:
+        session.closed = True
+        session.close_reason = reason
+        _terminate_session_processes(session)
+        _remove_workdirs(session.workdirs)
+        spool_kept = _finalize_session_spool(session)
+        _log_session_closure(session, reason, spool_kept)
+    finally:
+        with _LOCK:
+            _CLOSING_SESSIONS = max(0, _CLOSING_SESSIONS - 1)
 
 
 def close_all(*, reason: str = "shutdown") -> None:
+    global _REAPER_THREAD, _REAPER_STOP
     # Share the creation transaction. Without this, shutdown could snapshot an
     # empty map while create_session was still spawning, return, and then have
     # that creator publish a pipeline nothing would ever retire.
@@ -512,6 +521,19 @@ def close_all(*, reason: str = "shutdown") -> None:
         for token in tokens:
             close_session(token, reason=reason)
         _prune_completed_spools(keep=0)
+        with _LOCK:
+            stop_event = _REAPER_STOP
+            reaper_thread = _REAPER_THREAD
+            _REAPER_STOP = None
+            _REAPER_THREAD = None
+            if stop_event is not None:
+                stop_event.set()
+    if (
+        reaper_thread is not None
+        and reaper_thread is not threading.current_thread()
+        and reaper_thread.is_alive()
+    ):
+        reaper_thread.join(timeout=1.0)
 
 
 def sweep_spool_root() -> None:
@@ -548,26 +570,58 @@ def _session_expired(session: RelaySession, now: float) -> str:
     return ""
 
 
-def _reaper_loop() -> None:
-    while True:
-        time.sleep(_REAPER_INTERVAL_SEC)
+def _reaper_loop(stop_event: threading.Event) -> None:
+    global _REAPER_THREAD, _REAPER_STOP
+    while not stop_event.wait(_REAPER_INTERVAL_SEC):
         try:
             now = time.time()
             with _LOCK:
                 sessions = list(_SESSIONS.values())
             for session in sessions:
+                if stop_event.is_set():
+                    return
                 reason = _session_expired(session, now)
                 if reason:
                     close_session(session.token, reason=reason)
+            if stop_event.is_set():
+                return
             _prune_completed_spools(keep=1, max_age_sec=_SPOOL_TTL_SEC)
+            with _LOCK:
+                if (
+                    _REAPER_STOP is stop_event
+                    and not _SESSIONS
+                    and not _COMPLETED_SPOOLS
+                    and _CLOSING_SESSIONS == 0
+                ):
+                    _REAPER_STOP = None
+                    _REAPER_THREAD = None
+                    return
         except Exception:
             logger.exception("postlive_relay_reaper_error")
 
 
 def _ensure_reaper() -> None:
-    global _REAPER_STARTED
+    global _REAPER_THREAD, _REAPER_STOP
     with _LOCK:
-        if _REAPER_STARTED:
+        if (
+            _REAPER_THREAD is not None
+            and _REAPER_STOP is not None
+            and not _REAPER_STOP.is_set()
+            and _REAPER_THREAD.is_alive()
+        ):
             return
-        _REAPER_STARTED = True
-    threading.Thread(target=_reaper_loop, name="relaytv-postlive-reaper", daemon=True).start()
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=_reaper_loop,
+            args=(stop_event,),
+            name="relaytv-postlive-reaper",
+            daemon=True,
+        )
+        _REAPER_STOP = stop_event
+        _REAPER_THREAD = thread
+        try:
+            thread.start()
+        except Exception:
+            _REAPER_STOP = None
+            _REAPER_THREAD = None
+            raise

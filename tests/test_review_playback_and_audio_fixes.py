@@ -18,6 +18,7 @@ from relaytv_app import (
     main as app_main,
     playback_service,
     player,
+    postlive_relay,
     qt_shell_app,
     routes,
     state,
@@ -1166,3 +1167,129 @@ def test_detect_audio_device_prefers_confirmed_eld_hdmi_over_explicit_connector_
         )
         == "alsa/hdmi:CARD=NVidia,DEV=1"
     )
+
+
+def _install_fake_postlive_popen(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    poll_rc: int | None = None,
+) -> None:
+    class _FakePipe:
+        def __init__(self, fd: int) -> None:
+            self._fd = fd
+
+        def fileno(self) -> int:
+            return self._fd
+
+        def readline(self) -> bytes:
+            return b""
+
+        def close(self) -> None:
+            return None
+
+    class _FakeProc:
+        def __init__(self, fd: int) -> None:
+            self.stdout = _FakePipe(fd)
+            self.stderr = _FakePipe(fd + 100)
+            self._rc = poll_rc
+
+        def poll(self) -> int | None:
+            return self._rc
+
+        def terminate(self) -> None:
+            self._rc = 1
+
+        def wait(self, timeout: float | None = None) -> int:
+            if self._rc is None:
+                self._rc = 1
+            return self._rc
+
+        def kill(self) -> None:
+            self._rc = -9
+
+    seq = iter(range(10, 100))
+
+    def _fake_popen(*_args, **_kwargs):
+        return _FakeProc(next(seq))
+
+    monkeypatch.setattr(state, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(postlive_relay.subprocess, "Popen", _fake_popen)
+
+
+def test_postlive_close_all_stops_reaper_and_does_not_pollute_time_sleep(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_postlive_popen(monkeypatch, tmp_path, poll_rc=None)
+    monkeypatch.setattr(postlive_relay, "_REAPER_INTERVAL_SEC", 0.02)
+
+    try:
+        postlive_relay.create_session(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ytdl_format="best",
+        )
+        assert any(
+            t.is_alive() and t.name == "relaytv-postlive-reaper"
+            for t in threading.enumerate()
+        )
+
+        postlive_relay.close_all(reason="test cleanup")
+
+        assert not any(
+            t.is_alive() and t.name == "relaytv-postlive-reaper"
+            for t in threading.enumerate()
+        )
+
+        events: list[tuple[str, float]] = []
+        monkeypatch.setattr(player.time, "time", lambda: 1000.4)
+        monkeypatch.setattr(
+            player.time,
+            "sleep",
+            lambda seconds: events.append(("sleep", seconds)),
+        )
+        threading.Event().wait(0.08)
+        player._wait_for_resolved_media_availability({"_playback_available_at": 1004.0})
+        assert events == [("sleep", pytest.approx(4.2))]
+    finally:
+        postlive_relay.close_all(reason="test cleanup")
+
+
+def test_postlive_reaper_exits_when_idle_and_restarts_on_next_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_postlive_popen(monkeypatch, tmp_path, poll_rc=1)
+    monkeypatch.setattr(postlive_relay, "_REAPER_INTERVAL_SEC", 0.02)
+    monkeypatch.setattr(postlive_relay, "_READERLESS_GRACE_SEC", 0.0)
+
+    try:
+        postlive_relay.create_session(
+            "https://www.youtube.com/watch?v=first000001",
+            ytdl_format="best",
+        )
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if not any(
+                t.is_alive() and t.name == "relaytv-postlive-reaper"
+                for t in threading.enumerate()
+            ):
+                break
+            threading.Event().wait(0.02)
+        assert not any(
+            t.is_alive() and t.name == "relaytv-postlive-reaper"
+            for t in threading.enumerate()
+        )
+
+        monkeypatch.setattr(postlive_relay, "_READERLESS_GRACE_SEC", 60.0)
+        _install_fake_postlive_popen(monkeypatch, tmp_path, poll_rc=None)
+        postlive_relay.create_session(
+            "https://www.youtube.com/watch?v=second00002",
+            ytdl_format="best",
+        )
+        assert any(
+            t.is_alive() and t.name == "relaytv-postlive-reaper"
+            for t in threading.enumerate()
+        )
+    finally:
+        postlive_relay.close_all(reason="test cleanup")
