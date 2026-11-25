@@ -550,11 +550,26 @@ def _absolute_media_url(url: str) -> str:
 def _item_label(item: object) -> str:
     if not isinstance(item, dict):
         return str(item or "")
-    return str(item.get("title") or item.get("name") or item.get("url") or "item")
+    for key in ("title", "name", "url"):
+        val = str(item.get(key) or "").strip()
+        if not val:
+            continue
+        if val.lower().startswith(("http://", "https://", "rtsp://", "rtsps://")):
+            sanitized = public_media.sanitize_public_url(val)
+            if sanitized:
+                return sanitized
+            continue
+        return val
+    return "item"
 
 
 def wire_item(item: object) -> dict | None:
     """Serialize one queue item for transfer, or None when it cannot travel."""
+    if public_media.rtsp_item_has_credentials(item):
+        # RTSP URLs carrying inline credentials must stay on this device:
+        # stripping credentials would hand the peer a broken 401 URL while the
+        # sender deletes its local copy on Move/Handoff.
+        return None
     public = public_media.public_media_item(upload_store.annotate_item(item))
     if not isinstance(public, dict):
         return None
@@ -610,6 +625,8 @@ def wire_entries(items: list[object] | None) -> tuple[list[dict], list[dict], li
             reason = "iptv_channels_stay_on_this_device"
         elif provider == "plex":
             reason = "plex_items_stay_on_this_device"
+        elif public_media.rtsp_item_has_credentials(item):
+            reason = "rtsp_credentials_stay_on_this_device"
         else:
             reason = "item_has_no_shareable_url"
         skipped.append({"title": _item_label(item), "reason": reason})

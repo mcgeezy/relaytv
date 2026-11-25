@@ -15,7 +15,11 @@ import ctypes.util
 import json
 import os
 import platform
-from .config import env_bool as _env_bool, env_choice as _env_choice
+from .config import (
+    env_bool as _env_bool,
+    env_choice as _env_choice,
+    normalize_rtsp_transport as _normalize_rtsp_transport,
+)
 import shlex
 import signal
 import socket
@@ -558,6 +562,7 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--ytdl-raw-options",
         "--user-agent",
         "--referrer",
+        "--rtsp-transport",
         "--start",
         "--alang",
         "--sid",
@@ -717,6 +722,9 @@ def _build_mpv_args(
         args.append("--demuxer-seekable-cache=yes")
     if not _has_opt(args + extra, "--demuxer-max-back-bytes"):
         args.append(f"--demuxer-max-back-bytes={back_bytes}")
+    rtsp_mode = _normalize_rtsp_transport(os.getenv("RELAYTV_RTSP_TRANSPORT"))
+    if rtsp_mode and not _has_opt(args + extra, "--rtsp-transport"):
+        args.append(f"--rtsp-transport={rtsp_mode}")
     if ipc_path:
         args.append(f"--input-ipc-server={ipc_path}")
     # File-scoped options are collected here and wrapped in a --{ ... --}
@@ -737,6 +745,8 @@ def _build_mpv_args(
     if pos is not None and pos > 0.0:
         start_value = f"{pos:.3f}".rstrip("0").rstrip(".")
         file_opts.append(f"--start={start_value}")
+    if ytdl_enabled and str(stream or "").strip().lower().startswith(("rtsp://", "rtsps://")):
+        file_opts.append("--ytdl=no")
     if audio_device:
         args.append(f"--audio-device={audio_device}")
     if sub_lang:
@@ -1032,6 +1042,8 @@ class _QtLibMpvPlayer:
             options.append(f"start={f'{pos:.3f}'.rstrip('0').rstrip('.')}")
         if a:
             options.append(_mpv_format_loadfile_opt("audio-files-append", a))
+        if s.lower().startswith(("rtsp://", "rtsps://")):
+            options.append("ytdl=no")
         if options:
             self._command("loadfile", s, "replace", "-1", ",".join(options))
             return
@@ -1319,6 +1331,9 @@ class _QtLibMpvPlayer:
             "128MiB" if (platform.machine() or "").lower() in ("aarch64", "arm64") else "256MiB"
         )
         self._set_opt_best_effort("demuxer-max-back-bytes", back_bytes)
+        rtsp_mode = _normalize_rtsp_transport(os.getenv("RELAYTV_RTSP_TRANSPORT"))
+        if rtsp_mode:
+            self._set_opt_best_effort("rtsp-transport", rtsp_mode)
 
         log_file = _effective_mpv_log_path()
         _ensure_private_log_file(log_file)
@@ -3601,6 +3616,8 @@ def main(argv: list[str] | None = None) -> int:
                             options.append(
                                 _mpv_format_loadfile_opt("audio-files-append", audio_url)
                             )
+                        if stream_url.lower().startswith(("rtsp://", "rtsps://")):
+                            options.append("ytdl=no")
                         if options:
                             command.extend(["-1", ",".join(options)])
                         result = _subprocess_mpv_ipc_request(command)

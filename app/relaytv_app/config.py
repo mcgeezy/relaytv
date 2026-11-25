@@ -29,6 +29,7 @@ _FALSE_SPELLINGS = ("0", "false", "no", "off")
 _TRUE_SPELLINGS_EXTENDED = (*_TRUE_SPELLINGS, "enable", "enabled")
 _FALSE_SPELLINGS_EXTENDED = (*_FALSE_SPELLINGS, "disable", "disabled")
 SEERR_REQUEST_MODES = frozenset({"disabled", "shared_admin", "caller_session"})
+RTSP_TRANSPORTS = frozenset({"tcp", "udp", "udp_multicast", "http"})
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -133,6 +134,22 @@ def seerr_settings_from_env() -> dict[str, object]:
             os.getenv("RELAYTV_SEERR_REQUEST_USER_ID")
         ),
     }
+
+
+def normalize_rtsp_transport(value: object, *, default: str = "tcp") -> str:
+    """Normalize the operator RTSP transport override.
+
+    An explicit empty string defers to mpv's built-in default; unset or
+    unrecognized values fall back to ``default`` (``"tcp"``).
+    """
+    if value is None:
+        return default
+    mode = str(value).strip().lower()
+    if mode == "":
+        return ""
+    if mode in RTSP_TRANSPORTS:
+        return mode
+    return default
 
 
 def server_port() -> int:

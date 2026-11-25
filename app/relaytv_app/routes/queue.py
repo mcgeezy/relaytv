@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import player, playback_service, resolver, state, youtube_playlist
+from .. import player, playback_service, public_media, resolver, state, youtube_playlist
 from ..debug import get_logger
 
 
@@ -187,7 +187,9 @@ def enqueue(req: EnqueueReq):
         item = build_item(req.url or "")
     qlen, queue_snapshot = playback_service.queue_item(item)
     try:
-        _push_queue_added_toast_async(item, req.url or "item")
+        _push_queue_added_toast_async(
+            item, public_media.sanitize_embedded_urls(req.url or "").strip() or "item"
+        )
     except Exception:
         pass
     _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="enqueue")
@@ -578,7 +580,11 @@ def history_requeue(req: HistoryPlayReq):
                 item[key] = val
     qlen, queue_snapshot = playback_service.queue_item(item)
     try:
-        _push_queue_added_toast_async(item, str(it.get("title") or url or "item"))
+        _push_queue_added_toast_async(
+            item,
+            public_media.sanitize_embedded_urls(str(it.get("title") or url or "item")).strip()
+            or "item",
+        )
     except Exception:
         pass
     _ui_event_push_queue("add", queue=queue_snapshot, queue_length=qlen, source="history_requeue")

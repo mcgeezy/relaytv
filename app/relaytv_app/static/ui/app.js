@@ -154,13 +154,32 @@ async function clipboardText(){
 function looksLikeUrl(s){
   if (!s) return false;
   const t = String(s).trim();
-  return /^https?:\/\//i.test(t) || /^www\./i.test(t);
+  const isScheme = /^(?:https?|rtsps?):\/\//i.test(t);
+  const isWww = !isScheme && /^www\./i.test(t);
+  if (!isScheme && !isWww) return false;
+  const candidate = isWww ? 'https://' + t : t;
+  if (/\s/.test(candidate)) return false;
+  if (typeof URL === 'function') {
+    try {
+      const parsed = new URL(candidate);
+      const host = String(parsed.hostname || '').trim().toLowerCase();
+      if (!host || (isWww && host === 'www.')) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  return isWww
+    ? /^www\.[^.\s/?#:]+/i.test(t)
+    : /^(?:https?|rtsps?):\/\/(?:[^/@\s]+@)?(?:\[[^\];/?#\s]+\]|[^/:?#@\s]+)/i.test(t);
 }
 
 function normalizeUrl(s){
   const t = String(s || "").trim();
   if (!t) return "";
-  if (/^https?:\/\//i.test(t)) return t;
+  if (/^(?:https?|rtsps?):\/\//i.test(t)) {
+    return t.replace(/^(?:https?|rtsps?)(?=:\/\/)/i, (scheme) => scheme.toLowerCase());
+  }
   if (/^www\./i.test(t)) return "https://" + t;
   return t;
 }
@@ -248,7 +267,9 @@ async function submitAddUrl(mode){
     return;
   }
   if (!looksLikeUrl(url)) {
-    alert('Please enter a valid URL (starting with http(s):// or www.)');
+    const invalidMsg = 'Please enter a valid URL (starting with http(s)://, rtsp(s)://, or www.)';
+    if (typeof _setAddHelper === 'function') _setAddHelper(invalidMsg, 'err');
+    alert(invalidMsg);
     inp.focus();
     return;
   }
@@ -811,7 +832,12 @@ function _safeUrlHost(u){
 
 function _looksLikeJellyfinMediaUrl(u){
   try {
-    const uu = new URL(String(u || ''));
+    const raw = String(u || '').trim();
+    if (!raw) return false;
+    const isRelativePath = raw.startsWith('/') && !raw.startsWith('//');
+    const uu = isRelativePath ? new URL(raw, 'http://relaytv.local') : new URL(raw);
+    const proto = (uu.protocol || '').toLowerCase();
+    if (proto !== 'http:' && proto !== 'https:') return false;
     const p = (uu.pathname || '').toLowerCase();
     const hasApi = uu.searchParams.has('api_key') || uu.searchParams.has('ApiKey');
     if ((p.includes('/videos/') || p.includes('/items/')) && (hasApi || p.includes('/stream'))) return true;
@@ -886,7 +912,7 @@ function _providerIconKey(provider, host){
    Deterministic per host, needs no network and leaks nothing to third
    parties (the Google S2 favicon service used to see every queued domain). */
 function _letterFaviconDataUri(host){
-  const clean = String(host || '').replace(/^www\./, '');
+  const clean = String(host || '').replace(/^www\./, '').replace(/^\[|\]$/g, '');
   const letter = (clean[0] || '?').toUpperCase();
   const rootDomain = clean.split('.').slice(-2).join('.');
   let color = Object.hasOwn(__favBrandColors, clean)
@@ -911,7 +937,7 @@ function faviconUrl(input){
   const host = _safeUrlHost(u);
   const providerIcon = __providerIconPaths[_providerIconKey(provider, host)];
   if (providerIcon) return providerIcon;
-  if (!host) return '';
+  if (!host) return provider === 'rtsp' ? _letterFaviconDataUri('rtsp') : '';
   return _letterFaviconDataUri(host);
 }
 
@@ -987,7 +1013,7 @@ function _isNowPlayingLive(np){
   if (!np || typeof np !== 'object') return false;
   const provider = String(np.provider || '').trim().toLowerCase();
   const liveStatus = String(np.live_status || '').trim().toLowerCase();
-  if (provider === 'iptv') return true;
+  if (provider === 'iptv' || provider === 'rtsp') return true;
   if (np.is_live === true || np.live === true) return true;
   return liveStatus === 'is_live' || liveStatus === 'live';
 }

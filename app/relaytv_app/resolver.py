@@ -19,6 +19,7 @@ from fastapi import HTTPException
 
 from .debug import debug_log, get_logger
 from .thumb_cache import attach_local_thumbnail
+from . import public_media
 from . import upload_store
 from . import url_boundary
 from . import ytdlp_format_policy
@@ -284,13 +285,16 @@ def _rumble_impersonation_unavailable(error_text: str) -> bool:
 # URL helpers
 # =========================
 
+USER_MEDIA_URL_SCHEMES = ("http", "https", "rtsp", "rtsps")
+RESOLVED_HTTP_STREAM_SCHEMES = ("http", "https")
+
 
 def extract_first_url(text: str) -> str:
-    """Extract the first http(s) URL from a blob of shared text."""
+    """Extract the first http(s) or rtsp(s) URL from a blob of shared text."""
     if not text:
         return text
     text = text.strip()
-    m = re.search(r"https?://\S+", text)
+    m = re.search(r"(?:https?|rtsps?)://\S+", text, re.IGNORECASE)
     return m.group(0) if m else text
 
 
@@ -316,8 +320,9 @@ def normalize_shared_url(url: str) -> str:
 def validate_user_url(raw: str) -> str:
     """Normalize and validate a user-supplied URL.
 
-    We intentionally only allow http/https in API entrypoints to avoid handing
-    mpv local file paths or protocol-smuggled inputs from untrusted clients.
+    We intentionally only allow http/https/rtsp/rtsps in API entrypoints to
+    avoid handing mpv local file paths or protocol-smuggled inputs from
+    untrusted clients.
     """
     u = normalize_shared_url(extract_first_url(raw or ""))
     if not u:
@@ -328,12 +333,18 @@ def validate_user_url(raw: str) -> str:
     parsed = url_boundary.parse_url(u)
     if parsed is None:
         raise HTTPException(status_code=400, detail="Invalid url")
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="Unsupported URL scheme (http/https only)")
+    if parsed.scheme not in USER_MEDIA_URL_SCHEMES:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported URL scheme (http, https, rtsp, or rtsps only)",
+        )
     if not parsed.hostname:
         raise HTTPException(status_code=400, detail="Invalid url host")
     if url_boundary.is_forbidden_ip_literal(parsed.hostname) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
         raise HTTPException(status_code=400, detail="Unsupported URL host")
+    scheme_sep = u.find("://")
+    if scheme_sep > 0:
+        u = f"{u[:scheme_sep].lower()}{u[scheme_sep:]}"
     return u
 
 
@@ -341,14 +352,14 @@ def validate_resolved_stream_url(raw: object) -> str:
     """Validate a stream or audio URL emitted by an external resolver.
 
     Prevents a compromised or hostile extractor/Invidious response from handing
-    mpv non-network protocols (file://, edl://, av://), CLI option tokens, or
-    link-local metadata addresses.
+    mpv non-network protocols (file://, edl://, av://), RTSP sockets, CLI
+    option tokens, or link-local metadata addresses.
     """
     u = str(raw or "").strip()
     parsed = url_boundary.parse_url(u)
     if (
         parsed is None
-        or parsed.scheme not in ("http", "https")
+        or parsed.scheme not in RESOLVED_HTTP_STREAM_SCHEMES
         or not parsed.hostname
         or url_boundary.is_forbidden_ip_literal(parsed.hostname)
         or url_boundary.has_forbidden_resolved_address(parsed.hostname)
@@ -427,7 +438,10 @@ def provider_from_url(u: str) -> str:
     """
     if upload_store.is_upload_url(u):
         return "upload"
-    host = url_hostname(u)
+    parsed = url_boundary.parse_url(u)
+    if parsed is not None and parsed.scheme in ("rtsp", "rtsps"):
+        return "rtsp"
+    host = parsed.hostname if parsed is not None else ""
     if not host:
         return "other"
     for provider, domains in _PROVIDER_DOMAINS:
@@ -1314,13 +1328,16 @@ def resolve_title(url: str) -> str:
     invid_base = _invidious_base(settings)
     prov = provider_from_url(u)
 
+    if prov == "rtsp":
+        return _fallback_item_title(u, "rtsp")
+
     if prov == "youtube" and use_invid:
         t = title_from_invidious(u, base=invid_base)
         if t:
             return t
 
     t = title_from_ytdlp(u)
-    return t or u
+    return t or public_media.sanitize_public_url(u) or _provider_display_name(prov)
 
 
 def _provider_display_name(provider: str) -> str:
@@ -1347,6 +1364,7 @@ def _provider_display_name(provider: str) -> str:
         "vimeo": "Vimeo",
         "twitch": "Twitch",
         "tiktok": "TikTok",
+        "rtsp": "RTSP",
     }
     return labels.get(prov, prov.title() if prov else "Video")
 
@@ -1375,11 +1393,29 @@ def _apply_live_metadata(item: dict[str, object], info: object) -> bool:
     return changed
 
 
+_GENERIC_RTSP_SEGMENTS = re.compile(
+    r"^(?:live\d*|stream\d*|ch\d+|channel\d+|channels?|main|sub|h264|h265|rtsp|media|video|videos|watch|streaming)$",
+    re.IGNORECASE,
+)
+
+
 def _fallback_item_title(url: str, provider: str) -> str:
     prov = str(provider or "").strip().lower()
+    safe_url = public_media.sanitize_public_url(url)
     try:
-        p = urlparse(url or "")
-        parts = [seg for seg in str(p.path or "").split("/") if seg]
+        parsed = url_boundary.parse_url(safe_url)
+        parts = [seg for seg in str(parsed.path if parsed is not None else "").split("/") if seg]
+        host = parsed.hostname if parsed is not None else ""
+
+        if prov == "rtsp":
+            for raw_seg in reversed(parts):
+                seg = urllib.parse.unquote(raw_seg).strip()
+                seg = re.sub(r"\.(?:sdp|m3u8|ts|mp4)$", "", seg, flags=re.IGNORECASE)
+                seg_clean = re.sub(r"\s+", " ", seg.replace("-", " ").replace("_", " ")).strip()
+                if seg_clean and not _GENERIC_RTSP_SEGMENTS.fullmatch(seg):
+                    return f"{seg_clean} · {host}" if host else seg_clean
+            return f"RTSP · {host}" if host else "RTSP"
+
         label = parts[-1] if parts else ""
         label = urllib.parse.unquote(label).strip()
 
@@ -1399,12 +1435,11 @@ def _fallback_item_title(url: str, provider: str) -> str:
         if label and label.lower() not in {"watch", "video", "videos"}:
             return label
 
-        host = str(p.netloc or "").strip()
         if host:
             return _provider_display_name(prov) if prov else host
     except Exception:
         pass
-    return _provider_display_name(prov) if prov else url
+    return _provider_display_name(prov) if prov else (safe_url or "Video")
 
 
 def enrich_item_metadata(item: dict[str, object]) -> bool:
@@ -1412,6 +1447,8 @@ def enrich_item_metadata(item: dict[str, object]) -> bool:
         return False
     u = validate_user_url(str(item.get("url") or ""))
     prov = str(item.get("provider") or provider_from_url(u) or "other").strip().lower() or "other"
+    if prov == "rtsp":
+        return False
     changed = False
     title = str(item.get("title") or "").strip()
     thumb = str(item.get("thumbnail") or "").strip()
@@ -1491,6 +1528,14 @@ def make_item(input_text: str, *, lightweight: bool = False) -> dict:
         attach_local_thumbnail(item)
         return item
 
+    if prov == "rtsp":
+        return {
+            "url": u,
+            "provider": "rtsp",
+            "title": _fallback_item_title(u, "rtsp"),
+            "is_live": True,
+        }
+
     # Title:
     # - YouTube: lightweight path uses Invidious/oEmbed
     # - Others: either lightweight fallback or yt-dlp metadata
@@ -1542,7 +1587,7 @@ def make_item(input_text: str, *, lightweight: bool = False) -> dict:
     item = {
         "url": u,
         "provider": prov,
-        "title": title or u,
+        "title": title or public_media.sanitize_public_url(u) or _provider_display_name(prov),
     }
     if channel:
         item["channel"] = channel

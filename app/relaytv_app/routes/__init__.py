@@ -977,6 +977,7 @@ def _queue_toast_payload(item: object, fallback_label: str) -> tuple[str, str | 
     if isinstance(item, dict):
         queue_label = str(item.get("title") or item.get("url") or queue_label)
         thumb = item.get("thumbnail_local") or item.get("thumbnail")
+    queue_label = public_media.sanitize_embedded_urls(queue_label).strip() or "item"
     return queue_label, (str(thumb).strip() if thumb else None)
 
 
@@ -996,7 +997,13 @@ def _queue_toast_metadata_ready(item: object, fallback_label: str) -> bool:
         return False
     label, thumb = _queue_toast_payload(item, fallback_label)
     url = str(item.get("url") or "").strip()
-    return bool(label and label != url and (thumb or not bool(item.get("_metadata_lightweight"))))
+    safe_url = public_media.sanitize_public_url(url)
+    return bool(
+        label
+        and label != url
+        and label != safe_url
+        and (thumb or not bool(item.get("_metadata_lightweight")))
+    )
 
 
 def _push_queue_added_toast(item: object, fallback_label: str) -> None:

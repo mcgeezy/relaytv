@@ -298,6 +298,7 @@ direct-reader set (`state.py` defaults, child processes, entrypoint,
 | `RELAYTV_QUEUE_TOAST_METADATA_WAIT_SEC` | `routes/__init__.py` | - | static env |
 | `RELAYTV_RESOLVER_LOG_LEVEL` | `debug.py` | - | static env |
 | `RELAYTV_RESOLVE_PLAYBACK_TRANSITION_SEC` | `player.py` | - | static env |
+| `RELAYTV_RTSP_TRANSPORT` | `player.py`<br>`qt_shell_app.py` | - | child process input |
 | `RELAYTV_SEAMLESS_REPLACE_RETRIES` | `player.py` | - | static env |
 | `RELAYTV_SEAMLESS_REPLACE_RETRY_DELAY_SEC` | `player.py` | - | static env |
 | `RELAYTV_SEEK_TRANSITION_HOLD_SEC` | `routes/__init__.py` | - | static env |
