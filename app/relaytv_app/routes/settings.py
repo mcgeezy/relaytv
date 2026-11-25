@@ -250,6 +250,48 @@ def _server_origin(value: object) -> tuple[str, str, int] | None:
     return parsed.scheme, parsed.hostname, port
 
 
+def clear_repointed_receiver_credentials(
+    new_server_url: str, *, clear_api_key: bool = True
+) -> bool:
+    """Clear stored receiver credentials when repointed to a different server origin."""
+    settings_snapshot: dict[str, object] = {}
+    try:
+        raw_settings = state.get_settings() if hasattr(state, "get_settings") else {}
+        if isinstance(raw_settings, dict):
+            settings_snapshot = raw_settings
+    except Exception:
+        settings_snapshot = {}
+    try:
+        prev_status_url = str((jellyfin_receiver.status() or {}).get("server_url") or "").strip()
+    except Exception:
+        prev_status_url = ""
+    prev_url = (
+        prev_status_url
+        or str(settings_snapshot.get("jellyfin_server_url") or "").strip()
+        or str(runtime_config.snapshot().raw("RELAYTV_JELLYFIN_SERVER_URL") or "").strip()
+    )
+    if not prev_url or _server_origin(prev_url) == _server_origin(new_server_url):
+        return False
+    runtime_config.set_value("RELAYTV_JELLYFIN_USERNAME", "")
+    runtime_config.set_value("RELAYTV_JELLYFIN_PASSWORD", "")
+    runtime_config.set_value("RELAYTV_JELLYFIN_USER_ID", "")
+    if clear_api_key:
+        runtime_config.set_value("RELAYTV_JELLYFIN_API_KEY", "")
+    if hasattr(state, "update_settings"):
+        try:
+            clear_patch: dict[str, object] = {
+                "jellyfin_username": "",
+                "jellyfin_password": "",
+                "jellyfin_user_id": "",
+            }
+            if clear_api_key:
+                clear_patch["jellyfin_api_key"] = ""
+            state.update_settings(clear_patch)
+        except Exception:
+            pass
+    return True
+
+
 def _validate_configured_server_url(value: object, *, label: str) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -263,7 +305,9 @@ def _validate_configured_server_url(value: object, *, label: str) -> str:
         raise HTTPException(
             status_code=400, detail=f"{label} must not contain a query or fragment"
         )
-    if url_boundary.is_forbidden_ip_literal(parsed.hostname):
+    if url_boundary.is_forbidden_ip_literal(
+        parsed.hostname
+    ) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
         raise HTTPException(status_code=400, detail=f"{label} targets a forbidden address")
     path = parsed.path.rstrip("/")
     return f"{parsed.scheme}://{parsed.netloc}{path}"
@@ -286,6 +330,7 @@ def _normalize_invidious_base(value: object) -> str:
         or parsed.query
         or parsed.fragment
         or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+        or url_boundary.has_forbidden_resolved_address(parsed.hostname)
     ):
         return ""
     path = parsed.path.rstrip("/")
@@ -883,6 +928,7 @@ def _update_settings(req: SettingsReq):
                     if k not in live_applied
                 )
             elif jf_enabled and not jf_server:
+                jellyfin_receiver.disconnect()
                 live_apply_failed.extend(
                     k
                     for k in sorted(requested_keys.intersection(jellyfin_setting_keys))
@@ -890,6 +936,7 @@ def _update_settings(req: SettingsReq):
                 )
                 jellyfin_receiver.mark_error("jellyfin_server_url_required")
             elif jf_enabled and not credentials_ready:
+                jellyfin_receiver.disconnect()
                 live_apply_failed.extend(
                     k
                     for k in sorted(requested_keys.intersection(jellyfin_setting_keys))

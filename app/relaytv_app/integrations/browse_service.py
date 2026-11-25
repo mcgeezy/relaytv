@@ -438,7 +438,9 @@ def _normalize_custom_server_url_and_origin(
         raise ValueError("Server URL must not contain credentials")
     if parsed.query or parsed.fragment:
         raise ValueError("Server URL must not contain query parameters or fragments")
-    if url_boundary.is_forbidden_ip_literal(parsed.hostname):
+    if url_boundary.is_forbidden_ip_literal(
+        parsed.hostname
+    ) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
         raise ValueError("Forbidden server address")
     clean_path = (parsed.path or "").rstrip("/")
     normalized = _urlparse.urlunsplit((parsed.scheme, parsed.netloc, clean_path, "", ""))
@@ -554,6 +556,7 @@ class _SameOriginCustomJfRedirectHandler(_urlrequest.HTTPRedirectHandler):
             or next_parsed.scheme not in {"http", "https"}
             or not next_parsed.hostname
             or url_boundary.is_forbidden_ip_literal(next_parsed.hostname)
+            or url_boundary.has_forbidden_resolved_address(next_parsed.hostname)
             or _parsed_origin(orig_parsed) != _parsed_origin(next_parsed)
         ):
             raise _urlerror.HTTPError(
@@ -563,9 +566,11 @@ class _SameOriginCustomJfRedirectHandler(_urlrequest.HTTPRedirectHandler):
 
 
 def _open_custom_jf_request(req: _urlrequest.Request, *, timeout: float):
+    if not url_boundary.is_allowed_outbound_http_url(req.full_url):
+        raise _urlerror.URLError("Blocked unsafe custom server target")
     if _urlrequest.urlopen is not _ORIG_URLOPEN:
         return _urlrequest.urlopen(req, timeout=timeout)
-    opener = _urlrequest.build_opener(_SameOriginCustomJfRedirectHandler())
+    opener = url_boundary.safe_http_opener(_SameOriginCustomJfRedirectHandler())
     return opener.open(req, timeout=timeout)
 
 
@@ -869,6 +874,33 @@ def _adapt_plex_item(
     poster = str(pitem.get("poster_url") or pitem.get("thumbnail") or "").strip()
     backdrop = str(pitem.get("backdrop_url") or poster or "").strip()
 
+    versions = pitem.get("versions") if isinstance(pitem.get("versions"), list) else []
+    first_ver = versions[0] if versions and isinstance(versions[0], dict) else {}
+    audio_streams = [
+        {
+            "index": idx,
+            "id": str(tr.get("id") or ""),
+            "language": str(tr.get("language") or tr.get("language_code") or ""),
+            "display": str(tr.get("label") or ""),
+            "codec": str(tr.get("codec") or ""),
+            "is_default": bool(tr.get("default")),
+        }
+        for idx, tr in enumerate(first_ver.get("audio_tracks") or [])
+        if isinstance(tr, dict)
+    ]
+    subtitle_streams = [
+        {
+            "index": idx,
+            "id": str(tr.get("id") or ""),
+            "language": str(tr.get("language") or tr.get("language_code") or ""),
+            "display": str(tr.get("label") or ""),
+            "codec": str(tr.get("codec") or ""),
+            "is_default": bool(tr.get("default")),
+        }
+        for idx, tr in enumerate(first_ver.get("subtitle_tracks") or [])
+        if isinstance(tr, dict)
+    ]
+
     normalized: dict[str, Any] = {
         "item_id": raw_id,
         "title": title,
@@ -888,9 +920,14 @@ def _adapt_plex_item(
         "overview": str(pitem.get("summary") or pitem.get("overview") or "").strip(),
         "season_number": season_num if item_type in {"episode", "season"} else None,
         "episode_number": episode_num if item_type == "episode" else None,
-        "audio_streams": [],
-        "subtitle_streams": [],
-        "versions": pitem.get("versions") if isinstance(pitem.get("versions"), list) else [],
+        "audio_streams": audio_streams,
+        "subtitle_streams": subtitle_streams,
+        "versions": versions,
+        **(
+            {"_sort_title": str(pitem.get("_sort_title") or "").strip()}
+            if pitem.get("_sort_title")
+            else {}
+        ),
     }
     return _tag_item_source(normalized, server, latency_ms=latency_ms)
 
@@ -1312,6 +1349,84 @@ def _custom_plex_client(server: dict[str, Any]) -> PlexClient:
     return PlexClient(base, token=token, identity=plex_auth.auth_manager.identity)
 
 
+def _custom_plex_track_options(
+    part: dict[str, Any], *, stream_type: int
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    streams = part.get("Stream") if isinstance(part.get("Stream"), list) else []
+    for stream in streams:
+        if not isinstance(stream, dict) or _safe_int(stream.get("streamType")) != stream_type:
+            continue
+        stream_id = str(stream.get("id") or "").strip()
+        if not re.fullmatch(r"\d+", stream_id):
+            continue
+        language = str(stream.get("language") or stream.get("languageCode") or "").strip()
+        codec = str(stream.get("codec") or "").strip()
+        label = str(
+            stream.get("extendedDisplayTitle")
+            or stream.get("displayTitle")
+            or stream.get("title")
+            or language
+            or codec.upper()
+            or ("Audio track" if stream_type == 2 else "Subtitle track")
+        ).strip()
+        out.append(
+            {
+                "id": stream_id,
+                "label": label,
+                "language": language,
+                "language_code": str(stream.get("languageCode") or "").strip(),
+                "codec": codec,
+                "channels": _safe_int(stream.get("channels")) or None,
+                "default": _safe_int(stream.get("default")) == 1,
+                "forced": _safe_int(stream.get("forced")) == 1,
+            }
+        )
+    return out
+
+
+def _custom_plex_versions(server_id: str, raw: dict[str, Any]) -> list[dict[str, Any]]:
+    versions: list[dict[str, Any]] = []
+    media_values = raw.get("Media") if isinstance(raw.get("Media"), list) else []
+    for media in media_values:
+        if not isinstance(media, dict):
+            continue
+        media_id = str(media.get("id") or "").strip()
+        parts = media.get("Part") if isinstance(media.get("Part"), list) else []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if part.get("accessible") is False or part.get("exists") is False:
+                continue
+            part_path = plex_service._safe_upstream_path(part.get("key"))
+            if not part_path or not part_path.startswith("/library/parts/"):
+                continue
+            resolution = str(media.get("videoResolution") or "").strip().upper()
+            container = str(media.get("container") or part.get("container") or "").strip()
+            video_codec = str(media.get("videoCodec") or "").strip()
+            audio_codec = str(media.get("audioCodec") or "").strip()
+            label_parts = [v for v in (resolution, container.upper()) if v]
+            if video_codec:
+                label_parts.append(video_codec.upper())
+            versions.append(
+                {
+                    "id": encode_item_id(server_id, part_path),
+                    **({"media_id": media_id} if media_id else {}),
+                    **({"part_id": str(part.get("id"))} if part.get("id") is not None else {}),
+                    "label": " · ".join(label_parts) or f"Version {len(versions) + 1}",
+                    "container": container,
+                    "video_codec": video_codec,
+                    "audio_codec": audio_codec,
+                    "width": _safe_int(media.get("width")) or None,
+                    "height": _safe_int(media.get("height")) or None,
+                    "size": _safe_int(part.get("size")) or None,
+                    "audio_tracks": _custom_plex_track_options(part, stream_type=2),
+                    "subtitle_tracks": _custom_plex_track_options(part, stream_type=3),
+                }
+            )
+    return versions
+
+
 def _custom_plex_raw_to_dict(
     server: dict[str, Any],
     raw: dict[str, Any],
@@ -1351,6 +1466,7 @@ def _custom_plex_raw_to_dict(
     elif raw.get("year"):
         subtitle_parts.append(str(raw.get("year")))
 
+    sort_title = str(raw.get("titleSort") or "").strip()
     out: dict[str, Any] = {
         "id": key,
         "type": mtype,
@@ -1367,9 +1483,11 @@ def _custom_plex_raw_to_dict(
         "poster_url": poster_url,
         "backdrop_url": backdrop_url,
         "summary": str(raw.get("summary") or ""),
+        **({"_sort_title": sort_title} if sort_title else {}),
     }
     if detail:
         out["overview"] = str(raw.get("summary") or "")
+        out["versions"] = _custom_plex_versions(sid, raw)
     return out
 
 
@@ -1469,6 +1587,28 @@ def get_unified_home(*, limit: int = 24, refresh: bool = False) -> dict[str, Any
     }
 
 
+MAX_PLEX_STARTS_WITH_SCAN = 2000
+
+
+def _clean_plex_sort_title(item: dict[str, Any]) -> str:
+    explicit = str(item.get("_sort_title") or item.get("sort_title") or "").strip()
+    if explicit:
+        return explicit.lstrip("\"'“”‘’([ ")
+    raw = str(item.get("title") or "").strip().lstrip("\"'“”‘’([ ")
+    return re.sub(r"^(?:the|an|a)\s+", "", raw, flags=re.IGNORECASE).strip() or raw
+
+
+def _plex_item_matches_starts_with(item: dict[str, Any], letter: str) -> bool:
+    wanted = str(letter or "").strip()[:1].upper()
+    if not wanted:
+        return True
+    sort_head = _clean_plex_sort_title(item)[:1].upper()
+    raw_head = str(item.get("title") or "").strip()[:1].upper()
+    if wanted == "#":
+        return bool(sort_head and not sort_head.isalpha())
+    return sort_head == wanted or raw_head == wanted
+
+
 def _plex_sort_for_unified(sort_key: str) -> str:
     s = str(sort_key or "").strip().lower()
     if s == "added":
@@ -1528,11 +1668,12 @@ def _fetch_server_catalog_items(
 
         if sid == "plex_primary":
             if starts_with:
-                fetch_count = float("inf")
+                fetch_count = max(fetch_count, MAX_PLEX_STARTS_WITH_SCAN)
             libs_payload = plex_service.catalog_service.libraries()
             libs = libs_payload.get("libraries") if isinstance(libs_payload, dict) else []
             wanted_section_type = "movie" if kind == "movie" else "show"
             plex_sort = _plex_sort_for_unified(sort)
+            letter = starts_with[:1].upper() if starts_with else ""
             items_out: list[dict[str, Any]] = []
             total_count = 0
             for lib in libs if isinstance(libs, list) else []:
@@ -1548,16 +1689,30 @@ def _fetch_server_catalog_items(
                     sec_res = plex_service.catalog_service.library_items(
                         lib_id,
                         start=offset,
-                        limit=min(100, fetch_count - offset),
+                        limit=min(100, int(fetch_count - offset)),
                         sort=plex_sort,
                     )
-                    sec_items = sec_res.get("items") or []
-                    for pit in sec_items:
-                        if isinstance(pit, dict):
-                            items_out.append(pit)
+                    sec_items = [
+                        pit for pit in (sec_res.get("items") or []) if isinstance(pit, dict)
+                    ]
+                    items_out.extend(sec_items)
                     next_offset = sec_res.get("next_start")
                     if offset == 0:
                         total_count += int(sec_res.get("count") or len(sec_items))
+                    if (
+                        letter
+                        and letter.isalpha()
+                        and plex_sort == "title"
+                        and sec_items
+                        and all(
+                            (_clean_plex_sort_title(pit)[:1].upper() > letter)
+                            and (str(pit.get("title") or "").strip()[:1].upper() > letter)
+                            for pit in sec_items
+                            if _clean_plex_sort_title(pit)[:1].isalpha()
+                        )
+                        and any(_clean_plex_sort_title(pit)[:1].isalpha() for pit in sec_items)
+                    ):
+                        break
                     if next_offset is None or int(next_offset) <= offset:
                         break
                     offset = int(next_offset)
@@ -1565,12 +1720,12 @@ def _fetch_server_catalog_items(
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
             adapted = [_adapt_plex_item(it, server, latency_ms=dt) for it in items_out]
             if starts_with:
-                letter = starts_with[0].upper()
                 adapted = [
-                    it
-                    for it in adapted
-                    if str(it.get("title") or "").strip().upper().startswith(letter)
+                    it for it in adapted if _plex_item_matches_starts_with(it, starts_with)
                 ]
+            adapted = [
+                {k: v for k, v in it.items() if k != "_sort_title"} for it in adapted
+            ]
             return adapted, len(adapted) if starts_with else max(total_count, len(adapted))
 
         if stype in {"jellyfin", "emby"}:
@@ -1629,7 +1784,7 @@ def _fetch_server_catalog_items(
 
         if stype == "plex":
             if starts_with:
-                fetch_count = float("inf")
+                fetch_count = max(fetch_count, MAX_PLEX_STARTS_WITH_SCAN)
             client = _custom_plex_client(server)
             sec_payload = client.get("/library/sections")
             container = (
@@ -1638,6 +1793,7 @@ def _fetch_server_catalog_items(
             dirs = container.get("Directory") if isinstance(container, dict) else []
             wanted_type = "movie" if kind == "movie" else "show"
             plex_sort = plex_service.SORTS.get(_plex_sort_for_unified(sort), "titleSort:asc")
+            letter = starts_with[:1].upper() if starts_with else ""
             raw_list: list[dict[str, Any]] = []
             total_count = 0
             for d in dirs if isinstance(dirs, list) else []:
@@ -1650,38 +1806,57 @@ def _fetch_server_catalog_items(
                     continue
                 offset = 0
                 while offset < fetch_count:
+                    sec_query: dict[str, object] = {
+                        "sort": plex_sort,
+                        "includeGuids": 1,
+                        "X-Plex-Container-Start": offset,
+                        "X-Plex-Container-Size": min(100, int(fetch_count - offset)),
+                    }
+                    if letter and letter.isalpha():
+                        sec_query["firstCharacter"] = letter
                     p = client.get(
                         f"/library/sections/{_urlparse.quote(skey, safe='')}/all",
-                        query={
-                            "sort": plex_sort,
-                            "includeGuids": 1,
-                            "X-Plex-Container-Start": offset,
-                            "X-Plex-Container-Size": min(100, fetch_count - offset),
-                        },
+                        query=sec_query,
                     )
                     c = p.get("MediaContainer") or {}
                     recs = c.get("Metadata") or []
                     section_total = int(c.get("totalSize") or len(recs))
                     if offset == 0:
                         total_count += section_total
+                    page_converted: list[dict[str, Any]] = []
                     for r in recs:
                         if isinstance(r, dict):
                             conv = _custom_plex_raw_to_dict(server, r)
                             if conv:
+                                page_converted.append(conv)
                                 raw_list.append(conv)
                     offset += len(recs)
+                    if (
+                        letter
+                        and letter.isalpha()
+                        and plex_sort == "titleSort:asc"
+                        and page_converted
+                        and all(
+                            (_clean_plex_sort_title(conv)[:1].upper() > letter)
+                            and (str(conv.get("title") or "").strip()[:1].upper() > letter)
+                            for conv in page_converted
+                            if _clean_plex_sort_title(conv)[:1].isalpha()
+                        )
+                        and any(_clean_plex_sort_title(conv)[:1].isalpha() for conv in page_converted)
+                    ):
+                        break
                     if not recs or offset >= section_total:
                         break
             dt = (time.perf_counter() - t0) * 1000.0
             _record_latency(sid, dt, connected=True, server_name=str(server.get("name") or ""))
             adapted = [_adapt_plex_item(it, server, latency_ms=dt) for it in raw_list]
             if starts_with:
-                letter = starts_with[0].upper()
                 adapted = [
-                    it
-                    for it in adapted
-                    if str(it.get("title") or "").strip().upper().startswith(letter)
+                    it for it in adapted if _plex_item_matches_starts_with(it, starts_with)
                 ]
+            adapted = [
+                {k: v for k, v in it.items() if k != "_sort_title"} for it in adapted
+            ]
             return adapted, len(adapted) if starts_with else max(total_count, len(adapted))
     except Exception as exc:
         _record_latency(sid, None, connected=False, error=str(exc))
@@ -2320,6 +2495,7 @@ def get_unified_item_detail(item_id: str, *, refresh: bool = False) -> dict[str,
 
     if not tagged:
         return None
+    tagged.pop("_sort_title", None)
     return _apply_deduped_item_overlay(tagged)
 
 
@@ -2473,11 +2649,38 @@ def perform_unified_action(
             "provider": stype,
             "thumbnail": thumb,
             "jellyfin_item_id": raw_id,
+            "browse_server_id": sid,
+            "browse_server_type": stype,
             **({"jellyfin_media_source_id": mid} if mid else {}),
             **({"jellyfin_audio_stream_index": aidx} if aidx != "" else {}),
             **({"jellyfin_subtitle_stream_index": sidx} if sidx != "" else {}),
         }
     else:
+        clean_version_id = str(version_id or "").strip()
+        clean_audio_id = str(audio_id or "").strip()
+        clean_subtitle_id = str(subtitle_id or "").strip()
+        if clean_version_id or clean_audio_id or clean_subtitle_id:
+            versions_avail = detail.get("versions") if isinstance(detail.get("versions"), list) else []
+            if versions_avail:
+                selected_ver = _select_custom_plex_version_entry(sid, versions_avail, clean_version_id)
+                if clean_audio_id and not any(
+                    isinstance(tr, dict) and str(tr.get("id") or "") == clean_audio_id
+                    for tr in (selected_ver.get("audio_tracks") or [])
+                ):
+                    raise PlexError(
+                        "plex_track_unavailable",
+                        "The selected Plex media track is no longer available",
+                        status_code=409,
+                    )
+                if clean_subtitle_id and clean_subtitle_id not in {"-1", "0", "off"} and not any(
+                    isinstance(tr, dict) and str(tr.get("id") or "") == clean_subtitle_id
+                    for tr in (selected_ver.get("subtitle_tracks") or [])
+                ):
+                    raise PlexError(
+                        "plex_track_unavailable",
+                        "The selected Plex media track is no longer available",
+                        status_code=409,
+                    )
         # Keep a server-aware durable reference so the normal player lifecycle
         # can resolve this source again and send its watch-state reports.
         queue_entry = {
@@ -2486,6 +2689,9 @@ def perform_unified_action(
             "provider": "plex",
             "thumbnail": thumb,
             "plex_item_id": encode_item_id(sid, raw_id),
+            **({"plex_part_id": clean_version_id} if clean_version_id else {}),
+            **({"plex_audio_id": clean_audio_id} if clean_audio_id else {}),
+            **({"plex_subtitle_id": clean_subtitle_id} if clean_subtitle_id else {}),
         }
         if detail.get("runtime_sec"):
             queue_entry["duration_sec"] = detail["runtime_sec"]
@@ -2583,25 +2789,165 @@ def _custom_plex_stream_signature(
     return hmac.new(_CUSTOM_STREAM_SECRET, msg, hashlib.sha256).hexdigest()
 
 
+def _select_custom_plex_version_entry(
+    server_id: str,
+    versions: list[dict[str, Any]],
+    version_id: str,
+) -> dict[str, Any]:
+    wanted = str(version_id or "").strip()
+    if not wanted:
+        return versions[0] if versions else {}
+    dec_srv, dec_val = decode_item_id(wanted)
+    if dec_srv not in {server_id, "jf_primary"}:
+        raise PlexError("plex_invalid_reference", "Invalid Plex media version", status_code=404)
+    for ver in versions:
+        if not isinstance(ver, dict):
+            continue
+        ver_id = str(ver.get("id") or "")
+        _vsrv, ver_path = decode_item_id(ver_id)
+        if (
+            wanted == ver_id
+            or dec_val == ver_path
+            or wanted == str(ver.get("media_id") or "")
+            or wanted == str(ver.get("part_id") or "")
+        ):
+            return ver
+    raise PlexError("plex_media_unavailable", "Requested Plex media version not found", status_code=404)
+
+
+def _select_custom_plex_raw_part(
+    server_id: str,
+    raw: dict[str, Any],
+    *,
+    version_id: str = "",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    wanted = str(version_id or "").strip()
+    if not wanted:
+        part, media, _mi, _pi = plex_service.PlexCatalogService._select_playback_part(raw)
+        return part, media
+    dec_srv, dec_val = decode_item_id(wanted)
+    if dec_srv not in {server_id, "jf_primary"}:
+        raise PlexError("plex_invalid_reference", "Invalid Plex media version", status_code=404)
+    wanted_path = plex_service._safe_upstream_path(dec_val) if dec_val.startswith("/") else ""
+    media_values = raw.get("Media") if isinstance(raw.get("Media"), list) else []
+    for media in media_values:
+        if not isinstance(media, dict):
+            continue
+        media_id = str(media.get("id") or "").strip()
+        parts = media.get("Part") if isinstance(media.get("Part"), list) else []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if part.get("accessible") is False or part.get("exists") is False:
+                continue
+            candidate_path = plex_service._safe_upstream_path(part.get("key"))
+            if not candidate_path or not candidate_path.startswith("/library/parts/"):
+                continue
+            part_id = str(part.get("id") or "").strip()
+            if (
+                (wanted_path and candidate_path == wanted_path)
+                or (media_id and wanted in {media_id, dec_val})
+                or (part_id and wanted in {part_id, dec_val})
+            ):
+                return part, media
+    raise PlexError("plex_media_unavailable", "Requested Plex media version not found", status_code=404)
+
+
 def resolve_custom_plex_playback_item(item: dict[str, Any]) -> dict[str, Any]:
     server, path = _custom_plex_item_source(str(item.get("plex_item_id") or ""))
+    sid = str(server["id"])
     client = _custom_plex_client(server)
     payload = client.get(path, query={"includeGuids": 1, "includeExtras": 0})
     records = (payload.get("MediaContainer") or {}).get("Metadata") or []
     if not records or records[0].get("type") not in {"movie", "episode"}:
         raise PlexError("plex_not_found", "Custom Plex media item not found", status_code=404)
-    part, _media, _mi, _pi = plex_service.PlexCatalogService._select_playback_part(records[0])
+    version_id = str(item.get("plex_part_id") or item.get("version_id") or "").strip()
+    part, media = _select_custom_plex_raw_part(sid, records[0], version_id=version_id)
     part_path = plex_service._safe_upstream_path(part.get("key"))
     if not part_path.startswith("/library/parts/"):
         raise PlexError("plex_media_unavailable", "Plex media part is unavailable", status_code=502)
-    sid = str(server["id"])
+
+    audio_id = str(item.get("plex_audio_id") or "").strip()
+    subtitle_id = str(item.get("plex_subtitle_id") or "").strip()
+    stream_select_query: dict[str, object] = {}
+    selected_audio_lang = ""
+    selected_sub_lang = ""
+    streams = part.get("Stream") if isinstance(part.get("Stream"), list) else []
+    if audio_id:
+        matched_audio = next(
+            (
+                s
+                for s in streams
+                if isinstance(s, dict)
+                and _safe_int(s.get("streamType")) == 2
+                and str(s.get("id") or "").strip() == audio_id
+            ),
+            None,
+        )
+        if matched_audio is None:
+            raise PlexError(
+                "plex_track_unavailable",
+                "The selected Plex audio track is unavailable",
+                status_code=409,
+            )
+        stream_select_query["audioStreamID"] = audio_id
+        selected_audio_lang = str(
+            matched_audio.get("languageCode") or matched_audio.get("language") or ""
+        ).strip()
+    if subtitle_id:
+        if subtitle_id in {"-1", "0", "off"}:
+            stream_select_query["subtitleStreamID"] = 0
+            selected_sub_lang = "off"
+        else:
+            matched_sub = next(
+                (
+                    s
+                    for s in streams
+                    if isinstance(s, dict)
+                    and _safe_int(s.get("streamType")) == 3
+                    and str(s.get("id") or "").strip() == subtitle_id
+                ),
+                None,
+            )
+            if matched_sub is None:
+                raise PlexError(
+                    "plex_track_unavailable",
+                    "The selected Plex subtitle track is unavailable",
+                    status_code=409,
+                )
+            stream_select_query["subtitleStreamID"] = subtitle_id
+            selected_sub_lang = str(
+                matched_sub.get("languageCode") or matched_sub.get("language") or ""
+            ).strip()
+    part_num_id = str(part.get("id") or "").strip()
+    if stream_select_query and re.fullmatch(r"\d+", part_num_id):
+        try:
+            client.request_no_content(
+                "PUT",
+                f"/library/parts/{part_num_id}",
+                query={"allParts": 1, **stream_select_query},
+            )
+        except Exception:
+            pass
+
     exp = int(time.time()) + CUSTOM_STREAM_TTL_SEC
     sig = _custom_plex_stream_signature(server, part_path, exp)
     url = (
         f"http://127.0.0.1:{config.server_port()}/browse/stream/{_urlparse.quote(sid, safe='')}"
         f"?path={_urlparse.quote(part_path, safe='')}&exp={exp}&sig={sig}"
     )
-    resolved = {**item, "url": url, "plex_stream_mode": "direct"}
+    resolved: dict[str, Any] = {
+        **item,
+        "url": url,
+        "plex_stream_mode": "direct",
+        "plex_container": str(media.get("container") or part.get("container") or ""),
+        "plex_video_codec": str(media.get("videoCodec") or ""),
+        "plex_audio_codec": str(media.get("audioCodec") or ""),
+    }
+    if selected_audio_lang:
+        resolved["audio_language"] = selected_audio_lang
+    if selected_sub_lang:
+        resolved["subtitle_language"] = selected_sub_lang
     duration = _safe_float(records[0].get("duration"))
     if duration and duration > 0:
         resolved["duration_sec"] = duration / 1000.0
@@ -2686,8 +3032,14 @@ def fetch_server_artwork(server_id: str, path: str) -> PlexBinaryResponse:
         else:
             base, token, _uid = _resolve_custom_jf_auth(server)
         req = _urlrequest.Request(base.rstrip("/") + path, headers=_custom_jf_headers(token))
-        opener = _urlrequest.build_opener(_NoArtworkRedirect())
-        with opener.open(req, timeout=5.0) as response:
+        if not url_boundary.is_allowed_outbound_http_url(req.full_url):
+            raise ValueError("Blocked unsafe artwork URL")
+        open_artwork = (
+            _urlrequest.urlopen(req, timeout=5.0)
+            if _urlrequest.urlopen is not _ORIG_URLOPEN
+            else url_boundary.safe_http_opener(_NoArtworkRedirect()).open(req, timeout=5.0)
+        )
+        with open_artwork as response:
             body = response.read(MAX_BINARY_RESPONSE_BYTES + 1)
             media_type = str(response.headers.get("Content-Type") or "").partition(";")[0].strip().lower()
         if not body or len(body) > MAX_BINARY_RESPONSE_BYTES or media_type not in SAFE_IMAGE_TYPES:

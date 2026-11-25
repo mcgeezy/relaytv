@@ -11,6 +11,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from .. import player, playback_service, resolver, state
+from ..integrations import iptv_service
+from ..integrations.plex_client import PlexError
 from .queue import maybe_queue_playlist
 
 
@@ -376,6 +378,7 @@ def _play_now_item(
     title_hint: str | None = None,
     resume_pos: float | None = None,
     raise_on_superseded: bool = False,
+    use_resolver: bool = True,
 ) -> dict:
     """Run the play-now transition without flattening an existing item.
 
@@ -402,7 +405,7 @@ def _play_now_item(
         strict_options = {"raise_on_superseded": True} if raise_on_superseded else {}
         now = playback_service.play_now(
             item_or_text,
-            use_resolver=True,
+            use_resolver=use_resolver,
             cec=False,
             clear_queue=False,
             mode=(reason or "play_now"),
@@ -640,24 +643,32 @@ def previous():
         except Exception:
             pass
 
+    cur_now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     cur_url = None
-    if isinstance(state.NOW_PLAYING, dict):
-        u = state.NOW_PLAYING.get("url")
+    if isinstance(cur_now, dict):
+        u = cur_now.get("url")
         if isinstance(u, str) and u.strip():
             cur_url = u.strip()
 
     chosen = None
+    chosen_idx = 0
     with state.HISTORY_LOCK:
         for i, it in enumerate(state.HISTORY):
             if not isinstance(it, dict):
                 continue
             u = it.get("url")
-            if not isinstance(u, str) or not u.strip():
+            has_url = isinstance(u, str) and bool(u.strip())
+            has_catalog_ref = bool(it.get("plex_item_id")) or (
+                bool(it.get("iptv_source_id")) and bool(it.get("iptv_channel_id"))
+            )
+            if not has_url and not has_catalog_ref:
                 continue
-            u = u.strip()
-            if cur_url and u == cur_url:
+            if cur_now is not None and playback_service.same_playback_item(
+                cur_now, it, left_url=cur_url, right_url=(u.strip() if has_url else None)
+            ):
                 continue
             chosen = dict(it)
+            chosen_idx = i
             state.HISTORY.pop(i)
             break
     if chosen is None:
@@ -667,7 +678,78 @@ def previous():
     except Exception:
         pass
 
-    return play_now(PlayNowReq(url=chosen.get("url"), preserve_current=True, reason="previous"))
+    def _restore_history_entry() -> None:
+        with state.HISTORY_LOCK:
+            state.HISTORY.insert(min(chosen_idx, len(state.HISTORY)), chosen)
+        try:
+            state.persist_history()
+        except Exception:
+            pass
+
+    resume_pos = None
+    try:
+        raw_resume = chosen.get("resume_pos")
+        resume_pos = float(raw_resume) if raw_resume is not None else None
+    except Exception:
+        resume_pos = None
+
+    if chosen.get("iptv_source_id") and chosen.get("iptv_channel_id"):
+        try:
+            iptv_item = iptv_service.resolve_queue_item({**chosen, "provider": "iptv"})
+            return _play_now_item(
+                iptv_item,
+                request_url=str(iptv_item.get("url") or ""),
+                preserve_current=True,
+                reason="previous",
+                title_hint=str(iptv_item.get("title") or "").strip() or None,
+                resume_pos=resume_pos,
+                use_resolver=False,
+            )
+        except Exception:
+            _restore_history_entry()
+            raise
+
+    if chosen.get("plex_item_id"):
+        plex_item = {
+            **chosen,
+            "provider": "plex",
+            "url": str(chosen.get("url") or "https://plex.invalid/item").strip()
+            or "https://plex.invalid/item",
+        }
+        try:
+            return _play_now_item(
+                plex_item,
+                request_url=str(plex_item.get("url") or "https://plex.invalid/item"),
+                preserve_current=True,
+                reason="previous",
+                title_hint=str(plex_item.get("title") or "").strip() or None,
+                resume_pos=resume_pos,
+                use_resolver=False,
+            )
+        except PlexError as exc:
+            _restore_history_entry()
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+        except Exception:
+            _restore_history_entry()
+            raise
+
+    try:
+        return play_now(
+            PlayNowReq(
+                url=str(chosen.get("url") or "").strip(),
+                preserve_current=True,
+                reason="previous",
+                title=str(chosen.get("title") or "").strip() or None,
+                thumbnail=str(chosen.get("thumbnail") or "").strip() or None,
+                thumbnail_local=str(chosen.get("thumbnail_local") or "").strip() or None,
+                channel=str(chosen.get("channel") or "").strip() or None,
+                resume_pos=resume_pos,
+                history_id=str(chosen.get("history_id") or "").strip() or None,
+            )
+        )
+    except Exception:
+        _restore_history_entry()
+        raise
 
 
 @router.post("/share")

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from .. import playback_service, state
 from ..integrations import browse_service, jellyfin_receiver, jellyfin_service
+from . import settings as settings_routes
 
 
 router = APIRouter()
@@ -207,9 +208,7 @@ def jellyfin_catalog_cache_clear():
 
 @router.post("/integrations/jellyfin/connect")
 def jellyfin_integration_connect(req: JellyfinConnectReq):
-    server_url = (req.server_url or "").strip()
-    if not server_url:
-        raise HTTPException(status_code=400, detail="server_url is required")
+    server_url = jellyfin_service.validate_server_url(req.server_url)
     settings_name = ""
     try:
         settings_name = str(
@@ -218,6 +217,10 @@ def jellyfin_integration_connect(req: JellyfinConnectReq):
         ).strip()
     except Exception:
         settings_name = ""
+    settings_routes.clear_repointed_receiver_credentials(
+        server_url,
+        clear_api_key=(req.api_key is None),
+    )
     out = jellyfin_receiver.connect(
         server_url=server_url,
         api_key=req.api_key,

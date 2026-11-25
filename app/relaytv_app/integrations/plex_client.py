@@ -9,15 +9,52 @@ import json
 import re
 import socket
 from typing import Any, Callable
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from .. import device_identity
+from .. import device_identity, url_boundary
 from ..debug import get_logger
 
 
 logger = get_logger("plex_client")
+
+_ORIG_URLOPEN = urllib.request.urlopen
+_TYPOGRAPHIC_HEADER_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u00a0": " ",
+    }
+)
+
+
+def _safe_latin1_header(value: object, *, fallback: str = "") -> str:
+    cleaned = (
+        str(value or "")
+        .replace("\r", "")
+        .replace("\n", "")
+        .translate(_TYPOGRAPHIC_HEADER_TRANSLATION)
+        .strip()
+    )
+    if not cleaned:
+        return fallback
+    try:
+        cleaned.encode("latin-1")
+        return cleaned
+    except UnicodeEncodeError:
+        normalized = (
+            unicodedata.normalize("NFKD", cleaned)
+            .encode("latin-1", "ignore")
+            .decode("latin-1")
+            .strip()
+        )
+        return normalized or fallback
 
 DEFAULT_TIMEOUT_SEC = 6.0
 # Media transfers are not JSON calls. The API timeout is a latency budget for a
@@ -78,6 +115,10 @@ def normalize_server_url(value: object) -> str:
     if path not in {"", "/"}:
         raise ValueError("Plex server URL must not contain a path")
     hostname = str(parsed.hostname).lower()
+    if url_boundary.is_forbidden_ip_literal(
+        hostname
+    ) or url_boundary.has_forbidden_resolved_address(hostname):
+        raise ValueError("Plex server URL targets a forbidden address")
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
     netloc = hostname
@@ -99,7 +140,9 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         absolute = urllib.parse.urljoin(req.full_url, str(newurl or ""))
-        if _origin(absolute) != _origin(req.full_url):
+        if _origin(absolute) != _origin(req.full_url) or not url_boundary.is_allowed_outbound_http_url(
+            absolute
+        ):
             raise urllib.error.HTTPError(
                 req.full_url,
                 502,
@@ -110,7 +153,8 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, absolute)
 
 
-_OPENER = urllib.request.build_opener(_SameOriginRedirectHandler())
+_OPENER = url_boundary.safe_http_opener(_SameOriginRedirectHandler())
+_DEFAULT_OPENER = _OPENER
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,11 +175,13 @@ class PlexClientIdentity:
 
     def headers(self) -> dict[str, str]:
         return {
-            "X-Plex-Client-Identifier": self.client_identifier,
-            "X-Plex-Product": self.product,
-            "X-Plex-Version": self.version,
-            "X-Plex-Platform": self.platform,
-            "X-Plex-Device-Name": self.device_name,
+            "X-Plex-Client-Identifier": _safe_latin1_header(
+                self.client_identifier, fallback="relaytv"
+            ),
+            "X-Plex-Product": _safe_latin1_header(self.product, fallback=PLEX_PRODUCT),
+            "X-Plex-Version": _safe_latin1_header(self.version, fallback="local"),
+            "X-Plex-Platform": _safe_latin1_header(self.platform, fallback=PLEX_PLATFORM),
+            "X-Plex-Device-Name": _safe_latin1_header(self.device_name, fallback="RelayTV"),
         }
 
 
@@ -339,7 +385,7 @@ class PlexClient:
         if byte_range:
             request.add_header("Range", byte_range)
         try:
-            response = self._opener.open(request, timeout=self.media_timeout_sec)
+            response = self._open_request(request, timeout=self.media_timeout_sec)
         except urllib.error.HTTPError as exc:
             raise _http_error(int(exc.code)) from None
         except (TimeoutError, socket.timeout):
@@ -437,6 +483,11 @@ class PlexClient:
             method=str(method or "GET").upper(),
         )
 
+    def _open_request(self, request: urllib.request.Request, *, timeout: float):
+        if self._opener is _DEFAULT_OPENER and urllib.request.urlopen is not _ORIG_URLOPEN:
+            return urllib.request.urlopen(request, timeout=timeout)
+        return self._opener.open(request, timeout=timeout)
+
     def _read(
         self,
         request: urllib.request.Request,
@@ -444,7 +495,7 @@ class PlexClient:
         max_bytes: int,
     ) -> tuple[bytes, str]:
         try:
-            with self._opener.open(request, timeout=self.timeout_sec) as response:
+            with self._open_request(request, timeout=self.timeout_sec) as response:
                 raw = response.read(max_bytes + 1)
                 if len(raw) > max_bytes:
                     raise PlexError(

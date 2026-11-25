@@ -14,17 +14,22 @@ import urllib.error
 import urllib.request
 from collections import Counter
 from collections.abc import Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 from fastapi import HTTPException
 
-from .. import playback_service
+from .. import playback_service, url_boundary
 from ..config import env_int, env_str, runtime_config
 from ..debug import get_logger
 from .iptv_store import CatalogPublishRetired, IptvStore
 
 
 logger = get_logger("iptv")
+
+_ORIG_URLOPEN = urllib.request.urlopen
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_LOCAL = ipaddress.ip_network("64:ff9b:1::/48")
 
 _STORE_LOCK = threading.Lock()
 _STORE: IptvStore | None = None
@@ -199,12 +204,13 @@ def _preset(preset_id: str) -> dict[str, object] | None:
 
 def _validate_http_url(value: str, *, field: str) -> str:
     text = str(value or "").strip()
-    try:
-        parsed = urlsplit(text)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"invalid {field}") from exc
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+    parsed = url_boundary.parse_url(text)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=400, detail=f"{field} must be an HTTP or HTTPS URL")
+    if url_boundary.is_forbidden_ip_literal(
+        parsed.hostname
+    ) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
+        raise HTTPException(status_code=400, detail=f"{field} targets a forbidden address")
     return text
 
 
@@ -324,11 +330,23 @@ def parse_m3u(text: str, *, base_url: str = "") -> list[dict[str, object]]:
             attrs = {
                 k.lower(): (v1 or v2 or v3).strip() for k, v1, v2, v3 in attr_re_findall(attrs_text)
             }
+            raw_logo = attrs.get("tvg-logo", "")
+            logo_parsed = url_boundary.parse_url(raw_logo) if raw_logo else None
+            if (
+                logo_parsed is None
+                or logo_parsed.scheme not in {"http", "https"}
+                or not logo_parsed.hostname
+                or url_boundary.is_forbidden_ip_literal(logo_parsed.hostname)
+                or url_boundary.has_forbidden_resolved_address(logo_parsed.hostname)
+            ):
+                safe_logo = ""
+            else:
+                safe_logo = raw_logo
             pending = {
                 "name": title or attrs.get("tvg-name") or "Untitled channel",
                 "tvg_id": attrs.get("tvg-id", ""),
                 "tvg_name": attrs.get("tvg-name", ""),
-                "logo_url": attrs.get("tvg-logo", ""),
+                "logo_url": safe_logo,
                 "group_title": attrs.get("group-title", ""),
                 "user_agent": "",
                 "referrer": "",
@@ -351,12 +369,14 @@ def parse_m3u(text: str, *, base_url: str = "") -> list[dict[str, object]]:
         if line.startswith("#"):
             continue
         stream_url = urljoin(base_url, line) if base_url else line
-        try:
-            parsed = urlsplit(stream_url)
-        except Exception:
-            pending = None
-            continue
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        parsed = url_boundary.parse_url(stream_url)
+        if (
+            parsed is None
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or url_boundary.is_forbidden_ip_literal(parsed.hostname)
+            or url_boundary.has_forbidden_resolved_address(parsed.hostname)
+        ):
             pending = None
             continue
         pending["stream_url"] = stream_url
@@ -438,7 +458,41 @@ def _assign_channel_ids(
     return deduped
 
 
+def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if url_boundary.is_forbidden_ip_literal(str(ip)):
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded: list[ipaddress.IPv4Address] = []
+        if ip.ipv4_mapped is not None:
+            embedded.append(ip.ipv4_mapped)
+        if ip.sixtofour is not None:
+            embedded.append(ip.sixtofour)
+        if ip.teredo is not None:
+            embedded.extend(ip.teredo)
+        if ip in _NAT64_WELL_KNOWN or ip in _NAT64_LOCAL:
+            embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+        if int(ip) <= 0xFFFFFFFF and not ip.is_loopback and not ip.is_unspecified:
+            embedded.append(ipaddress.IPv4Address(int(ip)))
+        if any(not _ip_is_public(v4) for v4 in embedded):
+            return False
+    if isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_NETWORK:
+        return False
+    if (
+        not ip.is_global
+        or ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        return False
+    return True
+
+
 def _fetch_target_host_is_public(host: str, port: int) -> bool:
+    if url_boundary.is_forbidden_ip_literal(host):
+        return False
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except OSError:
@@ -446,36 +500,37 @@ def _fetch_target_host_is_public(host: str, port: int) -> bool:
     checked = False
     for info in infos:
         checked = True
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
+        raw_addr = str(info[4][0]).split("%", 1)[0]
+        if url_boundary.is_forbidden_ip_literal(raw_addr):
+            return False
+        try:
+            ip = ipaddress.ip_address(raw_addr)
+        except ValueError:
+            return False
+        if not _ip_is_public(ip):
             return False
     return checked
 
 
 def _assert_fetch_target_allowed(url: str) -> None:
-    """SSRF guard: on a token-less (open-LAN) deployment, only allow playlist
-    hosts that resolve to public addresses. A configured ``RELAYTV_API_TOKEN``
-    gates source management to the operator, who may then target private hosts.
+    """SSRF guard: always enforce http(s) and block forbidden/metadata/link-local
+    targets; on a token-less (open-LAN) deployment, also require public addresses.
     """
     from ..api_auth import configured_api_token
 
-    if configured_api_token():
-        return
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
-    if scheme not in {"http", "https"}:
+    parsed = url_boundary.parse_url(url)
+    if parsed is None or parsed.scheme not in {"http", "https"}:
         raise ValueError("playlist URL must be http(s)")
-    host = parts.hostname
+    host = parsed.hostname
     if not host:
         raise ValueError("playlist URL has no host")
-    port = parts.port or (443 if scheme == "https" else 80)
+    if url_boundary.is_forbidden_ip_literal(host) or url_boundary.has_forbidden_resolved_address(
+        host
+    ):
+        raise ValueError("playlist host targets a forbidden address")
+    if configured_api_token():
+        return
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if not _fetch_target_host_is_public(host, port):
         raise ValueError("playlist host is not a permitted public address")
 
@@ -485,11 +540,21 @@ class _PublicOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
     private/loopback/link-local host."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _assert_fetch_target_allowed(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        resolved = urljoin(req.full_url, str(newurl or ""))
+        _assert_fetch_target_allowed(resolved)
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
 
 
-_FETCH_OPENER = urllib.request.build_opener(_PublicOnlyRedirectHandler())
+_FETCH_OPENER = url_boundary.safe_http_opener(_PublicOnlyRedirectHandler())
+_DEFAULT_FETCH_OPENER = _FETCH_OPENER
+
+
+def _open_fetch_request(request: urllib.request.Request, *, timeout: float):
+    if _FETCH_OPENER is not _DEFAULT_FETCH_OPENER:
+        return _FETCH_OPENER.open(request, timeout=timeout)
+    if urllib.request.urlopen is not _ORIG_URLOPEN:
+        return urllib.request.urlopen(request, timeout=timeout)
+    return _FETCH_OPENER.open(request, timeout=timeout)
 
 
 def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
@@ -506,7 +571,7 @@ def _fetch_source(source: dict[str, object]) -> tuple[str, str, str, bool]:
     timeout = env_int("RELAYTV_IPTV_FETCH_TIMEOUT_SEC", 15, minimum=2, maximum=120)
     max_bytes = env_int("RELAYTV_IPTV_MAX_PLAYLIST_BYTES", 20 * 1024 * 1024, minimum=1024)
     try:
-        with _FETCH_OPENER.open(request, timeout=timeout) as response:
+        with _open_fetch_request(request, timeout=timeout) as response:
             if int(getattr(response, "status", 200) or 200) == 304:
                 return (
                     "",
@@ -642,6 +707,16 @@ def _playable_item(source_id: str, channel_id: str) -> dict[str, object]:
     channel = store().get_channel(source_id, channel_id)
     if channel is None or not bool(channel.get("active")):
         raise HTTPException(status_code=404, detail="IPTV channel is unavailable")
+    stream_url = str(channel.get("stream_url") or "").strip()
+    parsed_stream = url_boundary.parse_url(stream_url)
+    if (
+        parsed_stream is None
+        or parsed_stream.scheme not in {"http", "https"}
+        or not parsed_stream.hostname
+        or url_boundary.is_forbidden_ip_literal(parsed_stream.hostname)
+        or url_boundary.has_forbidden_resolved_address(parsed_stream.hostname)
+    ):
+        raise HTTPException(status_code=400, detail="IPTV channel stream URL is forbidden")
     headers: dict[str, str] = {}
     if channel.get("user_agent"):
         headers["User-Agent"] = str(channel["user_agent"])
@@ -652,7 +727,7 @@ def _playable_item(source_id: str, channel_id: str) -> dict[str, object]:
         "title": str(channel.get("name") or "IPTV channel"),
         "channel": str(channel.get("group_title") or "IPTV"),
         "thumbnail": str(channel.get("logo_url") or ""),
-        "url": str(channel.get("stream_url") or ""),
+        "url": stream_url,
         "iptv_source_id": source_id,
         "iptv_channel_id": channel_id,
         **({"http_headers": headers} if headers else {}),
@@ -721,7 +796,7 @@ def check_channel(
     available = False
     try:
         _assert_fetch_target_allowed(url)
-        with _FETCH_OPENER.open(request, timeout=timeout) as response:
+        with _open_fetch_request(request, timeout=timeout) as response:
             status_code = int(getattr(response, "status", 200) or 200)
             sample = response.read(64 * 1024)
             available = 200 <= status_code < 400 and bool(sample)

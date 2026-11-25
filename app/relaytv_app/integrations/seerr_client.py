@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .. import url_boundary
 from ..config import (
     SettingsSnapshot,
     normalize_optional_positive_int,
@@ -21,6 +22,7 @@ from ..config import (
 DEFAULT_TIMEOUT_SEC = 5.0
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
+_ORIG_URLOPEN = urllib.request.urlopen
 
 
 class SeerrError(RuntimeError):
@@ -81,6 +83,10 @@ def normalize_server_url(value: object) -> str:
     if path.lower().endswith("/api/v1"):
         path = path[: -len("/api/v1")].rstrip("/")
     hostname = parsed.hostname.lower()
+    if url_boundary.is_forbidden_ip_literal(
+        hostname
+    ) or url_boundary.has_forbidden_resolved_address(hostname):
+        raise ValueError("Seerr server URL targets a forbidden address")
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
     netloc = hostname
@@ -152,7 +158,9 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         absolute = urllib.parse.urljoin(req.full_url, str(newurl or ""))
-        if _origin(absolute) != _origin(req.full_url):
+        if _origin(absolute) != _origin(req.full_url) or not url_boundary.is_allowed_outbound_http_url(
+            absolute
+        ):
             raise urllib.error.HTTPError(
                 req.full_url,
                 502,
@@ -163,7 +171,8 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, absolute)
 
 
-_OPENER = urllib.request.build_opener(_SameOriginRedirectHandler())
+_OPENER = url_boundary.safe_http_opener(_SameOriginRedirectHandler())
+_DEFAULT_OPENER = _OPENER
 
 
 class SeerrClient:
@@ -324,8 +333,19 @@ class SeerrClient:
             headers=request_headers,
             method=str(method or "GET").upper(),
         )
+        if not url_boundary.is_allowed_outbound_http_url(url):
+            raise SeerrError(
+                "seerr_unreachable",
+                "Seerr could not be reached",
+                status_code=502,
+            )
         try:
-            with self._opener.open(request, timeout=self.timeout_sec) as response:
+            open_call = (
+                urllib.request.urlopen(request, timeout=self.timeout_sec)
+                if self._opener is _DEFAULT_OPENER and urllib.request.urlopen is not _ORIG_URLOPEN
+                else self._opener.open(request, timeout=self.timeout_sec)
+            )
+            with open_call as response:
                 raw = response.read(max_bytes + 1)
                 if len(raw) > max_bytes:
                     raise SeerrError(
