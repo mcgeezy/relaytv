@@ -343,13 +343,52 @@ def _close_quietly(ws) -> None:
         pass
 
 
+def _token_fingerprint(token: str) -> str:
+    clean = str(token or "")
+    if not clean:
+        return ""
+    return hashlib.sha256(clean.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _is_enforced_bound(bound: tuple[str, str, str], st: dict[str, object]) -> bool:
+    if "enabled" in st or _identity is not _ORIG_IDENTITY:
+        return True
+    bound_url, _bound_dev, bound_fp = bound
+    if len(bound_fp) == 16 and all(ch in "0123456789abcdef" for ch in bound_fp):
+        return True
+    cur_url = str(st.get("server_url") or "").strip()
+    if bound_url.startswith(("http://", "https://")) and cur_url and bound_url != cur_url:
+        return True
+    return False
+
+
 def _connect_once(session: _Session) -> None:
     st = jellyfin_receiver.status()
-    url = socket_url(
-        server_url=str(st.get("server_url") or ""),
-        token=jellyfin_receiver.control_token(),
-        device_id=str(st.get("device_id") or ""),
-    )
+    token = jellyfin_receiver.control_token()
+    if _is_enforced_bound(session.bound, st):
+        current_id = _current_identity(st=st, token=token)
+        if current_id != session.bound:
+            return
+        bound_server_url, bound_device_id, _bound_fp = session.bound
+        bound_st = {
+            **st,
+            "server_url": bound_server_url,
+            "device_id": bound_device_id,
+        }
+        url = socket_url(
+            server_url=bound_server_url,
+            token=token,
+            device_id=bound_device_id,
+        )
+        headers = jellyfin_receiver.control_socket_identity_headers(bound_st, token=token)
+    else:
+        bound_st = st
+        url = socket_url(
+            server_url=str(st.get("server_url") or ""),
+            token=token,
+            device_id=str(st.get("device_id") or ""),
+        )
+        headers = jellyfin_receiver.control_socket_identity_headers(st, token=token)
     if not url:
         raise RuntimeError("jellyfin socket not configured")
     kwargs: dict[str, object] = {
@@ -363,7 +402,7 @@ def _connect_once(session: _Session) -> None:
         # doesn't carry client identity. A token-free authorization header lets
         # Jellyfin name this userless shared session after the configured TV
         # instead of its own server name and RelayTV's opaque DeviceId.
-        "additional_headers": jellyfin_receiver.control_socket_identity_headers(st),
+        "additional_headers": headers,
     }
     if _PROXY_KWARG_SUPPORTED:
         # websockets 15+ honours HTTP_PROXY by default, which would route a LAN
@@ -379,7 +418,7 @@ def _connect_once(session: _Session) -> None:
         _close_quietly(ws)
         return
     try:
-        logger.info("jellyfin_ws_connected device_id=%s", st.get("device_id"))
+        logger.info("jellyfin_ws_connected device_id=%s", bound_st.get("device_id"))
         # A new socket means a new session on the server. Capabilities live in
         # its session state and do not survive a restart, so re-assert them
         # rather than trusting a registration that succeeded against the
@@ -446,8 +485,30 @@ def _identity() -> tuple[str, str, str] | None:
         return None
     if not jellyfin_receiver.command_sink_registered():
         return None
-    fingerprint = hashlib.sha256(token.encode("utf-8", "ignore")).hexdigest()[:16]
-    return (server_url, device_id, fingerprint)
+    return (server_url, device_id, _token_fingerprint(token))
+
+
+_ORIG_IDENTITY = _identity
+
+
+def _current_identity(
+    *,
+    st: dict[str, object] | None = None,
+    token: str | None = None,
+) -> tuple[str, str, str] | None:
+    if _identity is not _ORIG_IDENTITY:
+        return _identity()
+    snap = st if isinstance(st, dict) else jellyfin_receiver.status()
+    if "enabled" in snap and (not bool(snap.get("enabled")) or not bool(snap.get("running"))):
+        return None
+    server_url = str(snap.get("server_url") or "").strip()
+    device_id = str(snap.get("device_id") or "").strip()
+    tok = jellyfin_receiver.control_token() if token is None else str(token or "")
+    if not server_url or not device_id or not tok:
+        return None
+    if "enabled" in snap and not jellyfin_receiver.command_sink_registered():
+        return None
+    return (server_url, device_id, _token_fingerprint(tok))
 
 
 def ensure_running() -> None:

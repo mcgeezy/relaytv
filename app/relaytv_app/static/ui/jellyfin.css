@@ -4,7 +4,7 @@
   position: fixed;
   inset: 0;
   z-index: 1200;
-  padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
+  padding: max(14px, var(--safe-top)) 14px max(16px, env(safe-area-inset-bottom));
   background:
     radial-gradient(1200px 600px at 10% 0%, rgba(120,180,255,.22), transparent 55%),
     radial-gradient(900px 520px at 90% 10%, rgba(180,120,255,.16), transparent 60%),
@@ -777,7 +777,7 @@
   --jf-accent: #62d6ff;
   --jf-accent-strong: #3978f6;
   --jf-good: #55e9a4;
-  padding: max(12px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  padding: max(12px, var(--safe-top)) 16px max(18px, env(safe-area-inset-bottom));
   background:
     radial-gradient(900px 520px at 12% -8%, rgba(32, 161, 255, .22), transparent 62%),
     radial-gradient(720px 520px at 92% 12%, rgba(119, 74, 255, .16), transparent 64%),
@@ -1067,7 +1067,7 @@
   .jfModern .jfShellHead{
     top: 0;
     min-height: 62px;
-    padding: max(9px, env(safe-area-inset-top)) 10px 9px;
+    padding: max(9px, var(--safe-top)) 10px 9px;
     border-width: 0 0 1px;
     border-radius: 0;
   }
@@ -1134,7 +1134,7 @@
     border-radius: 18px;
   }
   .jfModern .jfCardHead{
-    top: calc(62px + env(safe-area-inset-top));
+    top: calc(62px + var(--safe-top));
     gap: 6px;
   }
   .jfModern .jfCardSearchWrap{
@@ -1645,7 +1645,7 @@
   max-width: none;
   height: 100dvh;
   max-height: none;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  padding: max(16px, var(--safe-top)) 16px max(18px, env(safe-area-inset-bottom));
   overflow-y: auto;
   border-width: 0 0 0 1px;
   border-radius: 24px 0 0 24px;
@@ -1726,7 +1726,7 @@
     inset: auto 0 0;
     width: 100%;
     height: auto;
-    max-height: min(84dvh, 780px);
+    max-height: min(84dvh, calc(100dvh - var(--safe-top) - 12px), 780px);
     padding: 10px 12px max(16px, env(safe-area-inset-bottom));
     border-width: 1px 0 0;
     border-radius: 24px 24px 0 0;

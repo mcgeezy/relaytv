@@ -17,11 +17,125 @@ from urllib import request as _urlrequest
 from urllib import error as _urlerror
 from urllib import parse as _urlparse
 import platform
-from .. import device_identity
+from .. import device_identity, url_boundary
 from ..debug import get_logger
 from ..thumb_cache import attach_local_thumbnail
 
 logger = get_logger("jellyfin_receiver")
+
+_ORIG_URLOPEN = _urlrequest.urlopen
+
+
+def _origin_key(value: object) -> tuple[str, str, int] | None:
+    parsed = url_boundary.parse_url(value)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    default_port = 443 if parsed.scheme == "https" else 80
+    return (parsed.scheme, parsed.hostname, int(parsed.port or default_port))
+
+
+def _same_server_origin(left: object, right: object) -> bool:
+    lo = _origin_key(left)
+    ro = _origin_key(right)
+    return bool(lo and ro and lo == ro)
+
+
+def _validate_receiver_server_url(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = url_boundary.parse_url(raw)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("server_url must be a valid http or https URL")
+    if parsed.username or parsed.password:
+        raise ValueError("server_url must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("server_url must not contain query parameters or fragments")
+    if url_boundary.is_forbidden_ip_literal(
+        parsed.hostname
+    ) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
+        raise ValueError("server_url targets a forbidden address")
+    return raw
+
+
+def _safe_emby_header_param(value: object, fallback: str = "") -> str:
+    raw = str(value or "").replace("\r", "").replace("\n", "").strip()
+    if not raw:
+        raw = fallback
+    if not raw:
+        return ""
+    # Escape double quotes and backslashes so quoted MediaBrowser header fields
+    # can never be broken out of, and percent-encode any non-ASCII codepoints so
+    # http.client's latin-1 header encoding never raises UnicodeEncodeError.
+    out: list[str] = []
+    for ch in raw:
+        if ch in {'"', "\\"}:
+            out.append(_urlparse.quote(ch, safe=""))
+        elif ord(ch) < 32 or ord(ch) == 127:
+            continue
+        elif ord(ch) > 126:
+            out.append(_urlparse.quote(ch, safe=""))
+        else:
+            out.append(ch)
+    cleaned = "".join(out).strip()
+    return cleaned or fallback
+
+
+class _SameOriginJellyfinRedirectHandler(_urlrequest.HTTPRedirectHandler):
+    """Follow redirects only when scheme, host, and port stay on the exact origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        resolved = _urlparse.urljoin(req.full_url, str(newurl or ""))
+        orig_origin = _origin_key(req.full_url)
+        next_origin = _origin_key(resolved)
+        if (
+            orig_origin is None
+            or next_origin is None
+            or not url_boundary.is_allowed_outbound_http_url(resolved)
+            or next_origin != orig_origin
+        ):
+            raise _urlerror.HTTPError(
+                req.full_url, code, "cross-origin redirect rejected", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, resolved)
+
+
+def _invalidate_session_auth_on_401(
+    *, generation: int | None = None, token_used: str = ""
+) -> None:
+    global _ACCESS_TOKEN, _AUTH_SESSION_ID
+    with _LOCK:
+        if generation is not None and generation != _CONFIG_GENERATION:
+            return
+        used = str(token_used or "").strip()
+        if used and _ACCESS_TOKEN and used != _ACCESS_TOKEN:
+            return
+        if _AUTH_MODE == "user_login" or bool(_ACCESS_TOKEN):
+            _ACCESS_TOKEN = ""
+            _AUTH_SESSION_ID = ""
+            _STATUS["authenticated"] = False
+            _STATUS["auth_session_id"] = ""
+
+
+def _open_http(
+    req: _urlrequest.Request,
+    *,
+    timeout: float,
+    generation: int | None = None,
+    token_used: str = "",
+    invalidate_on_401: bool = True,
+):
+    if not url_boundary.is_allowed_outbound_http_url(req.full_url):
+        raise _urlerror.URLError("Blocked unsafe Jellyfin URL target")
+    try:
+        if _urlrequest.urlopen is not _ORIG_URLOPEN:
+            return _urlrequest.urlopen(req, timeout=timeout)
+        opener = url_boundary.safe_http_opener(_SameOriginJellyfinRedirectHandler())
+        return opener.open(req, timeout=timeout)
+    except _urlerror.HTTPError as exc:
+        if invalidate_on_401 and int(getattr(exc, "code", 0) or 0) == 401:
+            _invalidate_session_auth_on_401(generation=generation, token_used=token_used)
+        raise
 
 _LOCK = threading.Lock()
 _THREAD_LOCK = threading.Lock()
@@ -752,7 +866,11 @@ def detect_server_type(server_url: str, *, timeout_sec: float = 3.0) -> dict[str
         }
     req = _urlrequest.Request(f"{base}/System/Info/Public", method="GET")
     try:
-        with _urlrequest.urlopen(req, timeout=max(0.5, float(timeout_sec))) as resp:
+        with _open_http(
+            req,
+            timeout=max(0.5, float(timeout_sec)),
+            invalidate_on_401=False,
+        ) as resp:
             raw = (resp.read() or b"{}").decode("utf-8", "ignore")
         data = json.loads(raw) if raw.strip() else {}
         if not isinstance(data, dict):
@@ -1001,10 +1119,23 @@ def _connect_locked(
         _NEXT_REGISTER_RETRY_TS, \
         _LAST_STOPPED_SIGNATURE, \
         _LAST_STOPPED_TS
+    next_server_url = _validate_receiver_server_url(server_url)
+    cfg_snapshot = runtime_config.snapshot()
+    cfg_server_url = (cfg_snapshot.raw("RELAYTV_JELLYFIN_SERVER_URL") or "").strip()
+    next_origin = _origin_key(next_server_url)
+    cfg_origin = _origin_key(cfg_server_url)
     with _LOCK:
+        prev_origin = _origin_key(_STATUS.get("server_url"))
+        origin_changed = bool(
+            next_origin
+            and (
+                (prev_origin is not None and prev_origin != next_origin)
+                or (cfg_origin is not None and cfg_origin != next_origin)
+            )
+        )
         _STATUS["enabled"] = True
         _STATUS["running"] = True
-        _STATUS["server_url"] = str(server_url or "").strip()
+        _STATUS["server_url"] = next_server_url
         if device_name is not None:
             _STATUS["device_name"] = str(device_name or "").strip() or "RelayTV"
             _STATUS["client_name"] = str(_STATUS["device_name"])
@@ -1013,6 +1144,8 @@ def _connect_locked(
             _STATUS["heartbeat_sec"] = max(2, int(heartbeat_sec))
         if api_key is not None:
             _API_KEY = str(api_key or "").strip()
+        elif origin_changed:
+            _API_KEY = ""
         selected_mode = str(auth_mode or "").strip().lower()
         if not selected_mode and api_key is not None:
             selected_mode = "shared_api_key" if _API_KEY else "user_login"
@@ -1022,8 +1155,12 @@ def _connect_locked(
             selected_mode = "shared_api_key" if _API_KEY else "user_login"
         _AUTH_MODE = selected_mode
         _STATUS["auth_mode"] = _AUTH_MODE
-        _AUTH_USERNAME = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
-        _AUTH_PASSWORD = (runtime_config.snapshot().raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
+        if origin_changed and (cfg_origin is None or cfg_origin != next_origin):
+            _AUTH_USERNAME = ""
+            _AUTH_PASSWORD = ""
+        else:
+            _AUTH_USERNAME = (cfg_snapshot.raw("RELAYTV_JELLYFIN_USERNAME") or "").strip()
+            _AUTH_PASSWORD = (cfg_snapshot.raw("RELAYTV_JELLYFIN_PASSWORD") or "").strip()
         _ACCESS_TOKEN = ""
         _AUTH_USER_ID = ""
         _AUTH_SESSION_ID = ""
@@ -1189,6 +1326,8 @@ def control_token() -> str:
 
 def control_socket_identity_headers(
     status_snapshot: dict[str, object] | None = None,
+    *,
+    token: str | None = None,
 ) -> dict[str, str]:
     """Identify the cast device during the websocket HTTP handshake.
 
@@ -1221,11 +1360,15 @@ def control_socket_identity_headers(
         f'DeviceId="{device_id}", '
         f'Version="{client_version}"'
     )
-    auth_mode = str(st.get("auth_mode") or "").strip().lower()
-    with _LOCK:
-        token = str(_API_KEY if auth_mode == "shared_api_key" else _ACCESS_TOKEN).strip()
-    if token:
-        auth = f'{auth}, Token="{token}"'
+    if token is None:
+        auth_mode = str(st.get("auth_mode") or "").strip().lower()
+        with _LOCK:
+            resolved_token = str(_API_KEY if auth_mode == "shared_api_key" else _ACCESS_TOKEN).strip()
+    else:
+        resolved_token = str(token or "").strip()
+    safe_token = _safe_emby_header_param(resolved_token)
+    if safe_token:
+        auth = f'{auth}, Token="{safe_token}"'
     return {"Authorization": auth}
 
 
@@ -1300,15 +1443,19 @@ def _emby_identity_headers(
     every catalog call was filed under one anonymous session named after the
     server instead of this device. Both headers carry the full value.
     """
-    tok = str(token or "").strip()
+    tok = _safe_emby_header_param(token)
+    safe_client = _safe_emby_header_param(client_name, "RelayTV")
+    safe_device = _safe_emby_header_param(device_name, "RelayTV")
+    safe_device_id = _safe_emby_header_param(device_id, "relaytv")
+    safe_version = _safe_emby_header_param(client_version, "1.0")
     out: dict[str, str] = {}
     if tok:
         out["X-Emby-Token"] = tok
     auth = (
-        f'MediaBrowser Client="{client_name}", '
-        f'Device="{device_name}", '
-        f'DeviceId="{device_id or "relaytv"}", '
-        f'Version="{client_version}"'
+        f'MediaBrowser Client="{safe_client}", '
+        f'Device="{safe_device}", '
+        f'DeviceId="{safe_device_id}", '
+        f'Version="{safe_version}"'
     )
     if tok:
         auth = f'{auth}, Token="{tok}"'
@@ -1340,8 +1487,13 @@ def get_item_metadata(
     base = str(server_url_override or context.server_url or "").strip().rstrip("/")
     if not iid or not base:
         return {}
-    token = str(token_override or context.catalog_token or "").strip()
-    user_id = str(user_id_override or context.catalog_user_id or "").strip()
+    same_origin = not server_url_override or _same_server_origin(base, context.server_url)
+    token = str(
+        token_override or (context.catalog_token if same_origin else "") or ""
+    ).strip()
+    user_id = str(
+        user_id_override or (context.catalog_user_id if same_origin else "") or ""
+    ).strip()
     token_key = hashlib.sha1(token.encode("utf-8", "ignore")).hexdigest()[:12] if token else "-"
     cache_key = f"meta:{base}:{user_id}:{iid}:{token_key}"
     cached = _catalog_cache_get(cache_key)
@@ -1373,8 +1525,12 @@ def get_item_metadata(
         for k, v in _headers().items():
             req.add_header(k, v)
         try:
-            with _urlrequest.urlopen(
-                req, timeout=float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5"))
+            with _open_http(
+                req,
+                timeout=float(os.getenv("RELAYTV_JELLYFIN_ITEM_TIMEOUT_SEC", "5")),
+                generation=context.generation,
+                token_used=token,
+                invalidate_on_401=same_origin,
             ) as resp:
                 raw = (resp.read() or b"{}").decode("utf-8", "ignore")
             data = json.loads(raw) if raw.strip() else {}
@@ -1483,7 +1639,7 @@ def _get_json(url: str, *, timeout: float = 5.0, token: str = "") -> object:
     req = _urlrequest.Request(url, method="GET")
     for k, v in _build_emby_headers(token=token).items():
         req.add_header(k, v)
-    with _urlrequest.urlopen(req, timeout=timeout) as resp:
+    with _open_http(req, timeout=timeout, token_used=token) as resp:
         raw = (resp.read() or b"{}").decode("utf-8", "ignore")
     if not raw.strip():
         return {}
@@ -2027,11 +2183,12 @@ def resolve_playback_url(
     h = int(max_height or 0) if max_height else 0
     bps = int(max_streaming_bitrate or 0) if max_streaming_bitrate else 0
     cache_key = f"playback:{base}:{user_id}:{iid}:{int(bool(prefer_transcode))}:{mid}:{aidx}:{sidx}:{h}:{bps}"
-    cached = _catalog_cache_get(cache_key)
-    if isinstance(cached, dict):
-        out = dict(cached)
-        if isinstance(out.get("url"), str) and out.get("url"):
-            return out
+    if not prefer_transcode:
+        cached = _catalog_cache_get(cache_key)
+        if isinstance(cached, dict):
+            out = dict(cached)
+            if isinstance(out.get("url"), str) and out.get("url"):
+                return out
 
     path = f"/Items/{_urlparse.quote(iid)}/PlaybackInfo"
     endpoint = f"{base}{path}"
@@ -2074,7 +2231,7 @@ def resolve_playback_url(
             req = _urlrequest.Request(req_url, method="GET")
         for k, v in _build_emby_headers(token=token).items():
             req.add_header(k, v)
-        with _urlrequest.urlopen(req, timeout=timeout) as resp:
+        with _open_http(req, timeout=timeout, token_used=token) as resp:
             raw = (resp.read() or b"{}").decode("utf-8", "ignore")
         if not raw.strip():
             return {}
@@ -2102,12 +2259,25 @@ def resolve_playback_url(
         if isinstance(data, dict) and isinstance(data.get("MediaSources"), list)
         else []
     )
-    selected = media_sources[0] if media_sources and isinstance(media_sources[0], dict) else {}
+    dict_sources = [s for s in media_sources if isinstance(s, dict)]
+    matched_mid = next(
+        (
+            source
+            for source in dict_sources
+            if mid
+            and (
+                str(source.get("Id") or "").strip() == mid
+                or str(source.get("MediaSourceId") or "").strip() == mid
+            )
+        ),
+        None,
+    )
+    selected: dict[str, object] = (
+        matched_mid if matched_mid is not None else (dict_sources[0] if dict_sources else {})
+    )
 
-    if prefer_transcode:
-        for source in media_sources:
-            if not isinstance(source, dict):
-                continue
+    if prefer_transcode and not selected.get("TranscodingUrl"):
+        for source in dict_sources:
             if source.get("TranscodingUrl"):
                 selected = source
                 break
@@ -2127,15 +2297,33 @@ def resolve_playback_url(
     if rel_url and rel_url.startswith("/"):
         rel_url = f"{base}{rel_url}"
 
+    play_session_id = str((data.get("PlaySessionId") if isinstance(data, dict) else "") or "").strip()
+    if not play_session_id and rel_url:
+        try:
+            q = dict(_urlparse.parse_qsl(_urlparse.urlsplit(rel_url).query, keep_blank_values=True))
+            play_session_id = str(
+                q.get("PlaySessionId") or q.get("playSessionId") or q.get("play_session_id") or ""
+            ).strip()
+        except Exception:
+            play_session_id = ""
+    if prefer_transcode and rel_url and play_session_id and "playsessionid=" not in rel_url.lower():
+        sep = "&" if "?" in rel_url else "?"
+        rel_url = f"{rel_url}{sep}PlaySessionId={_urlparse.quote(play_session_id, safe='')}"
+
     out_mid = str(
         (selected.get("Id") if isinstance(selected, dict) else "")
         or (selected.get("MediaSourceId") if isinstance(selected, dict) else "")
         or mid
         or ""
     ).strip()
-    out = {"url": rel_url, "method": method, "media_source_id": out_mid}
+    out: dict[str, object] = {"url": rel_url, "method": method, "media_source_id": out_mid}
+    if play_session_id:
+        out["play_session_id"] = play_session_id
     if rel_url:
-        _catalog_cache_set(cache_key, dict(out), ttl_sec=_catalog_ttl_sec("detail"))
+        # Transcode URLs embed a single-use PlaySessionId invalidated on stop;
+        # caching them causes subsequent replays to hit a dead transcode session.
+        if method != "transcode":
+            _catalog_cache_set(cache_key, dict(out), ttl_sec=_catalog_ttl_sec("detail"))
         _mark_catalog_ok()
     elif last_err:
         mark_error(last_err)
@@ -3268,7 +3456,12 @@ def _post_json_for(
     req.add_header("Content-Type", "application/json")
     for key, value in _context_headers(context).items():
         req.add_header(key, value)
-    with _urlrequest.urlopen(req, timeout=timeout):
+    with _open_http(
+        req,
+        timeout=timeout,
+        generation=context.generation,
+        token_used=context.control_token,
+    ):
         pass
     return url
 
@@ -3279,7 +3472,12 @@ def _post_no_body_for(context: _RequestContext, path: str, *, timeout: float = 3
     req = _urlrequest.Request(url, data=b"", method="POST")
     for key, value in _context_headers(context).items():
         req.add_header(key, value)
-    with _urlrequest.urlopen(req, timeout=timeout):
+    with _open_http(
+        req,
+        timeout=timeout,
+        generation=context.generation,
+        token_used=context.control_token,
+    ):
         pass
     return url
 
@@ -3290,7 +3488,12 @@ def _get_json_for(context: _RequestContext, path: str, *, timeout: float = 5.0) 
     req = _urlrequest.Request(url, method="GET")
     for key, value in _context_headers(context).items():
         req.add_header(key, value)
-    with _urlrequest.urlopen(req, timeout=timeout) as resp:
+    with _open_http(
+        req,
+        timeout=timeout,
+        generation=context.generation,
+        token_used=context.control_token,
+    ) as resp:
         raw = (resp.read() or b"{}").decode("utf-8", "ignore")
     if not raw.strip():
         return {}
@@ -3367,17 +3570,26 @@ def authenticate_once(*, _context: _RequestContext | None = None) -> dict[str, o
     # request.App null server-side, which crashes AuthenticateByName with a
     # 400 for every login attempt regardless of credentials. Send both, as
     # _emby_identity_headers already does for catalog requests.
+    safe_client = _safe_emby_header_param(client_name, "RelayTV")
+    safe_device = _safe_emby_header_param(device_name, "RelayTV")
+    safe_device_id = _safe_emby_header_param(device_id, "relaytv")
+    safe_version = _safe_emby_header_param(client_version, "1.0")
     identity_auth = (
-        f'MediaBrowser Client="{client_name}", '
-        f'Device="{device_name}", '
-        f'DeviceId="{device_id}", '
-        f'Version="{client_version}"'
+        f'MediaBrowser Client="{safe_client}", '
+        f'Device="{safe_device}", '
+        f'DeviceId="{safe_device_id}", '
+        f'Version="{safe_version}"'
     )
     req.add_header("Authorization", identity_auth)
     req.add_header("X-Emby-Authorization", identity_auth)
     timeout = float(os.getenv("RELAYTV_JELLYFIN_AUTH_TIMEOUT_SEC", "5"))
     try:
-        with _urlrequest.urlopen(req, timeout=timeout) as resp:
+        with _open_http(
+            req,
+            timeout=timeout,
+            generation=generation,
+            invalidate_on_401=False,
+        ) as resp:
             raw = (resp.read() or b"{}").decode("utf-8", "ignore")
         data = json.loads(raw) if raw.strip() else {}
         access_token = str(data.get("AccessToken") or "").strip()

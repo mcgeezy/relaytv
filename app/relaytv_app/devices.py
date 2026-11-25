@@ -124,6 +124,48 @@ def list_alsa_devices() -> list[dict[str, str]]:
     return devices
 
 
+_MPV_AUDIO_DRIVERS = frozenset(
+    {
+        "alsa",
+        "pulse",
+        "pipewire",
+        "jack",
+        "sndio",
+        "null",
+        "auto",
+        "oss",
+        "coreaudio",
+        "wasapi",
+        "sdl",
+        "openal",
+    }
+)
+_BARE_ALSA_PCM_NAMES = frozenset(
+    {
+        "default",
+        "sysdefault",
+        "front",
+        "rear",
+        "center_lfe",
+        "side",
+        "surround21",
+        "surround40",
+        "surround41",
+        "surround50",
+        "surround51",
+        "surround71",
+        "iec958",
+        "spdif",
+        "hdmi",
+        "dmix",
+        "dsnoop",
+        "asym",
+        "dshare",
+        "usbstream",
+    }
+)
+
+
 def normalize_audio_device_for_mpv(dev_id: str) -> str:
     d = (dev_id or "").strip()
     if not d:
@@ -131,9 +173,9 @@ def normalize_audio_device_for_mpv(dev_id: str) -> str:
     low = d.lower()
     if "/" in d:
         return d
-    if low in ("pulse", "pipewire", "jack", "sndio", "null", "auto"):
+    if low in _MPV_AUDIO_DRIVERS:
         return d
-    if ":" in d:
+    if ":" in d or low in _BARE_ALSA_PCM_NAMES:
         return f"alsa/{d}"
     return d
 
@@ -512,6 +554,27 @@ def _curate_audio_devices(
     # Pass B: Physical analog / USB / digital outputs via iec958 or plughw (skip HDMI plughw duplicates)
     # Process iec958 before plughw so dedicated S/PDIF PCMs win over generic digital plughw entries
     # regardless of whether entries came from `mpv` or `aplay -L`.
+    plughw_cards: set[str] = set()
+    for p_id, p_desc in entries:
+        p_norm = normalize_audio_device_for_mpv(p_id)
+        p_low = p_norm.lower()
+        if not p_low.startswith("alsa/plughw:"):
+            continue
+        p_head = p_desc.split("/", 1)[0].strip()
+        p_low_head = p_head.lower()
+        p_m = _ALSA_CARD_DEV_RE.search(p_norm)
+        p_card = (p_m.group(1) if p_m else "").strip().lower()
+        p_sub = p_head.split(",", 1)[1].strip().lower() if "," in p_head else ""
+        if (
+            "hdmi" in p_low_head
+            or "hda nvidia" in p_low_head
+            or "vc4hdmi" in p_low
+            or (p_card and p_sub and (p_card, p_sub) in hdmi_card_subs)
+        ):
+            continue
+        if p_card:
+            plughw_cards.add(p_card)
+
     pass_b_entries = sorted(
         entries,
         key=lambda item: (
@@ -525,17 +588,17 @@ def _curate_audio_devices(
             continue
         head = desc.split("/", 1)[0].strip()
         low_head = head.lower()
-        if "hdmi" in low_head or "nvidia" in low_head or "vc4hdmi" in low:
-            continue
         m = _ALSA_CARD_DEV_RE.search(norm)
         card = (m.group(1) if m else "").lower()
         sub_label = head.split(",", 1)[1].strip().lower() if "," in head else ""
         if (
-            low.startswith("alsa/plughw:")
-            and card
-            and sub_label
-            and (card, sub_label) in hdmi_card_subs
+            "hdmi" in low_head
+            or "hda nvidia" in low_head
+            or "vc4hdmi" in low
+            or (card and sub_label and (card, sub_label) in hdmi_card_subs)
         ):
+            continue
+        if low.startswith("alsa/iec958:") and "usb audio" in low_head and card in plughw_cards:
             continue
         dev_num = m.group(2) if m and m.group(2) is not None else "0"
         is_digital = low.startswith("alsa/iec958:") or "digital" in low_head or "spdif" in low_head
@@ -581,9 +644,7 @@ def list_audio_devices(
     connectors = drm_connectors if drm_connectors is not None else list_drm_connectors()
     probed = _probe_mpv_audio_devices() if mpv_entries is None else mpv_entries
     if probed:
-        curated = _curate_audio_devices(probed, drm_connectors=connectors)
-        if curated:
-            return curated
+        return _curate_audio_devices(probed, drm_connectors=connectors)
     # Fallback to `aplay -L` if mpv probe is unavailable
     alsa_list = list_alsa_devices() if alsa_devices is None else alsa_devices
     alsa_entries = [(d.get("id", ""), d.get("desc", "")) for d in alsa_list if d.get("id")]
@@ -685,7 +746,22 @@ def detect_audio_device(
         for item in confirmed_hdmi:
             if _alsa_hdmi_matches_connector_index(item["id"], idx):
                 return item["id"]
-        if explicit_connector or not confirmed_hdmi:
+
+        def _is_vc4_hdmi(dev_id: str) -> bool:
+            m_card = _ALSA_CARD_DEV_RE.search(dev_id)
+            card_name = (m_card.group(1) if m_card else "").strip()
+            return bool(_VC4_HDMI_CARD_RE.match(card_name))
+
+        if explicit_connector:
+            for dev_id, _desc in alsa_entries:
+                norm = normalize_audio_device_for_mpv(dev_id)
+                if (
+                    norm.lower().startswith("alsa/hdmi:")
+                    and _is_vc4_hdmi(norm)
+                    and _alsa_hdmi_matches_connector_index(norm, idx)
+                ):
+                    return norm
+        if not confirmed_hdmi:
             candidates = _curate_alsa_hdmi_entries(
                 alsa_entries,
                 drm_connectors=(None if explicit_connector else connectors),
@@ -694,13 +770,13 @@ def detect_audio_device(
             for item in candidates:
                 if _alsa_hdmi_matches_connector_index(item["id"], idx):
                     return item["id"]
-        if explicit_connector:
-            for dev_id, _desc in alsa_entries:
-                norm = normalize_audio_device_for_mpv(dev_id)
-                if norm.lower().startswith("alsa/hdmi:") and _alsa_hdmi_matches_connector_index(
-                    norm, idx
-                ):
-                    return norm
+            if explicit_connector:
+                for dev_id, _desc in alsa_entries:
+                    norm = normalize_audio_device_for_mpv(dev_id)
+                    if norm.lower().startswith("alsa/hdmi:") and _alsa_hdmi_matches_connector_index(
+                        norm, idx
+                    ):
+                        return norm
 
     if confirmed_hdmi:
         for item in confirmed_hdmi:

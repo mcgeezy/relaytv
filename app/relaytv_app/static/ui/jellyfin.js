@@ -142,12 +142,25 @@ function closeJellyfinShell(opts){
   _jfCancelDetailRequest();
   const fromNav = !!(opts && opts.fromNav);
   const force = !!(opts && opts.force);
-  if (!fromNav && !force && __jfUiVisible && __uiNavDepth > 0) {
+  const wasVisible = __jfUiVisible;
+  const wasDetailOpen = _jfIsDetailOpen();
+  if (!fromNav && !force && wasVisible && __uiNavDepth > 0) {
     try { history.back(); } catch (_e) {}
     return;
   }
   _jfSetShellVisible(false);
   _jfCloseDetailPanel({fromNav:true});
+  if (!fromNav && force && wasVisible && __uiNavDepth > 0) {
+    const layersToPop = Math.min(__uiNavDepth, wasDetailOpen ? 2 : 1);
+    try {
+      if (layersToPop > 1 && typeof history.go === 'function') {
+        __uiNavDepth = Math.max(0, __uiNavDepth - (layersToPop - 1));
+        history.go(-layersToPop);
+      } else if (layersToPop >= 1) {
+        history.back();
+      }
+    } catch (_e) {}
+  }
   const target =
     (__jfLastFocus && typeof __jfLastFocus.focus === 'function') ? __jfLastFocus :
     document.getElementById('jellyfinOpenBtn');
@@ -1883,12 +1896,16 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
   const explicitSeason = (opts && _jfHasFiniteNumber(opts.seasonNumber))
     ? Number(opts.seasonNumber)
     : null;
-  if (__jfBusy) return;
   _jfCancelCatalogPagination();
+  const request = _jfBeginBrowseRequest();
   __jfBusy = true;
   try {
     _jfSetStatus('Loading seasons…');
-    const seasonRes = await _jfFetchJson(`/browse/tv/series/${encodeURIComponent(sid)}/seasons${refresh ? '?refresh=1' : ''}`);
+    const seasonRes = await _jfFetchJson(
+      `/browse/tv/series/${encodeURIComponent(sid)}/seasons${refresh ? '?refresh=1' : ''}`,
+      {signal: request.signal},
+    );
+    if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'tv') return;
     const seasons = Array.isArray(seasonRes.seasons) ? seasonRes.seasons : [];
     const candidateSeason = _jfHasFiniteNumber(explicitSeason)
       ? explicitSeason
@@ -1914,7 +1931,8 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
     if (refresh) epQs.set('refresh', '1');
     const epQuery = epQs.toString();
     if (epQuery) epUrl += `?${epQuery}`;
-    const epRes = await _jfFetchJson(epUrl);
+    const epRes = await _jfFetchJson(epUrl, {signal: request.signal});
+    if (!_jfBrowseRequestIsCurrent(request) || __jfActiveTab !== 'tv') return;
     const episodes = Array.isArray(epRes.episodes) ? epRes.episodes : [];
 
     const seasonItems = seasons.map((s) => ({
@@ -1976,9 +1994,11 @@ async function loadJellyfinTvSeriesDetail(seriesId, opts){
     _jfSetStatus(`TV · ${title}`, 'ok');
     _jfSyncTabControls();
   } catch (e) {
+    if (_jfIsAbortError(e) || !_jfBrowseRequestIsCurrent(request)) return;
     _jfSetStatus(`Series load failed: ${String(e?.message || e)}`, 'err');
   } finally {
-    __jfBusy = false;
+    _jfFinishBrowseRequest(request);
+    if (_jfBrowseRequestIsCurrent(request)) __jfBusy = false;
   }
 }
 
@@ -2344,7 +2364,14 @@ function bindJellyfinUi(){
     __jfResizeBound = true;
   }
   if (launchBtn) launchBtn.onclick = () => openJellyfinShell();
-  if (shellBack) shellBack.onclick = () => closeJellyfinShell();
+  if (shellBack) shellBack.onclick = () => {
+    if (window.innerWidth <= 860 && _jfIsDetailOpen()) {
+      _jfCloseDetailPanel();
+      _jfFocusSelectedItem();
+      return;
+    }
+    closeJellyfinShell({force: true});
+  };
   if (detailBackdrop) detailBackdrop.onclick = () => {
     _jfCloseDetailPanel();
     _jfFocusSelectedItem();
@@ -2442,7 +2469,7 @@ function bindJellyfinUi(){
       }
       const backToSeries = e.target && e.target.closest ? e.target.closest('[data-jf-action="back_to_series"]') : null;
       if (backToSeries) {
-        _jfCloseDetailPanel({fromNav: true});
+        _jfCloseDetailPanel();
         __jfTvSeasonChooserExpanded = false;
         _jfResetBrowseScroll();
         loadJellyfinTvSeries(false);
@@ -2678,7 +2705,9 @@ function bindJellyfinUi(){
         }
         if (key === 'Escape') {
           _jfCloseDetailPanel();
-          if (_jfFocusSelectedItem()) e.preventDefault();
+          _jfFocusSelectedItem();
+          e.preventDefault();
+          e.stopPropagation();
         }
         return;
       }
@@ -2726,7 +2755,9 @@ function bindJellyfinUi(){
       }
       if (key === 'Escape') {
         _jfCloseDetailPanel();
-        if (_jfFocusSelectedItem()) e.preventDefault();
+        _jfFocusSelectedItem();
+        e.preventDefault();
+        e.stopPropagation();
       }
     });
   }

@@ -296,7 +296,8 @@ function _seerrRenderDetail(item){
   detail.replaceChildren();
   const hero = document.createElement('div');
   hero.className = 'seerrDetailHero';
-  if (item.backdrop_url) hero.style.backgroundImage = `url("${String(item.backdrop_url).replaceAll('"', '%22')}")`;
+  const heroBgUrl = String(item.backdrop_url || '').replace(/["')\\\r\n]/g, '').trim();
+  if (heroBgUrl) hero.style.backgroundImage = `url("${heroBgUrl}")`;
   const copy = document.createElement('div');
   copy.className = 'seerrDetailCopy';
   const close = document.createElement('button');
@@ -523,6 +524,7 @@ async function openSeerrShell(){
   if (!__seerrEnabled || __seerrVisible) return;
   __seerrLastFocus = document.activeElement;
   __seerrVisible = true;
+  if (typeof syncAndroidStatusBarTheme === 'function') syncAndroidStatusBarTheme();
   const shell = document.getElementById('seerrShell');
   if (shell) { shell.classList.remove('hidden'); shell.setAttribute('aria-hidden', 'false'); }
   document.body.classList.add('seerrNoScroll');
@@ -544,6 +546,7 @@ function closeSeerrShell(options){
     return;
   }
   __seerrVisible = false;
+  if (typeof syncAndroidStatusBarTheme === 'function') syncAndroidStatusBarTheme();
   _seerrCancelPendingSearch();
   closeSeerrQuickConnect();
   _seerrAbortBrowse(); _seerrCloseDetailNow();

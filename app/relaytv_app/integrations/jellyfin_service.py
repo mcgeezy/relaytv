@@ -24,7 +24,7 @@ from fastapi import HTTPException
 from typing import Callable, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .. import playback_service, player, resolver, state, video_profile
+from .. import playback_service, player, resolver, state, url_boundary, video_profile
 from ..config import runtime_config
 from ..debug import get_logger
 from ..thumb_cache import attach_local_thumbnail
@@ -673,6 +673,89 @@ def url_origin(url: str) -> str:
     return ""
 
 
+def _origin_tuple(value: object) -> tuple[str, str, int] | None:
+    parsed = url_boundary.parse_url(value)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    default_port = 443 if parsed.scheme == "https" else 80
+    return (parsed.scheme, parsed.hostname, int(parsed.port or default_port))
+
+
+def _same_origin(left: object, right: object) -> bool:
+    lo = _origin_tuple(left)
+    ro = _origin_tuple(right)
+    return bool(lo and ro and lo == ro)
+
+
+def validate_server_url(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="server_url is required")
+    parsed = url_boundary.parse_url(raw)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(
+            status_code=400, detail="server_url must be a valid http or https URL"
+        )
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="server_url must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise HTTPException(
+            status_code=400, detail="server_url must not contain a query or fragment"
+        )
+    if url_boundary.is_forbidden_ip_literal(
+        parsed.hostname
+    ) or url_boundary.has_forbidden_resolved_address(parsed.hostname):
+        raise HTTPException(status_code=400, detail="server_url targets a forbidden address")
+    return raw
+
+
+def _extract_play_session_id_from_url(url: str) -> str:
+    try:
+        q = dict(parse_qsl(urlsplit(str(url or "").strip()).query, keep_blank_values=True))
+        return _first_nonempty_str(
+            [
+                q.get("PlaySessionId"),
+                q.get("playSessionId"),
+                q.get("play_session_id"),
+            ]
+        )
+    except Exception:
+        return ""
+
+
+def _active_configured_server_url(st: object = None) -> str:
+    if not isinstance(st, dict):
+        try:
+            st = jellyfin_receiver.status()
+        except Exception:
+            return ""
+    if not isinstance(st, dict):
+        return ""
+    if "enabled" in st and not bool(st.get("enabled")):
+        return ""
+    return str(st.get("server_url") or "").strip()
+
+
+def _belongs_to_primary_jellyfin(
+    entry: dict | None, *, configured_server_url: str | None = None
+) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    browse_sid = str(entry.get("browse_server_id") or "").strip()
+    if browse_sid and browse_sid != "jf_primary":
+        return False
+    raw_url = str(entry.get("url") or "").strip()
+    item_origin = url_origin(raw_url)
+    if not item_origin:
+        return True
+    if configured_server_url is None:
+        configured_server_url = _active_configured_server_url()
+    cfg_origin = url_origin(configured_server_url)
+    if cfg_origin and not _same_origin(item_origin, cfg_origin):
+        return False
+    return True
+
+
 def looks_like_media_url(url: str) -> bool:
     try:
         p = urlsplit(str(url or "").strip())
@@ -1031,6 +1114,12 @@ def select_playback_url(
     )
     t_url = str((selected or {}).get("url") or "").strip()
     t_method = str((selected or {}).get("method") or "").strip()
+    t_psid = _first_nonempty_str(
+        [
+            (selected or {}).get("play_session_id") if isinstance(selected, dict) else "",
+            _extract_play_session_id_from_url(t_url),
+        ]
+    )
     out_mid = _first_nonempty_str([str((selected or {}).get("media_source_id") or "").strip(), mid])
     if not t_url:
         t_url = build_item_transcode_url(
@@ -1044,14 +1133,18 @@ def select_playback_url(
             max_streaming_bitrate=target_bitrate,
         )
         t_method = "fallback_master"
+        t_psid = _extract_play_session_id_from_url(t_url)
     if t_url:
-        return {
+        out_selected = {
             "url": t_url,
             "mode": "transcode",
             "reason": reason if reason != "forced_transcode_mode" else "forced_transcode_mode",
             "media_source_id": out_mid,
             "method": t_method,
         }
+        if t_psid:
+            out_selected["play_session_id"] = t_psid
+        return out_selected
     return {"url": src, "mode": "direct", "reason": "transcode_unavailable", "media_source_id": mid}
 
 
@@ -1553,7 +1646,7 @@ def retarget_queue_stream_preferences() -> int:
         st = jellyfin_receiver.status()
     except Exception:
         st = {}
-    configured_server_url = str((st or {}).get("server_url") or "").strip()
+    configured_server_url = _active_configured_server_url(st)
     configured_token = catalog_token()
 
     updates: dict[str, tuple[str, str, str, str, str, str, str, str]] = {}
@@ -1569,6 +1662,12 @@ def retarget_queue_stream_preferences() -> int:
             item_id = extract_item_id_from_url_raw(raw_url)
         if provider != "jellyfin" and not item_id:
             continue
+        if not _belongs_to_primary_jellyfin(entry, configured_server_url=configured_server_url):
+            continue
+        entry_origin = url_origin(raw_url)
+        same_cfg_origin = not entry_origin or (
+            bool(configured_server_url) and _same_origin(entry_origin, configured_server_url)
+        )
         media_source_id = _first_nonempty_str(
             [
                 str(entry.get("jellyfin_media_source_id") or "").strip(),
@@ -1591,7 +1690,12 @@ def retarget_queue_stream_preferences() -> int:
         next_mode = str(entry.get("jellyfin_stream_mode") or "").strip()
         next_reason = str(entry.get("jellyfin_stream_reason") or "").strip()
 
-        if item_id and "static=true" in raw_url.lower() and mode in {"auto", "transcode"}:
+        if (
+            same_cfg_origin
+            and item_id
+            and "static=true" in raw_url.lower()
+            and mode in {"auto", "transcode"}
+        ):
             detail_lookup: dict[str, object] = {}
             try:
                 detail_lookup = _get_item_detail_for_source(
@@ -1599,8 +1703,11 @@ def retarget_queue_stream_preferences() -> int:
                 )
             except Exception:
                 detail_lookup = {}
-            server_base = configured_server_url or url_origin(raw_url)
-            api_tok = configured_token or _extract_api_key_from_url(raw_url)
+            server_base = configured_server_url or entry_origin
+            api_tok = (
+                (configured_token if same_cfg_origin else "")
+                or _extract_api_key_from_url(raw_url)
+            )
             if server_base and (mode == "transcode" or (isinstance(detail_lookup, dict) and detail_lookup)):
                 try:
                     selected_q = select_playback_url(
@@ -2129,6 +2236,8 @@ def apply_startup_stream_tracks(
     def _needs_stream_detail(cur: dict | None) -> bool:
         if not isinstance(cur, dict):
             return False
+        if not _belongs_to_primary_jellyfin(cur):
+            return False
         return not isinstance(cur.get("audio_streams"), list) or not isinstance(
             cur.get("subtitle_streams"), list
         )
@@ -2564,7 +2673,9 @@ def emit_playback_start_hint() -> None:
         pass
 
 
-def _require_current_jellyfin_item() -> tuple[dict, str]:
+def _require_current_jellyfin_item(
+    *, server_status: dict | None = None
+) -> tuple[dict, str]:
     """Return (now_playing, item_id) for the active Jellyfin item or raise 409/502."""
     now = state.NOW_PLAYING if isinstance(state.NOW_PLAYING, dict) else None
     if not isinstance(now, dict) or not now:
@@ -2575,6 +2686,13 @@ def _require_current_jellyfin_item() -> tuple[dict, str]:
         item_id = extract_item_id_from_url_raw(str(now.get("url") or ""))
     if provider != "jellyfin" and not item_id:
         raise HTTPException(status_code=409, detail="now_playing is not a jellyfin item")
+    status_url = (
+        str(server_status.get("server_url") or "").strip()
+        if isinstance(server_status, dict) and "server_url" in server_status
+        else None
+    )
+    if not _belongs_to_primary_jellyfin(now, configured_server_url=status_url):
+        raise HTTPException(status_code=409, detail="now_playing is not a primary jellyfin item")
     if not item_id:
         raise HTTPException(status_code=409, detail="missing jellyfin item_id for current playback")
     return now, item_id
@@ -2629,8 +2747,16 @@ def _restart_with_stream_params(
         settings_snapshot = {}
     settings_dict = settings_snapshot if isinstance(settings_snapshot, dict) else {}
     effective_mode = effective_playback_mode(settings_dict)
-    effective_server_url = str(server_url or "").strip() or url_origin(str(now.get("url") or ""))
-    auth_token = catalog_token() or _extract_api_key_from_url(str(now.get("url") or ""))
+    configured_server_url = str(server_url or "").strip()
+    now_origin = url_origin(str(now.get("url") or ""))
+    effective_server_url = configured_server_url or now_origin
+    same_cfg_origin = not now_origin or (
+        bool(configured_server_url) and _same_origin(now_origin, configured_server_url)
+    )
+    auth_token = (
+        (catalog_token() if same_cfg_origin else "")
+        or _extract_api_key_from_url(str(now.get("url") or ""))
+    )
 
     source_url = build_item_stream_url(
         item_id,
@@ -2692,6 +2818,12 @@ def _restart_with_stream_params(
     if not source_url:
         raise HTTPException(status_code=502, detail="unable to build jellyfin stream url")
 
+    play_session_id = _first_nonempty_str(
+        [
+            selected_stream.get("play_session_id"),
+            _extract_play_session_id_from_url(source_url),
+        ]
+    )
     play_payload = {
         "url": source_url,
         "provider": "jellyfin",
@@ -2701,6 +2833,7 @@ def _restart_with_stream_params(
         **({"thumbnail_local": now.get("thumbnail_local")} if now.get("thumbnail_local") else {}),
         "jellyfin_item_id": item_id,
         **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+        **({"jellyfin_play_session_id": play_session_id} if play_session_id else {}),
         **(
             {"jellyfin_audio_stream_index": audio_stream_index}
             if audio_stream_index is not None
@@ -2755,7 +2888,7 @@ def switch_audio_track(requested_index: object, *, server_status: dict) -> dict:
     with a rewritten stream URL at the captured position. Raises HTTPException
     with the same statuses the route historically returned.
     """
-    now, item_id = _require_current_jellyfin_item()
+    now, item_id = _require_current_jellyfin_item(server_status=server_status)
     current_media_source_id = _first_nonempty_str(
         [
             str(now.get("jellyfin_media_source_id") or "").strip(),
@@ -2834,7 +2967,23 @@ def switch_audio_track(requested_index: object, *, server_status: dict) -> dict:
     )
     audio_stream_index = str(requested_idx)
 
-    if try_set_mpv_audio_track(language=requested_audio_language, display=requested_audio_display):
+    def _try_mpv_audio() -> bool:
+        try:
+            return bool(
+                try_set_mpv_audio_track(
+                    language=requested_audio_language,
+                    display=requested_audio_display,
+                    preferred_stream_index=requested_idx,
+                )
+            )
+        except TypeError:
+            return bool(
+                try_set_mpv_audio_track(
+                    language=requested_audio_language, display=requested_audio_display
+                )
+            )
+
+    if _try_mpv_audio():
         now_out = enrich_now_stream_metadata(
             dict(now),
             detail=detail if isinstance(detail, dict) else {},
@@ -2866,7 +3015,7 @@ def switch_audio_track(requested_index: object, *, server_status: dict) -> dict:
         start_pos=start_pos,
         mode="jellyfin_audio_switch",
     )
-    try_set_mpv_audio_track(language=requested_audio_language, display=requested_audio_display)
+    _try_mpv_audio()
     _finish_switch(now_out, was_paused=was_paused, pause_reason=pause_reason)
     return {
         "ok": True,
@@ -2886,7 +3035,7 @@ def switch_subtitle_track(requested_index: object, *, server_status: dict) -> di
     Same in-place-first strategy and HTTP error statuses as
     ``switch_audio_track``; index -1 turns subtitles off.
     """
-    now, item_id = _require_current_jellyfin_item()
+    now, item_id = _require_current_jellyfin_item(server_status=server_status)
     current_media_source_id = _first_nonempty_str(
         [
             str(now.get("jellyfin_media_source_id") or "").strip(),
@@ -3086,7 +3235,7 @@ def stopped_snapshot_from_now(
     if not isinstance(now, dict):
         return None
     item_id = str(now.get("jellyfin_item_id") or "").strip()
-    if not item_id:
+    if not item_id or not _belongs_to_primary_jellyfin(now):
         return None
     pos_f = None
     if position_sec is not None:
@@ -3113,7 +3262,7 @@ def stopped_snapshot_from_now(
             dur_f = None
     if dur_f is None:
         try:
-            d = now.get("duration")
+            d = now.get("duration_sec") if now.get("duration_sec") is not None else now.get("duration")
             dur_f = float(d) if d is not None else None
         except Exception:
             dur_f = None
@@ -3130,7 +3279,12 @@ def stopped_snapshot_from_now(
         if played_pct is not None:
             payload["PlayedPercentage"] = played_pct
     payload["PositionTicks"] = pos_ticks
-    play_session_id = str(now.get("jellyfin_play_session_id") or "").strip()
+    play_session_id = _first_nonempty_str(
+        [
+            now.get("jellyfin_play_session_id"),
+            _extract_play_session_id_from_url(str(now.get("url") or "")),
+        ]
+    )
     if play_session_id:
         payload["PlaySessionId"] = play_session_id
     media_source_id = _first_nonempty_str(
@@ -3196,7 +3350,7 @@ def progress_snapshot() -> dict | None:
     if not now:
         return None
     item_id = str(now.get("jellyfin_item_id") or "").strip()
-    if not item_id:
+    if not item_id or not _belongs_to_primary_jellyfin(now):
         return None
     is_playing = bool(player.is_playing())
     if not is_playing:
@@ -3224,10 +3378,13 @@ def progress_snapshot() -> dict | None:
     except Exception:
         pos_f = 0.0
     try:
+        raw_now_dur = (
+            now.get("duration_sec") if now.get("duration_sec") is not None else now.get("duration")
+        )
         if dur is not None:
             dur_f = float(dur)
-        elif now.get("duration") is not None:
-            dur_f = float(now.get("duration"))
+        elif raw_now_dur is not None:
+            dur_f = float(raw_now_dur)
         else:
             dur_f = None
     except Exception:
@@ -3242,7 +3399,12 @@ def progress_snapshot() -> dict | None:
         "CanSeek": True,
         "PlayMethod": play_method(now),
     }
-    play_session_id = str(now.get("jellyfin_play_session_id") or "").strip()
+    play_session_id = _first_nonempty_str(
+        [
+            now.get("jellyfin_play_session_id"),
+            _extract_play_session_id_from_url(str(now.get("url") or "")),
+        ]
+    )
     if play_session_id:
         payload["PlaySessionId"] = play_session_id
     media_source_id = _first_nonempty_str(
@@ -3310,16 +3472,26 @@ def smart_item_from_url(
     st = jellyfin_receiver.status()
     if item_id and (st.get("server_url") or looks_like_media_url(shared)):
         origin = url_origin(shared)
-        server_url = origin or str(st.get("server_url") or "")
+        configured_server = str(st.get("server_url") or "").strip()
+        configured_origin = url_origin(configured_server)
+        same_configured_origin = not origin or (
+            bool(configured_origin) and _same_origin(origin, configured_origin)
+        )
+        server_url = origin or configured_server
         link_api_key = _extract_api_key_from_url(shared)
-        token = link_api_key or catalog_token()
+        token = link_api_key or (catalog_token() if same_configured_origin else "")
+        effective_user_id = user_id_override if same_configured_origin else ""
         explicit_audio_idx = extract_audio_stream_index_from_url(shared)
         explicit_sub_idx = extract_subtitle_stream_index_from_url(shared)
         shared_media_source_id = extract_media_source_id_from_url(shared)
-        pref_audio_idx, pref_sub_idx = _preferred_indices_for_item(
-            item_id,
-            user_id_override=user_id_override,
-            media_source_id=shared_media_source_id,
+        pref_audio_idx, pref_sub_idx = (
+            _preferred_indices_for_item(
+                item_id,
+                user_id_override=effective_user_id,
+                media_source_id=shared_media_source_id,
+            )
+            if same_configured_origin
+            else ("", "")
         )
         effective_audio_idx = (
             explicit_audio_idx if explicit_audio_idx != "" else pref_audio_idx
@@ -3347,17 +3519,25 @@ def smart_item_from_url(
             settings_snapshot = state.get_settings()
         except Exception:
             settings_snapshot = {}
-        selected = select_playback_url(
-            item_id=item_id,
-            source_url=normalized_url,
-            server_url=server_url,
-            api_key=token,
-            media_source_id=media_source_id,
-            audio_stream_index=effective_audio_idx,
-            subtitle_stream_index=effective_sub_idx,
-            settings=settings_snapshot,
-            user_id_override=user_id_override,
-        )
+        if same_configured_origin:
+            selected = select_playback_url(
+                item_id=item_id,
+                source_url=normalized_url,
+                server_url=server_url,
+                api_key=token,
+                media_source_id=media_source_id,
+                audio_stream_index=effective_audio_idx,
+                subtitle_stream_index=effective_sub_idx,
+                settings=settings_snapshot,
+                user_id_override=effective_user_id,
+            )
+        else:
+            selected = {
+                "url": normalized_url,
+                "mode": "direct",
+                "reason": "foreign_origin",
+                "media_source_id": media_source_id,
+            }
         normalized_url = normalize_source_url(
             str(selected.get("url") or normalized_url),
             server_url=server_url,
@@ -3370,31 +3550,47 @@ def smart_item_from_url(
                 media_source_id,
             ]
         )
+        play_session_id = _first_nonempty_str(
+            [
+                selected.get("play_session_id"),
+                _extract_play_session_id_from_url(normalized_url),
+            ]
+        )
         item: dict[str, object] = {
             "url": normalized_url,
             "title": f"Jellyfin item {item_id}",
             "provider": "jellyfin",
             "jellyfin_item_id": item_id,
-            **({"_jellyfin_metadata_user_id": user_id_override} if user_id_override else {}),
+            **({"browse_server_id": "external"} if not same_configured_origin else {}),
+            **(
+                {"_jellyfin_metadata_user_id": effective_user_id}
+                if effective_user_id
+                else {}
+            ),
             **({"jellyfin_media_source_id": media_source_id} if media_source_id else {}),
+            **({"jellyfin_play_session_id": play_session_id} if play_session_id else {}),
             **(
                 {"jellyfin_audio_stream_index": effective_audio_idx}
-                if effective_audio_idx is not None
+                if effective_audio_idx is not None and str(effective_audio_idx) != ""
                 else {}
             ),
             **(
                 {"jellyfin_subtitle_stream_index": effective_sub_idx}
-                if effective_sub_idx is not None
+                if effective_sub_idx is not None and str(effective_sub_idx) != ""
                 else {}
             ),
             "jellyfin_stream_mode": str(selected.get("mode") or "direct"),
             "jellyfin_stream_reason": str(selected.get("reason") or ""),
         }
-        meta = jellyfin_receiver.get_item_metadata(
-            item_id,
-            token_override=token,
-            server_url_override=server_url,
-            user_id_override=user_id_override,
+        meta = (
+            jellyfin_receiver.get_item_metadata(
+                item_id,
+                token_override=token,
+                server_url_override=server_url,
+                user_id_override=effective_user_id,
+            )
+            if (same_configured_origin or bool(link_api_key))
+            else {}
         )
         if isinstance(meta, dict):
             title = str(meta.get("title") or "").strip()
@@ -4134,6 +4330,8 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
                             (req.payload or {}).get("PlaySessionId")
                             if isinstance(req.payload, dict)
                             else "",
+                            selected_stream.get("play_session_id"),
+                            _extract_play_session_id_from_url(source_url),
                         ]
                     )
                     if play_session_id:
@@ -4446,8 +4644,12 @@ def handle_command(req: CommandReqLike, *, controls: dict, ui: dict, guard=None)
     except HTTPException:
         raise
     except Exception as e:
-        jellyfin_receiver.mark_error(str(e))
-        raise HTTPException(status_code=500, detail=f"jellyfin command failed: {e}")
+        sanitized = jellyfin_receiver._sanitize_error_text(e)
+        jellyfin_receiver.mark_error(sanitized)
+        raise HTTPException(
+            status_code=500,
+            detail=f"jellyfin command failed: {sanitized or 'unexpected error'}",
+        )
 
 
 jellyfin_receiver.register_progress_provider(progress_snapshot)

@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -21,8 +22,8 @@ jobs:
           node-version: '24'
       - run: pip install -e '.[dev]'
       - run: ruff check app tests
-      - run: node --check app/relaytv_app/static/ui/realtime_transport.js
-      - run: node --check app/relaytv_app/static/ui/app.js
+      - name: Check UI JavaScript syntax
+        run: for f in app/relaytv_app/static/ui/*.js; do node --check "$f"; done
       - name: Check generated X11 overlay JavaScript
         run: >-
           PYTHONPATH=app python3 -c
@@ -34,6 +35,7 @@ jobs:
       - run: pytest -q
 
   docker-image:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

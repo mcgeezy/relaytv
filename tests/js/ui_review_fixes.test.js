@@ -569,11 +569,10 @@ test('_populateAudioDeviceSelect falls back to alsa_devices with visible IDs and
 
   const selectEl = createFakeElement('select', elements);
 
-  // 1. Empty audio_devices falls back to alsa_devices with `${id} — ${desc}` (or `${id}`)
+  // 1. Missing/non-array audio_devices falls back to alsa_devices with `${id} — ${desc}` (or `${id}`)
   context._populateAudioDeviceSelect(
     selectEl,
     {
-      audio_devices: [],
       alsa_devices: [
         {id: 'hdmi:CARD=PCH,DEV=0', desc: 'HDA Intel PCH, E601i-A3'},
         {id: 'plughw:CARD=PCH,DEV=0', desc: ''},
@@ -590,6 +589,23 @@ test('_populateAudioDeviceSelect falls back to alsa_devices with visible IDs and
     ],
   );
   assert.equal(selectEl.value, 'hdmi:CARD=PCH,DEV=0');
+
+  // 1b. Intentionally empty curated audio_devices: [] does NOT fall back to raw alsa_devices
+  context._populateAudioDeviceSelect(
+    selectEl,
+    {
+      audio_devices: [],
+      alsa_devices: [
+        {id: 'hdmi:CARD=PCH,DEV=0', desc: 'HDA Intel PCH, E601i-A3'},
+      ],
+    },
+    '',
+  );
+  assert.deepEqual(
+    selectEl.children.map((o) => ({value: o.value, text: o.textContent})),
+    [{value: '', text: 'Auto (System Default)'}],
+  );
+  assert.equal(selectEl.value, '');
 
   // 2. Missing or non-array audio_devices & alsa_devices do not throw
   for (const badPayload of [null, undefined, {}, {audio_devices: 'bad', alsa_devices: {id: 'x'}}]) {

@@ -17,8 +17,8 @@
     // Two channel browsers over the same catalog: the curated "My channels"
     // home (chan, favorites floated into their own section) and the
     // full-catalog explorer (disc).
-    chan: { channels: [], favorites: [], offset: 0, hasMore: false, busy: false, searchTimer: 0 },
-    disc: { channels: [], offset: 0, hasMore: false, busy: false, searchTimer: 0 },
+    chan: { channels: [], favorites: [], offset: 0, hasMore: false, busy: false, pendingReload: false, searchTimer: 0 },
+    disc: { channels: [], offset: 0, hasMore: false, busy: false, pendingReload: false, searchTimer: 0 },
   };
   const GRID = { chan: 'iptvChannelGrid', disc: 'iptvDiscoverGrid' };
   const MORE = { chan: 'iptvMoreBtn', disc: 'iptvDiscoverMoreBtn' };
@@ -69,7 +69,7 @@
       const count = Number(status && status.iptv_channel_count || 0);
       button.title = count ? `Watch live TV · ${count} channels` : 'Watch live TV';
     }
-    if (!state.enabled && state.visible) closeShell();
+    if (!state.enabled && state.visible) closeShell({fromNav:true, force:true});
   };
 
   function showShell(show){
@@ -83,8 +83,11 @@
 
   async function openShell(){
     if (!state.enabled || state.visible) return;
+    const shell = $('iptvShell');
+    const wasHidden = !shell || shell.classList.contains('hidden');
     state.lastFocus = document.activeElement;
     showShell(true);
+    if (wasHidden && typeof _uiPushLayer === 'function') _uiPushLayer();
     setStatus('Loading…');
     $('iptvBackBtn')?.focus();
     try {
@@ -98,12 +101,23 @@
     }
   }
 
-  function closeShell(){
+  function closeShell(opts){
+    const fromNav = !!(opts && opts.fromNav);
+    const force = !!(opts && opts.force);
+    if (!fromNav && !force && state.visible && typeof __uiNavDepth === 'number' && __uiNavDepth > 0) {
+      try { history.back(); } catch (_e) {}
+      return;
+    }
     closeMenu();
     showShell(false);
     const target = state.lastFocus && typeof state.lastFocus.focus === 'function' ? state.lastFocus : $('iptvOpenBtn');
     target?.focus();
   }
+
+  window.relaytvIptv = {
+    isOpen: () => state.visible,
+    close: closeShell,
+  };
 
   async function loadSources(){
     const result = await api('/iptv/sources');
@@ -130,8 +144,12 @@
   async function loadGrid(which, reset){
     if (which === 'chan') return loadChan(reset);
     const ctx = state.disc;
-    if (ctx.busy) return;
+    if (ctx.busy) {
+      if (reset) ctx.pendingReload = true;
+      return;
+    }
     ctx.busy = true;
+    ctx.pendingReload = false;
     if (reset) { ctx.offset = 0; ctx.channels = []; }
     setStatus('Loading channels…');
     try {
@@ -148,6 +166,10 @@
       setStatus(error.message, true);
     } finally {
       ctx.busy = false;
+      if (ctx.pendingReload) {
+        ctx.pendingReload = false;
+        loadGrid('disc', true);
+      }
     }
   }
 
@@ -155,8 +177,12 @@
   // section at the top, and the paginated main list excludes them.
   async function loadChan(reset){
     const ctx = state.chan;
-    if (ctx.busy) return;
+    if (ctx.busy) {
+      if (reset) ctx.pendingReload = true;
+      return;
+    }
     ctx.busy = true;
+    ctx.pendingReload = false;
     if (reset) { ctx.offset = 0; ctx.channels = []; }
     setStatus('Loading channels…');
     try {
@@ -188,6 +214,10 @@
       setStatus(error.message, true);
     } finally {
       ctx.busy = false;
+      if (ctx.pendingReload) {
+        ctx.pendingReload = false;
+        loadChan(true);
+      }
     }
   }
 
@@ -553,7 +583,7 @@
 
   function bind(){
     $('iptvOpenBtn')?.addEventListener('click', openShell);
-    $('iptvBackBtn')?.addEventListener('click', closeShell);
+    $('iptvBackBtn')?.addEventListener('click', () => closeShell());
     $('setIptvApplyBtn')?.addEventListener('click', applySetting);
     document.querySelectorAll('[data-iptv-goto]').forEach((button) => button.addEventListener('click', () => goTo(button.dataset.iptvGoto)));
     document.querySelectorAll('[data-iptv-back]').forEach((button) => button.addEventListener('click', goBack));

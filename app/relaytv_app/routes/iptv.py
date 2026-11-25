@@ -73,6 +73,7 @@ def iptv_directory(q: str = ""):
 
 @router.post("/iptv/directory/{preset_id}/add")
 def iptv_directory_add(preset_id: str):
+    _require_enabled()
     source = iptv_service.add_directory_source(preset_id)
     return {"ok": True, "source": source}
 
@@ -84,6 +85,7 @@ def iptv_sources():
 
 @router.post("/iptv/sources")
 def iptv_source_create(req: IptvSourceCreateReq):
+    _require_enabled()
     source = iptv_service.create_source(
         name=req.name,
         location=req.location,
@@ -106,18 +108,21 @@ def iptv_source_create(req: IptvSourceCreateReq):
 
 @router.patch("/iptv/sources/{source_id}")
 def iptv_source_update(source_id: str, req: IptvSourcePatchReq):
+    _require_enabled()
     patch = req.model_dump(exclude_none=True)
     return {"ok": True, "source": iptv_service.update_source(source_id, patch)}
 
 
 @router.delete("/iptv/sources/{source_id}")
 def iptv_source_delete(source_id: str):
+    _require_enabled()
     iptv_service.delete_source(source_id)
     return {"ok": True}
 
 
 @router.post("/iptv/sources/{source_id}/refresh")
 def iptv_source_refresh(source_id: str):
+    _require_enabled()
     return iptv_service.refresh_source(source_id)
 
 
@@ -162,6 +167,7 @@ def iptv_channels(
 
 @router.patch("/iptv/channels/{channel_id}")
 def iptv_channel_update(channel_id: str, req: IptvChannelPatchReq):
+    _require_enabled()
     patch = req.model_dump(exclude={"source_id"}, exclude_none=True)
     return {
         "ok": True,
@@ -171,6 +177,7 @@ def iptv_channel_update(channel_id: str, req: IptvChannelPatchReq):
 
 @router.post("/iptv/channels/visibility")
 def iptv_channel_visibility(req: IptvVisibilityReq):
+    _require_enabled()
     if not str(req.group or "").strip():
         raise HTTPException(status_code=400, detail="group is required")
     updated = iptv_service.set_group_hidden(req.source_id, req.group, req.hidden)
@@ -179,6 +186,7 @@ def iptv_channel_visibility(req: IptvVisibilityReq):
 
 @router.post("/iptv/channels/reorder")
 def iptv_channel_reorder(req: IptvReorderReq):
+    _require_enabled()
     iptv_service.reorder_channel(
         req.source_id,
         req.channel_id,
@@ -190,6 +198,7 @@ def iptv_channel_reorder(req: IptvReorderReq):
 
 @router.post("/iptv/channels/remove-unavailable")
 def iptv_channels_remove_unavailable(req: IptvRemoveUnavailableReq):
+    _require_enabled()
     removed = iptv_service.remove_unavailable(source_id=str(req.source_id or "").strip())
     return {"ok": True, "removed": removed}
 

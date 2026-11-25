@@ -92,17 +92,33 @@ def start_overlay() -> None:
                 env["XDG_SESSION_TYPE"] = "x11"
                 env.pop("WAYLAND_DISPLAY", None)
             log_path = Path(env.get("RELAYTV_OVERLAY_LOG", "/tmp/relaytv-overlay.log"))
+            log_handle: object = subprocess.DEVNULL
             try:
-                log_handle = log_path.open("ab")
+                if log_path.parent:
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(str(log_path), flags, 0o600)
+                try:
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    pass
+                log_handle = os.fdopen(fd, "ab")
             except Exception:
                 log_handle = subprocess.DEVNULL
-            # Prefer module execution so it works in editable installs and within the package.
-            _OVERLAY_PROC = subprocess.Popen(
-                [sys.executable, "-m", "relaytv_app.overlay_app"],
-                stdout=log_handle,
-                stderr=log_handle,
-                env=env,
-            )
+            try:
+                # Prefer module execution so it works in editable installs and within the package.
+                _OVERLAY_PROC = subprocess.Popen(
+                    [sys.executable, "-m", "relaytv_app.overlay_app"],
+                    stdout=log_handle,
+                    stderr=log_handle,
+                    env=env,
+                )
+            finally:
+                if log_handle is not subprocess.DEVNULL and hasattr(log_handle, "close"):
+                    try:
+                        log_handle.close()
+                    except Exception:
+                        pass
         except Exception:
             _OVERLAY_PROC = None
 
@@ -119,6 +135,7 @@ def stop_overlay() -> None:
         except Exception:
             try:
                 _OVERLAY_PROC.kill()
+                _OVERLAY_PROC.wait(timeout=1)
             except Exception:
                 pass
         _OVERLAY_PROC = None

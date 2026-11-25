@@ -377,6 +377,26 @@ def _sanitize_thumb_ref(th: object) -> str | None:
             return f"/plex/artwork/{asset_id}"
         return None
 
+    if th.startswith("/browse/artwork/"):
+        rest = th[len("/browse/artwork/") :]
+        server_part, sep, query_part = rest.partition("?")
+        if (
+            len(th) <= 4096
+            and server_part
+            and ".." not in server_part
+            and re.fullmatch(r"[A-Za-z0-9_.%~-]+", server_part)
+            and (
+                not sep
+                or (
+                    query_part
+                    and "#" not in query_part
+                    and re.fullmatch(r"[A-Za-z0-9_./%=&+:~-]+", query_part)
+                )
+            )
+        ):
+            return th
+        return None
+
     # bare filename -> normalize
     return f"/thumbs/{th}" if _is_safe_thumb_filename(th) else None
 
@@ -422,8 +442,11 @@ def _persistable_queue_item(item: dict) -> dict | None:
         "history_id",
         "jellyfin_item_id",
         "jellyfin_media_source_id",
+        "jellyfin_play_session_id",
         "jellyfin_stream_mode",
         "jellyfin_stream_reason",
+        "browse_server_id",
+        "browse_server_type",
         "series_name",
         "type",
         "audio_language",

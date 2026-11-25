@@ -568,7 +568,9 @@ def same_playback_item(
         left_jf = str(left.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
         right_jf = str(right.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
         if left_jf and right_jf:
-            return left_jf == right_jf
+            left_srv = str(left.get("browse_server_id") or "jf_primary").strip() or "jf_primary"
+            right_srv = str(right.get("browse_server_id") or "jf_primary").strip() or "jf_primary"
+            return left_jf == right_jf and left_srv == right_srv
 
     u_left = _extract_item_url(left, left_url)
     u_right = _extract_item_url(right, right_url)
@@ -671,8 +673,11 @@ def preserve_current_to_queue_front(
     if isinstance(now.get("jellyfin_media_source_id"), str) and now.get("jellyfin_media_source_id"):
         preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
     for jf_str_key in (
+        "jellyfin_play_session_id",
         "jellyfin_stream_mode",
         "jellyfin_stream_reason",
+        "browse_server_id",
+        "browse_server_type",
         "audio_language",
         "subtitle_language",
         "jellyfin_audio_language",
@@ -709,11 +714,20 @@ def preserve_current_to_queue_front(
             if isinstance(now.get(key), str) and now.get(key):
                 preserved[key] = now[key]
     else:
-        # Cache resolved streams only for ordinary URL providers.
+        # Cache resolved streams only for ordinary URL providers (never single-use
+        # loopback post-live relay tokens or local spool paths).
+        relay_token_fn = getattr(player, "_relay_token_from_url", lambda _u: "")
         resolved_stream = str(now.get("_resolved_stream") or "").strip()
+        if resolved_stream and bool(relay_token_fn(resolved_stream)):
+            resolved_stream = ""
         if not resolved_stream:
             now_stream = str(now.get("stream") or "").strip()
-            if now_stream and now_stream != url.strip():
+            if (
+                now_stream
+                and now_stream != url.strip()
+                and not bool(relay_token_fn(now_stream))
+                and not now_stream.startswith("/")
+            ):
                 resolved_stream = now_stream
         if resolved_stream:
             preserved["_resolved_source_url"] = url.strip()
@@ -1310,9 +1324,25 @@ def restore_playback_state(snapshot: dict) -> None:
     state.persist_queue()
 
     start_pos = snapshot.get("position")
+    iptv_sid = str(now.get("iptv_source_id") or "").strip()
+    iptv_cid = str(now.get("iptv_channel_id") or "").strip()
+    is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" or bool(
+        iptv_sid and iptv_cid
+    )
+    restore_target = dict(now)
+    if is_iptv:
+        restore_target["provider"] = "iptv"
+        if iptv_sid and iptv_cid:
+            restore_target["iptv_source_id"] = iptv_sid
+            restore_target["iptv_channel_id"] = iptv_cid
+            if not str(restore_target.get("url") or "").strip():
+                restore_target["url"] = f"https://iptv.invalid/{iptv_sid}/{iptv_cid}"
+        restore_target["title"] = str(
+            restore_target.get("title") or restore_target.get("url") or "IPTV channel"
+        )
     resumed = play_now(
-        now,
-        use_resolver=True,
+        restore_target,
+        use_resolver=not is_iptv,
         cec=False,
         clear_queue=False,
         mode="temporary_resume",

@@ -270,12 +270,12 @@ async def thumbs(filename: str):
     if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or ".." in filename:
         return Response(status_code=400)
     path = os.path.join(THUMB_DIR, filename)
-    if os.path.isfile(path):
+    if await asyncio.to_thread(os.path.isfile, path):
         return FileResponse(path, media_type="image/jpeg", headers=_THUMBNAIL_HEADERS)
     # Try to materialize on-demand from the stored mapping (best effort).
     thumb_id = filename[:-4] if filename.lower().endswith(".jpg") else filename
     ok = await asyncio.to_thread(ensure_cached_sync, thumb_id)
-    if ok and os.path.isfile(path):
+    if ok and await asyncio.to_thread(os.path.isfile, path):
         return FileResponse(path, media_type="image/jpeg", headers=_THUMBNAIL_HEADERS)
     return Response(status_code=404)
 

@@ -533,11 +533,19 @@ def browse_status() -> dict[str, object]:
     }
 
 
-def start_browse() -> dict[str, object]:
-    """Begin browsing for other RelayTV devices on the local network."""
+def _claim_browse_generation_locked() -> int:
+    """Take ownership of the browse slot. Caller must hold _BROWSE_LOCK."""
+    global _BROWSE_GENERATION
+    _BROWSE_GENERATION += 1
+    return _BROWSE_GENERATION
+
+
+def _start_browse_owned(expected_generation: int | None = None) -> dict[str, object]:
     global _BROWSE_ZEROCONF, _BROWSE_BROWSER, _BROWSE_LAST_ERROR, _BROWSE_THREAD
-    global _BROWSE_QUEUE, _BROWSE_SESSION, _BROWSE_GENERATION
+    global _BROWSE_QUEUE, _BROWSE_SESSION
     with _BROWSE_LOCK:
+        if expected_generation is not None and expected_generation != _BROWSE_GENERATION:
+            return browse_status()
         if not _browse_enabled():
             return browse_status()
         if _BROWSE_BROWSER is not None and _BROWSE_ZEROCONF is not None:
@@ -545,49 +553,89 @@ def start_browse() -> dict[str, object]:
         if Zeroconf is None or ServiceBrowser is None:
             _BROWSE_LAST_ERROR = "zeroconf dependency unavailable"
             return browse_status()
-
-        _BROWSE_GENERATION += 1
-        session = _BrowseSession(_BROWSE_GENERATION)
-        zc = None
-        try:
-            zc = Zeroconf()
-            session.zeroconf = zc
-            # Bind the handler to this session before the browser can fire it.
-            session.browser = ServiceBrowser(
-                zc, _service_type(), handlers=[_session_handler(session)]
-            )
-        except Exception as exc:
-            _BROWSE_LAST_ERROR = str(exc)
-            # Close the Zeroconf we built, not the global: the global is still
-            # None here, because it is only assigned once the browser exists.
-            _close_zeroconf(zc)
-            return browse_status()
-
-        _BROWSE_SESSION = session
-        _BROWSE_ZEROCONF = zc
-        _BROWSE_BROWSER = session.browser
-        _BROWSE_QUEUE = session.queue
-        _BROWSE_LAST_ERROR = None
-        session.thread = threading.Thread(
-            target=_resolve_worker,
-            args=(session,),
-            daemon=True,
-            name=f"relaytv-mdns-browse-{session.generation}",
+        generation = (
+            expected_generation
+            if expected_generation is not None
+            else _claim_browse_generation_locked()
         )
-        _BROWSE_THREAD = session.thread
-        session.thread.start()
+        session = _BrowseSession(generation)
+        service_type = _service_type()
+
+    zc = None
+    try:
+        zc = Zeroconf()
+        session.zeroconf = zc
+        # Bind the handler to this session before the browser can fire it.
+        session.browser = ServiceBrowser(
+            zc, service_type, handlers=[_session_handler(session)]
+        )
+    except Exception as exc:
+        # Close the Zeroconf we built, not the global: the global is still
+        # None here, because it is only assigned once the browser exists.
+        _close_zeroconf(zc)
+        with _BROWSE_LOCK:
+            if _BROWSE_GENERATION == generation:
+                _BROWSE_LAST_ERROR = str(exc)
+        return browse_status()
+
+    published = False
+    with _BROWSE_LOCK:
+        if _BROWSE_GENERATION == generation and _browse_enabled():
+            _BROWSE_SESSION = session
+            _BROWSE_ZEROCONF = zc
+            _BROWSE_BROWSER = session.browser
+            _BROWSE_QUEUE = session.queue
+            _BROWSE_LAST_ERROR = None
+            session.thread = threading.Thread(
+                target=_resolve_worker,
+                args=(session,),
+                daemon=True,
+                name=f"relaytv-mdns-browse-{session.generation}",
+            )
+            _BROWSE_THREAD = session.thread
+            session.thread.start()
+            published = True
+        else:
+            session.stop.set()
+
+    if not published:
+        logger.info("mdns_browse_retired generation=%d", generation)
+        try:
+            if session.browser is not None:
+                session.browser.cancel()
+        except Exception:
+            pass
+        _close_zeroconf(zc)
     return browse_status()
+
+
+def start_browse() -> dict[str, object]:
+    """Begin browsing for other RelayTV devices on the local network."""
+    return _start_browse_owned()
 
 
 def start_browse_async() -> dict[str, object]:
     """Start browsing in a background thread so startup cannot block on it."""
-    threading.Thread(target=start_browse, daemon=True, name="relaytv-mdns-browse-start").start()
+    generation: int | None = None
+    with _BROWSE_LOCK:
+        if _browse_enabled() and not (
+            _BROWSE_BROWSER is not None and _BROWSE_ZEROCONF is not None
+        ):
+            generation = _claim_browse_generation_locked()
+    if generation is not None:
+        threading.Thread(
+            target=_start_browse_owned,
+            args=(generation,),
+            daemon=True,
+            name="relaytv-mdns-browse-start",
+        ).start()
     return browse_status()
 
 
 def stop_browse() -> dict[str, object]:
     global _BROWSE_ZEROCONF, _BROWSE_BROWSER, _BROWSE_THREAD, _BROWSE_QUEUE, _BROWSE_SESSION
     with _BROWSE_LOCK:
+        _claim_browse_generation_locked()
         session = _BROWSE_SESSION
         browser = _BROWSE_BROWSER
         zc = _BROWSE_ZEROCONF

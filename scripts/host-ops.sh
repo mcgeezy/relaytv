@@ -31,11 +31,163 @@ Usage:
 EOF
 }
 
+parse_dotenv_scalar() {
+  local raw="${1#*=}"
+  raw="${raw%$'\r'}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  local dq_pattern='^"(([^"\\]|\\.)*)"[[:space:]]*(#.*)?$'
+  if [[ "$raw" =~ $dq_pattern ]]; then
+    local inner="${BASH_REMATCH[1]}" out="" i=0 len="${#BASH_REMATCH[1]}" ch next
+    while (( i < len )); do
+      ch="${inner:i:1}"
+      if [[ "$ch" == "\\" ]] && (( i + 1 < len )); then
+        next="${inner:i+1:1}"
+        case "$next" in
+          \"|\\|\$)
+            out+="$next"
+            (( i += 2 ))
+            continue
+            ;;
+        esac
+      fi
+      out+="$ch"
+      (( i += 1 ))
+    done
+    printf '%s' "$out"
+  elif [[ "$raw" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    if [[ "$raw" =~ ^#.*$ ]]; then
+      raw=""
+    elif [[ "$raw" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then
+      raw="${BASH_REMATCH[1]}"
+    else
+      raw="${raw%"${raw##*[![:space:]]}"}"
+    fi
+    printf '%s' "$raw"
+  fi
+}
+
 read_env_value() {
   local key="$1"
   local env_file="$ROOT_DIR/.env"
-  if [[ -f "$env_file" ]]; then
-    awk -F= -v k="$key" '$1==k {print $2; exit}' "$env_file"
+  local line found=""
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)= ]] && [[ "${BASH_REMATCH[2]}" == "$key" ]]; then
+      found="$line"
+    fi
+  done < "$env_file"
+  if [[ -n "$found" ]]; then
+    parse_dotenv_scalar "$found"
+  fi
+}
+
+resolve_api_port() {
+  local port="${RELAYTV_PORT:-}"
+  if [[ -z "$port" ]]; then
+    port="$(read_env_value RELAYTV_PORT || true)"
+  fi
+  if [[ -z "$port" ]]; then
+    port="${PORT:-}"
+  fi
+  if [[ -z "$port" ]]; then
+    port="$(read_env_value PORT || true)"
+  fi
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+    port="8787"
+  fi
+  printf '%d' "$((10#$port))"
+}
+
+resolve_api_token() {
+  local token="${RELAYTV_API_TOKEN:-}"
+  if [[ -z "$token" ]]; then
+    token="$(read_env_value RELAYTV_API_TOKEN || true)"
+  fi
+  printf '%s' "$token"
+}
+
+curl_escape_config_value() {
+  local val="$1"
+  val="${val//\\/\\\\}"
+  val="${val//\"/\\\"}"
+  printf '%s' "$val"
+}
+
+relay_container_get() {
+  local relay_container="$1"
+  local path="$2"
+  local port
+  port="$(resolve_api_port)"
+  docker exec "$relay_container" curl -fsS "http://127.0.0.1:${port}${path}"
+}
+
+relay_container_post_json() {
+  local relay_container="$1"
+  local path="$2"
+  local payload="$3"
+  local port token
+  port="$(resolve_api_port)"
+  token="$(resolve_api_token)"
+  if [[ -n "$token" ]]; then
+    local escaped_token escaped_payload
+    escaped_token="$(curl_escape_config_value "$token")"
+    escaped_payload="$(curl_escape_config_value "$payload")"
+    printf 'header = "Content-Type: application/json"\nheader = "Authorization: Bearer %s"\ndata-binary = "%s"\n' \
+      "$escaped_token" "$escaped_payload" \
+      | docker exec -i "$relay_container" curl -fsS -X POST "http://127.0.0.1:${port}${path}" -K -
+  else
+    printf '%s' "$payload" \
+      | docker exec -i "$relay_container" curl -fsS -X POST "http://127.0.0.1:${port}${path}" \
+          -H 'content-type: application/json' --data-binary @-
+  fi
+}
+
+relay_host_post_json() {
+  local url="$1"
+  local payload="$2"
+  local token
+  token="$(resolve_api_token)"
+  if [[ -n "$token" ]]; then
+    local escaped_token escaped_payload
+    escaped_token="$(curl_escape_config_value "$token")"
+    escaped_payload="$(curl_escape_config_value "$payload")"
+    printf 'header = "Content-Type: application/json"\nheader = "Authorization: Bearer %s"\ndata-binary = "%s"\n' \
+      "$escaped_token" "$escaped_payload" \
+      | curl -fsS -X POST "$url" -K -
+  else
+    printf '%s' "$payload" \
+      | curl -fsS -X POST "$url" -H 'content-type: application/json' --data-binary @-
+  fi
+}
+
+build_toast_payload() {
+  local text="$1"
+  local index="$2"
+  local count="$3"
+  local duration="$4"
+  local level="$5"
+  local position="$6"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys
+text, idx, total, duration, level, position = sys.argv[1:7]
+print(json.dumps({
+    "text": f"{text} {idx}/{total}",
+    "duration": float(duration),
+    "level": level,
+    "position": position,
+}, separators=(",", ":")))
+' "$text" "$index" "$count" "$duration" "$level" "$position"
+  else
+    jq -cn \
+      --arg text "${text} ${index}/${count}" \
+      --argjson duration "$duration" \
+      --arg level "$level" \
+      --arg position "$position" \
+      '{text:$text, duration:$duration, level:$level, position:$position}'
   fi
 }
 
@@ -78,8 +230,8 @@ native_qt_enable_hint() {
 
 compose_target_uid() {
   local uid="${PUID:-}"
-  if [[ -z "$uid" && -f "$ROOT_DIR/.env" ]]; then
-    uid="$(awk -F= '$1=="PUID"{print $2; exit}' "$ROOT_DIR/.env" | tr -d '[:space:]')"
+  if [[ -z "$uid" ]]; then
+    uid="$(read_env_value PUID | tr -d '[:space:]' || true)"
   fi
   if [[ -z "$uid" ]]; then
     uid="$(id -u)"
@@ -378,7 +530,7 @@ capture_soak_host_logs() {
 print_status() {
   local relay_container
   relay_container="$(resolve_service_container relaytv "$RELAY_CONTAINER_DEFAULT")"
-  docker exec "$relay_container" /bin/sh -lc 'curl -fsS http://127.0.0.1:8787/status'
+  relay_container_get "$relay_container" "/status"
 }
 
 do_native_ready() {
@@ -394,8 +546,8 @@ do_native_ready() {
   local status_json runtime_json
   local deadline=$((SECONDS + wait_sec))
   while true; do
-    if status_json="$(docker exec "$relay_container" /bin/sh -lc 'curl -fsS http://127.0.0.1:8787/status' 2>/dev/null)" \
-      && runtime_json="$(docker exec "$relay_container" /bin/sh -lc 'curl -fsS http://127.0.0.1:8787/runtime/capabilities' 2>/dev/null)"; then
+    if status_json="$(relay_container_get "$relay_container" "/status" 2>/dev/null)" \
+      && runtime_json="$(relay_container_get "$relay_container" "/runtime/capabilities" 2>/dev/null)"; then
       break
     fi
     if (( SECONDS >= deadline )); then
@@ -529,12 +681,12 @@ do_acceptance() {
   relay_container="$(resolve_service_container relaytv "$RELAY_CONTAINER_DEFAULT")"
 
   local status_json runtime_json playback_json overlay_resp volume_up_resp volume_dn_resp
-  status_json="$(docker exec "$relay_container" /bin/sh -lc 'curl -fsS http://127.0.0.1:8787/status')"
-  runtime_json="$(docker exec "$relay_container" /bin/sh -lc 'curl -fsS http://127.0.0.1:8787/runtime/capabilities')"
-  playback_json="$(docker exec "$relay_container" /bin/sh -lc 'curl -fsS http://127.0.0.1:8787/playback/state')"
-  overlay_resp="$(docker exec "$relay_container" /bin/sh -lc "curl -fsS -X POST http://127.0.0.1:8787/overlay -H 'content-type: application/json' -d '{\"text\":\"acceptance-check\",\"duration\":1.0,\"position\":\"top-right\"}'")"
-  volume_up_resp="$(docker exec "$relay_container" /bin/sh -lc "curl -fsS -X POST http://127.0.0.1:8787/volume -H 'content-type: application/json' -d '{\"delta\":1}'")"
-  volume_dn_resp="$(docker exec "$relay_container" /bin/sh -lc "curl -fsS -X POST http://127.0.0.1:8787/volume -H 'content-type: application/json' -d '{\"delta\":-1}'")"
+  status_json="$(relay_container_get "$relay_container" "/status")"
+  runtime_json="$(relay_container_get "$relay_container" "/runtime/capabilities")"
+  playback_json="$(relay_container_get "$relay_container" "/playback/state")"
+  overlay_resp="$(relay_container_post_json "$relay_container" "/overlay" '{"text":"acceptance-check","duration":1.0,"position":"top-right"}')"
+  volume_up_resp="$(relay_container_post_json "$relay_container" "/volume" '{"delta":1}')"
+  volume_dn_resp="$(relay_container_post_json "$relay_container" "/volume" '{"delta":-1}')"
 
   local relay_mode expected_visual_runtime
   relay_mode="$(read_env_value RELAYTV_MODE | tr -d '\r' | xargs || true)"
@@ -662,9 +814,10 @@ do_acceptance() {
       "$ROOT_DIR/scripts/pipeline-test.sh" "$youtube_url"
 
     echo "acceptance: verifying /play_now YouTube app-path mapping"
-    local smart_payload smart_ok play_now_resp play_now_provider
+    local api_port smart_payload smart_ok play_now_resp play_now_provider
+    api_port="$(resolve_api_port)"
     smart_payload="$(jq -cn --arg url "$youtube_url" '{url:$url}')"
-    play_now_resp="$(curl -fsS -X POST "http://127.0.0.1:8787/play_now" -H "content-type: application/json" -d "$smart_payload")"
+    play_now_resp="$(relay_host_post_json "http://127.0.0.1:${api_port}/play_now" "$smart_payload")"
     play_now_provider="$(jq -r '.now_playing.provider // ""' <<<"$play_now_resp")"
     if [[ "$play_now_provider" != "youtube" ]]; then
       echo "acceptance: FAIL"
@@ -674,7 +827,7 @@ do_acceptance() {
     smart_ok=0
     local i app_status app_playing app_provider app_url app_stream
     for i in $(seq 1 20); do
-      app_status="$(curl -fsS "http://127.0.0.1:8787/status")"
+      app_status="$(curl -fsS "http://127.0.0.1:${api_port}/status")"
       app_playing="$(jq -r '.playing // false' <<<"$app_status")"
       app_provider="$(jq -r '.now_playing.provider // ""' <<<"$app_status")"
       app_url="$(jq -r '.now_playing.url // ""' <<<"$app_status")"
@@ -701,13 +854,16 @@ do_acceptance() {
 
 build_soak_runtime_summary_json() {
   local relay_container="$1"
-  docker exec "$relay_container" /bin/sh -lc '
-python3 - <<"PY"
+  local api_port
+  api_port="$(resolve_api_port)"
+  docker exec "$relay_container" python3 - "$api_port" <<'PY'
 import json
+import sys
 import urllib.request
 
-status = json.load(urllib.request.urlopen("http://127.0.0.1:8787/status", timeout=5))
-runtime = json.load(urllib.request.urlopen("http://127.0.0.1:8787/runtime/capabilities", timeout=5))
+port = sys.argv[1]
+status = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=5))
+runtime = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/runtime/capabilities", timeout=5))
 out = {
     "playback_runtime_state": status.get("playback_runtime_state"),
     "playback_runtime_state_reason": status.get("playback_runtime_state_reason"),
@@ -726,7 +882,6 @@ out = {
 }
 print(json.dumps(out, sort_keys=True))
 PY
-'
 }
 
 do_soak() {
@@ -797,7 +952,9 @@ do_soak() {
     do_native_ready 25
   fi
 
-  local soak_base_url="${SOAK_BASE_URL:-http://127.0.0.1:8787}"
+  local api_port
+  api_port="$(resolve_api_port)"
+  local soak_base_url="${SOAK_BASE_URL:-http://127.0.0.1:${api_port}}"
   local soak_http_timeout_sec="${SOAK_HTTP_TIMEOUT_SEC:-8}"
   local soak_fail_diag_levels="${SOAK_FAIL_DIAG_LEVELS:-error}"
   local relay_container jellyfin_container
@@ -986,9 +1143,8 @@ do_toast_burst() {
   relay_container="$(resolve_service_container relaytv "$RELAY_CONTAINER_DEFAULT")"
   local i payload
   for ((i=1; i<=count; i++)); do
-    payload=$(printf '{"text":"%s %d/%d","duration":%s,"level":"%s","position":"%s"}' "$text" "$i" "$count" "$duration" "$level" "$position")
-    docker exec "$relay_container" /bin/sh -lc \
-      "curl -fsS -X POST http://127.0.0.1:8787/toast -H 'content-type: application/json' -d '$payload' >/dev/null"
+    payload="$(build_toast_payload "$text" "$i" "$count" "$duration" "$level" "$position")"
+    relay_container_post_json "$relay_container" "/toast" "$payload" >/dev/null
     sleep "$interval"
   done
 }

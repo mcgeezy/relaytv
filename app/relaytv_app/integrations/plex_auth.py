@@ -569,6 +569,14 @@ class PlexAuthManager:
                     "Plex device credentials could not be read",
                     status_code=500,
                 ) from None
+        try:
+            server_url = normalize_server_url(server_url)
+        except ValueError:
+            raise PlexAuthError(
+                "plex_server_invalid",
+                "The configured Plex server address is invalid",
+                status_code=400,
+            ) from None
         server_token, generation = self._upgrade_selected_server_token(
             generation=generation,
             account_id=account_id,
@@ -716,6 +724,14 @@ class PlexAuthManager:
                 "Choose a Plex Media Server first",
                 status_code=503,
             )
+        try:
+            url = normalize_server_url(url)
+        except ValueError:
+            raise PlexAuthError(
+                "plex_server_invalid",
+                "The configured Plex server address is invalid",
+                status_code=400,
+            ) from None
         identity = self._client_factory(url, token).get("/identity")
         container = identity.get("MediaContainer") if isinstance(identity, dict) else None
         actual = str(container.get("machineIdentifier") if isinstance(container, dict) else "")

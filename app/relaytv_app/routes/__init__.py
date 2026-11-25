@@ -1062,21 +1062,25 @@ def _x11_overlay_push(event: dict) -> None:
     realtime_hub.publish(OVERLAY_CHANNEL, str(event.get("type") or "toast"), event)
 
 
+_ACTIVE_REALTIME_SUBSCRIPTIONS: set[object] = set()
+
+
 async def _x11_overlay_sse() -> object:
     """Server-Sent Events stream for X11 overlay."""
-    subscription = realtime_hub.subscribe(OVERLAY_CHANNEL, transport="sse", maxsize=50)
-    try:
-        if hasattr(state, "update_overlay_delivery_state"):
-            state.update_overlay_delivery_state(
-                "connected",
-                "subscriber_connected",
-                client_event="subscriber",
-                client_reason="subscriber_connected",
-            )
-    except Exception:
-        pass
 
     async def gen():
+        subscription = realtime_hub.subscribe(OVERLAY_CHANNEL, transport="sse", maxsize=50)
+        _ACTIVE_REALTIME_SUBSCRIPTIONS.add(subscription)
+        try:
+            if hasattr(state, "update_overlay_delivery_state"):
+                state.update_overlay_delivery_state(
+                    "connected",
+                    "subscriber_connected",
+                    client_event="subscriber",
+                    client_reason="subscriber_connected",
+                )
+        except Exception:
+            pass
         try:
             hello = _json.dumps({"type": "hello", "ts": time.time()})
             yield f"data: {hello}\n\n"
@@ -1087,9 +1091,12 @@ async def _x11_overlay_sse() -> object:
                     yield f"data: {payload}\n\n"
                 except asyncio.TimeoutError:
                     yield f"data: {_json.dumps({'type': 'ping', 'ts': time.time()}, separators=(',', ':'))}\n\n"
+                except RealtimeSubscriptionClosed:
+                    break
         except asyncio.CancelledError:
             raise
         finally:
+            _ACTIVE_REALTIME_SUBSCRIPTIONS.discard(subscription)
             subscription.close()
             try:
                 if (
@@ -1126,6 +1133,7 @@ async def _x11_overlay_websocket_session(websocket: WebSocket) -> None:
         transport="websocket",
         maxsize=50,
     )
+    _ACTIVE_REALTIME_SUBSCRIPTIONS.add(subscription)
     try:
         if hasattr(state, "update_overlay_delivery_state"):
             state.update_overlay_delivery_state(
@@ -1184,6 +1192,7 @@ async def _x11_overlay_websocket_session(websocket: WebSocket) -> None:
     except (WebSocketDisconnect, RealtimeSubscriptionClosed):
         pass
     finally:
+        _ACTIVE_REALTIME_SUBSCRIPTIONS.discard(subscription)
         subscription.close()
         for task in (receive_task, event_task):
             if task is not None and not task.done():
@@ -2616,7 +2625,8 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       try{ socket = new WebSocket(url.toString(), 'relaytv.realtime.v1'); }
       catch(_e){
         _overlayRealtimePolicy.retire('websocket', 'open_error', null);
-        openOverlaySse(capabilities, generation);
+        if(capabilities?.sse?.enabled !== false) openOverlaySse(capabilities, generation);
+        else scheduleOverlayRealtimeRetry();
         return;
       }
       const active = {
@@ -2658,7 +2668,8 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
           websocketAvailable:typeof window.WebSocket === 'function',
         });
         if(selected === 'websocket') openOverlayWebSocket(capabilities, generation);
-        else openOverlaySse(capabilities, generation);
+        else if(selected === 'sse') openOverlaySse(capabilities, generation);
+        else scheduleOverlayRealtimeRetry();
       }catch(_e){
         scheduleOverlayRealtimeRetry();
       }finally{
@@ -4050,14 +4061,14 @@ def status():
 
 
 async def _ui_events_sse(request: Request) -> object:
-    subscription = realtime_hub.subscribe(
-        UI_CHANNEL,
-        transport="sse",
-        maxsize=100,
-        replay_latest=True,
-    )
-
     async def gen():
+        subscription = realtime_hub.subscribe(
+            UI_CHANNEL,
+            transport="sse",
+            maxsize=100,
+            replay_latest=True,
+        )
+        _ACTIVE_REALTIME_SUBSCRIPTIONS.add(subscription)
         last_emit_ts = 0.0
 
         try:
@@ -4076,18 +4087,26 @@ async def _ui_events_sse(request: Request) -> object:
                     payload = _json.dumps(message.data, separators=(",", ":"), ensure_ascii=False)
                     yield f"event: {message.event}\ndata: {payload}\n\n"
                     last_emit_ts = time.time()
+                    closed = False
                     while True:
                         try:
                             message = subscription.get_nowait()
                         except asyncio.QueueEmpty:
+                            break
+                        except RealtimeSubscriptionClosed:
+                            closed = True
                             break
                         payload = _json.dumps(
                             message.data, separators=(",", ":"), ensure_ascii=False
                         )
                         yield f"event: {message.event}\ndata: {payload}\n\n"
                         last_emit_ts = time.time()
+                    if closed:
+                        break
                 except asyncio.TimeoutError:
                     pass
+                except RealtimeSubscriptionClosed:
+                    break
 
                 # Idle ping cadence must stay well inside the client's health
                 # window (app.js _uiEventHealthy) or a quiet stream reads as dead.
@@ -4100,6 +4119,7 @@ async def _ui_events_sse(request: Request) -> object:
                     yield f"event: ping\ndata: {ping}\n\n"
                     last_emit_ts = time.time()
         finally:
+            _ACTIVE_REALTIME_SUBSCRIPTIONS.discard(subscription)
             subscription.close()
 
     return StreamingResponse(
@@ -4198,6 +4218,18 @@ async def stop_realtime_runtime() -> None:
     _UI_SAMPLER_STOP = None
     if stop_event is not None:
         stop_event.set()
+    if hasattr(realtime_hub, "close_all"):
+        try:
+            realtime_hub.close_all()
+        except Exception:
+            pass
+    active = list(_ACTIVE_REALTIME_SUBSCRIPTIONS)
+    _ACTIVE_REALTIME_SUBSCRIPTIONS.clear()
+    for subscription in active:
+        try:
+            subscription.close()
+        except Exception:
+            pass
     if task is not None:
         await asyncio.gather(task, return_exceptions=True)
 
@@ -4226,6 +4258,7 @@ async def _ui_websocket_session(websocket: WebSocket) -> None:
         maxsize=100,
         replay_latest=True,
     )
+    _ACTIVE_REALTIME_SUBSCRIPTIONS.add(subscription)
     receive_task: asyncio.Task | None = None
     event_task: asyncio.Task | None = None
     try:
@@ -4275,6 +4308,7 @@ async def _ui_websocket_session(websocket: WebSocket) -> None:
     except (WebSocketDisconnect, RealtimeSubscriptionClosed):
         pass
     finally:
+        _ACTIVE_REALTIME_SUBSCRIPTIONS.discard(subscription)
         subscription.close()
         for task in (receive_task, event_task):
             if task is not None and not task.done():

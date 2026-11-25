@@ -92,22 +92,36 @@ def _normalized_path(path: str) -> str:
     return value
 
 
+def _default_port(scheme: str) -> int | None:
+    low = str(scheme or "").strip().lower()
+    if low == "http":
+        return 80
+    if low == "https":
+        return 443
+    return None
+
+
 def _request_authority(value: str, *, absolute: bool) -> tuple[str, int | None] | None:
     """Return a comparable host/port pair without trusting malformed headers."""
     raw = str(value or "").strip()
-    if not raw:
+    if not raw or any(ch.isspace() for ch in raw):
+        return None
+    if not absolute and "," in raw:
         return None
     try:
         parsed = urlsplit(raw if absolute else f"//{raw}")
         host = str(parsed.hostname or "").strip().lower().rstrip(".")
-        if not host:
+        if not host or parsed.username is not None or parsed.password is not None:
+            return None
+        if not absolute and (parsed.path or parsed.query or parsed.fragment):
             return None
         port = parsed.port
-        if port is None and absolute:
-            if parsed.scheme.lower() == "http":
-                port = 80
-            elif parsed.scheme.lower() == "https":
-                port = 443
+        if absolute:
+            default_port = _default_port(parsed.scheme)
+            if default_port is None:
+                return None
+            if port is None:
+                port = default_port
         return host, port
     except (TypeError, ValueError):
         return None
@@ -125,29 +139,36 @@ def _is_cross_site(
         return True
 
     raw_origin = str(origin or "").strip()
+    raw_referer = str(referer or "").strip()
     if raw_origin.lower() == "null":
         return True
     target = _request_authority(str(host or ""), absolute=False)
-    if raw_origin and target is not None:
+    if (raw_origin or raw_referer) and target is None:
+        return True
+    if raw_origin:
         origin_auth = _request_authority(raw_origin, absolute=True)
         if origin_auth is None:
             return True
-        cmp_target = (target[0], origin_auth[1]) if target[1] is None else target
+        origin_default_port = _default_port(urlsplit(raw_origin).scheme)
+        cmp_target = (target[0], origin_default_port) if target[1] is None else target
         if origin_auth != cmp_target:
             return True
 
     if fetch_site in {"same-origin", "none"}:
         return False
 
-    source = _request_authority(str(referer or ""), absolute=True)
-    if source is None or target is None:
+    if not raw_referer:
         # Headerless non-browser API clients retain the local-first behavior.
         return False
+
+    source = _request_authority(raw_referer, absolute=True)
+    if source is None:
+        return True
     # Host has no scheme, so normalize an omitted port to the Referer's scheme
-    # default before comparing.
-    if target[1] is None:
-        target = (target[0], source[1])
-    return source != target
+    # default (80 for http, 443 for https) rather than copying source's port.
+    referer_default_port = _default_port(urlsplit(raw_referer).scheme)
+    cmp_target = (target[0], referer_default_port) if target[1] is None else target
+    return source != cmp_target
 
 
 def cross_site_write_request(

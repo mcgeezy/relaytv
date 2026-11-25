@@ -9,8 +9,11 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..integrations import browse_service
+from ..debug import get_logger
+from ..integrations import browse_service, jellyfin_receiver
 from ..integrations.plex_client import PlexError
+
+logger = get_logger("routes.browse")
 
 def _public_browse_response(endpoint):
     @wraps(endpoint)
@@ -206,7 +209,14 @@ def browse_item_detail(item_id: str, refresh: bool = False):
     except PlexError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from None
+        logger.warning(
+            "browse_item_detail_failed item_id=%s err=%s",
+            iid,
+            jellyfin_receiver._sanitize_error_text(exc),
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to load media item details"
+        ) from None
     st = browse_service.status_summary()
     if not item:
         return JSONResponse(
@@ -264,7 +274,13 @@ def browse_item_action(req: BrowseItemActionReq):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from None
+        logger.warning(
+            "browse_item_action_failed item_id=%s command=%s err=%s",
+            iid,
+            req.command,
+            jellyfin_receiver._sanitize_error_text(exc),
+        )
+        raise HTTPException(status_code=502, detail="Failed to execute media action") from None
 
 
 @router.get("/browse/artwork/{server_id}")

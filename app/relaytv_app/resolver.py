@@ -184,6 +184,44 @@ _RESOLVER_RUNTIME_STATE: dict[str, object] = {
     "last_success_unix": 0.0,
 }
 
+_ERR_URL_RE = re.compile(r"(?:https?|ftp|rtmps?|rtsps?|wss?|file)://\S+", re.IGNORECASE)
+_ERR_COOKIES_OPT_RE = re.compile(
+    r"(--cookies(?:-from-browser)?(?:=|\s+))(?!(?:or|for|to|and|when|with)\b)\S+",
+    re.IGNORECASE,
+)
+_ERR_AUTH_SCHEME_RE = re.compile(r"\b(Bearer|Basic)\s+\S+", re.IGNORECASE)
+_ERR_SECRET_KV_RE = re.compile(
+    r"\b(api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|sig|"
+    r"signature|hdnts|x-plex-token|x-emby-token|x-mediabrowser-token|password|passwd|"
+    r"secret|cookie|set-cookie|session(?:_id|id)?)\s*([=:])\s*\S+",
+    re.IGNORECASE,
+)
+_ERR_QUERY_RE = re.compile(r"\?[A-Za-z0-9_.%-]+=[^\s'\"<>]*")
+_ERR_WIN_PATH_RE = re.compile(r"\b[A-Za-z]:\\[^\s'\"<>]+")
+_ERR_UNIX_PATH_RE = re.compile(r"(^|[\s'\"(=:<\[,])(?:~(?=/))?/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+")
+_ERR_REL_COOKIE_PATH_RE = re.compile(
+    r"(^|[\s'\"(=:<\[,])(?:\.{1,2}/[^\s'\"<>:;,)]+|\S*cookies[^\s'\"<>:;,)]*\.(?:txt|sqlite|db))",
+    re.IGNORECASE,
+)
+_ERR_NETSCAPE_COOKIE_ROW_RE = re.compile(r"\S+\t(?:TRUE|FALSE)\t[^\r\n]*")
+
+
+def scrub_resolver_error(error_text: object) -> str:
+    """Redact URLs, query tokens, credentials, and local paths from resolver diagnostics."""
+    text = str(error_text or "").strip()
+    if not text:
+        return ""
+    text = _ERR_NETSCAPE_COOKIE_ROW_RE.sub("[redacted-cookie]", text)
+    text = _ERR_URL_RE.sub("[redacted-url]", text)
+    text = _ERR_COOKIES_OPT_RE.sub(r"\1[redacted-path]", text)
+    text = _ERR_AUTH_SCHEME_RE.sub(r"\1 [redacted]", text)
+    text = _ERR_SECRET_KV_RE.sub(r"\1\2[redacted]", text)
+    text = _ERR_WIN_PATH_RE.sub("[redacted-path]", text)
+    text = _ERR_UNIX_PATH_RE.sub(r"\1[redacted-path]", text)
+    text = _ERR_REL_COOKIE_PATH_RE.sub(r"\1[redacted-path]", text)
+    text = _ERR_QUERY_RE.sub("?[redacted]", text)
+    return text
+
 
 def get_resolver_runtime_state() -> dict[str, object]:
     with _RESOLVER_RUNTIME_LOCK:
@@ -200,6 +238,7 @@ def _update_resolver_runtime_state(
     success: bool = False,
 ) -> None:
     now_ts = time.time()
+    safe_error = scrub_resolver_error(error)[:1200]
     with _RESOLVER_RUNTIME_LOCK:
         _RESOLVER_RUNTIME_STATE["provider"] = str(provider or "").strip().lower()
         _RESOLVER_RUNTIME_STATE["effective_format"] = str(effective_format or "").strip()
@@ -207,7 +246,7 @@ def _update_resolver_runtime_state(
         _RESOLVER_RUNTIME_STATE["last_outcome_category"] = (
             str(outcome_category or "unknown").strip().lower() or "unknown"
         )
-        _RESOLVER_RUNTIME_STATE["last_error"] = str(error or "").strip()[:1200]
+        _RESOLVER_RUNTIME_STATE["last_error"] = safe_error
         _RESOLVER_RUNTIME_STATE["last_attempt_unix"] = float(now_ts)
         if success:
             _RESOLVER_RUNTIME_STATE["last_success_unix"] = float(now_ts)
@@ -794,7 +833,7 @@ def resolve_streams_ytdlp(url: str):
                 err_local = (p_local.stderr or "").strip()
                 low_err = err_local.lower()
                 if err_local:
-                    one_line = " ".join(err_local.splitlines())
+                    one_line = " ".join(scrub_resolver_error(err_local).splitlines())
                     if len(one_line) > 280:
                         one_line = one_line[:280] + "..."
                     debug_log(
@@ -855,6 +894,7 @@ def resolve_streams_ytdlp(url: str):
         raise HTTPException(status_code=400, detail="yt-dlp failed: empty process response")
     if p.returncode != 0 or not (p.stdout or "").strip():
         err = err or (p.stderr or "").strip()
+        safe_err = scrub_resolver_error(err)
         outcome_category = (
             "provider_challenge"
             if provider == "rumble" and rumble_challenge_seen
@@ -865,13 +905,13 @@ def resolve_streams_ytdlp(url: str):
             effective_format=selected_format,
             transport="yt-dlp",
             outcome_category=outcome_category,
-            error=err,
+            error=safe_err,
             success=False,
         )
         is_yt = is_youtube_url(u) or provider == "youtube" or "[youtube]" in err.lower()
         if is_yt and _youtube_error_is_postlive_processing(err.lower()):
             raise YouTubePostLiveProcessingError(u)
-        upcoming_reason = _youtube_error_upcoming_reason(err) if is_yt else None
+        upcoming_reason = _youtube_error_upcoming_reason(safe_err) if is_yt else None
         if upcoming_reason:
             raise YouTubeUpcomingError(reason=upcoming_reason, url=u)
         if is_yt and _youtube_error_is_botcheck(err.lower()):
@@ -880,11 +920,13 @@ def resolve_streams_ytdlp(url: str):
                 detail=(
                     "yt-dlp failed: YouTube requires anti-bot verification/cookies. "
                     "Configure RELAYTV_YTDLP_COOKIES (cookies.txt) or enable a working Invidious server. "
-                    f"Details: {err[:900]}"
+                    f"Details: {safe_err[:900]}"
                 ),
             )
         if is_yt and _youtube_error_is_unavailable(err):
-            raise YouTubeUnavailableError(status_code=400, detail=f"yt-dlp failed: {err[:1200]}")
+            raise YouTubeUnavailableError(
+                status_code=400, detail=f"yt-dlp failed: {safe_err[:1200]}"
+            )
         if provider == "rumble" and rumble_challenge_seen:
             if _rumble_impersonation_unavailable(err):
                 reason = (
@@ -898,9 +940,9 @@ def resolve_streams_ytdlp(url: str):
                 )
             raise HTTPException(
                 status_code=400,
-                detail=f"yt-dlp failed: {reason}. Details: {err[:900]}",
+                detail=f"yt-dlp failed: {reason}. Details: {safe_err[:900]}",
             )
-        raise HTTPException(status_code=400, detail=f"yt-dlp failed: {err[:1200]}")
+        raise HTTPException(status_code=400, detail=f"yt-dlp failed: {safe_err[:1200]}")
 
     lines = [ln.strip() for ln in (p.stdout or "").splitlines() if ln.strip()]
     live_status = ""
@@ -991,7 +1033,9 @@ def resolve_streams_invidious(youtube_url: str, base: str | None = None):
         with url_boundary.safe_urlopen(api_url, timeout=15) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invidious API error: {e}")
+        raise HTTPException(
+            status_code=400, detail=f"Invidious API error: {scrub_resolver_error(e)}"
+        )
 
     fmt_streams = data.get("formatStreams") or []
     adaptive = data.get("adaptiveFormats") or []
