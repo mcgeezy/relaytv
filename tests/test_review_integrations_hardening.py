@@ -1405,3 +1405,96 @@ def test_playback_previous_plays_iptv_and_plex_items_and_restores_history_on_fai
     assert played_plex["plex_subtitle_id"] == "sub-3"
     assert plex_kw["use_resolver"] is False
     assert plex_kw["start_pos"] == 145.5
+
+
+def test_player_and_playback_service_isolate_custom_browse_and_foreign_jellyfin_items(
+    monkeypatch,
+):
+    from relaytv_app import player
+
+    # 1) _hydrate_jellyfin_resume_metadata must never send primary credentials to foreign origins
+    #    and must preserve custom Emby browse items without contacting jf_primary.
+    monkeypatch.setattr(
+        jellyfin_receiver,
+        "status",
+        lambda: {"enabled": True, "server_url": "http://192.168.1.50:8096"},
+    )
+    monkeypatch.setattr(jellyfin_receiver, "session_token", lambda: "primary-session-secret")
+    monkeypatch.setattr(jellyfin_receiver, "api_key", lambda: "primary-api-secret")
+
+    metadata_calls: list[tuple[str, str, str]] = []
+
+    def _spy_get_item_metadata(
+        item_id: str,
+        *,
+        token_override: str = "",
+        server_url_override: str = "",
+        user_id_override: str = "",
+    ):
+        metadata_calls.append((item_id, token_override, server_url_override))
+        return {"title": "Should Not Fetch"}
+
+    monkeypatch.setattr(jellyfin_receiver, "get_item_metadata", _spy_get_item_metadata)
+
+    foreign_hydrated = player._hydrate_jellyfin_resume_metadata(
+        {
+            "url": "https://attacker.example/Items/deadbeef12345678/stream.mp4",
+            "title": "stream",
+        }
+    )
+    assert metadata_calls == []
+    assert foreign_hydrated["title"] == "stream"
+
+    custom_emby_hydrated = player._hydrate_jellyfin_resume_metadata(
+        {
+            "url": "http://192.168.1.60:8096/Videos/125/stream?static=true&api_key=emby-tok",
+            "title": "Custom Emby Movie",
+            "provider": "emby",
+            "jellyfin_item_id": "125",
+            "browse_server_id": "srv_emby_custom",
+            "browse_server_type": "emby",
+        }
+    )
+    assert metadata_calls == []
+    assert custom_emby_hydrated["provider"] == "emby"
+
+    # 2) _jellyfin_stopped_payload_from_now must ignore custom browse & foreign items
+    assert (
+        player._jellyfin_stopped_payload_from_now(
+            {
+                "url": "http://192.168.1.60:8096/Videos/125/stream?static=true",
+                "jellyfin_item_id": "125",
+                "browse_server_id": "srv_emby_custom",
+                "resume_pos": 42.0,
+                "duration_sec": 100.0,
+            }
+        )
+        is None
+    )
+    primary_stopped = player._jellyfin_stopped_payload_from_now(
+        {
+            "url": "http://192.168.1.50:8096/Videos/125/stream?static=true",
+            "jellyfin_item_id": "125",
+            "resume_pos": 99.0,
+            "duration_sec": 100.0,
+        }
+    )
+    assert isinstance(primary_stopped, dict)
+    assert primary_stopped["PositionTicks"] == 1_000_000_000
+    assert primary_stopped["RunTimeTicks"] == 1_000_000_000
+
+    # 3) same_playback_item and state._sanitize_persisted_item preserve browse_server_id isolation
+    primary_item = {"url": "http://192.168.1.50:8096/Videos/125/stream", "jellyfin_item_id": "125"}
+    custom_item = {
+        "url": "http://192.168.1.60:8096/Videos/125/stream",
+        "jellyfin_item_id": "125",
+        "browse_server_id": "srv_emby_custom",
+        "browse_server_type": "emby",
+    }
+    assert playback_service.same_playback_item(primary_item, custom_item) is False
+    assert playback_service.same_playback_item(custom_item, dict(custom_item)) is True
+
+    persisted = state._persistable_queue_item(custom_item)
+    assert persisted is not None
+    assert persisted["browse_server_id"] == "srv_emby_custom"
+    assert persisted["browse_server_type"] == "emby"

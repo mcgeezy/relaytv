@@ -2236,6 +2236,8 @@ def apply_startup_stream_tracks(
     def _needs_stream_detail(cur: dict | None) -> bool:
         if not isinstance(cur, dict):
             return False
+        if not _belongs_to_primary_jellyfin(cur):
+            return False
         return not isinstance(cur.get("audio_streams"), list) or not isinstance(
             cur.get("subtitle_streams"), list
         )

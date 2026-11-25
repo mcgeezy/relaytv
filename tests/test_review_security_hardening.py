@@ -60,6 +60,7 @@ def test_cross_site_rejects_port_confusion_on_omitted_standard_host_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    monkeypatch.setattr(player, "is_playing", lambda: False)
     runtime_config.refresh_from_env()
     client = TestClient(create_app(testing=True))
 
@@ -93,6 +94,7 @@ def test_cross_site_fails_closed_when_host_missing_or_malformed_with_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    monkeypatch.setattr(player, "is_playing", lambda: False)
     runtime_config.refresh_from_env()
 
     for bad_host in ("", "   ", "bad:99999", "host1, host2", "user@192.168.1.50", "192.168.1.50/x"):
@@ -372,6 +374,7 @@ def test_resolver_scrubs_urls_tokens_and_paths_from_errors_and_status(
     expected_phrase: str,
 ) -> None:
     monkeypatch.delenv("RELAYTV_API_TOKEN", raising=False)
+    monkeypatch.setattr(player, "is_playing", lambda: False)
     runtime_config.refresh_from_env()
     monkeypatch.setattr("relaytv_app.state.get_settings", lambda: {})
     monkeypatch.setattr("relaytv_app.video_profile.get_profile", lambda: {})

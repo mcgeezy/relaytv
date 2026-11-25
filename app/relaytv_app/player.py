@@ -6067,6 +6067,9 @@ def _consume_mpv_queued_next_if_started(
         if isinstance(consumed.get("subtitle_streams"), list):
             now_item["subtitle_streams"] = list(consumed["subtitle_streams"])
         for jf_key in (
+            "jellyfin_play_session_id",
+            "browse_server_id",
+            "browse_server_type",
             "audio_language",
             "subtitle_language",
             "jellyfin_audio_language",
@@ -6083,10 +6086,10 @@ def _consume_mpv_queued_next_if_started(
             now_item["_resolved_audio"] = consumed.get("_resolved_audio") or ""
             now_item["_resolved_at"] = consumed.get("_resolved_at") or time.time()
 
-    if str(now_item.get("provider") or "").strip().lower() == "jellyfin" or now_item.get(
-        "jellyfin_item_id"
-    ):
-        now_item["provider"] = "jellyfin"
+    now_provider_low = str(now_item.get("provider") or "").strip().lower()
+    if now_provider_low in ("jellyfin", "emby") or now_item.get("jellyfin_item_id"):
+        if now_provider_low not in ("jellyfin", "emby"):
+            now_item["provider"] = str(now_item.get("browse_server_type") or "jellyfin").strip().lower() or "jellyfin"
         if not now_item.get("jellyfin_item_id"):
             extracted_iid = str(jellyfin_receiver.extract_item_id_from_url(url) or "").strip()
             if extracted_iid:
@@ -6130,7 +6133,7 @@ def _consume_mpv_queued_next_if_started(
     state.set_session_state("playing")
     state.set_pause_reason(None)
     _reset_mpv_up_next_state()
-    if str(now_item.get("provider") or "").strip().lower() == "jellyfin" and now_item.get(
+    if str(now_item.get("provider") or "").strip().lower() in ("jellyfin", "emby") and now_item.get(
         "jellyfin_item_id"
     ):
         try:
@@ -7284,6 +7287,16 @@ def _play_item_owned(
             else {}
         ),
         **(
+            {"browse_server_id": item.get("browse_server_id")}
+            if item.get("browse_server_id")
+            else {}
+        ),
+        **(
+            {"browse_server_type": item.get("browse_server_type")}
+            if item.get("browse_server_type")
+            else {}
+        ),
+        **(
             {"_jellyfin_metadata_user_id": item.get("_jellyfin_metadata_user_id")}
             if item.get("_jellyfin_metadata_user_id")
             else {}
@@ -7370,7 +7383,7 @@ def _play_item_owned(
     _run_owned("publish", _publish_playback)
     _emit_plex_timeline_from_now(now, "playing")
 
-    if provider == "jellyfin" and now.get("jellyfin_item_id"):
+    if provider in ("jellyfin", "emby") and now.get("jellyfin_item_id"):
         from .integrations import jellyfin_service
 
         jellyfin_service.apply_startup_stream_tracks(
@@ -8243,6 +8256,15 @@ def recent_jellyfin_stop_matches(
 def _jellyfin_stopped_payload_from_now(now: dict | None) -> dict | None:
     if not isinstance(now, dict):
         return None
+    try:
+        from .integrations import jellyfin_service
+
+        if not jellyfin_service._belongs_to_primary_jellyfin(now):
+            return None
+    except Exception:
+        browse_sid = str(now.get("browse_server_id") or "").strip()
+        if browse_sid and browse_sid != "jf_primary":
+            return None
     item_id = str(now.get("jellyfin_item_id") or "").strip()
     if not item_id:
         return None
@@ -8396,7 +8418,27 @@ def _hydrate_jellyfin_resume_metadata(now: dict) -> dict:
     if not item_id and not _looks_like_jellyfin_media_url(src):
         return out
 
-    out["provider"] = "jellyfin"
+    browse_sid = str(out.get("browse_server_id") or "").strip()
+    browse_stype = str(out.get("browse_server_type") or "").strip().lower()
+    if browse_sid and browse_sid != "jf_primary":
+        if browse_stype in ("jellyfin", "emby"):
+            out["provider"] = browse_stype
+        if item_id:
+            out["jellyfin_item_id"] = item_id
+        return out
+
+    belongs_to_primary = True
+    try:
+        from .integrations import jellyfin_service
+
+        belongs_to_primary = jellyfin_service._belongs_to_primary_jellyfin(
+            {"url": src, "browse_server_id": browse_sid}
+        )
+    except Exception:
+        belongs_to_primary = False
+
+    if str(out.get("provider") or "").strip().lower() not in ("jellyfin", "emby"):
+        out["provider"] = "jellyfin"
     if item_id:
         out["jellyfin_item_id"] = item_id
 
@@ -8407,7 +8449,7 @@ def _hydrate_jellyfin_resume_metadata(now: dict) -> dict:
             token = str(q.get("api_key") or q.get("ApiKey") or "").strip()
         except Exception:
             token = ""
-        if not token:
+        if not token and belongs_to_primary:
             token = str(
                 jellyfin_receiver.session_token() or jellyfin_receiver.api_key() or ""
             ).strip()
@@ -8418,16 +8460,23 @@ def _hydrate_jellyfin_resume_metadata(now: dict) -> dict:
                 origin = f"{p.scheme}://{p.netloc}"
         except Exception:
             origin = ""
-        meta = (
-            jellyfin_receiver.get_item_metadata(
-                item_id,
-                token_override=token,
-                server_url_override=origin,
-                user_id_override=str(out.get("_jellyfin_metadata_user_id") or "").strip(),
+        if origin and not belongs_to_primary and not token:
+            meta = {}
+        else:
+            meta = (
+                jellyfin_receiver.get_item_metadata(
+                    item_id,
+                    token_override=token,
+                    server_url_override=origin,
+                    user_id_override=(
+                        str(out.get("_jellyfin_metadata_user_id") or "").strip()
+                        if belongs_to_primary
+                        else ""
+                    ),
+                )
+                if item_id
+                else {}
             )
-            if item_id
-            else {}
-        )
     except Exception:
         meta = {}
 

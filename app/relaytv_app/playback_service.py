@@ -568,7 +568,9 @@ def same_playback_item(
         left_jf = str(left.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
         right_jf = str(right.get("jellyfin_item_id") or "").strip().lower().replace("-", "")
         if left_jf and right_jf:
-            return left_jf == right_jf
+            left_srv = str(left.get("browse_server_id") or "jf_primary").strip() or "jf_primary"
+            right_srv = str(right.get("browse_server_id") or "jf_primary").strip() or "jf_primary"
+            return left_jf == right_jf and left_srv == right_srv
 
     u_left = _extract_item_url(left, left_url)
     u_right = _extract_item_url(right, right_url)
@@ -671,8 +673,11 @@ def preserve_current_to_queue_front(
     if isinstance(now.get("jellyfin_media_source_id"), str) and now.get("jellyfin_media_source_id"):
         preserved["jellyfin_media_source_id"] = now.get("jellyfin_media_source_id")
     for jf_str_key in (
+        "jellyfin_play_session_id",
         "jellyfin_stream_mode",
         "jellyfin_stream_reason",
+        "browse_server_id",
+        "browse_server_type",
         "audio_language",
         "subtitle_language",
         "jellyfin_audio_language",
