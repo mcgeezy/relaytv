@@ -60,6 +60,17 @@ _REQUEST_FILTERS = {
     "completed",
 }
 _IMAGE_SIZES = {"w185", "w342", "w500", "w780", "original"}
+_NEXT_IMAGE_WIDTHS = {
+    "w185": 256,
+    "w342": 384,
+    "w500": 640,
+    "w780": 828,
+    "original": 1200,
+}
+_IMAGE_PROXY_FALLBACK_TTL_SEC = 120.0
+_IMAGE_PROXY_FALLBACK_MAX_ENTRIES = 64
+_IMAGE_PROXY_FALLBACK_LOCK = threading.Lock()
+_IMAGE_PROXY_FALLBACK_UNTIL: dict[str, float] = {}
 _IMAGE_CONTENT_TYPES = {
     "image/jpeg": "image/jpeg",
     "image/jpg": "image/jpeg",
@@ -430,16 +441,91 @@ def playback_action(
     }
 
 
+def _use_next_image_fallback(server_url: str) -> bool:
+    if not server_url:
+        return False
+    now = time.monotonic()
+    with _IMAGE_PROXY_FALLBACK_LOCK:
+        until = _IMAGE_PROXY_FALLBACK_UNTIL.get(server_url, 0.0)
+        if until > now:
+            return True
+        _IMAGE_PROXY_FALLBACK_UNTIL.pop(server_url, None)
+    return False
+
+
+def _set_next_image_fallback(server_url: str, enabled: bool) -> None:
+    if not server_url:
+        return
+    now = time.monotonic()
+    with _IMAGE_PROXY_FALLBACK_LOCK:
+        if enabled:
+            _IMAGE_PROXY_FALLBACK_UNTIL[server_url] = now + _IMAGE_PROXY_FALLBACK_TTL_SEC
+            for candidate, expires_at in list(_IMAGE_PROXY_FALLBACK_UNTIL.items()):
+                if expires_at <= now:
+                    _IMAGE_PROXY_FALLBACK_UNTIL.pop(candidate, None)
+            while len(_IMAGE_PROXY_FALLBACK_UNTIL) > _IMAGE_PROXY_FALLBACK_MAX_ENTRIES:
+                oldest = min(
+                    _IMAGE_PROXY_FALLBACK_UNTIL,
+                    key=lambda item: _IMAGE_PROXY_FALLBACK_UNTIL[item],
+                )
+                _IMAGE_PROXY_FALLBACK_UNTIL.pop(oldest, None)
+        else:
+            _IMAGE_PROXY_FALLBACK_UNTIL.pop(server_url, None)
+
+
+def _clear_image_proxy_fallback_cache() -> None:
+    with _IMAGE_PROXY_FALLBACK_LOCK:
+        _IMAGE_PROXY_FALLBACK_UNTIL.clear()
+
+
+def _fetch_seerr_next_image(
+    client: SeerrClient,
+    selected_size: str,
+    quoted_path: str,
+) -> SeerrBinaryResponse:
+    return client.get_binary(
+        "/_next/image",
+        query={
+            "url": f"https://image.tmdb.org/t/p/{selected_size}/{quoted_path}",
+            "w": _NEXT_IMAGE_WIDTHS[selected_size],
+            "q": 75,
+        },
+        auth=False,
+    )
+
+
 def image(size: str, image_path: str) -> SeerrBinaryResponse:
     selected_size = str(size or "").strip().lower()
     selected_path = str(image_path or "").strip().lstrip("/")
     if selected_size not in _IMAGE_SIZES or not _IMAGE_PATH_RE.fullmatch(selected_path):
         raise _invalid("Invalid Seerr image path or size")
     config = _base_config()
-    response = SeerrClient(config).get_binary(
-        f"/imageproxy/tmdb/t/p/{selected_size}/{urllib.parse.quote(selected_path, safe='')}",
-        auth=False,
-    )
+    client = SeerrClient(config)
+    quoted_path = urllib.parse.quote(selected_path, safe="")
+    proxy_path = f"/imageproxy/tmdb/t/p/{selected_size}/{quoted_path}"
+    server_key = config.server_url
+    used_fallback = False
+
+    if _use_next_image_fallback(server_key):
+        try:
+            response = _fetch_seerr_next_image(client, selected_size, quoted_path)
+            used_fallback = True
+        except SeerrError as exc:
+            if exc.status_code != 404:
+                raise
+            _set_next_image_fallback(server_key, False)
+            response = client.get_binary(proxy_path, auth=False)
+    else:
+        try:
+            response = client.get_binary(proxy_path, auth=False)
+        except SeerrError as exc:
+            if exc.status_code != 404:
+                raise
+            # Seerr disables /imageproxy/tmdb unless "Enable Image Caching" is turned on;
+            # fall back to Seerr's own same-origin Next.js image optimizer endpoint.
+            response = _fetch_seerr_next_image(client, selected_size, quoted_path)
+            used_fallback = True
+
     content_type = _IMAGE_CONTENT_TYPES.get(response.content_type.strip().lower())
     if content_type is None:
         raise SeerrError(
@@ -447,6 +533,8 @@ def image(size: str, image_path: str) -> SeerrBinaryResponse:
             "Seerr returned an unexpected image response",
             status_code=502,
         )
+    if used_fallback:
+        _set_next_image_fallback(server_key, True)
     if response.content_type != content_type:
         return SeerrBinaryResponse(
             content=response.content,

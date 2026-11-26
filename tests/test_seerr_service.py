@@ -27,8 +27,10 @@ class _Config:
 @pytest.fixture(autouse=True)
 def _clear_request_metadata_cache():
     seerr_service._clear_request_metadata_cache()
+    seerr_service._clear_image_proxy_fallback_cache()
     yield
     seerr_service._clear_request_metadata_cache()
+    seerr_service._clear_image_proxy_fallback_cache()
 
 
 def _install_client(monkeypatch, responses: dict[str, object], *, config=None):
@@ -41,11 +43,17 @@ def _install_client(monkeypatch, responses: dict[str, object], *, config=None):
 
         def get(self, path, **kwargs):
             calls.append((path, kwargs))
-            return responses[path]
+            result = responses[path]
+            if isinstance(result, BaseException):
+                raise result
+            return result
 
         def get_binary(self, path, **kwargs):
             calls.append((path, kwargs))
-            return responses[path]
+            result = responses[path]
+            if isinstance(result, BaseException):
+                raise result
+            return result
 
     monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: selected_config)
     monkeypatch.setattr(seerr_service, "SeerrClient", _Client)
@@ -588,6 +596,196 @@ def test_image_requests_seerr_root_proxy_with_tmdb_asset_prefix(monkeypatch) -> 
     assert image.content == b"jpeg"
     assert image.content_type == "image/jpeg"
     assert requests == [(expected_path, None, "image/*")]
+
+
+def test_image_falls_back_to_next_image_when_imageproxy_caching_disabled(monkeypatch) -> None:
+    image = SeerrBinaryResponse(
+        content=b"jpeg-from-next",
+        content_type="image/jpeg",
+        cache_control="public, max-age=3600",
+        etag='"next-etag"',
+        last_modified="",
+    )
+    calls = _install_client(
+        monkeypatch,
+        {
+            "/imageproxy/tmdb/t/p/w342/poster.jpg": SeerrError(
+                "seerr_not_found",
+                "The requested Seerr resource was not found",
+                status_code=404,
+            ),
+            "/_next/image": image,
+        },
+    )
+
+    first = seerr_service.image("w342", "poster.jpg")
+    second = seerr_service.image("w780", "backdrop.jpg")
+
+    assert first is image
+    assert second is image
+    assert calls == [
+        ("/imageproxy/tmdb/t/p/w342/poster.jpg", {"auth": False}),
+        (
+            "/_next/image",
+            {
+                "query": {
+                    "url": "https://image.tmdb.org/t/p/w342/poster.jpg",
+                    "w": 384,
+                    "q": 75,
+                },
+                "auth": False,
+            },
+        ),
+        (
+            "/_next/image",
+            {
+                "query": {
+                    "url": "https://image.tmdb.org/t/p/w780/backdrop.jpg",
+                    "w": 828,
+                    "q": 75,
+                },
+                "auth": False,
+            },
+        ),
+    ]
+
+
+def test_image_fallback_still_rejects_non_raster_content_types(monkeypatch) -> None:
+    bad = SeerrBinaryResponse(
+        content=b"<svg/>",
+        content_type="image/svg+xml",
+        cache_control="",
+        etag="",
+        last_modified="",
+    )
+    _install_client(
+        monkeypatch,
+        {
+            "/imageproxy/tmdb/t/p/w342/poster.jpg": SeerrError(
+                "seerr_not_found",
+                "not found",
+                status_code=404,
+            ),
+            "/_next/image": bad,
+        },
+    )
+
+    with pytest.raises(SeerrError) as exc_info:
+        seerr_service.image("w342", "poster.jpg")
+
+    assert exc_info.value.code == "seerr_invalid_response"
+    assert exc_info.value.status_code == 502
+    assert seerr_service._use_next_image_fallback("https://seerr.example") is False
+
+
+def test_image_fallback_over_real_http_when_imageproxy_returns_404(monkeypatch) -> None:
+    requests: list[tuple[str, str | None, str | None]] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            requests.append(
+                (
+                    self.path,
+                    self.headers.get("X-Api-Key"),
+                    self.headers.get("Accept"),
+                )
+            )
+            if self.path.startswith("/imageproxy/"):
+                body = b'{"message":"Image caching is disabled."}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path.startswith("/_next/image?"):
+                body = b"jpeg-from-next"
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "public, max-age=3600")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_error(404)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        host, port = server.server_address
+        config = SeerrConfig(
+            enabled=True,
+            server_url=f"http://{host}:{port}",
+            api_key="server-secret",
+            shared_requests_enabled=False,
+            request_user_id=None,
+        )
+        monkeypatch.setattr(seerr_service.SeerrConfig, "current", lambda: config)
+
+        first = seerr_service.image("w342", "poster.jpg")
+        second = seerr_service.image("w780", "backdrop.jpg")
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+    assert first.content == b"jpeg-from-next"
+    assert first.content_type == "image/jpeg"
+    assert second.content == b"jpeg-from-next"
+    assert requests == [
+        ("/imageproxy/tmdb/t/p/w342/poster.jpg", None, "image/*"),
+        (
+            "/_next/image?url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Fw342%2Fposter.jpg&w=384&q=75",
+            None,
+            "image/*",
+        ),
+        (
+            "/_next/image?url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Fw780%2Fbackdrop.jpg&w=828&q=75",
+            None,
+            "image/*",
+        ),
+    ]
+
+
+def test_image_fallback_recovers_if_next_image_returns_404_and_proxy_succeeds(monkeypatch) -> None:
+    seerr_service._set_next_image_fallback("https://seerr.example", True)
+    image = SeerrBinaryResponse(
+        content=b"jpeg-from-proxy",
+        content_type="image/jpeg",
+        cache_control="public, max-age=3600",
+        etag='"proxy-etag"',
+        last_modified="",
+    )
+    calls = _install_client(
+        monkeypatch,
+        {
+            "/_next/image": SeerrError("seerr_not_found", "not found", status_code=404),
+            "/imageproxy/tmdb/t/p/w342/poster.jpg": image,
+        },
+    )
+
+    result = seerr_service.image("w342", "poster.jpg")
+
+    assert result is image
+    assert seerr_service._use_next_image_fallback("https://seerr.example") is False
+    assert calls == [
+        (
+            "/_next/image",
+            {
+                "query": {
+                    "url": "https://image.tmdb.org/t/p/w342/poster.jpg",
+                    "w": 384,
+                    "q": 75,
+                },
+                "auth": False,
+            },
+        ),
+        ("/imageproxy/tmdb/t/p/w342/poster.jpg", {"auth": False}),
+    ]
 
 
 def test_user_selector_records_are_sanitized(monkeypatch) -> None:
