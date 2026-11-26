@@ -560,6 +560,47 @@ def test_failed_ingest_media_removes_orphan_upload_directories(
     assert upload_store._ACTIVE_UPLOADS == set()
 
 
+class _BlockingGate:
+    """Thread barrier that proves a blocking hook runs off the event loop.
+
+    The worker blocks on ``release.wait(timeout)``; the event loop waits for
+    ``entered``, serves a real competing HTTP request while the hook is still
+    parked, and only then sets ``release``. If the hook ever runs on the event
+    loop, ``release.wait`` times out (``released_before_timeout is False``) and
+    the test fails deterministically without wall-clock jitter.
+    """
+
+    def __init__(self, timeout: float = 2.0) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.timeout = timeout
+        self.released_before_timeout: bool | None = None
+
+    def block(self) -> None:
+        self.entered.set()
+        self.released_before_timeout = self.release.wait(self.timeout)
+
+
+async def _assert_event_loop_responsive_while_blocked(
+    client: httpx.AsyncClient,
+    request_task: asyncio.Task,
+    gate: _BlockingGate,
+    *,
+    label: str,
+) -> None:
+    deadline = time.monotonic() + 2.0
+    while not gate.entered.is_set():
+        assert not request_task.done(), f"{label} finished before entering blocking hook"
+        assert time.monotonic() < deadline, f"timed out waiting for {label}"
+        await asyncio.sleep(0.005)
+    try:
+        health = await asyncio.wait_for(client.get("/health"), timeout=1.0)
+        assert health.status_code == 200
+        assert not request_task.done(), f"{label} completed while gate was still blocked"
+    finally:
+        gate.release.set()
+
+
 @pytest.mark.anyio
 async def test_upload_file_open_and_close_run_off_event_loop(
     monkeypatch: pytest.MonkeyPatch,
@@ -573,6 +614,7 @@ async def test_upload_file_open_and_close_run_off_event_loop(
     real_fdopen = os.fdopen
     open_calls = 0
     close_calls = 0
+    active_gates: dict[str, _BlockingGate] = {}
 
     class _SlowCloseWrapper:
         def __init__(self, inner):
@@ -584,7 +626,9 @@ async def test_upload_file_open_and_close_run_off_event_loop(
         def close(self):
             nonlocal close_calls
             close_calls += 1
-            time.sleep(0.25)
+            gate = active_gates.get("close")
+            if gate is not None:
+                gate.block()
             return self._inner.close()
 
         def __enter__(self):
@@ -600,7 +644,9 @@ async def test_upload_file_open_and_close_run_off_event_loop(
         handle = real_open(file, mode, *args, **kwargs)
         if "wb" in str(mode) and str(uploads_dir) in str(file):
             open_calls += 1
-            time.sleep(0.25)
+            gate = active_gates.get("open")
+            if gate is not None:
+                gate.block()
             return _SlowCloseWrapper(handle)
         return handle
 
@@ -609,47 +655,55 @@ async def test_upload_file_open_and_close_run_off_event_loop(
         handle = real_fdopen(fd, mode, *args, **kwargs)
         if "wb" in str(mode):
             open_calls += 1
-            time.sleep(0.25)
+            gate = active_gates.get("open")
+            if gate is not None:
+                gate.block()
             return _SlowCloseWrapper(handle)
         return handle
 
     monkeypatch.setattr(builtins, "open", _slow_open)
     monkeypatch.setattr(uploads_routes.os, "fdopen", _slow_fdopen)
 
-    gaps: list[float] = []
-    ticking = True
-
-    async def _ticker() -> None:
-        prev = time.monotonic()
-        while ticking:
-            await asyncio.sleep(0.02)
-            now = time.monotonic()
-            gaps.append(now - prev)
-            prev = now
-
     transport = httpx.ASGITransport(app=create_app(testing=True))
     async with httpx.AsyncClient(transport=transport, base_url="http://tv.local") as client:
-        ticker_task = asyncio.create_task(_ticker())
-        try:
-            for endpoint in ("/ingest/media", "/ingest/media/play"):
-                monkeypatch.setattr(
-                    uploads_routes,
-                    "_play_uploaded_item",
-                    lambda item, *, mode: asyncio.sleep(0, result=dict(item)),
-                )
-                resp = await client.post(
+        assert (await client.get("/health")).status_code == 200
+        for endpoint in ("/ingest/media", "/ingest/media/play"):
+            monkeypatch.setattr(
+                uploads_routes,
+                "_play_uploaded_item",
+                lambda item, *, mode: asyncio.sleep(0, result=dict(item)),
+            )
+            open_gate = _BlockingGate()
+            close_gate = _BlockingGate()
+            active_gates["open"] = open_gate
+            active_gates["close"] = close_gate
+            upload_task = asyncio.create_task(
+                client.post(
                     endpoint,
                     files={"file": ("clip.mp4", b"a" * 1024, "video/mp4")},
                 )
-                assert resp.status_code == 200, resp.text
-        finally:
-            ticking = False
-            await ticker_task
+            )
+            try:
+                await _assert_event_loop_responsive_while_blocked(
+                    client, upload_task, open_gate, label=f"{endpoint} open"
+                )
+                await _assert_event_loop_responsive_while_blocked(
+                    client, upload_task, close_gate, label=f"{endpoint} close"
+                )
+                resp = await upload_task
+            finally:
+                open_gate.release.set()
+                close_gate.release.set()
+                if not upload_task.done():
+                    await upload_task
+            assert resp.status_code == 200, resp.text
+            assert open_gate.released_before_timeout is True, f"{endpoint} open blocked event loop"
+            assert close_gate.released_before_timeout is True, (
+                f"{endpoint} close blocked event loop"
+            )
 
     assert open_calls >= 2
     assert close_calls >= 2
-    assert gaps
-    assert max(gaps) < 0.18, f"event loop stalled during upload open/close: max gap {max(gaps):.3f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -731,37 +785,35 @@ async def test_snapshot_and_thumb_isfile_checks_do_not_block_event_loop(
 
     real_isfile = os.path.isfile
     isfile_calls: list[str] = []
+    active_gate: list[_BlockingGate | None] = [None]
 
     def _slow_isfile(path):
         p = str(path)
         if str(snap_dir) in p or str(thumbs_dir) in p:
             isfile_calls.append(p)
-            time.sleep(0.3)
+            gate = active_gate[0]
+            if gate is not None:
+                gate.block()
         return real_isfile(path)
 
     monkeypatch.setattr(snapshots_routes.os.path, "isfile", _slow_isfile)
 
     transport = httpx.ASGITransport(app=create_app(testing=True))
     async with httpx.AsyncClient(transport=transport, base_url="http://tv.local") as client:
+        assert (await client.get("/health")).status_code == 200
         for target_url in ("/snapshots/missing.jpg", "/thumbs/0123456789abcdef0123.jpg"):
-            gaps: list[float] = []
-            ticking = True
-
-            async def _ticker() -> None:
-                prev = time.monotonic()
-                while ticking:
-                    await asyncio.sleep(0.02)
-                    now = time.monotonic()
-                    gaps.append(now - prev)
-                    prev = now
-
-            ticker_task = asyncio.create_task(_ticker())
+            gate = _BlockingGate()
+            active_gate[0] = gate
+            req_task = asyncio.create_task(client.get(target_url))
             try:
-                resp = await client.get(target_url)
-                assert resp.status_code == 404
+                await _assert_event_loop_responsive_while_blocked(
+                    client, req_task, gate, label=target_url
+                )
+                resp = await req_task
             finally:
-                ticking = False
-                await ticker_task
-            assert gaps
-            assert max(gaps) < 0.18, f"{target_url} stalled event loop for {max(gaps):.3f}s"
+                gate.release.set()
+                if not req_task.done():
+                    await req_task
+            assert resp.status_code == 404
+            assert gate.released_before_timeout is True, f"{target_url} blocked event loop"
     assert len(isfile_calls) >= 2

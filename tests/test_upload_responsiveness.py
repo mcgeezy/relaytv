@@ -94,6 +94,8 @@ async def test_active_upload_registration_does_not_block_the_event_loop(
 
     holder_started = threading.Event()
     holder_acquired = threading.Event()
+    holder_release = threading.Event()
+    holder_released_before_timeout: list[bool] = []
     cleanup_calls = 0
 
     def hold_cleanup_lock() -> None:
@@ -101,7 +103,7 @@ async def test_active_upload_registration_does_not_block_the_event_loop(
             return
         with upload_store._UPLOAD_LOCK:
             holder_acquired.set()
-            time.sleep(0.6)
+            holder_released_before_timeout.append(holder_release.wait(2.0))
 
     holder = threading.Thread(target=hold_cleanup_lock, daemon=True)
     holder.start()
@@ -120,32 +122,26 @@ async def test_active_upload_registration_does_not_block_the_event_loop(
     monkeypatch.setattr(upload_store, "cleanup_uploads", coordinated_cleanup)
     monkeypatch.setattr(uploads, "_play_uploaded_item", fake_play)
 
-    gaps: list[float] = []
-    ticking = True
-
-    async def ticker() -> None:
-        previous = time.monotonic()
-        while ticking:
-            await asyncio.sleep(0.02)
-            now = time.monotonic()
-            gaps.append(now - previous)
-            previous = now
-
     transport = httpx.ASGITransport(app=create_app(testing=True))
-    async with httpx.AsyncClient(transport=transport, base_url="http://tv.local") as client:
-        ticker_task = asyncio.create_task(ticker())
-        response = await client.post(
-            "/ingest/media/play",
-            files={"file": ("clip.mp4", b"q" * 4096, "video/mp4")},
-        )
-        ticking = False
-        await ticker_task
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://tv.local") as client:
+            assert (await client.get("/health")).status_code == 200
+            response = await asyncio.wait_for(
+                client.post(
+                    "/ingest/media/play",
+                    files={"file": ("clip.mp4", b"q" * 4096, "video/mp4")},
+                ),
+                timeout=1.5,
+            )
+            assert holder_acquired.is_set()
+            assert holder.is_alive(), "upload waited for cleanup lock release instead of proceeding"
+    finally:
+        holder_release.set()
+        holder.join(timeout=2.0)
 
-    holder.join(timeout=2.0)
     assert not holder.is_alive()
+    assert holder_released_before_timeout == [True]
     assert response.status_code == 200, response.text
-    assert gaps
-    assert max(gaps) < 0.2, gaps
 
 
 @pytest.mark.anyio
@@ -168,6 +164,7 @@ async def test_health_stays_responsive_while_the_disk_is_slow(uploads_root, monk
     app = create_app(testing=True)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://tv.local") as client:
+        assert (await client.get("/health")).status_code == 200
         # 6 MiB in 1 MiB chunks: ~0.9s of blocking disk time.
         upload = asyncio.create_task(
             client.post(
