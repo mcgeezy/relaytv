@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/mcgeezy/relaytv/compare/v0.13.0...v0.13.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* fall back to Seerr /_next/image when image caching is disabled ([#183](https://github.com/mcgeezy/relaytv/issues/183)) ([4e1d18a](https://github.com/mcgeezy/relaytv/commit/4e1d18a0a07fe961e082f7cdff1a333757037b4d))
+* harden yt-dlp format selection, EJS fallback, JS runtime checks, and persisted pruning ([#181](https://github.com/mcgeezy/relaytv/issues/181)) ([f7e9dfe](https://github.com/mcgeezy/relaytv/commit/f7e9dfe788076809cc10ec80d8e3547c5f00b1f1))
+
 ## [0.13.0](https://github.com/mcgeezy/relaytv/compare/v0.12.3...v0.13.0) (2026-11-26)
 
 
