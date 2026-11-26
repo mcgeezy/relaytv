@@ -198,10 +198,8 @@ The default container build is now lean and native-Qt-first. Optional feature bu
   challenge runtime (pinned static binary, sha256-verified; amd64/arm64 only)
   - default is `1`; deno sandboxes the remote challenge code and needs no
     per-invocation flags, so it also covers mpv's own ytdl hook
-- `RELAYTV_INSTALL_NODE=1`: include the nodejs fallback runtime for yt-dlp
-  - default is now `1`
-  - RelayTV prefers `deno` when available, otherwise uses explicit `--js-runtimes node`
-    (the only option on 32-bit ARM, which has no deno build)
+- `RELAYTV_INSTALL_NODE=1`: optional opt-in to install Debian's `nodejs` package
+  - default is `0` (Deno is primary; yt-dlp requires Node >= 22 and rejects Debian 13's Node 20)
 - `RELAYTV_INSTALL_IDLE_BROWSER=1`: include Chromium for the optional browser-backed idle dashboard
 - `RELAYTV_INSTALL_OPS_TOOLS=1`: include extra debug/ops tools (`mesa-utils`, `procps`, `socat`)
 

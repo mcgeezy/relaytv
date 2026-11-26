@@ -71,7 +71,7 @@ def _mpv_ytdl_raw_options(args: list[str]) -> str:
             if idx < len(args) and not str(args[idx]).startswith("-"):
                 value = str(args[idx])
                 idx += 1
-        if key in {"no-playlist"}:
+        if key in {"no-playlist", "ignore-config"}:
             continue
         # mpv's key/value-list parser splits pairs on commas and has no
         # backslash escaping (a `\,` makes option parsing fail outright);
@@ -551,6 +551,58 @@ def _youtube_strategy_related_retry(low_err: str) -> bool:
     )
 
 
+_YTDLP_RESOLVE_TIMEOUT_SEC = 45
+_YTDLP_SOCKET_TIMEOUT_SEC = 15
+_NODE_MIN_MAJOR = 22
+_NODE_SUPPORT_CACHE: dict[str, bool] = {}
+
+
+def _node_runtime_supported(binary: str) -> bool:
+    """Return False when a real node binary is below yt-dlp's minimum major version."""
+    path = str(binary or "").strip()
+    if not path or not os.path.isfile(path):
+        # Allow mocked paths (e.g. unit tests patching shutil.which) without spawning.
+        return True
+    cached = _NODE_SUPPORT_CACHE.get(path)
+    if cached is not None:
+        return cached
+    supported = True
+    try:
+        proc = subprocess.run(
+            [path, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        ver = (proc.stdout or "").strip()
+        m = re.match(r"^v?(\d+)(?:\.(\d+))?", ver)
+        if proc.returncode == 0 and m:
+            major = int(m.group(1))
+            if major < _NODE_MIN_MAJOR:
+                logger.warning(
+                    "ytdlp_node_runtime_unsupported version=%s min_major=%d",
+                    ver,
+                    _NODE_MIN_MAJOR,
+                )
+                supported = False
+    except Exception:
+        pass
+    _NODE_SUPPORT_CACHE[path] = supported
+    return supported
+
+
+def _which_supported_js_runtime(name: str) -> str | None:
+    if name == "quickjs":
+        return shutil.which("qjs") or shutil.which("quickjs")
+    binary = shutil.which(name)
+    if not binary:
+        return None
+    if name == "node" and not _node_runtime_supported(binary):
+        return None
+    return binary
+
+
 def _preferred_js_runtime_spec() -> str:
     override = (
         os.getenv("RELAYTV_YTDLP_JS_RUNTIME") or os.getenv("YTDLP_JS_RUNTIME") or ""
@@ -561,27 +613,40 @@ def _preferred_js_runtime_spec() -> str:
         if low in ("0", "false", "no", "off", "none", "disable", "disabled"):
             return ""
         if low != "auto":
-            runtime_name = low.split(":", 1)[0].strip()
-            if runtime_name in ("deno", "node"):
-                if shutil.which(runtime_name):
+            runtime_name, sep, explicit_path = override.partition(":")
+            runtime_key = runtime_name.strip().lower()
+            if sep and explicit_path.strip():
+                if runtime_key == "node" and not _node_runtime_supported(explicit_path.strip()):
+                    return ""
+                return override
+            if runtime_key in ("deno", "node", "quickjs"):
+                if _which_supported_js_runtime(runtime_key):
                     return override
                 logger.warning("configured_js_runtime_unavailable runtime=%s", override)
                 return ""
             return override
 
     if str(os.getenv("RELAYTV_YTDLP_USE_NODE") or "").strip().lower() in ("1", "true", "yes", "on"):
-        if shutil.which("node"):
+        if _which_supported_js_runtime("node"):
             return "node"
         logger.warning("ytdlp_node_requested_but_unavailable")
         return ""
 
-    return "deno" if shutil.which("deno") else "node" if shutil.which("node") else ""
+    for runtime_name in ("deno", "quickjs", "node"):
+        if _which_supported_js_runtime(runtime_name):
+            return runtime_name
+    return ""
 
 
-def _add_js_and_remote(args: list[str], js_runtime: str) -> list[str]:
+def _add_js_runtime(args: list[str], js_runtime: str) -> list[str]:
     res = list(args)
     if not _has_opt(res, "--js-runtimes") and js_runtime:
         res += ["--js-runtimes", js_runtime]
+    return res
+
+
+def _add_js_and_remote(args: list[str], js_runtime: str) -> list[str]:
+    res = _add_js_runtime(args, js_runtime)
     if not _has_opt(res, "--remote-components"):
         res += ["--remote-components", "ejs:github"]
     return res
@@ -611,10 +676,14 @@ def _build_youtube_arm_safe_strategies(
     js_runtime = _preferred_js_runtime_spec()
     strategies: list[tuple[list[str], list[str]]] = []
 
+    # Try local bundled yt-dlp-ejs first; fall back to remote GitHub EJS only
+    # if local challenge solving fails or remote components are required.
     if has_cookie_auth:
+        strategies.append((_add_js_runtime(base, js_runtime), candidates))
         strategies.append((_add_js_and_remote(base, js_runtime), candidates))
 
     challenge_public = _without_opts(base, "--cookies", "--cookies-from-browser")
+    strategies.append((_add_js_runtime(challenge_public, js_runtime), candidates))
     strategies.append((_add_js_and_remote(challenge_public, js_runtime), candidates))
     strategies.append((default_args, candidates))
 
@@ -629,26 +698,29 @@ def _build_youtube_strategies(
     default_args = _without_opts(
         base, "--cookies", "--cookies-from-browser", "--js-runtimes", "--remote-components"
     )
-    has_extractor_args = _has_opt(public_base, "--extractor-args")
     js_runtime = _preferred_js_runtime_spec()
     strategies: list[tuple[list[str], list[str]]] = []
 
+    # Preserve configured/profiled format selectors (e.g. display height/fps caps)
+    # before falling back to yt-dlp's uncapped default ("") or "best".
+    explicit_candidates = [c for c in candidates if c not in ("", "best", "b")]
     challenge_candidates = (
-        ["", "best"] if any(c in ("", "best", "b") for c in candidates) else candidates
+        list(dict.fromkeys([*explicit_candidates, "", "best"]))
+        if any(c in ("", "best", "b") for c in candidates)
+        else candidates
     )
+
+    # Prefer local bundled yt-dlp-ejs before opting into remote GitHub scripts.
     if has_cookie_auth:
+        strategies.append((_add_js_runtime(base, js_runtime), challenge_candidates))
         strategies.append((_add_js_and_remote(base, js_runtime), challenge_candidates))
 
+    strategies.append((_add_js_runtime(public_base, js_runtime), challenge_candidates))
     strategies.append((_add_js_and_remote(public_base, js_runtime), challenge_candidates))
     strategies.append((default_args, candidates))
 
     if tuple(public_base) != tuple(default_args):
         strategies.append((public_base, candidates))
-
-    # Keep Android as a later fallback only.
-    if not has_extractor_args and not has_cookie_auth:
-        android_last = [*public_base, "--extractor-args", "youtube:player_client=android"]
-        strategies.append((android_last, candidates))
 
     return _deduplicate_strategies(strategies)
 
@@ -658,8 +730,8 @@ def build_ytdlp_base_args() -> list[str]:
 
     Supported env vars:
       - YTDLP_ARGS: base extra args (existing behavior)
-      - RELAYTV_YTDLP_JS_RUNTIME or YTDLP_JS_RUNTIME: `auto`, `deno`, `node`, or explicit `runtime:path`
-      - RELAYTV_YTDLP_USE_NODE: legacy override that forces '--js-runtimes node'
+      - RELAYTV_YTDLP_JS_RUNTIME or YTDLP_JS_RUNTIME: `auto`, `deno`, `quickjs`, `node`, or explicit `runtime:path`
+      - RELAYTV_YTDLP_USE_NODE: legacy override that forces '--js-runtimes node' (requires Node >= 22)
       - RELAYTV_YTDLP_COOKIES or YTDLP_COOKIES: path to Netscape cookies.txt, adds '--cookies <path>'
       - RELAYTV_YTDLP_COOKIES_FROM_BROWSER or YTDLP_COOKIES_FROM_BROWSER: adds '--cookies-from-browser <spec>'
     """
@@ -672,6 +744,9 @@ def build_ytdlp_base_args() -> list[str]:
         parts.append(opt)
         if val is not None:
             parts.append(val)
+
+    if not (_has_opt(parts, "--config-location") or _has_opt(parts, "--config-locations")):
+        add_opt("--ignore-config")
 
     js_runtime = _preferred_js_runtime_spec()
     if js_runtime:
@@ -775,6 +850,8 @@ def resolve_streams_ytdlp(url: str):
     resolve_live_status = provider in {"youtube", "rumble"}
     output_args = (
         [
+            "--socket-timeout",
+            str(_YTDLP_SOCKET_TIMEOUT_SEC),
             "--print",
             "urls",
             "--print",
@@ -785,7 +862,7 @@ def resolve_streams_ytdlp(url: str):
             "live_status",
         ]
         if resolve_live_status
-        else ["-g"]
+        else ["--socket-timeout", str(_YTDLP_SOCKET_TIMEOUT_SEC), "-g"]
     )
 
     strategies: list[tuple[list[str], list[str]]] = [(base, candidates)]
@@ -824,6 +901,7 @@ def resolve_streams_ytdlp(url: str):
                     u,
                     list(args_base),
                     command_args,
+                    timeout=_YTDLP_RESOLVE_TIMEOUT_SEC,
                 )
                 rumble_challenge_seen = rumble_challenge_seen or challenged
                 elapsed_ms = int((time.monotonic() - t_attempt) * 1000)

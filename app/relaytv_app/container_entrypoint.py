@@ -253,7 +253,7 @@ def _yt_dlp_version(env: dict[str, str], *, path: str | None = None, user_site: 
 
 
 def _persisted_ytdlp_paths(update_dir: Path) -> list[Path]:
-    """Exactly what pip put there for yt-dlp, and nothing else."""
+    """Exactly what pip put there for yt-dlp[default,curl-cffi], and nothing else."""
     found: list[Path] = []
     bin_dir = update_dir / "bin"
     try:
@@ -262,7 +262,18 @@ def _persisted_ytdlp_paths(update_dir: Path) -> list[Path]:
         pass
     try:
         for site in update_dir.glob("lib/python*/site-packages"):
-            for pattern in ("yt_dlp", "yt_dlp-*.dist-info", "yt_dlp-*.egg-info"):
+            for pattern in (
+                "yt_dlp",
+                "yt_dlp-*.dist-info",
+                "yt_dlp-*.egg-info",
+                "yt_dlp_ejs",
+                "yt_dlp_ejs-*.dist-info",
+                "yt_dlp_ejs-*.egg-info",
+                "curl_cffi",
+                "curl_cffi-*.dist-info",
+                "curl_cffi-*.egg-info",
+                "curl_cffi.libs",
+            ):
                 found.extend(sorted(site.glob(pattern)))
     except Exception:
         pass

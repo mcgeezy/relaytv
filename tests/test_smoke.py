@@ -1861,7 +1861,7 @@ def test_pi_youtube_resolver_does_not_fall_back_to_auto_when_av1_disallowed(
     )
     monkeypatch.setattr(resolver.shutil, "which", lambda name: None)
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, **_kwargs):
         calls.append(list(cmd))
         return Proc()
 
@@ -2382,16 +2382,20 @@ def test_mark_playback_transition_allows_longer_resolve_window(
 def test_youtube_arm_safe_strategies_prefer_quality_retries_before_plain_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(resolver, "_preferred_js_runtime_spec", lambda: "node")
+    monkeypatch.setattr(resolver, "_preferred_js_runtime_spec", lambda: "deno")
 
     strategies = resolver._build_youtube_arm_safe_strategies(
         ["yt-dlp", "--cookies", "/data/cookies.txt", "--no-playlist"],
         ["fmt1", "best"],
     )
 
+    # Local bundled yt-dlp-ejs is tried first; remote GitHub EJS is the fallback.
     assert "--cookies" in strategies[0][0]
-    assert "--remote-components" in strategies[0][0]
+    assert "--js-runtimes" in strategies[0][0]
+    assert "--remote-components" not in strategies[0][0]
     assert strategies[0][1] == ["fmt1", "best"]
+    assert "--cookies" in strategies[1][0]
+    assert "--remote-components" in strategies[1][0]
     assert strategies[-1][0] == ["yt-dlp", "--no-playlist"]
     assert strategies[-1][1] == ["fmt1", "best"]
 
@@ -2399,26 +2403,29 @@ def test_youtube_arm_safe_strategies_prefer_quality_retries_before_plain_default
 def test_youtube_strategies_prefer_quality_retries_before_plain_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(resolver, "_preferred_js_runtime_spec", lambda: "node")
+    monkeypatch.setattr(resolver, "_preferred_js_runtime_spec", lambda: "deno")
 
     strategies = resolver._build_youtube_strategies(
-        ["yt-dlp", "--cookies", "/data/cookies.txt", "--js-runtimes", "node", "--no-playlist"],
+        ["yt-dlp", "--cookies", "/data/cookies.txt", "--js-runtimes", "deno", "--no-playlist"],
         ["fmt1", "best"],
     )
 
     assert "--cookies" in strategies[0][0]
-    assert "--remote-components" in strategies[0][0]
-    assert strategies[0][1] == ["", "best"]
+    assert "--remote-components" not in strategies[0][0]
+    assert strategies[0][1] == ["fmt1", "", "best"]
+    assert "--cookies" in strategies[1][0]
+    assert "--remote-components" in strategies[1][0]
+    assert strategies[1][1] == ["fmt1", "", "best"]
     assert (["yt-dlp", "--no-playlist"], ["fmt1", "best"]) in strategies
 
 
 def test_youtube_cookie_strategies_do_not_use_android_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(resolver, "_preferred_js_runtime_spec", lambda: "node")
+    monkeypatch.setattr(resolver, "_preferred_js_runtime_spec", lambda: "deno")
 
     strategies = resolver._build_youtube_strategies(
-        ["yt-dlp", "--cookies", "/data/cookies.txt", "--js-runtimes", "node", "--no-playlist"],
+        ["yt-dlp", "--cookies", "/data/cookies.txt", "--js-runtimes", "deno", "--no-playlist"],
         ["best"],
     )
 
@@ -5217,7 +5224,7 @@ def _patch_resolver_ytdlp_env(monkeypatch: pytest.MonkeyPatch, stdout: str) -> l
     )
     monkeypatch.setattr(resolver.shutil, "which", lambda name: None)
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, **_kwargs):
         calls.append(list(cmd))
         return Proc()
 
@@ -5278,7 +5285,7 @@ def test_resolver_raises_post_live_processing_when_replay_is_unready(
     )
     monkeypatch.setattr(resolver.shutil, "which", lambda name: None)
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, **_kwargs):
         calls.append(list(cmd))
         return Proc()
 
@@ -5783,6 +5790,9 @@ def test_resolver_live_default_candidate_does_not_pass_auto_format(
         "relaytv_app.video_profile.get_profile",
         lambda: {"decode_profile": "default", "display_cap_height": 1080, "av1_allowed": True},
     )
+    monkeypatch.setattr(
+        resolver.ytdlp_format_policy, "effective_ytdlp_format", lambda *a, **kw: ""
+    )
 
     result = resolver.resolve_streams_ytdlp(url)
 
@@ -5818,7 +5828,7 @@ def test_resolver_live_handoff_preserves_cookie_and_challenge_options(
     assert result.transport == "mpv_ytdl"
     assert "cookies=/data/cookies.txt" in result.ytdl_raw_options
     assert "js-runtimes=deno" in result.ytdl_raw_options
-    assert "remote-components=ejs:github" in result.ytdl_raw_options
+    assert "remote-components=ejs:github" not in result.ytdl_raw_options
     assert calls
 
 

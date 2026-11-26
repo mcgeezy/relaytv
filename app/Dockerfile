@@ -3,7 +3,7 @@ FROM python:3.13-slim@sha256:d168b8d9eb761f4d3fe305ebd04aeb7e7f2de0297cec5fb2f8f
 ARG RELAYTV_INSTALL_QT=1
 ARG RELAYTV_INSTALL_X11_OVERLAY=0
 ARG RELAYTV_INSTALL_HEADLESS=0
-ARG RELAYTV_INSTALL_NODE=1
+ARG RELAYTV_INSTALL_NODE=0
 ARG RELAYTV_INSTALL_DENO=1
 ARG RELAYTV_DENO_VERSION=2.9.7
 ARG RELAYTV_INSTALL_IDLE_BROWSER=0
@@ -106,8 +106,8 @@ RUN set -eux; \
 # Deno is yt-dlp's only default-enabled JavaScript runtime for YouTube
 # challenge solving and sandboxes the remote challenge code (no fs/network
 # permissions). Pinned static binary from the official release, verified by
-# sha256. 32-bit ARM has no deno build and falls back to the nodejs bundle,
-# which the resolver opts in via --js-runtimes.
+# sha256. Debian's packaged Node.js (v20) is below yt-dlp's Node >= 22 floor,
+# so RELAYTV_INSTALL_NODE defaults to 0.
 RUN set -eux; \
     if [ "${RELAYTV_INSTALL_DENO}" = "1" ]; then \
       arch="$(dpkg --print-architecture)"; \
