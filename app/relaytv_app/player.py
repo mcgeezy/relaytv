@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import math
 import importlib.util
 from .config import env_bool as _env_bool
+from .config import normalize_rtsp_transport as _normalize_rtsp_transport
 from .config import runtime_config
 from .display_credentials import refresh_display_credentials
 import shlex
@@ -24,7 +25,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlsplit, url
 from typing import Any, Callable
 from fastapi import HTTPException
 
-from . import state, devices, postlive_relay, ytdlp_format_policy, video_profile, youtube_stream
+from . import state, devices, postlive_relay, public_media, ytdlp_format_policy, video_profile, youtube_stream
 from .integrations import jellyfin_receiver
 from .debug import debug_log, get_logger
 from .resolver import (
@@ -32,6 +33,7 @@ from .resolver import (
     YouTubePostLiveProcessingError,
     YouTubeUpcomingError,
     YouTubeUnavailableError,
+    _fallback_item_title,
     enrich_item_metadata,
     is_youtube_url,
     make_item,
@@ -1504,7 +1506,27 @@ def _build_qt_external_mpv_args(
         prefix, file_spec = args[:-1], args[-1:]
     base = _strip_mpv_renderer_args(prefix)
     extra = _qt_external_mpv_mode_args(fallback_to_x11=fallback_to_x11)
-    return _first_wins_dedupe(base + extra + file_spec)
+    if _has_opt(extra, "--rtsp-transport"):
+        base = _strip_mpv_opt(base, "--rtsp-transport")
+    return _first_wins_dedupe(base + extra) + file_spec
+
+
+def _strip_mpv_opt(args: list[str], opt: str) -> list[str]:
+    """Remove an option token (``--opt=val`` or ``--opt val``) from an argv list."""
+    out: list[str] = []
+    skip_next = False
+    prefix = f"{opt}="
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == opt:
+            skip_next = True
+            continue
+        if arg.startswith(prefix):
+            continue
+        out.append(arg)
+    return out
 
 
 def _strip_mpv_renderer_args(args: list[str]) -> list[str]:
@@ -1859,6 +1881,7 @@ def _first_wins_dedupe(args: list[str]) -> list[str]:
         "--demuxer-seekable-cache",
         "--demuxer-max-back-bytes",
         "--force-seekable",
+        "--rtsp-transport",
         "--load-scripts",
         "--msg-level",
         "--osd-level",
@@ -1962,15 +1985,18 @@ _ACTIVE_YTDL_OVERRIDES: dict[str, str] = {}
 
 
 def _redacted_mpv_args(args: list[str]) -> str:
-    """Format launch arguments without logging stream headers."""
+    """Format launch arguments without logging stream headers or media URLs."""
     sensitive = ("--user-agent=", "--referrer=", "--http-header-fields=")
+    media_schemes = ("http://", "https://", "rtsp://", "rtsps://")
+    audio_file_schemes = tuple(f"--audio-file={scheme}" for scheme in media_schemes)
     redacted = []
     for arg in args:
+        low = arg.lower()
         if arg.startswith(sensitive):
             redacted.append(f"{arg.split('=', 1)[0]}=<redacted>")
-        elif arg.startswith(("http://", "https://")):
+        elif low.startswith(media_schemes):
             redacted.append("<media-url>")
-        elif arg.startswith("--audio-file=http"):
+        elif low.startswith(audio_file_schemes):
             redacted.append("--audio-file=<media-url>")
         else:
             redacted.append(arg)
@@ -2004,6 +2030,13 @@ def _signed_direct_url(url: str) -> bool:
     )
     keys = {k.lower() for k in q.keys()}
     return any(k in keys for k in signed_markers)
+
+
+def _is_rtsp_stream(stream_url: str, provider_hint: str | None = None) -> bool:
+    raw = str(stream_url or "").strip().lower()
+    if raw.startswith(("rtsp://", "rtsps://")):
+        return True
+    return str(provider_hint or "").strip().lower() == "rtsp"
 
 
 def _should_force_ytdl_off(stream_url: str, provider_hint: str | None = None) -> bool:
@@ -3120,6 +3153,9 @@ def _build_mpv_args(
     back_bytes = _demuxer_max_back_bytes(settings)
     if not _has_opt(mpv_args + extra, "--demuxer-max-back-bytes"):
         mpv_args.append(f"--demuxer-max-back-bytes={back_bytes}")
+    rtsp_mode = _normalize_rtsp_transport(os.getenv("RELAYTV_RTSP_TRANSPORT"))
+    if rtsp_mode and not _has_opt(mpv_args + extra, "--rtsp-transport"):
+        mpv_args.append(f"--rtsp-transport={rtsp_mode}")
 
     # Conservative decode defaults by runtime profile.
     # MPV_ARGS retains override priority by short-circuiting when explicit opts
@@ -3209,6 +3245,10 @@ def _build_mpv_args(
         )
         if ytdl_raw:
             mpv_args.append(f"--ytdl-raw-options={ytdl_raw}")
+        if _is_rtsp_stream(stream_url, provider_hint):
+            # Disable ytdl_hook per-file only so a cold-started RTSP player can
+            # still seamlessly load ytdl_hook-backed streams later.
+            file_opts.append("--ytdl=no")
     else:
         mpv_args.append("--ytdl=no")
 
@@ -3609,13 +3649,15 @@ def _load_stream_in_existing_mpv(
     else:
         cmd: list[object] = ["loadfile", str(stream_url), "replace"]
         start_value = _mpv_start_option_value(start_pos)
+        loadfile_opts: list[str] = []
+        if start_value:
+            loadfile_opts.append(f"start={start_value}")
         if audio_url:
-            option_value = _mpv_format_loadfile_opt("audio-files-append", audio_url)
-            if start_value:
-                option_value = f"start={start_value},{option_value}"
-            cmd.extend(["-1", option_value])
-        elif start_value:
-            cmd.extend(["-1", f"start={start_value}"])
+            loadfile_opts.append(_mpv_format_loadfile_opt("audio-files-append", audio_url))
+        if str(stream_url or "").strip().lower().startswith(("rtsp://", "rtsps://")):
+            loadfile_opts.append("ytdl=no")
+        if loadfile_opts:
+            cmd.extend(["-1", ",".join(loadfile_opts)])
         try:
             resp = mpv_command(cmd)
         except Exception:
@@ -3875,12 +3917,12 @@ def wait_for_ipc_ready(timeout: float = 5.0) -> bool:
 
 
 _LOG_SECRET_QUERY_RE = re.compile(
-    r"(?i)\b(api_key|x-emby-token|x-jellyfin-token|x-plex-token|token|auth|sig|signature)=[^\s&\"'<>)\]]+"
+    r"(?i)\b(api_key|x-emby-token|x-jellyfin-token|x-plex-token|token|auth|sig|signature|user|username|usr|pass|passwd|password|pwd)=[^\s&\"'<>)\]]+"
 )
 
 
 def _scrub_mpv_log_line(line: str) -> str:
-    scrubbed = re.sub(r"""https?://[^\s"'<>)\]]+""", "<url>", line)
+    scrubbed = re.sub(r"""(?i)(?:https?|rtsps?)://[^\s"'<>)\]]+""", "<url>", line)
     return _LOG_SECRET_QUERY_RE.sub(r"\1=<redacted>", scrubbed)
 
 
@@ -4363,6 +4405,8 @@ def _value_truthy(value: object) -> bool:
 
 
 def _url_looks_like_live_stream(url: str, provider: str) -> bool:
+    if provider == "rtsp":
+        return True
     try:
         parsed = urlparse(str(url or "").strip())
         path = (parsed.path or "").strip().lower()
@@ -4416,7 +4460,7 @@ def _item_looks_like_live_stream(item: object) -> bool:
     if not isinstance(item, dict):
         return False
     provider = str(item.get("provider") or "").strip().lower()
-    if provider == "iptv":
+    if provider in {"iptv", "rtsp"}:
         return True
     for key in (
         "is_live",
@@ -4578,7 +4622,7 @@ def _item_supports_metadata_prefetch(item: object) -> bool:
     }:
         return False
     provider = str(item.get("provider") or provider_from_url(url) or "").strip().lower()
-    if provider in {"jellyfin", "plex", "iptv", "upload"}:
+    if provider in {"jellyfin", "plex", "iptv", "upload", "rtsp"}:
         return False
     return True
 
@@ -4933,10 +4977,11 @@ def _mpv_up_next_eligible_item(item: object) -> bool:
     if (not prefer_mpv_ytdl) or force_resolve_provider:
         return False
     # IPTV and Plex carry opaque catalog references that must be re-resolved
-    # (and redacted in NOW_PLAYING/history/session), and any header-bearing
-    # item needs its per-channel headers installed. mpv's direct playlist
-    # handoff does neither, so route all of them through play_item.
-    if provider in {"iptv", "plex"}:
+    # (and redacted in NOW_PLAYING/history/session), RTSP cameras often cap
+    # concurrent connections so queued feeds must not be pre-opened, and any
+    # header-bearing item needs its per-channel headers installed. mpv's direct
+    # playlist handoff does none of these, so route them through play_item.
+    if provider in {"iptv", "plex", "rtsp"}:
         return False
     if isinstance(item, dict) and _item_http_headers(item):
         return False
@@ -6484,11 +6529,13 @@ def active_playback_seek_baseline(now: dict | None = None) -> tuple[float, float
 
 
 def _item_is_completable_live_stream(now: dict | None) -> bool:
-    """Return true for active non-IPTV live broadcasts (excluding archived VODs)."""
+    """Return true for active non-IPTV/non-RTSP live broadcasts (excluding archived VODs)."""
     if not isinstance(now, dict):
         return False
     provider = str(now.get("provider") or "").strip().lower()
-    if provider == "iptv":
+    if not provider:
+        provider = str(provider_from_url(str(now.get("url") or "")) or "").strip().lower()
+    if provider in {"iptv", "rtsp"}:
         return False
     live_status = str(now.get("live_status") or "").strip().lower()
     if live_status in {"was_live", "not_live", "post_live", "is_upcoming"}:
@@ -6889,8 +6936,12 @@ def _play_item_owned(
     _require_owned("post_item_prepare", plex_stream=prepared_plex_stream)
     raw = validate_user_url(item["url"])
     item["url"] = raw
-    title = item.get("title") or raw
-    provider = item.get("provider") or provider_from_url(raw)
+    provider = str(item.get("provider") or provider_from_url(raw) or "").strip().lower()
+    title = (
+        item.get("title")
+        or (_fallback_item_title(raw, "rtsp") if provider == "rtsp" else public_media.sanitize_public_url(raw))
+        or raw
+    )
     http_headers = _item_http_headers(item)
     play_t0 = time.monotonic()
     debug_log(
@@ -6902,7 +6953,8 @@ def _play_item_owned(
             f"iptv_catalog_ref={item.get('iptv_source_id')!r}/{item.get('iptv_channel_id')!r}",
         )
     else:
-        debug_log("player", f"raw_url={raw!r}")
+        safe_raw = public_media.sanitize_public_url(raw) or "<media-url>"
+        debug_log("player", f"raw_url={safe_raw!r}")
     # CEC auto on/switch with active-source awareness.
     tv_state = state.get_tv_state() if hasattr(state, "get_tv_state") else {}
     active_src = str(tv_state.get("active_source_phys_addr") or "")
@@ -6942,6 +6994,7 @@ def _play_item_owned(
     prefetched = _fresh_prefetched_stream(item)
     should_resolve = (
         use_resolver
+        and provider != "rtsp"
         and (not trusted_local_stream)
         and (
             not prefer_mpv_ytdl
@@ -7054,9 +7107,15 @@ def _play_item_owned(
     if provider == "iptv":
         debug_log("player", "resolved_stream=<iptv-stream> audio=<redacted>")
     else:
-        debug_log("player", f"resolved_stream={stream!r} audio={audio!r}")
+        safe_stream = public_media.sanitize_public_url(stream) or ("<media-url>" if stream else "")
+        safe_audio = (
+            (public_media.sanitize_public_url(audio) or "<media-url>") if audio else None
+        )
+        debug_log("player", f"resolved_stream={safe_stream!r} audio={safe_audio!r}")
 
-    resume_start_pos = _normalize_start_pos(start_pos)
+    if provider == "rtsp":
+        start_pos = None
+    resume_start_pos = None if provider == "rtsp" else _normalize_start_pos(start_pos)
     player_start_pos = resume_start_pos
     if plex_playback and str(item.get("plex_stream_mode") or "").strip().lower() in {
         "remux",
@@ -7205,7 +7264,7 @@ def _play_item_owned(
     }
 
     now = {
-        "input": item_or_text if not isinstance(item_or_text, dict) else raw,
+        "input": raw,
         "url": raw,
         "title": title,
         "provider": provider,
@@ -9437,13 +9496,14 @@ def restart_current(apply_mode: str | None = None) -> dict | None:
                         "raw_options": ytdl_raw or "",
                     }
             target = item
-        # capture position if possible
+        # capture position if possible (skip live RTSP feeds so restart joins live edge)
         pos = None
-        try:
-            if is_playing():
-                pos = mpv_get("time-pos")
-        except Exception:
-            pos = None
+        if provider != "rtsp" and provider_from_url(inp) != "rtsp":
+            try:
+                if is_playing():
+                    pos = mpv_get("time-pos")
+            except Exception:
+                pos = None
         if not plex_restart:
             stop_mpv()
         # Use settings-driven video mode by default; apply_mode can force x11/drm.

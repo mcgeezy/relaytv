@@ -37,7 +37,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException
 
-from . import player, resolver, state
+from . import player, public_media, resolver, state
 from .debug import get_logger
 
 logger = get_logger("playback")
@@ -647,6 +647,7 @@ def preserve_current_to_queue_front(
     )
     plex_item_id = str(now.get("plex_item_id") or "").strip()
     is_plex = str(now.get("provider") or "").strip().lower() == "plex" and bool(plex_item_id)
+    is_rtsp = str(now.get("provider") or "").strip().lower() == "rtsp"
 
     preserved = {
         # Catalog providers keep only opaque references; temporary or
@@ -657,7 +658,11 @@ def preserve_current_to_queue_front(
             else ("https://plex.invalid/item" if is_plex else url.strip())
         ),
         "title": now.get("title")
-        or ("IPTV channel" if is_iptv else ("Plex item" if is_plex else url.strip())),
+        or (
+            "IPTV channel"
+            if is_iptv
+            else ("Plex item" if is_plex else (public_media.sanitize_public_url(url.strip()) or url.strip()))
+        ),
         "provider": now.get("provider"),
         "_relaytv_interrupt_preserved": True,
         "_relaytv_interrupt_preserved_at": int(time.time()),
@@ -739,7 +744,7 @@ def preserve_current_to_queue_front(
                 preserved["_resolved_at"] = float(now.get("_resolved_at") or time.time())
             except Exception:
                 preserved["_resolved_at"] = time.time()
-    if pos_f is not None:
+    if pos_f is not None and not is_rtsp:
         preserved["resume_pos"] = pos_f
     player.update_history_progress(now, position_sec=pos_f, duration_sec=dur, force=True)
 
@@ -787,6 +792,8 @@ def handoff_snapshot() -> dict[str, Any] | None:
         return None
     if str(now.get("provider") or "").strip().lower() == "iptv":
         return None
+    if public_media.rtsp_item_has_credentials(now):
+        return None
 
     pos = None
     dur = None
@@ -807,6 +814,8 @@ def handoff_snapshot() -> dict[str, Any] | None:
         duration = float(dur) if dur is not None else None
     except Exception:
         duration = None
+    if str(now.get("provider") or "").strip().lower() == "rtsp":
+        position = None
     if not player.playback_intent_current(intent):
         return None
     return {
@@ -969,16 +978,20 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
         "session_state": "closed" if preserve_resume else "idle",
     }
     if preserve_resume:
+        is_rtsp = (
+            isinstance(state.NOW_PLAYING, dict)
+            and str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "rtsp"
+        )
         with player.MPV_LOCK:
             try:
-                pos = player.mpv_get("time-pos")
+                pos = None if is_rtsp else player.mpv_get("time-pos")
             except Exception:
                 pos = None
             try:
                 dur = player.mpv_get("duration")
             except Exception:
                 dur = None
-        if pos is None and isinstance(state.NOW_PLAYING, dict):
+        if not is_rtsp and pos is None and isinstance(state.NOW_PLAYING, dict):
             pos = state.NOW_PLAYING.get("resume_pos")
         try:
             session_update["session_position"] = float(pos) if pos is not None else None
@@ -986,9 +999,12 @@ def close_current(*, idle_surface_enabled: bool, keep_shell_allowed: bool) -> di
             session_update["session_position"] = None
 
         try:
-            if isinstance(state.NOW_PLAYING, dict) and pos is not None:
+            if isinstance(state.NOW_PLAYING, dict) and (pos is not None or is_rtsp):
                 np = dict(state.NOW_PLAYING)
-                np["resume_pos"] = float(pos)
+                if is_rtsp:
+                    np.pop("resume_pos", None)
+                elif pos is not None:
+                    np["resume_pos"] = float(pos)
                 np["closed"] = True
                 np["closed_at"] = int(time.time())
                 session_update["now_playing"] = np
@@ -1044,10 +1060,11 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     if pos is None:
         pos = getattr(state, "SESSION_POSITION", None)
     start_pos = None
-    try:
-        start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
-    except Exception:
-        start_pos = None
+    if str(now.get("provider") or "").strip().lower() != "rtsp":
+        try:
+            start_pos = player._normalize_start_pos(float(pos)) if pos is not None else None
+        except Exception:
+            start_pos = None
 
     # A Plex stream reference dies with the session that made it: closing
     # reports the item stopped, which releases the transcode and drops the
@@ -1064,9 +1081,12 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
     )
     if plex_item or postlive_stream or not isinstance(stream, str) or not stream.strip():
         resume_source = dict(now) if isinstance(now, dict) else now
-        if isinstance(resume_source, dict) and postlive_stream:
-            resume_source.pop("stream", None)
-            resume_source.pop("_resolved_stream", None)
+        if isinstance(resume_source, dict):
+            if str(resume_source.get("provider") or "").strip().lower() == "rtsp":
+                resume_source.pop("resume_pos", None)
+            if postlive_stream:
+                resume_source.pop("stream", None)
+                resume_source.pop("_resolved_stream", None)
         resumed = play_now(
             resume_source,
             use_resolver=not plex_item,
@@ -1103,7 +1123,10 @@ def resume_session() -> tuple[dict[str, Any], dict[str, Any] | None]:
         resumed["started"] = int(time.time())
         resumed["mode"] = "resume"
         resumed["closed"] = False
-        if start_pos is not None:
+        if str(resumed.get("provider") or "").strip().lower() == "rtsp":
+            resumed.pop("resume_pos", None)
+            resumed["_playback_started_pos"] = 0.0
+        elif start_pos is not None:
             try:
                 resumed["resume_pos"] = float(start_pos)
                 resumed["_playback_started_pos"] = max(0.0, float(start_pos))
@@ -1209,8 +1232,12 @@ def stop_current() -> dict[str, Any]:
         "session_state": "closed" if preserve_resume else "idle",
     }
     if preserve_resume:
+        is_rtsp = (
+            isinstance(state.NOW_PLAYING, dict)
+            and str(state.NOW_PLAYING.get("provider") or "").strip().lower() == "rtsp"
+        )
         with player.MPV_LOCK:
-            pos = player.mpv_get("time-pos")
+            pos = None if is_rtsp else player.mpv_get("time-pos")
             dur = player.mpv_get("duration")
         try:
             session_update["session_position"] = float(pos) if pos is not None else None
@@ -1221,7 +1248,9 @@ def stop_current() -> dict[str, Any]:
         try:
             if isinstance(state.NOW_PLAYING, dict):
                 np = dict(state.NOW_PLAYING)
-                if pos is not None:
+                if str(np.get("provider") or "").strip().lower() == "rtsp":
+                    np.pop("resume_pos", None)
+                elif pos is not None:
                     np["resume_pos"] = float(pos)
                 np["closed"] = True
                 np["closed_at"] = int(time.time())
@@ -1323,7 +1352,8 @@ def restore_playback_state(snapshot: dict) -> None:
         state.QUEUE[:] = list(snapshot.get("queue") or [])
     state.persist_queue()
 
-    start_pos = snapshot.get("position")
+    is_rtsp = str(now.get("provider") or "").strip().lower() == "rtsp"
+    start_pos = None if is_rtsp else snapshot.get("position")
     iptv_sid = str(now.get("iptv_source_id") or "").strip()
     iptv_cid = str(now.get("iptv_channel_id") or "").strip()
     is_iptv = str(now.get("provider") or "").strip().lower() == "iptv" or bool(

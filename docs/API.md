@@ -127,7 +127,7 @@ must not control the WebSocket origin check.
   Not part of the public API surface — clients should never call it.
 - `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
 - `GET /share`
-  - query: `url` or `link`, optional `cec`
+  - query: `url` or `link` (`http(s)://` or `rtsp(s)://`), optional `cec`
   - PWA share-target entrypoint; redirects (`303`) to `/ui?share=…` so the Link dialog opens prefilled without side effects on an unauthenticated GET
 
 Selected SVG/asset helpers also exist for the UI:
@@ -265,6 +265,51 @@ Primary play-family endpoints:
 - `POST /play_temporary/cancel`
 - `POST /play_at`
   - body: `{"url", "start_at": epoch_seconds}`
+
+### Shared RTSP and RTSPS streams
+
+RelayTV accepts `rtsp://` and `rtsps://` stream links (IP cameras, NVRs,
+`go2rtc` / Frigate / Scrypted / UniFi Protect relays, and Home Assistant camera
+feeds) across user playback and queue entrypoints:
+
+- Supported endpoints and UI surfaces: `GET /share`, `POST /share`,
+  `POST /smart`, `POST /play`, `POST /play_now`, `POST /play_temporary`,
+  `POST /enqueue` (plus `/queue/add`, `/api/queue/add`, `/v1/queue/add`), and
+  the `/ui` Add Link dialog. Shared text containing an embedded `rtsp://` or
+  `rtsps://` URL is extracted case-insensitively. RFC1918 LAN addresses are
+  allowed; link-local (`169.254.0.0/16`), unspecified (`0.0.0.0`/`::`), and
+  multicast literals remain rejected, and outbound HTTP / resolved-extractor URL
+  validators remain restricted to `http` and `https`.
+- Direct `mpv` playback and live semantics: RTSP/RTSPS items use
+  `provider: "rtsp"` and `is_live: true`, playing directly through `mpv` /
+  `libmpv` without invoking `yt-dlp` (`ytdl=no`, skipping metadata/stream
+  subprocess probes, queue prefetch, and mpv up-next pre-opening). Playback
+  starts, restarts, `/history/play`, and `play_temporary` interruptions always
+  join the live edge rather than sending RTSP `Range:` seeks (`start_pos` and
+  `resume_pos` are ignored). Cached DVR rewind (`POST /playback/live`) remains
+  available, and transient camera keyframe/Wi-Fi stalls do not treat the stream
+  as completed or auto-advance the queue.
+- Credential redaction: unredacted RTSP URLs remain only in server-owned state
+  so `/queue/play`, `/history/play`, and `/history/requeue` replay with intact
+  credentials. All public API and realtime payloads (`/status`,
+  `/playback/state`, `/queue`, `/history`, `/ui/ws`, `/ui/events`), derived
+  fallback titles, TV overlay toasts, and player debug logs strip URL userinfo
+  (`username`/`password`) as well as camera authentication query parameters
+  (`user`, `username`, `usr`, `pass`, `passwd`, `password`, `pwd`).
+- Peer transfer rules: RTSP items carrying inline userinfo or sensitive camera
+  query credentials stay on the originating device — `POST /peers/{peer_id}/send`
+  reports them in `rejected` with reason `"rtsp_credentials_stay_on_this_device"`
+  (preserving them locally during `move`), and `POST /peers/{peer_id}/handoff`
+  refuses to hand off a credentialed RTSP session. Unauthenticated LAN RTSP
+  relays (for example `rtsp://go2rtc.lan:8554/front_door`) transfer and hand off
+  normally.
+- Transport override: `RELAYTV_RTSP_TRANSPORT` is a static/child-process
+  environment variable (not a runtime `/settings` key) that sets
+  `--rtsp-transport` for `mpv` / `libmpv` (default `tcp`; allowed values `tcp`,
+  `udp`, `udp_multicast`, `http`, or empty string `""` to defer to mpv's
+  built-in default). An explicit `--rtsp-transport` in `MPV_ARGS`,
+  `RELAYTV_QT_EXTERNAL_MPV_ARGS`, or `RELAYTV_QT_SHELL_MPV_ARGS` takes
+  precedence.
 
 
 ## Uploaded media ingest
@@ -603,7 +648,7 @@ Send:
   - `move` drops only what the peer **accepted**, matched atomically by stable
     queue ID when the response arrives, never by position or URL. Accepted
     entries are removed even if reordered; already-removed entries are ignored.
-    Rejected items, items that could not travel (IPTV or Plex), and unsent entries
+    Rejected items, items that could not travel (IPTV, Plex, or credentialed RTSP), and unsent entries
     (including duplicates of a sent URL) stay local. Per-item results are
     correlated in request order and must echo the submitted URL; missing,
     reordered, or malformed results remain local. If a peer reports no per-item
@@ -613,9 +658,12 @@ Send:
     when all displayed items are selected; additions after submission are not
     included. Omitting selectors remains supported for other API clients
   - returns `{"sent", "accepted", "rejected", "queue_length", "peer", "mode"}`
-  - IPTV and Plex items are reported in `rejected`, not sent. IPTV stream URLs
-    may carry credentials anywhere in the path; Plex references are encrypted
-    for the sending device's linked account and selected server
+  - IPTV, Plex, and credentialed RTSP items are reported in `rejected`, not
+    sent. IPTV stream URLs may carry credentials anywhere in the path; Plex
+    references are encrypted for the sending device's linked account and
+    selected server; credentialed RTSP URLs report
+    `"rtsp_credentials_stay_on_this_device"` while unauthenticated LAN RTSP
+    relays travel normally
 - `POST /peers/{peer_id}/handoff`
   - body: `{"queue_ids"?, "indexes"?, "keep_local"?}`; an empty body (or none)
     hands over the current playback plus the whole queue and stops here
@@ -626,9 +674,11 @@ Send:
     so both devices play the same thing from the same position. This is the UI's
     **Copy**; it defaults to `false` so an unasked-for handoff still moves the
     session rather than duplicating it
-  - `409` when nothing is playing. IPTV and Plex sessions cannot be handed off:
-    IPTV streams come from a local catalog the peer does not have, and Plex
-    references are bound to the sending device's account and server
+  - `409` when nothing is playing. IPTV, Plex, and credentialed RTSP sessions
+    cannot be handed off: IPTV streams come from a local catalog the peer does
+    not have, Plex references are bound to the sending device's account and
+    server, and inline RTSP credentials stay on the originating device
+    (unauthenticated LAN RTSP relays can still hand off)
   - ordering is deliberate — playback stops locally only after the peer reports
     it took over, so a failed handoff leaves this device playing
   - without `keep_local` the local session is cleared, not closed: the session

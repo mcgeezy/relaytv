@@ -396,7 +396,7 @@ def test_queue_import_rebuilds_items_and_reports_rejections(client, monkeypatch)
     assert body["received"] == 2
     assert body["accepted"] == 1
     assert [entry["accepted"] for entry in body["results"]] == [True, False]
-    assert "http/https" in body["results"][1]["reason"]
+    assert "Unsupported URL scheme" in body["results"][1]["reason"]
 
     with state.QUEUE_LOCK:
         queued = list(state.QUEUE)

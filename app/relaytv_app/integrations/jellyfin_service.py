@@ -136,11 +136,25 @@ def canonical_media_source_id(raw: str | None) -> str:
     return str(raw or "").strip().lower()
 
 
+def _is_non_http_scheme_url(raw: str) -> bool:
+    parts = urlsplit(raw)
+    scheme = (parts.scheme or "").strip().lower()
+    if scheme and scheme not in ("http", "https"):
+        return True
+    if not scheme:
+        m = re.search(r"\b([a-z][a-z0-9+.-]*)://", raw, re.IGNORECASE)
+        if m and m.group(1).lower() not in ("http", "https"):
+            return True
+    return False
+
+
 def extract_item_id_from_url(raw_url: str | None) -> str:
     u = str(raw_url or "").strip()
     if not u:
         return ""
     try:
+        if _is_non_http_scheme_url(u):
+            return ""
         parts = urlsplit(u)
         segs = [seg for seg in (parts.path or "").split("/") if seg]
         for idx, seg in enumerate(segs):
@@ -652,6 +666,8 @@ def extract_item_id_from_url_raw(raw_url: str | None) -> str:
     if not u:
         return ""
     try:
+        if _is_non_http_scheme_url(u):
+            return ""
         parts = urlsplit(u)
         segs = [seg for seg in (parts.path or "").split("/") if seg]
         for idx, seg in enumerate(segs):
@@ -666,8 +682,9 @@ def extract_item_id_from_url_raw(raw_url: str | None) -> str:
 def url_origin(url: str) -> str:
     try:
         p = urlsplit(str(url or "").strip())
-        if p.scheme and p.netloc:
-            return f"{p.scheme}://{p.netloc}"
+        scheme = (p.scheme or "").strip().lower()
+        if scheme in ("http", "https") and p.netloc:
+            return f"{scheme}://{p.netloc}"
     except Exception:
         return ""
     return ""
@@ -758,7 +775,10 @@ def _belongs_to_primary_jellyfin(
 
 def looks_like_media_url(url: str) -> bool:
     try:
-        p = urlsplit(str(url or "").strip())
+        raw = str(url or "").strip()
+        if _is_non_http_scheme_url(raw):
+            return False
+        p = urlsplit(raw)
         path = (p.path or "").lower()
         if "/items/" in path or "/videos/" in path:
             return True
@@ -3468,7 +3488,12 @@ def smart_item_from_url(
     If the URL looks like Jellyfin media, enrich title/thumbnail/resume from Jellyfin APIs.
     """
     shared = str(url or "").strip()
-    item_id = jellyfin_receiver.extract_item_id_from_url(shared)
+    candidate = resolver.normalize_shared_url(resolver.extract_first_url(shared))
+    item_id = (
+        ""
+        if _is_non_http_scheme_url(shared) or _is_non_http_scheme_url(candidate)
+        else jellyfin_receiver.extract_item_id_from_url(shared)
+    )
     st = jellyfin_receiver.status()
     if item_id and (st.get("server_url") or looks_like_media_url(shared)):
         origin = url_origin(shared)

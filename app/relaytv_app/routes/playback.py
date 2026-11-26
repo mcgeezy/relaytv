@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from .. import player, playback_service, resolver, state
+from .. import player, playback_service, public_media, resolver, state
 from ..integrations import iptv_service
 from ..integrations.plex_client import PlexError
 from .queue import maybe_queue_playlist
@@ -298,6 +298,17 @@ def _push_queue_added_toast_async(item: object, fallback_label: str) -> None:
     push_queue_added_toast_async(item, fallback_label)
 
 
+def _safe_toast_label(*candidates: object) -> str:
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        sanitized = public_media.sanitize_embedded_urls(text).strip()
+        if sanitized:
+            return sanitized
+    return ""
+
+
 def _toast_playback_failure(exc: Exception, label: str) -> None:
     """Deliver a warn toast to the TV overlay when a direct play request fails."""
     text = None
@@ -345,7 +356,7 @@ def play(req: PlayReq):
             start_pos=(float(start_pos) if start_pos is not None else None),
         )
     except Exception as exc:
-        _toast_playback_failure(exc, str(label or req.url or ""))
+        _toast_playback_failure(exc, _safe_toast_label(label, req.url))
         raise
     return {"status": "playing", "now_playing": _annotate_upload_item(now)}
 
@@ -415,7 +426,7 @@ def _play_now_item(
     except Exception as exc:
         if isinstance(exc, player.YouTubePostLiveProcessingError):
             playback_service.settle_play_now_preserve(preserved)
-            _toast_playback_failure(exc, title_hint or request_url)
+            _toast_playback_failure(exc, _safe_toast_label(title_hint, request_url))
             try:
                 handoff = playback_service.advance_queue(
                     mode="play_next",
@@ -442,7 +453,7 @@ def _play_now_item(
                 "queue_length": qlen,
             }
         _rollback_play_now_preserve(preserved)
-        _toast_playback_failure(exc, title_hint or request_url)
+        _toast_playback_failure(exc, _safe_toast_label(title_hint, request_url))
         raise
     if player.last_play_superseded():
         _rollback_play_now_preserve(preserved)
@@ -461,7 +472,7 @@ def _play_now_item(
     try:
         title = now.get("title") if isinstance(now, dict) else None
         _push_overlay_toast(
-            text=f"Playing now: {title or title_hint or request_url}",
+            text=f"Playing now: {_safe_toast_label(title, title_hint, request_url)}",
             duration=_playback_notification_display_sec(),
             level="success",
             icon="play",
@@ -572,12 +583,12 @@ def play_temporary(req: PlayTemporaryReq):
         with _temporary_playback_lock():
             if stack and stack[-1].get("id") == frame_id:
                 stack.pop()
-        _toast_playback_failure(exc, req.url)
+        _toast_playback_failure(exc, _safe_toast_label(req.url))
         raise
     try:
         title = now.get("title") if isinstance(now, dict) else None
         _push_overlay_toast(
-            text=f"Temporary playback: {title or req.url}",
+            text=f"Temporary playback: {_safe_toast_label(title, req.url)}",
             duration=_playback_notification_display_sec(),
             level="warn",
             icon="play",
@@ -614,19 +625,25 @@ def play_temporary_cancel():
 
 @router.post("/play_at")
 def play_at(req: PlayAtReq):
+    validated_url = resolver.validate_user_url(req.url or "")
+
     def _delayed_play() -> None:
         delay = max(0.0, float(req.start_at) - time.time())
         if delay > 0:
             time.sleep(delay)
         try:
             playback_service.play_now(
-                req.url, use_resolver=True, cec=False, clear_queue=False, mode="play_at"
+                validated_url, use_resolver=True, cec=False, clear_queue=False, mode="play_at"
             )
         except Exception as e:
             _logger().warning("play_at_failed start_at=%s error=%s", req.start_at, e)
 
     _threading_module().Thread(target=_delayed_play, daemon=True).start()
-    return {"ok": True, "url": req.url, "start_at": req.start_at}
+    return {
+        "ok": True,
+        "url": public_media.sanitize_public_url(validated_url),
+        "start_at": req.start_at,
+    }
 
 
 @router.post("/previous")
@@ -775,7 +792,7 @@ def share(req: ShareReq):
         )
     except Exception as exc:
         label = item.get("title") if isinstance(item, dict) else None
-        _toast_playback_failure(exc, str(label or shared))
+        _toast_playback_failure(exc, _safe_toast_label(label, shared))
         raise
     return {
         "status": "playing",
@@ -821,7 +838,7 @@ def smart(req: SmartPlayReq):
         item = _smart_item_from_url(req.url or "", lightweight=True)
         qlen, _queue_snapshot = playback_service.queue_item(item)
         try:
-            _push_queue_added_toast_async(item, req.url or "item")
+            _push_queue_added_toast_async(item, _safe_toast_label(req.url) or "item")
         except Exception:
             pass
         return {

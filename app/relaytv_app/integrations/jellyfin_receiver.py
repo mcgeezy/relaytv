@@ -1404,11 +1404,25 @@ def session_token() -> str:
         return str(_ACCESS_TOKEN or "")
 
 
+def _is_non_http_scheme_url(raw: str) -> bool:
+    parts = _urlparse.urlsplit(raw)
+    scheme = (parts.scheme or "").strip().lower()
+    if scheme and scheme not in ("http", "https"):
+        return True
+    if not scheme:
+        m = re.search(r"\b([a-z][a-z0-9+.-]*)://", raw, re.IGNORECASE)
+        if m and m.group(1).lower() not in ("http", "https"):
+            return True
+    return False
+
+
 def extract_item_id_from_url(url: str | None) -> str:
     u = str(url or "").strip()
     if not u:
         return ""
     try:
+        if _is_non_http_scheme_url(u):
+            return ""
         parts = _urlparse.urlsplit(u)
         q = dict(_urlparse.parse_qsl(parts.query, keep_blank_values=True))
         for key in ("itemId", "ItemId", "item_id", "id", "Id"):

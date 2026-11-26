@@ -78,3 +78,32 @@ test('Jellyfin and Emby continue using their product icons', () => {
     '/pwa/emby.svg',
   );
 });
+
+test('RTSP and RTSPS camera URLs render local SVG badges without external requests', () => {
+  const context = fixture();
+  const cases = [
+    [{provider: 'rtsp', url: 'rtsp://go2rtc.lan:8554/front_door'}, 'G'],
+    [{provider: 'rtsp', url: 'rtsps://192.168.1.50:7441/camera'}, '1'],
+    [{provider: 'rtsp', url: 'rtsp://192.168.1.50:554/videos/stream1'}, '1'],
+    [{provider: 'rtsp', url: 'rtsps://192.168.1.50:7441/items/1?api_key=cam'}, '1'],
+    ['rtsp://192.168.1.50:554/videos/stream1', '1'],
+    [{provider: 'rtsp', url: 'rtsp://[fd00::10]:554/live'}, 'F'],
+    [{provider: 'rtsp', url: ''}, 'R'],
+  ];
+  for (const [item, expectedLetter] of cases) {
+    const value = vm.runInContext(`faviconUrl(${JSON.stringify(item)})`, context);
+    assert.match(value, /^data:image\/svg\+xml;utf8,/);
+    assert.notEqual(value, '/pwa/jellyfin.svg');
+    assert.notEqual(value, '/pwa/emby.svg');
+    assert.equal(value.includes('google.com'), false);
+    assert.ok(decodeURIComponent(value).includes(`>${expectedLetter}</text>`), decodeURIComponent(value));
+  }
+  assert.equal(
+    vm.runInContext("faviconUrl('https://jf.example/Videos/123/stream')", context),
+    '/pwa/jellyfin.svg',
+  );
+  assert.equal(
+    vm.runInContext("_looksLikeJellyfinMediaUrl('/Videos/123/stream')", context),
+    true,
+  );
+});

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl, urlencode, urlunsplit
 
 from . import url_boundary
@@ -40,10 +41,17 @@ _SENSITIVE_QUERY_KEYS = {
     "hdnts",
     "jwt",
     "key-pair-id",
+    "pass",
+    "passwd",
+    "password",
     "policy",
+    "pwd",
     "sig",
     "signature",
     "token",
+    "user",
+    "username",
+    "usr",
     "x-emby-token",
     "x-jellyfin-token",
     "x-plex-token",
@@ -51,6 +59,17 @@ _SENSITIVE_QUERY_KEYS = {
 
 _URL_FIELDS = {"art", "image", "input", "poster", "thumbnail", "thumbnail_local", "url"}
 _PLEX_PLACEHOLDER_URL = "https://plex.invalid/item"
+_NETWORK_MEDIA_SCHEMES = frozenset({"http", "https", "rtsp", "rtsps"})
+_EMBEDDED_MEDIA_URL_RE = re.compile(r"(?:https?|rtsps?)://[^\s<>'\"`]+", re.IGNORECASE)
+_PUBLIC_URL_PREFIXES = (
+    "http://",
+    "https://",
+    "rtsp://",
+    "rtsps://",
+    "/plex/stream",
+    "/browse/stream",
+    "/postlive",
+)
 
 
 def _is_sensitive_query_key(key: str) -> bool:
@@ -72,7 +91,7 @@ def _redacted_capability_stream_url(path: str) -> str | None:
     return None
 
 
-def sanitize_public_url(value: object) -> str:
+def sanitize_public_url(value: object, *, _allow_embedded: bool = True) -> str:
     """Remove credentials and transient signing parameters from a public URL."""
     raw = str(value or "").strip()
     if not raw:
@@ -88,10 +107,19 @@ def sanitize_public_url(value: object) -> str:
     redacted_stream = _redacted_capability_stream_url(parsed.path)
     if redacted_stream is not None:
         return redacted_stream
+    if parsed.scheme == "data":
+        return raw
+    # A network media URL with an empty authority (for example `rtsp:///stream1`
+    # or `http:///path`) is malformed; omit it rather than echoing or recursing.
+    if parsed.scheme in _NETWORK_MEDIA_SCHEMES and not parsed.raw_netloc:
+        return ""
     # Preserved from the urlsplit version: a value with no scheme or no
     # authority is a relative reference or a non-network URL (file:, data:),
-    # and is passed through untouched.
+    # and is passed through untouched — unless it carries an embedded media URL
+    # (for example prose-prefixed or <...>-wrapped share text).
     if not parsed.scheme or not parsed.raw_netloc:
+        if _allow_embedded and _EMBEDDED_MEDIA_URL_RE.search(raw):
+            return sanitize_embedded_urls(raw)
         return raw
     # An authority that parsed but yielded no hostname is malformed. Omit it
     # rather than echoing it back: the raw form can still carry credentials,
@@ -105,6 +133,60 @@ def sanitize_public_url(value: object) -> str:
         if not _is_sensitive_query_key(key)
     ]
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), ""))
+
+
+def sanitize_embedded_urls(text: object) -> str:
+    """Sanitize any embedded http(s)/rtsp(s) URLs inside arbitrary text."""
+    raw = str(text or "")
+    if not raw:
+        return ""
+    stripped = raw.strip()
+    if stripped.lower().startswith("data:"):
+        return raw
+    if stripped.lower().startswith(_PUBLIC_URL_PREFIXES) and " " not in stripped and "\t" not in stripped:
+        if not any(ch in stripped for ch in "<>'\"`"):
+            return sanitize_public_url(stripped, _allow_embedded=False)
+
+    def _replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        suffix = ""
+        while token and token[-1] in ",.;!?":
+            suffix = token[-1] + suffix
+            token = token[:-1]
+        for close, open_ in ((")", "("), ("]", "["), ("}", "{")):
+            while token.endswith(close) and token.count(close) > token.count(open_):
+                suffix = close + suffix
+                token = token[:-1]
+        sanitized = sanitize_public_url(token, _allow_embedded=False)
+        return f"{sanitized}{suffix}" if sanitized else suffix
+
+    return _EMBEDDED_MEDIA_URL_RE.sub(_replace, raw)
+
+
+def url_has_credentials(value: object) -> bool:
+    """Return True when ``value`` embeds userinfo or sensitive auth query keys."""
+    parsed = url_boundary.parse_url(value)
+    if parsed is None or not parsed.scheme or not parsed.raw_netloc:
+        return False
+    if parsed.username or parsed.password:
+        return True
+    return any(
+        _is_sensitive_query_key(key)
+        for key, _val in parse_qsl(parsed.query, keep_blank_values=True)
+    )
+
+
+def rtsp_item_has_credentials(item: object) -> bool:
+    """Return True when an RTSP item carries inline credentials."""
+    if not isinstance(item, dict):
+        return False
+    raw_url = str(item.get("url") or item.get("input") or "").strip()
+    provider = str(item.get("provider") or "").strip().lower()
+    parsed = url_boundary.parse_url(raw_url)
+    is_rtsp = provider == "rtsp" or (parsed is not None and parsed.scheme in ("rtsp", "rtsps"))
+    if not is_rtsp:
+        return False
+    return url_has_credentials(raw_url)
 
 
 def public_media_item(item: object) -> object:
@@ -128,13 +210,20 @@ def public_media_item(item: object) -> object:
             if safe_url:
                 result[key] = safe_url
             continue
-        if isinstance(value, str) and value.strip().lower().startswith(
-            ("http://", "https://", "/plex/stream", "/browse/stream", "/postlive")
-        ):
+        if isinstance(value, str) and value.strip().lower().startswith(_PUBLIC_URL_PREFIXES):
             # A failed metadata lookup can leave the signed stream URL in a
             # display field such as title. Public redaction is about the value,
             # not only the expected schema key.
             safe_value = sanitize_public_url(value)
+            if safe_value:
+                result[key] = safe_value
+            continue
+        if (
+            isinstance(value, str)
+            and not value.strip().lower().startswith("data:")
+            and _EMBEDDED_MEDIA_URL_RE.search(value)
+        ):
+            safe_value = sanitize_embedded_urls(value).strip()
             if safe_value:
                 result[key] = safe_value
             continue
