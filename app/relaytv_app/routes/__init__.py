@@ -5396,7 +5396,7 @@ def ui():
             <div class="toggleRow">
               <div class="toggleCopy">
                 <div class="toggleTitle">Keep yt-dlp up to date</div>
-                <div class="toggleHint">Check for yt-dlp updates daily (and right away when enabled). Recommended to prevent YouTube playback failures.</div>
+                <div class="toggleHint">Check for yt-dlp updates every 6 hours (and right away when enabled). Recommended to prevent YouTube playback failures.</div>
               </div>
               <label class="toggleSwitch" for="setYtdlpAutoUpdate" title="Keep yt-dlp up to date">
                 <input type="checkbox" id="setYtdlpAutoUpdate" />
@@ -5422,7 +5422,7 @@ def ui():
               <div class="settingsSubHead">Direct-play cookies.txt</div>
               <div class="fieldRow">
                 <input id="setYtCookiesFile" class="input fileInput" type="file" accept=".txt,text/plain" aria-label="Direct-play cookies.txt" />
-                <div class="hint">Upload Netscape-format cookies.txt for yt-dlp (node/deno challenge flow).</div>
+                <div class="hint">Upload Netscape-format cookies.txt for yt-dlp (Deno EJS challenge flow).</div>
               </div>
               <div class="inlineApplyRow">
                 <button type="button" id="setYtCookiesUploadBtn" class="btn electricBlue">Upload cookies.txt</button>
