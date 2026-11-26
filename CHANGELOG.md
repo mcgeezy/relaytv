@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.0](https://github.com/mcgeezy/relaytv/compare/v0.12.3...v0.13.0) (2026-11-26)
+
+
+### Features
+
+* curate viable audio outputs and support NVIDIA CDI GPU reservations ([#175](https://github.com/mcgeezy/relaytv/issues/175)) ([59966d7](https://github.com/mcgeezy/relaytv/commit/59966d770b9c6e6958e01a365c6a9e8129590554))
+* support playing shared RTSP and RTSPS stream links ([#179](https://github.com/mcgeezy/relaytv/issues/179)) ([6afce05](https://github.com/mcgeezy/relaytv/commit/6afce0557deab863d9d3318b92ca855c120b9cda))
+* **ui:** integrate Android native header bridge for server switcher and app menu ([#176](https://github.com/mcgeezy/relaytv/issues/176)) ([2b2b5b3](https://github.com/mcgeezy/relaytv/commit/2b2b5b351fa570a95a77632b408819da75c44421))
+
+
+### Bug Fixes
+
+* harden cross-origin auth, outbound SSRF, playback lifecycle, integrations, Android UI, and installer ([#178](https://github.com/mcgeezy/relaytv/issues/178)) ([3b957d7](https://github.com/mcgeezy/relaytv/commit/3b957d725f4ead2c9128612f0d2fda191f6116fa))
+* stop post-live reaper on close_all and isolate sleep spies by thread ([#180](https://github.com/mcgeezy/relaytv/issues/180)) ([3024c5f](https://github.com/mcgeezy/relaytv/commit/3024c5f18e6366de5e2f2ea0a25d6f4771c555a3))
+
 ## [0.12.3](https://github.com/mcgeezy/relaytv/compare/v0.12.2...v0.12.3) (2026-11-22)
 
 
