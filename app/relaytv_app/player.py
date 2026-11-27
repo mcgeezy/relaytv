@@ -2432,7 +2432,8 @@ def _qt_shell_runtime_load_stream(
 def qt_shell_runtime_overlay_toast(
     *,
     text: str,
-    duration: float = 4.0,
+    title: str | None = None,
+    duration: float = 4.5,
     level: str = "info",
     icon: str | None = None,
     image_url: str | None = None,
@@ -2444,12 +2445,14 @@ def qt_shell_runtime_overlay_toast(
     payload: dict[str, Any] = {
         "action": "overlay_toast",
         "text": str(text or ""),
-        "duration": max(0.8, float(duration or 4.0)),
+        "duration": max(0.8, float(duration or 4.5)),
         "level": str(level or "info"),
         "icon": icon,
         "position": str(position or "top-left"),
         "ts": time.time(),
     }
+    if title:
+        payload["title"] = str(title)
     if image_url:
         payload["image_url"] = str(image_url)
     if link_url:

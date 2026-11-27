@@ -2303,6 +2303,139 @@ console.log(JSON.stringify(sent));
     assert sent[-1]["payload"]["client_reason"] == "stream_ping"
 
 
+def test_overlay_toast_glass_layout_copy_splitting_and_exit_lifecycle() -> None:
+    node = shutil.which("node")
+    assert node is not None, "node is required by the JavaScript quality gates"
+    html = routes.x11_overlay_page().body.decode()
+    assert "@keyframes toastEnter" in html
+    assert "@keyframes toastExit" in html
+    assert "backdrop-filter" not in html  # software-mode WebEngine 60fps guard
+
+    script = re.findall(r"<script>(.*?)</script>", html, re.S)[0]
+    toast_fn_block = script[
+        script.index("let _toastSvgSeq = 0;") : script.index("async function loadOverlayRealtimeCapabilities")
+    ]
+    helpers_start = toast_fn_block.index("const _knownPrefixTitles")
+    svg_block = toast_fn_block[: toast_fn_block.index("const overlayAllowToastImages")]
+    add_toast_block = toast_fn_block[helpers_start:]
+
+    harness = (
+        """
+const timers = [];
+const setTimeout = (fn, ms) => { timers.push({fn, ms}); return timers.length; };
+const clearTimeout = () => {};
+class FakeEl {
+  constructor(tag) {
+    this.tagName = tag;
+    this.className = '';
+    this.textContent = '';
+    this.innerHTML = '';
+    this.children = [];
+    this.attributes = {};
+    this.classList = {
+      add: (...cls) => {
+        const set = new Set(this.className.split(/\\s+/).filter(Boolean));
+        cls.forEach(c => set.add(c));
+        this.className = Array.from(set).join(' ');
+      },
+      remove: (...cls) => {
+        const drop = new Set(cls);
+        this.className = this.className.split(/\\s+/).filter(c => c && !drop.has(c)).join(' ');
+      }
+    };
+  }
+  append(...els) { els.forEach(e => this.appendChild(e)); }
+  appendChild(el) { el.parent = this; this.children.push(el); return el; }
+  prepend(el) { el.parent = this; this.children.unshift(el); return el; }
+  get lastElementChild() { return this.children[this.children.length - 1] || null; }
+  removeAttribute(k) { delete this.attributes[k]; }
+  remove() {
+    if (this.parent) {
+      this.parent.children = this.parent.children.filter(c => c !== this);
+    }
+  }
+}
+const rootEl = new FakeEl('div');
+const document = {
+  createElement: (tag) => new FakeEl(tag),
+  getElementById: (id) => (id === 'toasts' ? rootEl : null),
+};
+const overlayAllowToastImages = true;
+const states = [];
+const _overlayToastCount = () => rootEl.children.length;
+const reportOverlayState = (state, reason) => states.push({state, reason, count: _overlayToastCount()});
+const $ = (id) => document.getElementById(id);
+"""
+        + svg_block
+        + "\n"
+        + add_toast_block
+        + """
+addToast({title: 'Smart Home System', text: 'Front door camera detected motion.', icon: 'camera', image_url: '/thumbs/cam.jpg', duration: 4.5});
+const first = rootEl.children[0];
+const tile = first.children[0].children[0];
+const content = first.children[0].children[1];
+const mediaWrap = first.children[1];
+const mediaImg = mediaWrap ? mediaWrap.children[0] : null;
+if (mediaImg && mediaImg.onload) mediaImg.onload();
+const explicitSnap = {
+  rootClass: rootEl.className,
+  toastClass: first.className,
+  tileClass: tile.className,
+  hasSvg: tile.innerHTML.includes('<svg'),
+  mediaWrapClass: mediaWrap ? mediaWrap.className : '',
+  mediaImgClass: mediaImg ? mediaImg.className : '',
+  title: content.children[0] ? content.children[0].textContent : '',
+  body: content.children[1] ? content.children[1].textContent : '',
+};
+
+const colonCopy = resolveToastCopy({text: 'Playing now: Big Buck Bunny'});
+const singleCopy = resolveToastCopy({text: 'Doorbell motion detected'});
+
+// Trigger dwell timer (not image 4000ms timer -> find 4500ms timer)
+const dwellTimer = timers.find(t => t.ms === 4500);
+dwellTimer.fn();
+const exitingClass = first.className;
+const removeTimer = timers[timers.length - 1];
+removeTimer.fn();
+
+console.log(JSON.stringify({
+  explicitSnap,
+  colonCopy,
+  singleCopy,
+  exitingClass,
+  removeMs: removeTimer.ms,
+  remainingChildren: rootEl.children.length,
+  states,
+}));
+"""
+    )
+    result = subprocess.run(
+        [node, "-"],
+        input=harness,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["explicitSnap"] == {
+        "rootClass": "toasts top-left",
+        "toastClass": "toast has-media",
+        "tileClass": "toastTile",
+        "hasSvg": True,
+        "mediaWrapClass": "toastMedia ready",
+        "mediaImgClass": "toastImg",
+        "title": "Smart Home System",
+        "body": "Front door camera detected motion.",
+    }
+    assert out["colonCopy"] == {"title": "Playing Now", "body": "Big Buck Bunny"}
+    assert out["singleCopy"] == {"title": "Doorbell motion detected", "body": ""}
+    assert "is-exiting" in out["exitingClass"]
+    assert out["removeMs"] >= 560
+    assert out["remainingChildren"] == 0
+    assert [s["state"] for s in out["states"]] == ["displaying", "draining", "connected"]
+
+
 def test_qt_runtime_defaults_disable_libmpv_on_pi(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RELAYTV_QT_LIBMPV", raising=False)
     monkeypatch.setattr("relaytv_app.qt_shell_app.platform.machine", lambda: "aarch64")

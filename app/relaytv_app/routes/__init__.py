@@ -242,6 +242,7 @@ def _idle_weather_proxy_url(settings_payload: dict | None) -> str:
 
 
 class OverlayReq(BaseModel):
+    title: str | None = None
     text: str | None = None
     duration: float = 5.0
     position: str = "top-left"
@@ -273,18 +274,18 @@ def _overlay_osd_debug_enabled() -> bool:
 def _playback_notification_display_sec() -> float:
     """Default time standard playback notifications stay visible."""
     try:
-        sec = float(os.getenv("RELAYTV_PLAYBACK_NOTIFY_DISPLAY_SEC", "3.5"))
+        sec = float(os.getenv("RELAYTV_PLAYBACK_NOTIFY_DISPLAY_SEC", "4.5"))
     except Exception:
-        sec = 3.5
+        sec = 4.5
     return max(0.8, sec)
 
 
 def _playback_notification_fade_ms() -> int:
-    """Toast enter/exit fade duration for overlay playback notifications."""
+    """Toast exit glide/dissolve duration for overlay playback notifications."""
     try:
-        ms = int(float(os.getenv("RELAYTV_PLAYBACK_NOTIFY_FADE_MS", "240")))
+        ms = int(float(os.getenv("RELAYTV_PLAYBACK_NOTIFY_FADE_MS", "560")))
     except Exception:
-        ms = 240
+        ms = 560
     return max(80, ms)
 
 
@@ -893,7 +894,8 @@ def _runtime_capabilities(*, playing: bool | None = None) -> dict:
 def _push_overlay_toast(
     *,
     text: str,
-    duration: float = 4.0,
+    title: str | None = None,
+    duration: float = 4.5,
     level: str = "info",
     icon: str | None = None,
     image_url: str | None = None,
@@ -904,8 +906,10 @@ def _push_overlay_toast(
 ) -> str:
     """Deliver a toast through the active notification runtime."""
     image_url = _native_qt_toast_image_url(image_url)
+    clean_title = str(title or "").strip() or None
     payload = {
         "type": "toast",
+        "title": clean_title,
         "text": text,
         "duration": float(duration),
         "duration_ms": max(250, int(float(duration) * 1000.0)),
@@ -921,6 +925,7 @@ def _push_overlay_toast(
     if _overlay_prefers_native_qt_toast(image_url):
         try:
             result = player.qt_shell_runtime_overlay_toast(
+                title=clean_title,
                 text=text,
                 duration=float(duration),
                 level=(level or "info"),
@@ -2185,51 +2190,224 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       --shadow:0 22px 44px rgba(0,0,0,.40);
       --radius:20px;
       --overlay-scale:1;
-      --toast-width:430px;
-      --toast-gap:11px;
-      --toast-edge:22px;
-      --toast-edge-center:20px;
-      --toast-pad-y:13px;
-      --toast-pad-x:14px;
-      --toast-radius:15px;
-      --toast-shadow-y:16px;
-      --toast-shadow-blur:36px;
-      --toast-accent-width:4px;
-      --toast-accent-glow:16px;
-      --toast-top-gap:10px;
-      --toast-icon-size:24px;
-      --toast-icon-font:13px;
-      --toast-text-font:14px;
-      --toast-link-font:14px;
+      --toast-width:620px;
+      --toast-media-width:540px;
+      --toast-min-width:420px;
+      --toast-center-width:540px;
+      --toast-min-height:112px;
+      --toast-gap:14px;
+      --toast-edge-x:56px;
+      --toast-edge-y:44px;
+      --toast-pad-y:14px;
+      --toast-pad-x:16px;
+      --toast-content-pad-right:12px;
+      --toast-radius:26px;
+      --toast-shadow-y:20px;
+      --toast-shadow-blur:48px;
+      --toast-top-gap:22px;
+      --toast-tile-size:84px;
+      --toast-tile-radius:18px;
+      --toast-icon-size:56px;
+      --toast-title-font:25px;
+      --toast-single-font:23px;
+      --toast-text-font:19px;
+      --toast-text-gap:5px;
+      --toast-link-font:17px;
       --toast-link-gap:6px;
-      --toast-image-gap:10px;
-      --toast-image-height:124px;
-      --toast-image-radius:11px;
+      --toast-image-gap:14px;
+      --toast-image-height:286px;
+      --toast-image-radius:16px;
+      --toast-enter-dist:180px;
+      --toast-exit-dist:260px;
+      --toast-rim-width:1.5px;
+      --toast-glint-w:150px;
+      --toast-glint-h:3px;
     }
-    html,body{height:100%;margin:0;overflow:hidden;background:var(--overlay-debug-bg);color:var(--txt);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;cursor:none!important;}
+    html,body{height:100%;margin:0;overflow:hidden;background:var(--overlay-debug-bg);color:var(--txt);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;cursor:none!important;-webkit-font-smoothing:antialiased;}
     body *{cursor:none!important;}
     body,.stage{pointer-events:none;}
     .stage{position:fixed;inset:0;opacity:0;visibility:hidden;transition:opacity .20s ease,visibility .20s ease;}
     body.idle .stage{opacity:1;visibility:visible;}
     .idleFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;}
 
-    .toasts{position:fixed;width:min(var(--toast-width),70vw);display:flex;flex-direction:column;gap:var(--toast-gap);pointer-events:none;}
-    .toasts.top-left{top:var(--toast-edge);left:var(--toast-edge);right:auto;bottom:auto;transform:none;}
-    .toasts.top-right{top:var(--toast-edge);right:var(--toast-edge);left:auto;bottom:auto;transform:none;}
-    .toasts.bottom-right{bottom:var(--toast-edge);right:var(--toast-edge);left:auto;top:auto;transform:none;}
-    .toasts.bottom-left{bottom:var(--toast-edge);left:var(--toast-edge);right:auto;top:auto;transform:none;}
-    .toasts.top-center{top:var(--toast-edge-center);left:50%;right:auto;bottom:auto;transform:translateX(-50%);}
-    .toast{position:relative;overflow:hidden;padding:var(--toast-pad-y) var(--toast-pad-x);border-radius:var(--toast-radius);background:rgba(9,16,28,.82);border:1px solid rgba(42,168,255,.26);box-shadow:0 var(--toast-shadow-y) var(--toast-shadow-blur) rgba(0,0,0,.44);
-      opacity:0;transform:translateY(-8px) scale(.98);transition:opacity __PLAYBACK_NOTIFY_FADE_MS__ms ease,transform __PLAYBACK_NOTIFY_FADE_MS__ms ease,border-color __PLAYBACK_NOTIFY_FADE_MS__ms ease;pointer-events:auto;}
-    .toast.show{opacity:1;transform:translateY(0) scale(1);}
-    .toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--toast-accent-width);background:var(--accent);box-shadow:0 0 var(--toast-accent-glow) var(--accent);}
-    .toast.success{--accent:var(--ok)} .toast.warn{--accent:var(--warn)} .toast.error{--accent:var(--err)}
-    .toastTop{display:flex;align-items:center;gap:var(--toast-top-gap);}
-    .ico{width:var(--toast-icon-size);height:var(--toast-icon-size);border-radius:999px;background:rgba(255,255,255,.08);display:grid;place-items:center;font-size:var(--toast-icon-font);}
-    .tTxt{font-size:var(--toast-text-font);line-height:1.28;white-space:pre-line;}
-    .toast a{color:inherit;text-decoration:underline;font-weight:600;font-size:var(--toast-link-font);display:inline-block;margin-top:var(--toast-link-gap);pointer-events:auto;}
-    .toast .img{margin-top:var(--toast-image-gap);width:100%;height:var(--toast-image-height);display:none;object-fit:cover;border-radius:var(--toast-image-radius);border:1px solid rgba(130,170,220,.25);background:rgba(255,255,255,.04)}
-    .toast .img.ready{display:block;}
+    @keyframes toastEnter{
+      0%{
+        opacity:0;
+        transform:translate3d(var(--toast-enter-x,0px),var(--toast-enter-y,-164px),0) scale(.94);
+      }
+      38%{
+        opacity:.94;
+      }
+      100%{
+        opacity:1;
+        transform:translate3d(0,0,0) scale(1);
+      }
+    }
+    @keyframes toastExit{
+      0%{
+        opacity:1;
+        transform:translate3d(0,0,0) scale(1);
+      }
+      100%{
+        opacity:0;
+        transform:translate3d(var(--toast-exit-x,-240px),var(--toast-exit-y,0px),0) scale(.965);
+      }
+    }
+    @keyframes toastTileEnter{
+      0%{opacity:.45;transform:scale(.88);}
+      100%{opacity:1;transform:scale(1);}
+    }
+
+    .toasts{position:fixed;max-width:min(var(--toast-width),80vw);display:flex;flex-direction:column;gap:var(--toast-gap);pointer-events:none;z-index:20;}
+    .toasts.top-left{
+      top:var(--toast-edge-y);left:var(--toast-edge-x);right:auto;bottom:auto;transform:none;align-items:flex-start;
+      --toast-enter-x:0px;--toast-enter-y:calc(-100% - var(--toast-edge-y) - 12px);
+      --toast-exit-x:calc(-65% - var(--toast-edge-x));--toast-exit-y:0px;
+    }
+    .toasts.top-right{
+      top:var(--toast-edge-y);right:var(--toast-edge-x);left:auto;bottom:auto;transform:none;align-items:flex-end;
+      --toast-enter-x:0px;--toast-enter-y:calc(-100% - var(--toast-edge-y) - 12px);
+      --toast-exit-x:calc(65% + var(--toast-edge-x));--toast-exit-y:0px;
+    }
+    .toasts.bottom-left{
+      bottom:var(--toast-edge-y);left:var(--toast-edge-x);right:auto;top:auto;transform:none;align-items:flex-start;
+      --toast-enter-x:0px;--toast-enter-y:calc(100% + var(--toast-edge-y) + 12px);
+      --toast-exit-x:calc(-65% - var(--toast-edge-x));--toast-exit-y:0px;
+    }
+    .toasts.bottom-right{
+      bottom:var(--toast-edge-y);right:var(--toast-edge-x);left:auto;top:auto;transform:none;align-items:flex-end;
+      --toast-enter-x:0px;--toast-enter-y:calc(100% + var(--toast-edge-y) + 12px);
+      --toast-exit-x:calc(65% + var(--toast-edge-x));--toast-exit-y:0px;
+    }
+    .toasts.top-center{
+      top:var(--toast-edge-y);left:50%;right:auto;bottom:auto;max-width:min(var(--toast-center-width),80vw);transform:translateX(-50%);align-items:center;
+      --toast-enter-x:0px;--toast-enter-y:calc(-100% - var(--toast-edge-y) - 12px);
+      --toast-exit-x:0px;--toast-exit-y:calc(-100% - var(--toast-edge-y));
+    }
+
+    .toast{
+      --tile-glow-a:rgba(42,168,255,.42);
+      --tile-glow-b:rgba(56,189,248,.36);
+      position:relative;
+      box-sizing:border-box;
+      width:max-content;
+      min-width:min(var(--toast-min-width),76vw);
+      max-width:min(var(--toast-width),80vw);
+      min-height:var(--toast-min-height);
+      overflow:hidden;
+      padding:var(--toast-pad-y) var(--toast-pad-x);
+      border-radius:var(--toast-radius);
+      background:
+        linear-gradient(114deg,rgba(96,189,255,.20) 0%,rgba(42,168,255,.085) 40%,rgba(14,116,244,0) 40.8%),
+        radial-gradient(120% 140% at 12% 0%,rgba(30,144,255,.28) 0%,rgba(14,62,138,0) 62%),
+        linear-gradient(135deg,rgba(13,38,76,.93) 0%,rgba(7,20,44,.96) 100%);
+      border:1px solid rgba(56,189,248,.34);
+      box-shadow:0 var(--toast-shadow-y) var(--toast-shadow-blur) rgba(2,8,23,.62),0 0 28px rgba(42,168,255,.18);
+      color:#f0f7ff;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      pointer-events:none;
+      backface-visibility:hidden;
+      animation:toastEnter 720ms cubic-bezier(.22,1,.36,1) both;
+    }
+    .toast.has-media{
+      width:min(var(--toast-media-width),80vw);
+    }
+    .toasts.top-center .toast{max-width:min(var(--toast-center-width),80vw);}
+    .toast::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      border-radius:inherit;
+      padding:var(--toast-rim-width);
+      background:
+        radial-gradient(var(--toast-glint-w) var(--toast-glint-h) at 36% 0%,rgba(186,230,253,.98),rgba(56,189,248,.45) 55%,rgba(56,189,248,0) 100%),
+        radial-gradient(var(--toast-glint-w) var(--toast-glint-h) at 62% 100%,rgba(125,211,252,.92),rgba(42,168,255,.40) 55%,rgba(42,168,255,0) 100%),
+        linear-gradient(155deg,rgba(96,189,255,.52) 0%,rgba(42,168,255,.18) 48%,rgba(56,189,248,.42) 100%);
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;
+      mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      mask-composite:exclude;
+      pointer-events:none;
+    }
+    .toast.is-exiting{
+      animation:toastExit __PLAYBACK_NOTIFY_FADE_MS__ms cubic-bezier(.32,0,.67,0) forwards;
+    }
+    .toast.success{--tile-glow-a:rgba(52,211,153,.34);--tile-glow-b:rgba(56,189,248,.30);}
+    .toast.warn{--tile-glow-a:rgba(251,191,36,.34);--tile-glow-b:rgba(56,189,248,.26);}
+    .toast.error{--tile-glow-a:rgba(251,113,133,.36);--tile-glow-b:rgba(56,189,248,.26);}
+
+    .toastTop{display:flex;align-items:center;gap:var(--toast-top-gap);min-width:0;}
+    .toastTile{
+      position:relative;
+      width:var(--toast-tile-size);
+      height:var(--toast-tile-size);
+      flex:0 0 auto;
+      border-radius:var(--toast-tile-radius);
+      overflow:hidden;
+      background:
+        radial-gradient(68% 30% at 50% 90%,var(--tile-glow-b),rgba(0,0,0,0) 100%),
+        radial-gradient(64% 64% at 48% 38%,var(--tile-glow-a),rgba(0,0,0,0) 100%),
+        linear-gradient(160deg,#0d2854 0%,#06132b 100%);
+      border:1px solid rgba(96,189,255,.30);
+      box-shadow:inset 0 1px 0 rgba(186,230,253,.22),0 6px 18px rgba(2,8,24,.48);
+      display:grid;
+      place-items:center;
+      animation:toastTileEnter 580ms cubic-bezier(.22,1,.36,1) 60ms both;
+    }
+    .toastTile svg{width:var(--toast-icon-size);height:var(--toast-icon-size);display:block;overflow:visible;}
+
+    .tContent{display:flex;flex-direction:column;justify-content:center;gap:var(--toast-text-gap);min-width:0;flex:1 1 auto;padding-right:var(--toast-content-pad-right);}
+    .tTitle{
+      font-size:var(--toast-title-font);
+      font-weight:600;
+      letter-spacing:-0.015em;
+      line-height:1.22;
+      color:#f0f7ff;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .tTitle.single{
+      font-size:var(--toast-single-font);
+      white-space:normal;
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+    }
+    .tTxt{
+      font-size:var(--toast-text-font);
+      font-weight:400;
+      letter-spacing:-0.005em;
+      line-height:1.32;
+      color:rgba(196,222,255,.88);
+      white-space:pre-line;
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
+    }
+    .toast a{color:#60bdff;text-decoration:underline;font-weight:600;font-size:var(--toast-link-font);display:inline-block;margin-top:var(--toast-link-gap);pointer-events:auto;}
+    .toastMedia{
+      position:relative;
+      margin-top:var(--toast-image-gap);
+      width:100%;
+      border-radius:var(--toast-image-radius);
+      overflow:hidden;
+      background:#061226;
+      border:1px solid rgba(96,189,255,.28);
+      box-shadow:0 10px 26px rgba(2,8,24,.50);
+      display:none;
+    }
+    .toastMedia.ready{display:block;}
+    .toastMedia .toastImg{
+      display:block;
+      width:100%;
+      aspect-ratio:16/9;
+      max-height:var(--toast-image-height);
+      object-fit:cover;
+    }
 
   </style>
 </head>
@@ -2243,7 +2421,34 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
   <script src="/static/ui/realtime_transport.js?v=__UI_ASSET_V__"></script>
   <script>
     const $ = (id)=>document.getElementById(id);
-    const iconMap = {share:"↗",check:"✓",warn:"!",camera:"📷",play:"▶",info:"i"};
+    let _toastSvgSeq = 0;
+    function buildToastIconSvg(iconKey, level){
+      const id = `tg${++_toastSvgSeq}`;
+      const key = String(iconKey || level || 'info').toLowerCase();
+      let stopA = '#67e8f9', stopB = '#2aa8ff';
+      if(level === 'success' || key === 'check'){ stopA = '#34d399'; stopB = '#38bdf8'; }
+      else if(level === 'warn' || key === 'warn'){ stopA = '#fbbf24'; stopB = '#38bdf8'; }
+      else if(level === 'error' || key === 'error'){ stopA = '#fb7185'; stopB = '#38bdf8'; }
+      const defs = `<defs><linearGradient id="${id}" x1="12" y1="10" x2="52" y2="50" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="${stopA}"/><stop offset="100%" stop-color="${stopB}"/></linearGradient></defs>`;
+      const base = `<path d="M12 49 L32 55 L52 49" fill="none" stroke="url(#${id})" stroke-width="2" stroke-linecap="round" opacity="0.65"/>`;
+      let glyph = '';
+      if(key === 'camera'){
+        glyph = `<path d="M15 27 L32 14 L49 27 V44 H15 Z" fill="rgba(56,189,248,0.10)" stroke="url(#${id})" stroke-width="2.4" stroke-linejoin="round"/><rect x="24.5" y="25.5" width="15" height="14" rx="4.5" fill="rgba(15,23,42,0.85)" stroke="#e0f2fe" stroke-width="1.8"/><circle cx="32" cy="32.5" r="3.2" fill="${stopA}"/>`;
+      } else if(key === 'play'){
+        glyph = `<rect x="15" y="15" width="34" height="30" rx="9" fill="rgba(56,189,248,0.10)" stroke="url(#${id})" stroke-width="2.4"/><path d="M27.5 23.5 L40.5 30 L27.5 36.5 Z" fill="#f0f9ff" stroke="url(#${id})" stroke-width="1.4" stroke-linejoin="round"/>`;
+      } else if(key === 'share'){
+        glyph = `<rect x="14" y="18" width="28" height="24" rx="6" fill="rgba(56,189,248,0.09)" stroke="url(#${id})" stroke-width="2.2"/><path d="M31 31 L47 15 M37 15 H47 V25" fill="none" stroke="#f0f9ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+      } else if(key === 'check' || level === 'success'){
+        glyph = `<circle cx="32" cy="29" r="14.5" fill="rgba(52,211,153,0.12)" stroke="url(#${id})" stroke-width="2.4"/><path d="M25 29.5 L30 34.5 L39.5 24.5" fill="none" stroke="#ecfdf5" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+      } else if(key === 'warn' || level === 'warn'){
+        glyph = `<path d="M32 14 L49 43 H15 Z" fill="rgba(251,191,36,0.12)" stroke="url(#${id})" stroke-width="2.4" stroke-linejoin="round"/><path d="M32 24.5 V33.5" stroke="#fffbeb" stroke-width="2.8" stroke-linecap="round"/><circle cx="32" cy="38.5" r="1.7" fill="#fffbeb"/>`;
+      } else if(key === 'error' || level === 'error'){
+        glyph = `<circle cx="32" cy="29" r="14.5" fill="rgba(251,113,133,0.12)" stroke="url(#${id})" stroke-width="2.4"/><path d="M26.5 23.5 L37.5 34.5 M37.5 23.5 L26.5 34.5" stroke="#fff1f2" stroke-width="2.6" stroke-linecap="round"/>`;
+      } else {
+        glyph = `<path d="M32 14 C24.8 14 20 19.2 20 26.5 V34 L16.5 38 H47.5 L44 34 V26.5 C44 19.2 39.2 14 32 14 Z" fill="rgba(56,189,248,0.10)" stroke="url(#${id})" stroke-width="2.3" stroke-linejoin="round"/><circle cx="32" cy="42.5" r="2.6" fill="#e0f2fe"/>`;
+      }
+      return `<svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">${defs}${base}${glyph}</svg>`;
+    }
     const overlayAllowToastImages = __OVERLAY_ALLOW_IMAGES__;
     let _wasPlaying = true;
     let _overlayRealtimeTransport = null;
@@ -2264,26 +2469,37 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
       websocketCooldownMs:60000,
     });
     const overlayToastMetrics = [
-      ['--toast-width', 430],
-      ['--toast-gap', 11],
-      ['--toast-edge', 22],
-      ['--toast-edge-center', 20],
-      ['--toast-pad-y', 13],
-      ['--toast-pad-x', 14],
-      ['--toast-radius', 15],
-      ['--toast-shadow-y', 16],
-      ['--toast-shadow-blur', 36],
-      ['--toast-accent-width', 4],
-      ['--toast-accent-glow', 16],
-      ['--toast-top-gap', 10],
-      ['--toast-icon-size', 24],
-      ['--toast-icon-font', 13],
-      ['--toast-text-font', 14],
-      ['--toast-link-font', 14],
+      ['--toast-width', 620],
+      ['--toast-media-width', 540],
+      ['--toast-min-width', 420],
+      ['--toast-center-width', 540],
+      ['--toast-min-height', 112],
+      ['--toast-gap', 14],
+      ['--toast-edge-x', 56],
+      ['--toast-edge-y', 44],
+      ['--toast-pad-y', 14],
+      ['--toast-pad-x', 16],
+      ['--toast-content-pad-right', 12],
+      ['--toast-radius', 26],
+      ['--toast-shadow-y', 20],
+      ['--toast-shadow-blur', 48],
+      ['--toast-top-gap', 22],
+      ['--toast-tile-size', 84],
+      ['--toast-tile-radius', 18],
+      ['--toast-icon-size', 56],
+      ['--toast-title-font', 25],
+      ['--toast-single-font', 23],
+      ['--toast-text-font', 19],
+      ['--toast-text-gap', 5],
+      ['--toast-link-font', 17],
       ['--toast-link-gap', 6],
-      ['--toast-image-gap', 10],
-      ['--toast-image-height', 124],
-      ['--toast-image-radius', 11],
+      ['--toast-image-gap', 14],
+      ['--toast-image-height', 286],
+      ['--toast-image-radius', 16],
+      ['--toast-enter-dist', 180],
+      ['--toast-exit-dist', 260],
+      ['--toast-glint-w', 150],
+      ['--toast-glint-h', 3],
     ];
 
     function updateOverlayToastScale(){
@@ -2471,6 +2687,42 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
     }
     refreshNowPlaying();
 
+    const _knownPrefixTitles = {
+      'playing now': 'Playing Now',
+      'added to queue': 'Added to Queue',
+      'temporary playback': 'Temporary Playback',
+      'playback failed': 'Playback Failed',
+    };
+
+    function resolveToastCopy(msg){
+      const explicitTitle = String(msg?.title || '').trim();
+      const rawText = String(msg?.text || '').trim();
+      if(explicitTitle){
+        return {title: explicitTitle, body: rawText === explicitTitle ? '' : rawText};
+      }
+      if(!rawText) return {title: '', body: ''};
+      if(rawText.includes('\n')){
+        const lines = rawText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        if(lines.length >= 2){
+          return {title: lines[0], body: lines.slice(1).join(' ')};
+        }
+        return {title: lines[0] || rawText, body: ''};
+      }
+      const colonMatch = /^([A-Za-z][A-Za-z0-9 /_-]{2,28}):\s+(.+)$/.exec(rawText);
+      if(colonMatch){
+        const rawPrefix = colonMatch[1].trim();
+        const mapped = _knownPrefixTitles[rawPrefix.toLowerCase()] || rawPrefix;
+        return {title: mapped, body: colonMatch[2].trim()};
+      }
+      const dashMatch = /^(.{4,42}?)\s+[—–]\s+(.+)$/.exec(rawText);
+      if(dashMatch){
+        const rest = dashMatch[2].trim();
+        const body = rest ? (rest[0].toUpperCase() + rest.slice(1)) : '';
+        return {title: dashMatch[1].trim(), body};
+      }
+      return {title: rawText, body: ''};
+    }
+
     function addToast(msg){
       const root = $('toasts');
       if(!root) return;
@@ -2479,12 +2731,33 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
         const position = allowedPositions.has(msg.position) ? msg.position : 'top-left';
         root.className = `toasts ${position}`;
         const el = document.createElement('div');
-        const level = (msg.level || 'info').toLowerCase();
-        el.className = `toast ${level === 'success' ? 'success' : level === 'warn' ? 'warn' : level === 'error' ? 'error' : ''}`;
-        const top = document.createElement('div'); top.className='toastTop';
-        const ico = document.createElement('div'); ico.className='ico'; ico.textContent = iconMap[msg.icon] || iconMap[level] || '•';
-        const txt = document.createElement('div'); txt.className='tTxt'; txt.textContent = msg.text || '';
-        top.append(ico, txt); el.appendChild(top);
+        const level = String(msg.level || 'info').toLowerCase();
+        const levelCls = level === 'success' ? 'success' : level === 'warn' ? 'warn' : level === 'error' ? 'error' : '';
+        el.className = levelCls ? `toast ${levelCls}` : 'toast';
+
+        const top = document.createElement('div');
+        top.className = 'toastTop';
+
+        const tile = document.createElement('div');
+        tile.className = 'toastTile';
+        tile.innerHTML = buildToastIconSvg(msg.icon, level);
+
+        const content = document.createElement('div');
+        content.className = 'tContent';
+        const copy = resolveToastCopy(msg);
+        if(copy.title){
+          const ttlEl = document.createElement('div');
+          ttlEl.className = copy.body ? 'tTitle' : 'tTitle single';
+          ttlEl.textContent = copy.title;
+          content.appendChild(ttlEl);
+        }
+        if(copy.body){
+          const txt = document.createElement('div');
+          txt.className = 'tTxt';
+          txt.textContent = copy.body;
+          content.appendChild(txt);
+        }
+
         const rawLinkUrl = String(msg.link_url || '').trim();
         const safeLinkUrl = /^(https?:\/\/|\/)/i.test(rawLinkUrl) && !/^\/\//.test(rawLinkUrl) ? rawLinkUrl : '';
         const linkText = msg.link_text || rawLinkUrl;
@@ -2494,14 +2767,20 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
           a.textContent = linkText;
           a.target = '_blank';
           a.rel = 'noopener noreferrer';
-          el.appendChild(a);
+          content.appendChild(a);
         }
+
+        top.append(tile, content);
+        el.appendChild(top);
+
         const rawImageUrl = String(msg.image_url || '').trim();
         if(overlayAllowToastImages && rawImageUrl){
-          const safeImageUrl = /^(https?:\/\/|\/|data:image\/)/i.test(rawImageUrl) ? rawImageUrl : '';
+          const safeImageUrl = /^(https?:\/\/|\/|data:image\/)/i.test(rawImageUrl) && !/^\/\//.test(rawImageUrl) ? rawImageUrl : '';
           if(safeImageUrl){
+            const mediaWrap = document.createElement('div');
+            mediaWrap.className = 'toastMedia';
             const img = document.createElement('img');
-            img.className = 'img';
+            img.className = 'toastImg';
             img.alt = '';
             img.decoding = 'async';
             img.loading = 'eager';
@@ -2512,35 +2791,39 @@ _X11_OVERLAY_HTML = r"""<!doctype html>
               imgSettled = true;
               try{ clearTimeout(imgTimeout); }catch(_e){}
               try{ img.removeAttribute('src'); }catch(_e){}
-              try{ img.remove(); }catch(_e){}
+              try{ mediaWrap.remove(); }catch(_e){}
+              el.classList.remove('has-media');
             };
             img.onload = ()=>{
               if(imgSettled) return;
               imgSettled = true;
               try{ clearTimeout(imgTimeout); }catch(_e){}
-              img.classList.add('ready');
+              el.classList.add('has-media');
+              mediaWrap.classList.add('ready');
             };
             img.onerror = ()=>{ dropImg(); };
             const imgTimeout = setTimeout(()=>{ dropImg(); }, 4000);
             img.src = safeImageUrl;
-            el.appendChild(img);
+            mediaWrap.appendChild(img);
+            el.appendChild(mediaWrap);
           }
         }
+
         root.prepend(el);
         while(root.children.length > 4){
           try{ root.lastElementChild?.remove(); }catch(_e){ break; }
         }
         reportOverlayState('displaying', 'toast_visible', 'toast', 'toast_visible', true);
-        requestAnimationFrame(()=>el.classList.add('show'));
         const ttlSec = Number(msg.duration || __PLAYBACK_NOTIFY_DISPLAY_SEC__);
         const ttl = Math.min(30000, Math.max(800, Number.isFinite(ttlSec) ? Math.round(ttlSec * 1000) : Math.round(__PLAYBACK_NOTIFY_DISPLAY_SEC__ * 1000)));
+        const exitMs = Math.max(80, Number(__PLAYBACK_NOTIFY_FADE_MS__ || 560));
         setTimeout(()=>{
           reportOverlayState('draining', 'toast_draining', 'toast', 'toast_draining', true);
-          el.classList.remove('show');
+          el.classList.add('is-exiting');
           setTimeout(()=>{
             try{ el.remove(); }catch(_e){}
             if(_overlayToastCount() <= 0) reportOverlayState('connected', 'toast_drained', 'toast', 'toast_drained', true);
-          }, __PLAYBACK_NOTIFY_FADE_MS__);
+          }, exitMs + 30);
         }, ttl);
       }catch(_e){}
     }
@@ -2726,7 +3009,11 @@ _temporary_watchdog = playback_service.temporary_watchdog
 
 @router.post("/overlay")
 def overlay(req: OverlayReq):
+    title = (req.title or "").strip() or None
     text = (req.text or "").strip()
+    if not text and title:
+        text = title
+        title = None
     if not text and req.image_url:
         text = f"[image] {req.image_url}"
     if not text:
@@ -2760,6 +3047,7 @@ def overlay(req: OverlayReq):
     try:
         if native_qt_toast:
             result = player.qt_shell_runtime_overlay_toast(
+                title=title,
                 text=text,
                 duration=float(req.duration),
                 level=(req.level or "info"),
@@ -2784,6 +3072,7 @@ def overlay(req: OverlayReq):
                     pass
             else:
                 _push_overlay_toast(
+                    title=title,
                     text=text,
                     duration=float(req.duration),
                     level=(req.level or "info"),
@@ -2797,6 +3086,7 @@ def overlay(req: OverlayReq):
                 delivery_mode = "overlay_fallback"
         else:
             _push_overlay_toast(
+                title=title,
                 text=text,
                 duration=float(req.duration),
                 level=(req.level or "info"),
@@ -2810,6 +3100,7 @@ def overlay(req: OverlayReq):
     except Exception:
         try:
             _push_overlay_toast(
+                title=title,
                 text=text,
                 duration=float(req.duration),
                 level=(req.level or "info"),
@@ -4483,6 +4774,10 @@ def ui():
         </div>
 
         <section id="notifySection" class="amSection">
+          <div class="notifyField">
+            <label for="notifyTitleInput">Title (optional)</label>
+            <input id="notifyTitleInput" class="notifyInput" type="text" maxlength="120" placeholder="e.g. Smart Home System" />
+          </div>
           <div class="notifyField">
             <label for="notifyTextInput">Text</label>
             <textarea id="notifyTextInput" class="notifyInput" maxlength="500" placeholder="Notification text…"></textarea>

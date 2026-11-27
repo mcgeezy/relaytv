@@ -339,12 +339,14 @@ function readNotifyImageDataUrl(file){
 }
 
 async function submitNotificationToast(){
+  const titleEl = document.getElementById('notifyTitleInput');
   const textEl = document.getElementById('notifyTextInput');
   const imageEl = document.getElementById('notifyImageInput');
   const imageUrlEl = document.getElementById('notifyImageUrlInput');
   const posEl = document.getElementById('notifyPositionSelect');
   const durEl = document.getElementById('notifyDurationInput');
   const sendBtn = document.getElementById('notifySendBtn');
+  const title = String(titleEl?.value || '').trim();
   const text = String(textEl?.value || '').trim();
   if (!text) {
     _setNotifyHelper('Enter notification text first.', 'err');
@@ -356,6 +358,7 @@ async function submitNotificationToast(){
   if (!Number.isFinite(duration)) duration = 5;
   duration = Math.min(30, Math.max(0.8, duration));
   const payload = {text, position, duration, level:'info', icon:'info'};
+  if (title) payload.title = title;
   try {
     if (sendBtn) sendBtn.disabled = true;
     _setNotifyHelper('Sending…', '');

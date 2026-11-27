@@ -1670,7 +1670,7 @@ def main(argv: list[str] | None = None) -> int:
             pix = QPixmap()
             if not pix.loadFromData(data):
                 return
-            scaled = pix.scaled(380, 124, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            scaled = pix.scaled(508, 286, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             label.setPixmap(scaled)
             label.show()
 
@@ -1772,7 +1772,11 @@ def main(argv: list[str] | None = None) -> int:
             self.hide()
 
         def show_toast(self, payload: dict[str, object]) -> None:
+            title = str(payload.get("title") or "").strip()
             text = str(payload.get("text") or "").strip()
+            if not text and title:
+                text = title
+                title = ""
             if not text and payload.get("image_url"):
                 text = "[image]"
             if not text:
@@ -1782,41 +1786,59 @@ def main(argv: list[str] | None = None) -> int:
             self._layout.setAlignment(item_alignment)
             frame = QFrame(self)
             frame.setObjectName("qt-native-toast")
-            frame.setMaximumWidth(430)
+            frame.setMaximumWidth(560)
             frame.setStyleSheet(
-                "QFrame#qt-native-toast{background:rgba(9,16,28,210);border:1px solid rgba(42,168,255,68);"
-                "border-radius:15px;} QLabel{color:#eef4ff;font-size:16px;}"
+                "QFrame#qt-native-toast{background:rgba(11,31,66,238);border:1px solid rgba(56,189,248,92);"
+                "border-radius:24px;} QLabel{color:#f0f7ff;font-size:17px;}"
             )
             box = QVBoxLayout(frame)
-            box.setContentsMargins(14, 13, 14, 13)
+            box.setContentsMargins(16, 14, 24, 14)
             box.setSpacing(10)
             top = QHBoxLayout()
-            top.setSpacing(10)
+            top.setSpacing(18)
             ico = QLabel(self._icon_text(payload), frame)
-            ico.setFixedWidth(18)
+            ico.setFixedSize(64, 64)
+            ico.setAlignment(Qt.AlignCenter)
+            ico.setStyleSheet(
+                "background:rgba(6,19,43,245);border:1px solid rgba(96,189,255,76);"
+                "border-radius:16px;font-size:24px;color:#67e8f9;"
+            )
+            text_col = QVBoxLayout()
+            text_col.setSpacing(4)
+            if title:
+                title_lbl = QLabel(title, frame)
+                title_lbl.setWordWrap(True)
+                title_lbl.setStyleSheet("color:#f0f7ff;font-size:20px;font-weight:600;")
+                title_lbl.setTextInteractionFlags(Qt.NoTextInteraction)
+                text_col.addWidget(title_lbl)
             msg = QLabel(text, frame)
             msg.setWordWrap(True)
+            if title:
+                msg.setStyleSheet("color:rgba(196,222,255,224);font-size:16px;")
+            else:
+                msg.setStyleSheet("color:#f0f7ff;font-size:19px;font-weight:600;")
             msg.setTextInteractionFlags(Qt.NoTextInteraction)
-            top.addWidget(ico, 0, Qt.AlignTop)
-            top.addWidget(msg, 1)
-            box.addLayout(top)
-            link_url = str(payload.get("link_url") or "").strip()
-            if link_url:
-                link = QLabel(str(payload.get("link_text") or link_url), frame)
-                link.setWordWrap(True)
-                link.setStyleSheet("color:#b9d6ff;font-size:13px;")
-                box.addWidget(link)
+            text_col.addWidget(msg)
             image_url = str(payload.get("image_url") or "").strip()
+            top.addWidget(ico, 0, Qt.AlignVCenter)
+            top.addLayout(text_col, 1)
+            box.addLayout(top)
             if image_url:
                 img = QLabel(frame)
-                img.setFixedHeight(124)
+                img.setFixedHeight(286)
                 img.setAlignment(Qt.AlignCenter)
                 img.setStyleSheet(
-                    "background:rgba(255,255,255,10); border:1px solid rgba(130,170,220,64); border-radius:11px;"
+                    "background:#061226;border:1px solid rgba(96,189,255,72);border-radius:16px;"
                 )
                 img.hide()
                 box.addWidget(img)
                 self._load_image(img, image_url)
+            link_url = str(payload.get("link_url") or "").strip()
+            if link_url:
+                link = QLabel(str(payload.get("link_text") or link_url), frame)
+                link.setWordWrap(True)
+                link.setStyleSheet("color:#b9d6ff;font-size:14px;")
+                box.addWidget(link)
             insert_at = self._insert_index_for_position(position)
             self._layout.insertWidget(insert_at, frame, 0, item_alignment)
             self._toasts.insert(insert_at, frame)
