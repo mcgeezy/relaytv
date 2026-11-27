@@ -5,8 +5,10 @@ release branch.
 
 ## Primary Docs
 
-- `INSTALL.md`: installation, first boot, and environment defaults
-- `API.md`: HTTP endpoint reference
+- `INSTALL.md`: installation, in-place updates, first boot, and environment
+  defaults
+- `API.md`: HTTP endpoint reference (playback, queue, unified multi-server
+  browse, peers, and integrations)
 - `ARCHITECTURE.md`: module ownership, service boundaries, guardrails, and
   open follow-ups
 - `JELLYFIN_OPERATIONS.md`: Jellyfin/Emby runtime config, verification,

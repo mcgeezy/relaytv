@@ -39,9 +39,16 @@ With the token enabled:
     -H "Authorization: Bearer use-a-long-random-value"
   ```
 
-- Reads stay open: all `GET` endpoints (`/health`, `/status`, `/ui`, static
-  assets, SSE streams, Jellyfin browse) behave exactly as before, so
-  dashboards and health checks keep working.
+- Reads stay open: `GET` endpoints (`/health`, `/status`, `/ui`, static
+  assets, SSE/WebSocket streams, library browse) behave as before, so
+  dashboards and health checks keep working. The sole exception is the legacy
+  mutating compatibility alias `GET /snapshot`, which is classified as a write
+  and requires the bearer token when set.
+- Browser cross-site write protection: all write requests (`POST`/`PUT`/`PATCH`/
+  `DELETE` and `GET /snapshot`) reject cross-site browser requests (`Sec-Fetch-Site`,
+  `Origin`, and `Referer` authority checks, including cross-port mismatches) even
+  when `RELAYTV_API_TOKEN` is unset, while headerless LAN API clients keep their
+  local-first behavior.
 - The web UI prompts for the token on the first rejected control action and
   stores it in browser localStorage (`relaytv_api_token`); it can also be
   pre-set from the browser console with
@@ -110,6 +117,8 @@ must not control the WebSocket origin check.
   - compatible Server-Sent Events fallback for the main web UI and companion clients
 - `GET /static/ui/{asset_name}`: static CSS/JavaScript used by `/ui`
 - `GET /idle`: idle dashboard HTML
+- `GET /idle/weather`: Open-Meteo current conditions and forecast proxy used by
+  idle surfaces
 - `GET /`: redirects to `/ui`
 - `GET /health`: `{"ok": true}`
 - `GET /app/info`: returns RelayTV version, image revision, changelog/release
@@ -125,7 +134,15 @@ must not control the WebSocket origin check.
   Once the underlying download completes, the player swaps mpv onto the
   finalized local spool file (gaining seeking) and this route drops out.
   Not part of the public API surface — clients should never call it.
+- `GET /youtube-stream/{token}` and `HEAD /youtube-stream/{token}`: internal
+  loopback-only bounded-range media proxy for finite YouTube `googlevideo.com`
+  streams, avoiding open-ended range throttling while keeping signed URLs in
+  server state. Non-loopback requests receive `404`.
 - `GET /snapshot` and `POST /snapshot`: capture a snapshot of active playback
+  (prefer `POST /snapshot`; `GET /snapshot` is retained for compatibility and
+  guarded as a write). Oldest `snapshot-*.jpg` files are pruned beyond
+  `RELAYTV_SNAPSHOT_MAX_FILES` (default `50`) and `RELAYTV_SNAPSHOT_MAX_BYTES`
+  (default `100 MiB`).
 - `GET /share`
   - query: `url` or `link` (`http(s)://` or `rtsp(s)://`), optional `cec`
   - PWA share-target entrypoint; redirects (`303`) to `/ui?share=…` so the Link dialog opens prefilled without side effects on an unauthenticated GET
@@ -438,11 +455,15 @@ Transport/control endpoints:
 - `POST /seek`
   - body: `{"sec": number}`
 - `POST /seek_abs`
-  - body: `{"sec": number}`
+  - body: `{"sec": number}` or `{"live": true}` (jumps rewound live playback back to the live edge)
+- `POST /playback/live`
+  - jumps rewound live stream playback back to the live edge (`409` when nothing is playing)
 - `POST /volume`
   - body: `{"set": number}` or `{"delta": number}`
 - `POST /mute`
   - body: optional `{"set": boolean}`
+- `POST /now_playing/clear`
+  - discards the current now-playing item and advances into the queue when non-empty, or clears the session and returns to idle/desktop
 - `POST /close`
   - close playback but retain resumable session state
 - `POST /stop`
@@ -822,6 +843,7 @@ native Qt control surface.
     - `youtube_cookies_path`
     - `youtube_use_invidious`
     - `youtube_invidious_base`
+    - `ytdlp_auto_update_enabled`
     - `sub_lang`
     - `cec_enabled`
     - `tv_takeover_enabled`
@@ -835,6 +857,7 @@ native Qt control surface.
     - `idle_panels`
     - `weather`
     - `uploads`
+    - `iptv_enabled`
     - `jellyfin_enabled`
     - `jellyfin_server_url`
     - `jellyfin_api_key` (write-only; blank preserves the stored key)
@@ -856,6 +879,7 @@ native Qt control surface.
     - `seerr_server_url`
     - `seerr_api_key` (write-only; an empty value preserves the stored key)
     - `seerr_api_key_clear` (explicitly clears the stored key)
+    - `seerr_shared_requests_enabled` (compatibility boolean normalized into `seerr_request_mode`)
     - `seerr_request_mode` (`disabled | shared_admin | caller_session`)
     - `seerr_request_user_id` (optional shared-mode attribution)
     - `apply_now`
@@ -938,7 +962,8 @@ duplicates).
   proxy paths are limited to item Primary/Backdrop images and optional image tags;
   credentials are sent only in upstream headers. Redirects, non-image responses,
   and images larger than 16 MiB are rejected.
-- `GET /browse/stream/{server_id}?path=...`: media stream proxy for custom Plex servers
+- `GET /browse/stream/{server_id}?path=...&exp=...&sig=...`: loopback-only (`403`
+  off loopback), HMAC-signed media stream proxy for custom Plex servers
 - `POST /browse/action`: execute `play_now`, `resume`, `play_next`, or `play_last` on a unified `item_id`
 
 ## Plex integration and browse API
@@ -1143,7 +1168,8 @@ Discovery and request endpoints:
     acting; callers cannot provide a Jellyfin item ID, stream URL, or token
 - `GET /seerr/image/{size}/{image_path}`
   - proxies only a validated TMDB image filename at `w185`, `w342`, `w500`,
-    `w780`, or `original`
+    `w780`, or `original` (falling back automatically to Seerr's `/_next/image`
+    endpoint when Seerr image caching is disabled)
 
 Every Seerr POST route uses the normal optional `RELAYTV_API_TOKEN` write
 guard. Upstream errors use `detail: {"code": "...", "message": "..."}`;

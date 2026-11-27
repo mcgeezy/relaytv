@@ -104,11 +104,20 @@ Settings apply checks:
 - when both dashboard and idle notifications are disabled, RelayTV should stop
   idle visual surfaces and return to the desktop/session background
 
-Pi refresh sequence:
+Pi refresh sequence (published-image install):
+
+```bash
+cd ~/relaytv
+./install.sh --update
+docker logs --tail 120 relaytv
+```
+
+Pi refresh sequence (source checkout):
 
 ```bash
 cd /path/to/relaytv
-git pull origin main
+git pull --ff-only origin main
+./scripts/install.sh
 docker compose up -d --build
 docker logs --tail 120 relaytv
 ```
@@ -371,8 +380,19 @@ cd /path/to/relaytv
 
 Rollback is now a deploy-time action, not a live compat runtime path.
 
-Redeploy a known-good immutable release image when the current release needs
-to be rolled back:
+When updating via `install.sh`, if runtime configuration, container startup, or
+`/health` verification fails, the updater automatically restores the previous
+managed files and container image.
+
+To manually roll back a published-image install to a known-good immutable
+release tag, run the same `install.sh` script with `--branch`:
+
+```bash
+cd ~/relaytv
+./install.sh --branch vX.Y.Z
+```
+
+On a source checkout, redeploy a pinned image with `scripts/install.sh`:
 
 ```bash
 cd /path/to/relaytv

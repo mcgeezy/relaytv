@@ -39,6 +39,16 @@ milestone logs live in git history.
   queue rollback; legacy player callers retain their normal return contract.
 - `app/relaytv_app/postlive_relay.py`: local relay for still-processing
   YouTube replays (see `POSTLIVE_REPLAY.md`).
+- `app/relaytv_app/youtube_stream.py` and `app/relaytv_app/routes/youtube_stream.py`:
+  process-local, loopback-only bounded-range media proxy for finite YouTube
+  `googlevideo.com` streams so `mpv` avoids open-ended range throttling while
+  signed upstream URLs remain server-side.
+- `app/relaytv_app/url_boundary.py`: shared URL validation, redirect policy, and
+  connect-time DNS-rebinding / private-range SSRF guards across resolver, peer,
+  and integration HTTP transports.
+- `app/relaytv_app/devices.py`: DRM connector, CEC adapter, and curated audio
+  output discovery (PipeWire, PulseAudio, and confirmed ALSA HDMI/analog/optical
+  sinks).
 - `app/relaytv_app/state.py`: persisted queue, history, session, and
   settings data — owns the globals, their setters, and persistence.
 - `app/relaytv_app/device_identity.py`: this install's stable identity —
@@ -172,10 +182,12 @@ returned by `/settings`, never logged). Reads — health, status, assets,
 UI — stay open. See `app/relaytv_app/api_auth.py` and
 `tests/test_api_auth.py` for the contract.
 
-Compatibility GET controls reject a cross-site browser request when `Origin`
-or `Referer` proves it is foreign, and require bearer authentication whenever
-`RELAYTV_API_TOKEN` is configured. With the token unset, a request carrying
-neither provenance header is indistinguishable from a legacy local API client;
+All write requests (`POST`/`PUT`/`PATCH`/`DELETE`) and compatibility mutating
+`GET` aliases (`GET /snapshot`) reject cross-site browser requests when
+`Sec-Fetch-Site`, `Origin`, or `Referer` indicates a foreign origin (including
+cross-port mismatches), and require bearer authentication whenever
+`RELAYTV_API_TOKEN` is configured. With the token unset, a request carrying no
+browser provenance headers is indistinguishable from a legacy local API client;
 that is an accepted consequence of the tokenless local-first contract. A
 fail-closed default would be a breaking API migration requiring a documented
 companion-client deprecation path.
@@ -206,9 +218,9 @@ Carried from the review, in rough value order:
    Jellyfin casts. The API-key receiver remains userless, and
    `jellyfin_auth_mode=user_login` is one operator-configured account rather
    than the initiating controller's identity.
-2. Extend the checked-in browser smoke beyond the Jellyfin, Plex, IPTV, and
-   send-to-device shells to settings, general queue actions, and the remaining
-   `/ui` surfaces.
+2. Extend the checked-in browser smoke beyond the Jellyfin, Plex, IPTV, Seerr,
+   playlist-import, and send-to-device shells to settings, general queue
+   actions, and the remaining `/ui` surfaces.
 3. Versioned models for queue/history/session/settings — migrations
    remain implicit.
 4. Continue shrinking `routes/__init__.py` (shared helpers, overlay/idle

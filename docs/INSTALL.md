@@ -43,21 +43,22 @@ installation and print matching operator commands at completion.
 
 ## Quick Start
 
-Published-image one-line install:
+Published-image one-line install (and in-place update):
 
 ```bash
 mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash
 ```
 
-The bootstrap installer downloads the release compose file and installer scripts,
-confirms that RelayTV will be installed in the current directory, generates
-`.env`, optionally enables HDMI-CEC passthrough when detected and approved, then
-runs:
+On a fresh host, `install.sh` downloads the release compose file and helper
+scripts (including a local copy of `install.sh`), confirms that RelayTV will be
+installed in the target directory, generates `.env` and
+`docker-compose.override.yml`, optionally enables HDMI-CEC passthrough when
+detected and approved, pulls and starts the published image, and verifies
+`/health`.
 
-```bash
-docker compose pull
-docker compose up -d
-```
+On an existing host, running the **exact same command** (or running the saved
+`~/relaytv/install.sh` script) updates RelayTV in place while preserving your
+`.env` secrets, settings, and `./data`; see [Updating RelayTV](#updating-relaytv).
 
 Common bootstrap options:
 
@@ -84,65 +85,129 @@ mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.c
 curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --dir /opt/relaytv --force
 ```
 
-Source checkout install:
+## Updating RelayTV
+
+Installing and updating use the same `install.sh` script and the same command:
+
+```bash
+mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash
+```
+
+Because initial installation also saves `install.sh` into your RelayTV
+directory, you can run the local script directly as well:
+
+```bash
+~/relaytv/install.sh
+```
+
+When run inside your RelayTV directory (or invoked via `~/relaytv/install.sh`),
+the script automatically detects the deployed installation and updates it in
+place. If you run `curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash`
+interactively from outside your install directory (for example right after an
+SSH login into `~`), the installer detects an existing RelayTV deployment via
+the `relaytv` container's Compose working-directory label (or `~/relaytv`) and
+offers to update it instead of creating a second copy. Pass `--update` (for
+example `~/relaytv/install.sh --update` or `... | bash -s -- --update --yes`) to
+target the discovered installation automatically and fail cleanly if no
+installation exists.
+
+What an installer update does:
+
+- refreshes `docker-compose.yml`, `install.sh`, `scripts/install.sh`,
+  `scripts/doctor.sh`, and `scripts/host-ops.sh`
+- regenerates installer-owned `.env` keys and `docker-compose.override.yml`
+  while preserving operator secrets (`RELAYTV_API_TOKEN`, service credentials),
+  port/playback overrides, `./data`, `./bin`, saved HDMI-CEC settings, and
+  explicit `headless` or inactive-session `wayland`/`x11`/`drm` runtime modes
+- pulls the configured image before recreating the container so playback stays
+  up while downloading
+- verifies `/health` after restart and automatically rolls back the previous
+  configuration files and container image if health verification fails
+- keeps the previous RelayTV image on disk by default for manual rollback; add
+  `--prune` to remove the superseded image once `/health` passes (useful on
+  smaller Raspberry Pi SD cards)
+
+Updating or rolling back version-pinned deployments:
+
+```bash
+# Pin or roll back to a specific immutable release tag
+mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --branch vX.Y.Z
+
+# Unpin a saved tag back to ghcr.io/mcgeezy/relaytv:latest and prune the replaced image
+mkdir -p ~/relaytv && cd ~/relaytv && curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash -s -- --branch main --prune
+```
+
+## Source Checkout Install and Update
+
+For local development or custom image builds from a Git checkout instead of
+pulled release images:
 
 ```bash
 cd /path/to/relaytv
-chmod +x scripts/install.sh scripts/doctor.sh
 ./scripts/install.sh
 docker compose up -d --build
 ./scripts/doctor.sh
 ```
 
-For local source iteration instead of pulled images:
+To update a source checkout after pulling new commits:
 
 ```bash
 cd /path/to/relaytv
+git pull --ff-only
 ./scripts/install.sh
 docker compose up -d --build
-./scripts/doctor.sh
 ```
 
 ## What The Installer Does
 
 `scripts/install.sh`:
 
-- detects the active runtime (`wayland`, `x11`, or `drm`)
+- detects the active runtime (`wayland`, `x11`, or `drm`) and preserves saved
+  `headless` or inactive-session `wayland`/`x11`/`drm` modes on unattended or
+  SSH reruns
 - atomically refreshes installer-owned `.env` keys while preserving
   operator-owned values such as `RELAYTV_API_TOKEN` and `RELAYTV_PORT`
 - restricts `.env` permissions to the target user (`0600`)
 - emits Docker build bundle flags only when an optional runtime path needs them
 - generates host integration overrides only for existing system paths and
-  devices, including desktop sockets, Raspberry Pi V4L2 devices, and optional
-  HDMI-CEC passthrough
+  devices, including desktop sockets, NVIDIA CDI or Container Toolkit GPU
+  passthrough, Raspberry Pi V4L2 devices, and optional HDMI-CEC passthrough
 - refuses to overwrite an unmarked, user-managed `docker-compose.override.yml`
 - disables container SELinux labeling in the generated override on enforcing
   SELinux hosts, avoiding relabeling of shared system paths
-- records host identity (`PUID`, `PGID`, render group gid)
+- records host identity (`PUID`, `PGID`, render group gid, and device group ids)
 - selects a runtime profile (`native-qt` by default)
-- leaves `MPV_AUDIO_DEVICE` blank so runtime auto-detect chooses audio output
+- leaves `MPV_AUDIO_DEVICE` blank by default (while preserving any saved override)
+  so runtime auto-detect chooses the active audio output
 
 Root `install.sh`:
 
-- bootstraps published-image installs from GitHub raw files
+- serves as both the one-line bootstrap installer and in-place updater
 - validates native Linux and the published image architecture before download
 - offers to install Docker Engine and Compose v2 when missing, then validates
   daemon and socket access
-- defaults to the current directory and prompts before writing service files
-- writes a release-only `docker-compose.yml` with no source build dependency
-- downloads `scripts/install.sh`, `scripts/doctor.sh`, and `scripts/host-ops.sh`
-- runs `scripts/install.sh` to generate `.env`
-- delegates HDMI-CEC detection and the optional prompt to `scripts/install.sh`
-- pulls and starts the configured published image by default
-- waits for `/health` and reports container status and recent logs if startup
-  does not become healthy within the configured timeout
+- detects an existing RelayTV deployment automatically when re-run in the
+  install directory, invoked via the saved `install.sh`, or run interactively /
+  with `--update` (discovering the active `relaytv` container's Compose working
+  directory or `~/relaytv`); prompts before fresh installs into the current
+  directory
+- writes a release-only `docker-compose.yml` (with no source build dependency)
+  and saves `install.sh`, `scripts/install.sh`, `scripts/doctor.sh`, and
+  `scripts/host-ops.sh` into the deployment directory
+- runs `scripts/install.sh` to generate `.env` and `docker-compose.override.yml`,
+  preserving saved CEC and image pin choices on updates unless overridden
+- backs up managed configuration/script files and records the running image
+  before an update, rolling back both files and container image automatically if
+  configuration, pull, startup, or `/health` verification fails
+- pulls and starts the configured published image by default, optionally pruning
+  the superseded image after `/health` passes when `--prune` is supplied
 
 Published-image defaults:
 
 - the bootstrap installer writes a release-only `docker-compose.yml` that uses the published image
 - source checkouts use the repo `docker-compose.yml` and should start with `docker compose up -d --build`
 - default image ref is `ghcr.io/mcgeezy/relaytv:latest`
-- operators can use `docker compose pull && docker compose up -d`
+- re-run `install.sh` (or `./install.sh --update`) to refresh compose files, helper scripts, host overrides, and the container image together; `docker compose pull && docker compose up -d` refreshes only the image
 
 Published image:
 
@@ -225,7 +290,10 @@ Examples:
 # force native Qt explicitly
 ./scripts/install.sh --mode wayland --native-qt
 
-# deploy a known-good immutable release image
+# deploy a known-good immutable release image (published-image install)
+./install.sh --branch vX.Y.Z --mode wayland --native-qt
+
+# deploy a known-good immutable release image (source checkout)
 RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:vX.Y.Z \
   ./scripts/install.sh --mode wayland --native-qt
 docker compose pull relaytv
@@ -366,10 +434,15 @@ Published images still require the same Linux media-host integration as local bu
   compose files map no devices, so hosts without KMS or audio hardware can
   still start the container. Re-run `scripts/install.sh` after hardware or
   kernel changes to refresh the override.
-- NVIDIA decode acceleration requires host NVIDIA drivers plus Docker NVIDIA
-  Container Toolkit. When both an NVIDIA device and toolkit are detected,
-  `scripts/install.sh` writes a generated compose override with `gpus: all` and
-  NVIDIA driver capabilities for decode/playback.
+- NVIDIA decode acceleration requires host NVIDIA drivers plus either NVIDIA
+  Container Device Interface (CDI) support (`nvidia.com/gpu` advertised in
+  `docker info` or `/etc/cdi` / `/var/run/cdi`) or Docker NVIDIA Container
+  Toolkit (`nvidia` runtime). When an NVIDIA device and either runtime mechanism
+  are detected, `scripts/install.sh` writes a generated compose override (using
+  a CDI GPU reservation when available, or `gpus: all` otherwise) along with
+  NVIDIA driver capabilities (`compute,video,graphics,utility`). Override
+  auto-detection if needed with `RELAYTV_NVIDIA_CDI=0|1` or
+  `RELAYTV_NVIDIA_DOCKER_TOOLKIT=0|1`.
 - host display/session env such as `DISPLAY`, `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR`
 - host networking
 - the stable `/run/user` parent and X11 socket directory for desktop session
@@ -396,16 +469,23 @@ Pulled images are an operator convenience, not a generic desktop-container porta
 
 ### Audio Device
 
-`MPV_AUDIO_DEVICE` is intentionally left blank by default so RelayTV chooses the active sink at runtime.
+`MPV_AUDIO_DEVICE` is intentionally left blank by default so RelayTV chooses the
+active sink at runtime. On direct-ALSA hosts (and Raspberry Pi hosts where
+PipeWire/PulseAudio exposes only the 3.5mm mailbox jack while HDMI audio stays on
+`vc4hdmi*`), auto-detect selects the confirmed HDMI output matching the connected
+DRM port.
 
-If you need to force a specific sink, set `MPV_AUDIO_DEVICE` manually in `.env`.
+In the Web UI (**Settings → Device & TV → Audio device**), RelayTV curates viable
+PipeWire, PulseAudio, and connected ALSA HDMI/analog/optical outputs with
+human-readable TV/monitor names while filtering dummy/monitor sinks and
+disconnected HDMI ports. You can also set `MPV_AUDIO_DEVICE` manually in `.env`.
 
 ### yt-dlp Auto-Update
 
-Toggleable at runtime in the web UI (Settings -> YouTube -> "Keep yt-dlp up to
-date"): enabling it runs an immediate update check and then a daily background
-check, no container restart needed. The env values seed the toggle's default
-and tune the schedule:
+Toggleable at runtime in the web UI (Settings -> Sources -> YouTube -> "Keep
+yt-dlp up to date"): enabling it runs an immediate update check and then a
+background check every 6 hours by default, no container restart needed. The env
+values seed the toggle's default and tune the schedule:
 
 ```bash
 RELAYTV_YTDLP_AUTO_UPDATE=1

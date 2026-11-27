@@ -6,7 +6,7 @@ playback of movie and episode media that the selected server exposes.
 
 ## Set up Plex
 
-1. Open **Settings → Plex Integration** and enable Plex.
+1. Open **Settings → Servers → Plex Integration** and enable Plex.
 2. Choose **Link Plex account**, then open **Continue on Plex**.
 3. Approve RelayTV on Plex's site and return to RelayTV.
 4. Choose **Check link**.
@@ -18,8 +18,11 @@ playback of movie and episode media that the selected server exposes.
 8. Optionally choose a maximum video bitrate. Automatic mode converts a file
    when PMS determines it exceeds the cap. Original quality removes the cap;
    Direct play ignores it.
-9. Close Settings and choose **Plex** in the RelayTV header to browse Home,
-   movie and TV libraries, search, details, seasons, and episodes.
+9. Close Settings and choose **Browse** in the RelayTV header to explore Home,
+   Movies, TV series, seasons, episodes, search, and details. When Jellyfin,
+   Emby, or additional servers in **Settings → Servers → Unified Browse Servers**
+   are also enabled, **Browse** merges and deduplicates titles across servers
+   automatically while preserving Plex version and track choices on playback.
 10. Open a movie or episode and choose **Play now**, **Resume**, **Play next**,
    or **Add to queue**. Resume appears when Plex reports saved progress; Play
    now starts over.
@@ -131,9 +134,10 @@ create its own device identity and Plex authorization.
   refresh attempts.
 - **A timeout occurs during link or refresh:** retry without deleting the
   private state file. Network failures do not erase credentials.
-- **Plex does not appear in the header:** finish all three setup steps: enable
-  Plex, link an account, and select a server. The browse entry remains hidden
-  until the integration is ready.
+- **Browse does not appear in the header (or omits Plex titles):** finish all
+  three setup steps: enable Plex, link an account, and select a server (and keep
+  the server enabled in **Unified Browse Servers**). The **Browse** launcher
+  remains hidden until at least one media library integration is ready.
 - **An item becomes unavailable after changing servers:** reload the Plex
   browser. Item and artwork references are intentionally scoped to the server
   that returned them.
