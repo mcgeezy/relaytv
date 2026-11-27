@@ -6,8 +6,8 @@ until it is enabled and an operator adds a source.
 
 ## Enable and Add a Source
 
-Open **Settings → IPTV Integration**, enable IPTV, and select **Apply IPTV**.
-The IPTV launcher then appears in the RelayTV header.
+Open **Settings → Sources → IPTV Integration**, enable IPTV, and select
+**Apply IPTV**. The **TV** launcher then appears in the RelayTV header.
 
 Inside IPTV, navigation is link-driven with a Back control — there is no tab
 bar:
@@ -68,10 +68,12 @@ inactive immediately but remains in My Channels until the operator removes it.
 ## Playback and Credentials
 
 Extended M3U `http-user-agent` and `http-referrer` directives are passed to mpv
-for that channel. RelayTV returns opaque source/channel IDs from catalog APIs
-and resolves the actual stream server-side at play time. Raw playlist and
-stream URLs and request headers are omitted from status, queue, history,
-session, and IPTV action responses.
+for that channel. When a live channel provides a seekable demuxer cache window,
+the remote exposes live DVR rewind and jump-to-live controls (`POST /playback/live`)
+within the buffered window without recording streams to disk. RelayTV returns
+opaque source/channel IDs from catalog APIs and resolves the actual stream
+server-side at play time. Raw playlist and stream URLs and request headers are
+omitted from status, queue, history, session, and IPTV action responses.
 
 The catalog file and uploaded playlist content are stored owner-only at
 `/data/iptv.sqlite3` by default. They are not encrypted at rest. Protect the

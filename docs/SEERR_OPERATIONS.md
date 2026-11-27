@@ -12,14 +12,16 @@ Shared API-key browsing and requests do not have that restriction.
 
 ## Configure the Integration
 
-Open RelayTV's web UI, then choose **Settings → Seerr Integration**:
+Open RelayTV's web UI, then choose **Settings → Sources → Seerr Integration**:
 
 1. Enable the integration.
 2. Enter the Seerr base URL, such as `http://seerr.lan:5055`. A trailing
    `/api/v1` is accepted and removed automatically.
 3. Choose exactly one request identity mode.
 4. Enter the API key when the selected mode requires it.
-5. Apply the settings, then use **Test connection**.
+5. Apply the settings, then use **Test connection**. Once enabled, **Add**
+   appears in the RelayTV header to browse discovery sections, search, and
+   manage requests.
 
 Do not put credentials in the server URL. The Seerr API key is write-only in
 RelayTV settings: it is stored server-side, never returned by `/settings`, and
@@ -131,6 +133,10 @@ that a mismatched or missing TMDB provider ID leaves the action unavailable.
 - **Playback returns `409` or no Play action appears:** verify the same media
   exists on RelayTV's active Jellyfin/Emby server and has the same type and
   TMDB provider ID. RelayTV intentionally does not guess by title.
+- **Posters or backdrops fail to load:** RelayTV proxies validated TMDB artwork
+  through `/seerr/image/{size}/{image_path}` and automatically falls back to
+  Seerr's `/_next/image` endpoint when Seerr's local image cache is disabled. If
+  artwork still fails, confirm the Seerr container itself can reach TMDB.
 - **Upstream `502`/`504`:** verify Seerr reachability and reverse-proxy routing.
   RelayTV does not expose arbitrary upstream HTML or headers in the response.
 

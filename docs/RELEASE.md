@@ -214,5 +214,11 @@ For immutable releases, prefer this process:
 4. Ensure the image label `org.opencontainers.image.revision` matches the source
    revision used for the build.
 
-`latest` is convenient for normal installs, but immutable tags are preferred for
-audited deployments.
+`latest` is convenient for normal installs, while immutable tags are preferred
+for audited deployments. Published-image installs can pin or roll back to an
+immutable release tag (or return to `latest` via `--branch main`) with the same
+bootstrap script:
+
+```bash
+~/relaytv/install.sh --branch vX.Y.Z
+```

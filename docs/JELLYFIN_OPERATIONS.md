@@ -9,10 +9,13 @@ The old Jellyfin server plugin is deprecated and no longer ships in the public r
 
 ## Browser Library Experience
 
-The `/ui` remote includes a responsive Jellyfin/Emby library shell for phones
-and desktop browsers. Its product behavior remains backed by the existing
-Jellyfin routes and integration service; the dedicated browser assets are
-`static/ui/jellyfin.js` and `static/ui/jellyfin.css`.
+The `/ui` remote opens its responsive media library browser via the **Browse**
+header action (`static/ui/jellyfin.js` and `static/ui/jellyfin.css`). When only
+the primary Jellyfin/Emby server is enabled it drives `/jellyfin/*` directly;
+when Plex or additional servers under **Settings → Servers → Unified Browse
+Servers** are also enabled, **Browse** uses the unified `/browse/*` endpoints to
+merge catalogs, deduplicate titles by lowest measured server latency, and
+combine watch progress across servers.
 
 - Home presents Continue Watching, Next Up, Movies, Shows, and recently added
   content as horizontally scrollable rails.

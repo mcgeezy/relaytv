@@ -61,19 +61,23 @@ API token, anyone using the remote needs that token to control playback.
 
 ### ▶️ Play
 
-Paste a media URL into the Web UI, share a link or local audio/video file from
+Paste a media URL or live `rtsp://` / `rtsps://` camera stream into **Link**,
+share a link or local audio/video file from
 [Android](https://github.com/mcgeezy/relaytv-android), or upload media through
 [Home Assistant](https://github.com/mcgeezy/relaytv-ha). Play now, add to the
 queue, or resume something from history. Playback runs on the Linux box, so
 your phone can leave the remote page while the TV keeps playing. Temporary
-playback can interrupt a session and resume it afterward.
+playback can interrupt a session — such as a doorbell camera feed — and resume
+what was playing afterward.
 
 ### 🎬 Browse
 
-Explore Plex, Jellyfin, or Emby from a responsive library built for phones and
-desktops. Search for a movie, browse seasons and episodes, then play now or add
-to the queue. Connect Seerr to discover movies and series, request something
-missing, and follow its request status. Add IPTV playlists, curate
+Open **Browse** to explore Plex, Jellyfin, and Emby from a responsive library
+built for phones and desktops — including unified multi-server browsing that
+automatically deduplicates titles across servers and merges watch progress.
+Search for a movie, browse seasons and episodes, then play now or add to the
+queue. Connect Seerr (**Add**) to discover movies and series, request something
+missing, and follow its request status. Add IPTV playlists (**TV**), curate
 **My Channels**, and favorite the live sources you use.
 
 ### 🎛️ Control
@@ -167,11 +171,18 @@ Pi 5 hardware profiles), Intel mini PCs, NUCs, HTPCs, and other `amd64` or
 `arm64` Linux hosts connected directly to a television. The installer can set up
 Docker with your approval when needed.
 
+**Install or update with the same script and command:**
+
 ```bash
 mkdir -p ~/relaytv
 cd ~/relaytv
 curl -fsSL https://raw.githubusercontent.com/mcgeezy/relaytv/main/install.sh | bash
 ```
+
+Run the exact same command again (or run the saved `~/relaytv/install.sh`
+script) at any time to update RelayTV in place while keeping your settings,
+`.env` secrets, and library data — with `/health` verification and automatic
+rollback if startup fails.
 
 Then scan the QR code on the TV's idle screen, or open
 `http://YOUR_RELAYTV_HOST:8787/ui` from a phone or desktop browser on the same
@@ -195,7 +206,8 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
   Movies, TV, search, season and episode browsing, media and track choices,
   resume, queue, direct-play, and transcoding workflows.
 - **Jellyfin and Emby** — responsive Home, Movies, TV, series, season, episode,
-  search, resume, and queue workflows.
+  search, resume, cast-target, and queue workflows, plus unified multi-server
+  browsing across connected Plex, Jellyfin, and Emby libraries.
 - **Seerr** — discover movies and series, request missing titles, and track
   requests. Play available Jellyfin items when RelayTV can match them to your
   connected library. Choose shared requests or individual sign-in.
@@ -203,6 +215,9 @@ Need runtime choices, hardware notes, or an existing source checkout? See the
   availability checks, with rewind and return-to-live controls when the stream
   has a seekable cache. The rewind window is limited to the buffered media;
   this does not record shows for later.
+- **RTSP / RTSPS Cameras** — play live IP camera, doorbell, NVR, and local relay
+  feeds (`go2rtc`, Frigate, Scrypted, UniFi Protect) directly in `mpv` with live
+  cache rewind, temporary-playback interruptions, and credential redaction.
 - **HTTP API** — local automation from shell scripts, dashboards, services, and
   custom applications.
 

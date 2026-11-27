@@ -1288,3 +1288,1333 @@ def test_switch_to_standard_release_image_disables_saved_remote(
     env_text = (tmp_path / ".env").read_text()
     assert "RELAYTV_HEADLESS_REMOTE_ENABLED=0\n" in env_text
     assert "RELAYTV_PLAYER_BACKEND=mpv\n" in env_text
+
+
+def _ref_state_key(ref: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in ref)
+
+
+def _write_stateful_fake_docker_and_curl(
+    fake_bin: Path,
+    state_dir: Path,
+    remote_dir: Path,
+) -> None:
+    """Create stateful fake `docker` and `curl` shims for bootstrap update tests."""
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        f"STATE={shlex.quote(str(state_dir))}\n"
+        "ref_key() { printf '%s' \"$1\" | sed 's/[^A-Za-z0-9]/_/g'; }\n"
+        "configured_image_ref() {\n"
+        "  local line val=\"\"\n"
+        "  if [ -f .env ]; then\n"
+        "    while IFS= read -r line || [ -n \"$line\" ]; do\n"
+        "      case \"$line\" in\n"
+        "        RELAYTV_IMAGE_REF=*) val=\"${line#RELAYTV_IMAGE_REF=}\" ;;\n"
+        "      esac\n"
+        "    done < .env\n"
+        "  fi\n"
+        "  val=\"${val%\\\"}\"; val=\"${val#\\\"}\"; val=\"${val%\\'}\"; val=\"${val#\\'}\"\n"
+        "  printf '%s' \"${val:-ghcr.io/mcgeezy/relaytv:latest}\"\n"
+        "}\n"
+        "configured_pull_policy() {\n"
+        "  local line val=\"\"\n"
+        "  if [ -f .env ]; then\n"
+        "    while IFS= read -r line || [ -n \"$line\" ]; do\n"
+        "      case \"$line\" in\n"
+        "        RELAYTV_PULL_POLICY=*) val=\"${line#RELAYTV_PULL_POLICY=}\" ;;\n"
+        "      esac\n"
+        "    done < .env\n"
+        "  fi\n"
+        "  printf '%s' \"${val:-missing}\"\n"
+        "}\n"
+        'cmd="${1:-}"\n'
+        'if [ "$cmd" = "info" ]; then\n'
+        "  printf 'Server Version: 27.0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$cmd" = "compose" ]; then\n'
+        '  sub="${2:-}"\n'
+        '  case "$sub" in\n'
+        "    version) printf 'Docker Compose version v2.29.0\\n'; exit 0 ;;\n"
+        "    pull)\n"
+        '      ref="$(configured_image_ref)"\n'
+        '      rkey="$(ref_key "$ref")"\n'
+        '      cat "$STATE/remote_image_id" > "$STATE/ref_${rkey}"\n'
+        '      cat "$STATE/remote_image_id" > "$STATE/tag_image_id"\n'
+        '      cp "$STATE/remote_version" "$STATE/img_$(cat "$STATE/remote_image_id" | tr : _)_version"\n'
+        '      cp "$STATE/remote_revision" "$STATE/img_$(cat "$STATE/remote_image_id" | tr : _)_revision"\n'
+        "      exit 0\n"
+        "      ;;\n"
+        "    up)\n"
+        '      printf "%s\\n" "$*" >> "$STATE/compose_up_args.log"\n'
+        '      ref="$(configured_image_ref)"\n'
+        '      rkey="$(ref_key "$ref")"\n'
+        '      if [ "$(configured_pull_policy)" = "always" ] && [[ " $* " != *" --pull never "* ]]; then\n'
+        '        cat "$STATE/remote_image_id" > "$STATE/ref_${rkey}"\n'
+        '        cat "$STATE/remote_image_id" > "$STATE/tag_image_id"\n'
+        "      fi\n"
+        '      pwd -P > "$STATE/container_working_dir"\n'
+        '      if [ -f "$STATE/ref_${rkey}" ]; then\n'
+        '        cat "$STATE/ref_${rkey}" > "$STATE/container_image_id"\n'
+        "      else\n"
+        '        cat "$STATE/tag_image_id" > "$STATE/container_image_id"\n'
+        "      fi\n"
+        '      printf "true" > "$STATE/container_running"\n'
+        "      exit 0\n"
+        "      ;;\n"
+        "    down)\n"
+        '      printf "false" > "$STATE/container_running"\n'
+        "      exit 0\n"
+        "      ;;\n"
+        "    ps|logs)\n"
+        '      printf "fake compose %s output\\n" "$sub"\n'
+        "      exit 0\n"
+        "      ;;\n"
+        "  esac\n"
+        "fi\n"
+        'if [ "$cmd" = "image" ]; then\n'
+        '  sub="${2:-}"\n'
+        '  case "$sub" in\n'
+        "    inspect)\n"
+        '      ref="${@: -1}"\n'
+        '      rkey="$(ref_key "$ref")"\n'
+        '      [ -f "$STATE/ref_${rkey}" ] || exit 1\n'
+        '      cat "$STATE/ref_${rkey}"\n'
+        "      printf '\\n'\n"
+        "      exit 0\n"
+        "      ;;\n"
+        "    tag)\n"
+        '      src="${3:-}"\n'
+        '      dst="${4:-}"\n'
+        '      rkey="$(ref_key "$dst")"\n'
+        '      printf "%s" "$src" > "$STATE/ref_${rkey}"\n'
+        '      printf "%s" "$src" > "$STATE/tag_image_id"\n'
+        '      printf "tagged:%s->%s\\n" "$src" "$dst" >> "$STATE/image_ops.log"\n'
+        "      exit 0\n"
+        "      ;;\n"
+        "    rm)\n"
+        '      target="${3:-}"\n'
+        '      if [ -f "$STATE/container_running" ] && [ "$(cat "$STATE/container_running")" = "true" ] && [ -f "$STATE/container_image_id" ] && [ "$(cat "$STATE/container_image_id")" = "$target" ]; then\n'
+        '        printf "Error response from daemon: conflict: unable to delete %s (container is running)\\n" "$target" >&2\n'
+        "        exit 1\n"
+        "      fi\n"
+        '      printf "rm:%s\\n" "$target" >> "$STATE/image_ops.log"\n'
+        "      exit 0\n"
+        "      ;;\n"
+        "  esac\n"
+        "fi\n"
+        'if [ "$cmd" = "inspect" ]; then\n'
+        '  fmt=""\n'
+        '  target=""\n'
+        "  shift\n"
+        "  while [ $# -gt 0 ]; do\n"
+        '    case "$1" in\n'
+        '      -f|--format) shift; fmt="$1" ;;\n'
+        '      *) target="$1" ;;\n'
+        "    esac\n"
+        "    shift\n"
+        "  done\n"
+        '  if [ "$target" = "relaytv" ]; then\n'
+        '    [ -f "$STATE/container_image_id" ] || exit 1\n'
+        '    img="$(cat "$STATE/container_image_id")"\n'
+        '    case "$fmt" in\n'
+        '      *working_dir*) cat "$STATE/container_working_dir"; printf "\\n"; exit 0 ;;\n'
+        '      *State.Running*) cat "$STATE/container_running"; printf "\\n"; exit 0 ;;\n'
+        '      *".Image"*) printf "%s\\n" "$img"; exit 0 ;;\n'
+        "    esac\n"
+        "  else\n"
+        '    img="$target"\n'
+        "  fi\n"
+        '  key="$(printf "%s" "$img" | tr : _)"\n'
+        '  case "$fmt" in\n'
+        '    *image.version*) [ -f "$STATE/img_${key}_version" ] && cat "$STATE/img_${key}_version"; printf "\\n"; exit 0 ;;\n'
+        '    *image.revision*) [ -f "$STATE/img_${key}_revision" ] && cat "$STATE/img_${key}_revision"; printf "\\n"; exit 0 ;;\n'
+        "  esac\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    real_curl = shutil.which("curl")
+    assert real_curl is not None
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        'url="${@: -1}"\n'
+        'if [[ "$url" == https://review.invalid/* ]]; then\n'
+        '  rel="${url#https://review.invalid/}"\n'
+        f'  cat {shlex.quote(str(remote_dir))}/"$rel"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'exec {shlex.quote(real_curl)} "$@"\n',
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+
+def _populate_remote_bundle(remote_dir: Path, compose_comment: str = "# v1 release") -> None:
+    (remote_dir / "scripts").mkdir(parents=True, exist_ok=True)
+    compose_body = (ROOT_DIR / "docker-compose.release.yml").read_text(encoding="utf-8")
+    (remote_dir / "docker-compose.release.yml").write_text(
+        f"{compose_comment}\n{compose_body}",
+        encoding="utf-8",
+    )
+    shutil.copy2(ROOT_DIR / "install.sh", remote_dir / "install.sh")
+    shutil.copy2(ROOT_DIR / "scripts" / "install.sh", remote_dir / "scripts" / "install.sh")
+    shutil.copy2(ROOT_DIR / "scripts" / "doctor.sh", remote_dir / "scripts" / "doctor.sh")
+    shutil.copy2(ROOT_DIR / "scripts" / "host-ops.sh", remote_dir / "scripts" / "host-ops.sh")
+
+
+def _seed_fake_docker_image_state(
+    state_dir: Path,
+    *,
+    current_id: str,
+    current_version: str,
+    current_revision: str,
+    remote_id: str,
+    remote_version: str,
+    remote_revision: str,
+    current_ref: str = "ghcr.io/mcgeezy/relaytv:latest",
+) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tag_image_id").write_text(current_id, encoding="utf-8")
+    (state_dir / f"ref_{_ref_state_key(current_ref)}").write_text(current_id, encoding="utf-8")
+    (state_dir / f"img_{current_id.replace(':', '_')}_version").write_text(
+        current_version, encoding="utf-8"
+    )
+    (state_dir / f"img_{current_id.replace(':', '_')}_revision").write_text(
+        current_revision, encoding="utf-8"
+    )
+    (state_dir / "remote_image_id").write_text(remote_id, encoding="utf-8")
+    (state_dir / "remote_version").write_text(remote_version, encoding="utf-8")
+    (state_dir / "remote_revision").write_text(remote_revision, encoding="utf-8")
+
+
+def test_bootstrap_same_command_updates_existing_install_without_prompt_and_preserves_state(
+    tmp_path: Path,
+) -> None:
+    import http.server
+    import threading
+
+    if shutil.which("setsid") is None:
+        pytest.skip("setsid is unavailable")
+
+    class HealthyHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), HealthyHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        install_dir = tmp_path / "relaytv"
+        install_dir.mkdir()
+        remote_dir = tmp_path / "remote"
+        _populate_remote_bundle(remote_dir, "# release v1")
+        state_dir = tmp_path / "docker-state"
+        fake_bin = tmp_path / "fake-bin"
+        fake_bin.mkdir()
+        _write_stateful_fake_docker_and_curl(fake_bin, state_dir, remote_dir)
+
+        v1_id = "sha256:" + "1" * 64
+        v2_id = "sha256:" + "2" * 64
+        _seed_fake_docker_image_state(
+            state_dir,
+            current_id=v1_id,
+            current_version="0.12.3",
+            current_revision="a8bc5dc000001111",
+            remote_id=v1_id,
+            remote_version="0.12.3",
+            remote_revision="a8bc5dc000001111",
+        )
+
+        base_env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+        base_env.update(
+            PATH=f"{fake_bin}:{base_env.get('PATH', '')}",
+            RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+            RELAYTV_BOOTSTRAP_DISCOVER_DOCKER="0",
+            RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+            RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+            RELAYTV_PORT=str(port),
+        )
+
+        # 1. Initial headless install.
+        first = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--yes", "--mode", "headless"],
+            cwd=install_dir,
+            env=base_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert first.returncode == 0, first.stderr
+        assert "RelayTV install complete." in first.stdout
+
+        # Persist operator secret and data volume file.
+        secret = "operator-secret-token-keep"
+        with (install_dir / ".env").open("a", encoding="utf-8") as fh:
+            fh.write(f"\nRELAYTV_API_TOKEN={secret}\n")
+        (install_dir / "data" / "settings.json").write_text('{"device_name":"Living Room"}\n')
+
+        # 2. Publish v2 remotely and run exact flagless `install.sh` in a detached non-TTY session
+        #    (no --yes, no --dir, no --update, no --mode).
+        _populate_remote_bundle(remote_dir, "# release v2")
+        (state_dir / "remote_image_id").write_text(v2_id, encoding="utf-8")
+        (state_dir / "remote_version").write_text("0.13.1", encoding="utf-8")
+        (state_dir / "remote_revision").write_text("c5ab8a2000002222", encoding="utf-8")
+
+        update_env = dict(base_env)
+        update_env.pop("RELAYTV_PORT", None)  # must read saved RELAYTV_PORT from .env
+        update = subprocess.run(
+            ["/bin/bash", str(ROOT_DIR / "install.sh")],
+            cwd=install_dir,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=15,
+            env=update_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert update.returncode == 0, update.stderr
+        assert "RelayTV updater" in update.stdout
+        assert "RelayTV update complete." in update.stdout
+        assert "0.12.3 (a8bc5dc00000) -> 0.13.1 (c5ab8a200000)" in update.stdout
+        assert (install_dir / "docker-compose.yml").read_text(encoding="utf-8").startswith(
+            "# release v2\n"
+        )
+        env_after = (install_dir / ".env").read_text(encoding="utf-8")
+        assert f"RELAYTV_API_TOKEN={secret}\n" in env_after
+        assert "RELAYTV_MODE=headless\n" in env_after
+        assert f"RELAYTV_PORT={port}\n" in env_after
+        assert secret not in update.stdout
+        assert secret not in update.stderr
+        assert (install_dir / "data" / "settings.json").read_text() == '{"device_name":"Living Room"}\n'
+        assert not (state_dir / "image_ops.log").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_bootstrap_discovers_existing_install_from_outside_dir_and_supports_update_flag(
+    tmp_path: Path,
+) -> None:
+    import fcntl
+    import pty
+    import select
+    import termios
+
+    remote_dir = tmp_path / "remote"
+    _populate_remote_bundle(remote_dir, "# discovered v2")
+    state_dir = tmp_path / "docker-state"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    _write_stateful_fake_docker_and_curl(fake_bin, state_dir, remote_dir)
+
+    v1_id = "sha256:" + "3" * 64
+    v2_id = "sha256:" + "4" * 64
+    _seed_fake_docker_image_state(
+        state_dir,
+        current_id=v1_id,
+        current_version="0.12.3",
+        current_revision="a8bc5dc00000",
+        remote_id=v2_id,
+        remote_version="0.13.1",
+        remote_revision="c5ab8a200000",
+    )
+
+    # Seed an existing deployed install at tmp_path/opt-relaytv tracked via Docker label.
+    opt_dir = tmp_path / "opt-relaytv"
+    (opt_dir / "scripts").mkdir(parents=True)
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", opt_dir / "docker-compose.yml")
+    shutil.copy2(ROOT_DIR / "scripts" / "install.sh", opt_dir / "scripts" / "install.sh")
+    (opt_dir / ".env").write_text("RELAYTV_MODE=headless\nRELAYTV_CEC_ENABLED=0\n", encoding="utf-8")
+    (state_dir / "container_working_dir").write_text(str(opt_dir), encoding="utf-8")
+    (state_dir / "container_image_id").write_text(v1_id, encoding="utf-8")
+    (state_dir / "container_running").write_text("true", encoding="utf-8")
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    base_env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+    base_env.update(
+        HOME=str(fake_home),
+        PATH=f"{fake_bin}:{base_env.get('PATH', '')}",
+        RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+        RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+        RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+    )
+
+    # 1. Interactive PTY from fake_home with no flags: offers opt_dir and updates on Enter.
+    master_fd, slave_fd = pty.openpty()
+    try:
+        os.write(master_fd, b"\n")
+
+        def attach_ctty() -> None:
+            os.setsid()
+            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+        pty_proc = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--no-pull", "--no-start"],
+            cwd=fake_home,
+            env=base_env,
+            stdin=slave_fd,
+            capture_output=True,
+            text=True,
+            preexec_fn=attach_ctty,
+            timeout=10,
+            check=False,
+        )
+        os.close(slave_fd)
+        slave_fd = -1
+        pty_chunks: list[bytes] = []
+        while select.select([master_fd], [], [], 0.05)[0]:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            pty_chunks.append(chunk)
+        pty_text = b"".join(pty_chunks).decode("utf-8", errors="replace")
+    finally:
+        if slave_fd >= 0:
+            os.close(slave_fd)
+        os.close(master_fd)
+
+    assert pty_proc.returncode == 0, pty_proc.stderr
+    assert "Existing RelayTV installation detected in:" in pty_text
+    assert str(opt_dir) in pty_text
+    assert (opt_dir / "docker-compose.yml").read_text(encoding="utf-8").startswith(
+        "# discovered v2\n"
+    )
+    assert list(fake_home.iterdir()) == []
+
+    # 2. --update --yes falls back to ~/relaytv when Docker container label is absent.
+    (state_dir / "container_image_id").unlink()
+    home_install = fake_home / "relaytv"
+    (home_install / "scripts").mkdir(parents=True)
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", home_install / "docker-compose.yml")
+    (home_install / ".env").write_text("RELAYTV_MODE=headless\nRELAYTV_CEC_ENABLED=0\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    flag_update = subprocess.run(
+        ["bash", str(ROOT_DIR / "install.sh"), "--update", "--yes", "--no-pull", "--no-start"],
+        cwd=elsewhere,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert flag_update.returncode == 0, flag_update.stderr
+    assert (home_install / "docker-compose.yml").read_text(encoding="utf-8").startswith(
+        "# discovered v2\n"
+    )
+    assert list(elsewhere.iterdir()) == []
+
+    # 3. Saved ~/relaytv/install.sh invoked directly from elsewhere targets its own directory.
+    _populate_remote_bundle(remote_dir, "# local-self-update v3")
+    self_update = subprocess.run(
+        ["bash", str(home_install / "install.sh"), "--no-pull", "--no-start"],
+        cwd=elsewhere,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        timeout=15,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert self_update.returncode == 0, self_update.stderr
+    assert (home_install / "docker-compose.yml").read_text(encoding="utf-8").startswith(
+        "# local-self-update v3\n"
+    )
+
+    # 4. --update when no installation exists anywhere fails cleanly without creating files.
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    missing_dir = tmp_path / "missing-install"
+    missing_res = subprocess.run(
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(missing_dir),
+            "--update",
+            "--yes",
+        ],
+        cwd=elsewhere,
+        env={**base_env, "HOME": str(empty_home)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing_res.returncode != 0
+    assert "No existing RelayTV installation found" in missing_res.stderr
+    assert not missing_dir.exists()
+
+
+def test_bootstrap_update_auto_rolls_back_config_and_image_when_health_check_fails(
+    tmp_path: Path,
+) -> None:
+    import http.server
+    import threading
+    import urllib.request
+
+    state_dir = tmp_path / "docker-state"
+    v1_id = "sha256:" + "a" * 64
+    v2_id = "sha256:" + "b" * 64
+
+    class VersionGateHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            running = (state_dir / "container_running").read_text(encoding="utf-8").strip()
+            active_img = (state_dir / "container_image_id").read_text(encoding="utf-8").strip()
+            if running == "true" and active_img == v1_id:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+            else:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b'{"ok":false}')
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), VersionGateHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        install_dir = tmp_path / "relaytv"
+        install_dir.mkdir()
+        remote_dir = tmp_path / "remote"
+        _populate_remote_bundle(remote_dir, "# good v1")
+        fake_bin = tmp_path / "fake-bin"
+        fake_bin.mkdir()
+        _write_stateful_fake_docker_and_curl(fake_bin, state_dir, remote_dir)
+        _seed_fake_docker_image_state(
+            state_dir,
+            current_id=v1_id,
+            current_version="0.12.3",
+            current_revision="a8bc5dc00000",
+            remote_id=v1_id,
+            remote_version="0.12.3",
+            remote_revision="a8bc5dc00000",
+        )
+
+        env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+        env.update(
+            PATH=f"{fake_bin}:{env.get('PATH', '')}",
+            RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+            RELAYTV_BOOTSTRAP_DISCOVER_DOCKER="0",
+            RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+            RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+            RELAYTV_PORT=str(port),
+        )
+
+        # Install healthy v1, with RELAYTV_PULL_POLICY=always so rollback must pass --pull never.
+        init_res = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--yes", "--mode", "headless"],
+            cwd=install_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert init_res.returncode == 0, init_res.stderr
+        with (install_dir / ".env").open("a", encoding="utf-8") as fh:
+            fh.write("\nRELAYTV_API_TOKEN=rollback-token-keep\nRELAYTV_PULL_POLICY=always\n")
+        v1_env_snapshot = (install_dir / ".env").read_text(encoding="utf-8")
+        v1_override_snapshot = (install_dir / "docker-compose.override.yml").read_text(
+            encoding="utf-8"
+        )
+
+        # Publish broken v2 image that fails /health with HTTP 500.
+        _populate_remote_bundle(remote_dir, "# broken v2")
+        (state_dir / "remote_image_id").write_text(v2_id, encoding="utf-8")
+        (state_dir / "remote_version").write_text("0.13.1", encoding="utf-8")
+        (state_dir / "remote_revision").write_text("c5ab8a200000", encoding="utf-8")
+
+        upd_env = dict(env)
+        upd_env.pop("RELAYTV_PORT", None)
+        upd_env["RELAYTV_INSTALL_HEALTH_TIMEOUT"] = "2"
+        failed_upd = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--yes", "--mode", "headless"],
+            cwd=install_dir,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=15,
+            env=upd_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert failed_upd.returncode != 0
+        assert "RelayTV is healthy." not in failed_upd.stdout
+        assert "Update failed during health verification; rolling back RelayTV" in failed_upd.stderr
+        assert (
+            "Rollback succeeded: previous RelayTV (0.12.3 (a8bc5dc00000)) is running and healthy."
+            in failed_upd.stderr
+        )
+        compose_ups = (state_dir / "compose_up_args.log").read_text(encoding="utf-8").splitlines()
+        assert any("--pull never --force-recreate" in line for line in compose_ups)
+        # Compose, .env, override, image tag, and running container must all be back on v1.
+        assert (install_dir / "docker-compose.yml").read_text(encoding="utf-8").startswith(
+            "# good v1\n"
+        )
+        assert (install_dir / ".env").read_text(encoding="utf-8") == v1_env_snapshot
+        assert stat.S_IMODE((install_dir / ".env").stat().st_mode) == 0o600
+        assert (
+            install_dir / "docker-compose.override.yml"
+        ).read_text(encoding="utf-8") == v1_override_snapshot
+        assert (state_dir / "tag_image_id").read_text(encoding="utf-8") == v1_id
+        assert (state_dir / "container_image_id").read_text(encoding="utf-8") == v1_id
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
+            assert resp.status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_bootstrap_update_prune_and_pinned_image_notice(tmp_path: Path) -> None:
+    import http.server
+    import threading
+
+    class HealthyHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), HealthyHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        install_dir = tmp_path / "relaytv"
+        (install_dir / "scripts").mkdir(parents=True)
+        shutil.copy2(ROOT_DIR / "docker-compose.release.yml", install_dir / "docker-compose.yml")
+        (install_dir / ".env").write_text(
+            "RELAYTV_MODE=headless\n"
+            "RELAYTV_CEC_ENABLED=0\n"
+            f"RELAYTV_PORT={port}\n"
+            "RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:v0.12.2\n",
+            encoding="utf-8",
+        )
+
+        remote_dir = tmp_path / "remote"
+        _populate_remote_bundle(remote_dir, "# prune check")
+        state_dir = tmp_path / "docker-state"
+        fake_bin = tmp_path / "fake-bin"
+        fake_bin.mkdir()
+        _write_stateful_fake_docker_and_curl(fake_bin, state_dir, remote_dir)
+
+        v1_id = "sha256:" + "5" * 64
+        v2_id = "sha256:" + "6" * 64
+        _seed_fake_docker_image_state(
+            state_dir,
+            current_id=v1_id,
+            current_version="0.12.2",
+            current_revision="111111111111",
+            remote_id=v1_id,
+            remote_version="0.12.2",
+            remote_revision="111111111111",
+            current_ref="ghcr.io/mcgeezy/relaytv:v0.12.2",
+        )
+        (state_dir / "container_working_dir").write_text(str(install_dir), encoding="utf-8")
+        (state_dir / "container_image_id").write_text(v1_id, encoding="utf-8")
+        (state_dir / "container_running").write_text("true", encoding="utf-8")
+
+        env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+        env.update(
+            PATH=f"{fake_bin}:{env.get('PATH', '')}",
+            RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+            RELAYTV_BOOTSTRAP_DISCOVER_DOCKER="0",
+            RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+            RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+        )
+
+        # 1. Pinned image notice + no prune when image ID is unchanged.
+        same_res = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--prune", "--no-start"],
+            cwd=install_dir,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=15,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert same_res.returncode == 0, same_res.stderr
+        assert "Branch/tag: v0.12.2" in same_res.stdout
+        assert (
+            "NOTE: RELAYTV_IMAGE_REF is pinned to ghcr.io/mcgeezy/relaytv:v0.12.2"
+            in same_res.stdout
+        )
+        assert "--branch main" in same_res.stdout
+        assert "(already up to date)" in same_res.stdout
+        assert not (state_dir / "image_ops.log").exists()
+
+        # 2. --prune with --no-start must NOT remove the running container's v1_id before restart.
+        (state_dir / "remote_image_id").write_text(v2_id, encoding="utf-8")
+        (state_dir / "remote_version").write_text("0.13.1", encoding="utf-8")
+        (state_dir / "remote_revision").write_text("222222222222", encoding="utf-8")
+        staged_res = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--branch", "main", "--prune", "--no-start"],
+            cwd=install_dir,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=15,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert staged_res.returncode == 0, staged_res.stderr
+        assert "Skipping --prune because --no-start was specified." in staged_res.stdout
+        assert "(staged; --no-start)" in staged_res.stdout
+        assert not (state_dir / "image_ops.log").exists()
+
+        # 3. Real started + healthy --prune update removes superseded v1_id, including when
+        #    no container existed beforehand (reading previous RELAYTV_IMAGE_REF from .env).
+        (install_dir / ".env").write_text(
+            "RELAYTV_MODE=headless\n"
+            "RELAYTV_CEC_ENABLED=0\n"
+            f"RELAYTV_PORT={port}\n"
+            "RELAYTV_IMAGE_REF=ghcr.io/mcgeezy/relaytv:v0.12.2\n",
+            encoding="utf-8",
+        )
+        (state_dir / "container_image_id").unlink()
+        (state_dir / "container_running").unlink()
+        prune_res = subprocess.run(
+            ["bash", str(ROOT_DIR / "install.sh"), "--branch", "main", "--prune"],
+            cwd=install_dir,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            timeout=15,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert prune_res.returncode == 0, prune_res.stderr
+        assert "Removing superseded RelayTV image" in prune_res.stdout
+        assert (state_dir / "image_ops.log").read_text(encoding="utf-8") == f"rm:{v1_id}\n"
+        assert "RELAYTV_IMAGE_REF=" not in (install_dir / ".env").read_text(encoding="utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_host_installer_preserves_headless_offline_drm_and_raspi_wayland_qpa_on_flagless_rerun(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "no-session-bin"
+    fake_bin.mkdir()
+    for tool in ("loginctl", "systemctl"):
+        shim = fake_bin / tool
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+    def prepare_offline_installer(work_dir: Path) -> Path:
+        installer = _copy_host_installer(work_dir)
+        text = installer.read_text(encoding="utf-8").replace(
+            'DRM_CONNECTOR_DETECTED="$(detect_connected_drm_connector)"',
+            'DRM_CONNECTOR_DETECTED=""',
+            1,
+        )
+        installer.write_text(text, encoding="utf-8")
+        return installer
+
+    base_env = {
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "RELAYTV_TARGET_USER": pwd.getpwuid(os.getuid()).pw_name,
+        "RELAYTV_CEC_ENABLED": "0",
+        "RELAYTV_PI_VIDEO_DEVICES_ENABLED": "0",
+    }
+
+    # 1. Saved RELAYTV_MODE=headless survives flagless rerun on a host with no display/DRM.
+    headless_dir = tmp_path / "headless-rerun"
+    headless_dir.mkdir()
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", headless_dir / "docker-compose.yml")
+    (headless_dir / ".env").write_text("RELAYTV_MODE=headless\n", encoding="utf-8")
+    hl_installer = prepare_offline_installer(headless_dir)
+    hl_res = subprocess.run(
+        [str(hl_installer)],
+        cwd=headless_dir,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert hl_res.returncode == 0, hl_res.stderr
+    assert "RELAYTV_MODE=headless\n" in (headless_dir / ".env").read_text(encoding="utf-8")
+
+    # Explicit --mode auto on that same offline host still enforces live display/DRM detection.
+    explicit_auto = subprocess.run(
+        [str(hl_installer), "--mode", "auto"],
+        cwd=headless_dir,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert explicit_auto.returncode == 3
+
+    # 2. Saved RELAYTV_MODE=drm + RELAYTV_DRM_CONNECTOR=HDMI-A-1 survives SSH update while TV is off.
+    drm_dir = tmp_path / "drm-offline"
+    drm_dir.mkdir()
+    (drm_dir / ".env").write_text(
+        "RELAYTV_MODE=drm\nRELAYTV_DRM_CONNECTOR=HDMI-A-1\n",
+        encoding="utf-8",
+    )
+    drm_installer = prepare_offline_installer(drm_dir)
+    drm_res = subprocess.run(
+        [str(drm_installer)],
+        cwd=drm_dir,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert drm_res.returncode == 0, drm_res.stderr
+    assert "preserving saved RELAYTV_MODE=drm" in drm_res.stdout
+    drm_env = (drm_dir / ".env").read_text(encoding="utf-8")
+    assert "RELAYTV_MODE=drm\n" in drm_env
+    assert "RELAYTV_DRM_CONNECTOR=HDMI-A-1\n" in drm_env
+
+    # 3. Raspberry Pi Wayland explicit QT_QPA_PLATFORM=wayland opt-in survives flagless update.
+    raspi_dir = tmp_path / "raspi-wayland"
+    raspi_dir.mkdir()
+    runtime_dir = tmp_path / "wl-runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "wayland-0").touch()
+    first_pi = _run_host_installer(
+        raspi_dir,
+        args=["--use-shell-env"],
+        env_overrides={
+            "DISPLAY": ":0",
+            "QT_QPA_PLATFORM": "wayland",
+            "RELAYTV_HOST_PROFILE": "raspi",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_RUNTIME_DIR": str(runtime_dir),
+            "XDG_SESSION_TYPE": "wayland",
+        },
+    )
+    assert first_pi.returncode == 0, first_pi.stderr
+    assert "QT_QPA_PLATFORM=wayland\n" in (raspi_dir / ".env").read_text(encoding="utf-8")
+
+    shutil.rmtree(raspi_dir / "scripts")
+    rerun_pi = _run_host_installer(
+        raspi_dir,
+        args=["--use-shell-env"],
+        env_overrides={
+            "DISPLAY": ":0",
+            "RELAYTV_HOST_PROFILE": "raspi",
+            "WAYLAND_DISPLAY": "wayland-0",
+            "XDG_RUNTIME_DIR": str(runtime_dir),
+            "XDG_SESSION_TYPE": "wayland",
+        },
+    )
+    assert rerun_pi.returncode == 0, rerun_pi.stderr
+    assert "QT_QPA_PLATFORM=wayland\n" in (raspi_dir / ".env").read_text(encoding="utf-8")
+
+    # 4. Logged-out / greeter SSH rerun on a desktop host with connected HDMI (DRM_CONNECTED=1)
+    #    must preserve saved wayland/x11 instead of clobbering to drm, while a fresh install
+    #    with no saved RELAYTV_MODE still selects drm.
+    def prepare_drm_connected_no_session_installer(work_dir: Path) -> Path:
+        installer = _copy_host_installer(work_dir)
+        text = installer.read_text(encoding="utf-8").replace(
+            'DRM_CONNECTOR_DETECTED="$(detect_connected_drm_connector)"',
+            'DRM_CONNECTOR_DETECTED="HDMI-A-1"',
+            1,
+        )
+        installer.write_text(text, encoding="utf-8")
+        return installer
+
+    for desktop_mode, extra_lines in (
+        ("wayland", "WAYLAND_DISPLAY=wayland-1\nDISPLAY=:1\nXDG_RUNTIME_DIR=/run/user/12345\n"),
+        ("x11", "DISPLAY=:2\n"),
+    ):
+        greeter_dir = tmp_path / f"greeter-{desktop_mode}"
+        greeter_dir.mkdir()
+        (greeter_dir / ".env").write_text(
+            f"RELAYTV_MODE={desktop_mode}\n{extra_lines}",
+            encoding="utf-8",
+        )
+        gr_installer = prepare_drm_connected_no_session_installer(greeter_dir)
+        gr_res = subprocess.run(
+            [str(gr_installer)],
+            cwd=greeter_dir,
+            env=base_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert gr_res.returncode == 0, gr_res.stderr
+        assert f"preserving saved RELAYTV_MODE={desktop_mode}" in gr_res.stdout
+        gr_env = (greeter_dir / ".env").read_text(encoding="utf-8")
+        assert f"RELAYTV_MODE={desktop_mode}\n" in gr_env
+        assert "RELAYTV_MODE=drm" not in gr_env
+        if desktop_mode == "wayland":
+            assert "WAYLAND_DISPLAY=wayland-1\n" in gr_env
+            assert "DISPLAY=:1\n" in gr_env
+        else:
+            assert "DISPLAY=:2\n" in gr_env
+
+    fresh_drm_dir = tmp_path / "fresh-drm"
+    fresh_drm_dir.mkdir()
+    fresh_drm_installer = prepare_drm_connected_no_session_installer(fresh_drm_dir)
+    fresh_drm_res = subprocess.run(
+        [str(fresh_drm_installer)],
+        cwd=fresh_drm_dir,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert fresh_drm_res.returncode == 0, fresh_drm_res.stderr
+    assert "RELAYTV_MODE=drm\n" in (fresh_drm_dir / ".env").read_text(encoding="utf-8")
+
+
+def test_bootstrap_review_regressions(tmp_path: Path) -> None:
+    import fcntl
+    import pty
+    import select
+    import termios
+
+    def run_pty(
+        cmd: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        input_bytes: bytes,
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        master_fd, slave_fd = pty.openpty()
+        try:
+            if input_bytes:
+                os.write(master_fd, input_bytes)
+
+            def attach_ctty() -> None:
+                os.setsid()
+                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+            proc = subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=env,
+                stdin=slave_fd,
+                capture_output=True,
+                text=True,
+                preexec_fn=attach_ctty,
+                timeout=10,
+                check=False,
+            )
+            os.close(slave_fd)
+            slave_fd = -1
+            chunks: list[bytes] = []
+            while select.select([master_fd], [], [], 0.05)[0]:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                chunks.append(data)
+            return proc, b"".join(chunks).decode("utf-8", errors="replace")
+        finally:
+            if slave_fd >= 0:
+                os.close(slave_fd)
+            os.close(master_fd)
+
+    remote_dir = tmp_path / "remote"
+    _populate_remote_bundle(remote_dir, "# main bundle")
+    state_dir = tmp_path / "docker-state"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    _write_stateful_fake_docker_and_curl(fake_bin, state_dir, remote_dir)
+
+    base_env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+    base_env.update(
+        PATH=f"{fake_bin}:{base_env.get('PATH', '')}",
+        RELAYTV_BOOTSTRAP_RAW_BASE="https://review.invalid",
+        RELAYTV_BOOTSTRAP_DISCOVER_DOCKER="0",
+        RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+        RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+    )
+
+    # 1. Fresh interactive install prompts "Continue? [y/N]" exactly once (not twice).
+    fresh_dir = tmp_path / "fresh-interactive"
+    fresh_dir.mkdir()
+    fresh_home = tmp_path / "fresh-home"
+    fresh_home.mkdir()
+    fresh_proc, fresh_pty = run_pty(
+        ["bash", str(ROOT_DIR / "install.sh"), "--no-pull", "--no-start", "--mode", "headless"],
+        cwd=fresh_dir,
+        env={**base_env, "HOME": str(fresh_home)},
+        input_bytes=b"y\n",
+    )
+    assert fresh_proc.returncode == 0, f"stderr={fresh_proc.stderr} pty={fresh_pty}"
+    assert fresh_pty.count("Continue? [y/N]") == 1
+
+    # 2. Interactive `install.sh` (without --update) discovers an existing container on a
+    #    sudo-only Docker host where `docker` and `sudo -n docker` fail before `ensure_docker_ready`.
+    if os.geteuid() != 0:
+        sudo_bin = tmp_path / "sudo-bin"
+        sudo_bin.mkdir()
+        opt_install = tmp_path / "opt-sudo-relaytv"
+        (opt_install / "scripts").mkdir(parents=True)
+        shutil.copy2(ROOT_DIR / "docker-compose.release.yml", opt_install / "docker-compose.yml")
+        (opt_install / ".env").write_text(
+            "RELAYTV_MODE=headless\nRELAYTV_CEC_ENABLED=0\n",
+            encoding="utf-8",
+        )
+        sudo_docker = sudo_bin / "docker"
+        sudo_docker.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then\n'
+            "  printf 'Docker Compose version v2.29.0\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            'if [ "${FAKE_SUDO_OK:-0}" != "1" ]; then\n'
+            "  printf 'permission denied\\n' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            'if [ "$1" = "info" ]; then\n'
+            "  printf 'Server Version: 27.0\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            'if [ "$1" = "inspect" ]; then\n'
+            '  case "$*" in\n'
+            f'    *working_dir*) printf "%s\\n" {shlex.quote(str(opt_install))}; exit 0 ;;\n'
+            "  esac\n"
+            "  exit 1\n"
+            "fi\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        sudo_docker.chmod(0o755)
+        fake_sudo = sudo_bin / "sudo"
+        fake_sudo.write_text(
+            "#!/bin/sh\n"
+            'if [ "${1:-}" = "-n" ]; then\n'
+            "  printf 'sudo: a password is required\\n' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            'FAKE_SUDO_OK=1 exec "$@"\n',
+            encoding="utf-8",
+        )
+        fake_sudo.chmod(0o755)
+        fake_systemctl = sudo_bin / "systemctl"
+        fake_systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_systemctl.chmod(0o755)
+        shutil.copy2(fake_bin / "curl", sudo_bin / "curl")
+
+        sudo_home = tmp_path / "sudo-home"
+        sudo_home.mkdir()
+        sudo_proc, sudo_pty = run_pty(
+            ["bash", str(ROOT_DIR / "install.sh"), "--no-pull", "--no-start"],
+            cwd=sudo_home,
+            env={
+                **base_env,
+                "HOME": str(sudo_home),
+                "PATH": f"{sudo_bin}:{os.environ.get('PATH', '')}",
+                "RELAYTV_BOOTSTRAP_DISCOVER_DOCKER": "1",
+            },
+            input_bytes=b"y\n",
+        )
+        assert sudo_proc.returncode == 0, f"stderr={sudo_proc.stderr} pty={sudo_pty}"
+        assert "Existing RelayTV installation detected in:" in sudo_pty
+        assert str(opt_install) in sudo_pty
+        assert "Continue? [y/N]" not in sudo_pty
+        assert list(sudo_home.iterdir()) == []
+
+    # 3. Root / sudo HOME=/root discovers ~${SUDO_USER}/relaytv via getent passwd.
+    sudo_user_home = tmp_path / "home-tvuser"
+    (sudo_user_home / "relaytv" / "scripts").mkdir(parents=True)
+    shutil.copy2(
+        ROOT_DIR / "docker-compose.release.yml",
+        sudo_user_home / "relaytv" / "docker-compose.yml",
+    )
+    (sudo_user_home / "relaytv" / ".env").write_text("RELAYTV_MODE=headless\n", encoding="utf-8")
+    root_shim_bin = tmp_path / "root-shim"
+    root_shim_bin.mkdir()
+    (root_shim_bin / "id").write_text("#!/bin/sh\nprintf '0\\n'\n", encoding="utf-8")
+    (root_shim_bin / "id").chmod(0o755)
+    (root_shim_bin / "getent").write_text(
+        f"#!/bin/sh\nprintf 'tvuser:x:1000:1000::%s:/bin/bash\\n' {shlex.quote(str(sudo_user_home))}\n",
+        encoding="utf-8",
+    )
+    (root_shim_bin / "getent").chmod(0o755)
+    discover_script = (
+        "set -euo pipefail\n"
+        "DISCOVER_DOCKER=0\n"
+        "FORCE_INSTALL=0\n"
+        + "\n".join(
+            _extract_fn(ROOT_DIR / "install.sh", name)
+            for name in (
+                "compose_file_has_local_build",
+                "is_deployed_relaytv_dir",
+                "probe_docker_compose_working_dir",
+                "discover_existing_install_dir",
+            )
+        )
+        + "\ndiscover_existing_install_dir\n"
+    )
+    disc_res = subprocess.run(
+        ["bash", "-c", discover_script],
+        env={
+            "PATH": f"{root_shim_bin}:/usr/bin:/bin",
+            "HOME": "/root",
+            "SUDO_USER": "tvuser",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert disc_res.returncode == 0, disc_res.stderr
+    assert disc_res.stdout.strip() == str((sudo_user_home / "relaytv").resolve())
+
+    # 4. Rolling back / pinning to a pre-updater tag (whose install.sh lacks --update and whose
+    #    scripts/install.sh lacks SAVED_RELAYTV_MODE) keeps the saved install.sh capable of
+    #    --update and --prune on headless/offline hosts without --mode, and subsequent flagless
+    #    updates fetch scripts from that pinned tag rather than skewing main onto the old image.
+    tag_root = tmp_path / "github-raw"
+    _populate_remote_bundle(tag_root / "main", "# main compose")
+    _populate_remote_bundle(tag_root / "v0.13.1", "# v0.13.1 compose")
+    # Simulate pre-updater v0.13.1 install.sh (lacks --update) and v0.13.1 scripts/install.sh
+    # (lacks SAVED_RELAYTV_MODE and sees no live display or connected DRM output).
+    (tag_root / "v0.13.1" / "install.sh").write_text(
+        "#!/usr/bin/env bash\nprintf 'ERROR: legacy install.sh without update flag\\n' >&2\nexit 2\n",
+        encoding="utf-8",
+    )
+    legacy_host_installer = (
+        (ROOT_DIR / "scripts" / "install.sh")
+        .read_text(encoding="utf-8")
+        .replace(
+            'SAVED_RELAYTV_MODE="$(existing_env_value RELAYTV_MODE || true)"',
+            'SAVED_RELAYTV_MODE=""',
+            1,
+        )
+        .replace(
+            'DRM_CONNECTOR_DETECTED="$(detect_connected_drm_connector)"',
+            'DRM_CONNECTOR_DETECTED=""',
+            1,
+        )
+    )
+    legacy_host_installer = legacy_host_installer.replace(
+        "SAVED_RELAYTV_MODE", "LEGACY_DISABLED_MODE"
+    )
+    assert "SAVED_RELAYTV_MODE" not in legacy_host_installer
+    (tag_root / "v0.13.1" / "scripts" / "install.sh").write_text(
+        legacy_host_installer,
+        encoding="utf-8",
+    )
+    branch_curl_log = tmp_path / "branch-curl.log"
+    branch_bin = tmp_path / "branch-bin"
+    branch_bin.mkdir()
+    shutil.copy2(fake_bin / "docker", branch_bin / "docker")
+    for tool in ("loginctl", "systemctl"):
+        (branch_bin / tool).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (branch_bin / tool).chmod(0o755)
+    real_curl = shutil.which("curl")
+    assert real_curl is not None
+    (branch_bin / "curl").write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        'url="${@: -1}"\n'
+        f'printf "%s\\n" "$url" >> {shlex.quote(str(branch_curl_log))}\n'
+        'if [[ "$url" == https://raw.githubusercontent.com/mcgeezy/relaytv/* ]]; then\n'
+        '  rel="${url#https://raw.githubusercontent.com/mcgeezy/relaytv/}"\n'
+        f'  cat {shlex.quote(str(tag_root))}/"$rel"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'exec {shlex.quote(real_curl)} "$@"\n',
+        encoding="utf-8",
+    )
+    (branch_bin / "curl").chmod(0o755)
+
+    pinned_dir = tmp_path / "pinned-install"
+    pinned_dir.mkdir()
+    shutil.copy2(ROOT_DIR / "install.sh", pinned_dir / "install.sh")
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", pinned_dir / "docker-compose.yml")
+    (pinned_dir / ".env").write_text("RELAYTV_MODE=headless\nRELAYTV_CEC_ENABLED=0\n", encoding="utf-8")
+
+    pin_env = {k: v for k, v in os.environ.items() if not k.startswith("RELAYTV_")}
+    pin_env.update(
+        PATH=f"{branch_bin}:{pin_env.get('PATH', '')}",
+        RELAYTV_BOOTSTRAP_DISCOVER_DOCKER="0",
+        RELAYTV_TARGET_USER=pwd.getpwuid(os.getuid()).pw_name,
+        RELAYTV_PI_VIDEO_DEVICES_ENABLED="0",
+    )
+    # Also test piped stdin (`curl ... | bash -s -- --branch v0.13.1`, BASH_SOURCE[0] unset)
+    # WITHOUT passing --mode headless, verifying legacy scripts/install.sh receives saved mode.
+    piped_pin = subprocess.run(
+        ["bash", "-s", "--", "--branch", "v0.13.1", "--no-pull", "--no-start"],
+        input=(ROOT_DIR / "install.sh").read_text(encoding="utf-8"),
+        cwd=pinned_dir,
+        env=pin_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert piped_pin.returncode == 0, piped_pin.stderr
+    assert (pinned_dir / "docker-compose.yml").read_text(encoding="utf-8").startswith(
+        "# v0.13.1 compose\n"
+    )
+    assert "RELAYTV_MODE=headless\n" in (pinned_dir / ".env").read_text(encoding="utf-8")
+    assert "--update" in (pinned_dir / "install.sh").read_text(encoding="utf-8")
+
+    branch_curl_log.write_text("", encoding="utf-8")
+    followup_upd = subprocess.run(
+        [str(pinned_dir / "install.sh"), "--update", "--no-pull", "--no-start"],
+        cwd=pinned_dir,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        timeout=15,
+        env=pin_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert followup_upd.returncode == 0, followup_upd.stderr
+    logged_urls = branch_curl_log.read_text(encoding="utf-8").splitlines()
+    assert any("/v0.13.1/docker-compose.release.yml" in u for u in logged_urls)
+    assert not any("/main/docker-compose.release.yml" in u for u in logged_urls)
+
+    # 4b. Interrupted / truncated download of install.sh (even past line 27 `--update`) must never
+    #     overwrite $INSTALL_DIR/install.sh when piped via stdin and fallback fetch also fails.
+    trunc_bin = tmp_path / "trunc-bin"
+    trunc_bin.mkdir()
+    shutil.copy2(fake_bin / "docker", trunc_bin / "docker")
+    full_install_lines = (ROOT_DIR / "install.sh").read_text(encoding="utf-8").splitlines()
+    truncated_payload = "\n".join(full_install_lines[:60]) + "\nif [\n"
+    assert "--update" in truncated_payload
+    (trunc_bin / "curl").write_text(
+        "#!/bin/bash\n"
+        'url="${@: -1}"\n'
+        'if [[ "$url" == */install.sh ]]; then\n'
+        f"  printf '%s' {shlex.quote(truncated_payload)}\n"
+        "  exit 18\n"
+        "fi\n"
+        'rel="${url#https://review.invalid/}"\n'
+        f'cat {shlex.quote(str(remote_dir))}/"$rel"\n',
+        encoding="utf-8",
+    )
+    (trunc_bin / "curl").chmod(0o755)
+    trunc_dir = tmp_path / "trunc-install"
+    trunc_dir.mkdir()
+    shutil.copy2(ROOT_DIR / "install.sh", trunc_dir / "install.sh")
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", trunc_dir / "docker-compose.yml")
+    (trunc_dir / ".env").write_text("RELAYTV_MODE=headless\nRELAYTV_CEC_ENABLED=0\n", encoding="utf-8")
+    original_saved_install = (trunc_dir / "install.sh").read_text(encoding="utf-8")
+    trunc_res = subprocess.run(
+        ["bash", "-s", "--", "--update", "--no-pull", "--no-start"],
+        input=original_saved_install,
+        cwd=trunc_dir,
+        env={**base_env, "PATH": f"{trunc_bin}:{os.environ.get('PATH', '')}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert trunc_res.returncode != 0
+    assert (trunc_dir / "install.sh").read_text(encoding="utf-8") == original_saved_install
+
+    # 5. Rollback preserves restrictive permissions (0600) on a user-managed override.
+    custom_ovr_dir = tmp_path / "custom-override-install"
+    (custom_ovr_dir / "scripts").mkdir(parents=True)
+    shutil.copy2(ROOT_DIR / "docker-compose.release.yml", custom_ovr_dir / "docker-compose.yml")
+    (custom_ovr_dir / ".env").write_text("RELAYTV_MODE=headless\nRELAYTV_CEC_ENABLED=0\n")
+    custom_ovr = custom_ovr_dir / "docker-compose.override.yml"
+    custom_ovr.write_text("services:\n  relaytv:\n    environment:\n      SECRET_KEY: keep\n")
+    custom_ovr.chmod(0o600)
+    ovr_fail = subprocess.run(
+        ["bash", str(ROOT_DIR / "install.sh"), "--update", "--no-pull", "--no-start"],
+        cwd=custom_ovr_dir,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        timeout=15,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ovr_fail.returncode != 0
+    assert "Update failed during runtime configuration; rolling back" in ovr_fail.stderr
+    assert stat.S_IMODE(custom_ovr.stat().st_mode) == 0o600
+
+    # 6. Git worktrees (.git file) and single-line `build: .` compose files are rejected without --force.
+    wt_dir = tmp_path / "git-worktree"
+    wt_dir.mkdir()
+    (wt_dir / ".git").write_text("gitdir: /tmp/somewhere/.git/worktrees/wt\n", encoding="utf-8")
+    wt_res = subprocess.run(
+        ["bash", str(ROOT_DIR / "install.sh"), "--dir", str(wt_dir), "--yes", "--no-pull", "--no-start"],
+        cwd=tmp_path,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert wt_res.returncode != 0
+    assert "looks like a source checkout" in wt_res.stderr
+
+    inline_build_dir = tmp_path / "inline-build"
+    inline_build_dir.mkdir()
+    (inline_build_dir / "docker-compose.yml").write_text(
+        "services:\n  relaytv:\n    build: .\n",
+        encoding="utf-8",
+    )
+    ib_res = subprocess.run(
+        [
+            "bash",
+            str(ROOT_DIR / "install.sh"),
+            "--dir",
+            str(inline_build_dir),
+            "--yes",
+            "--no-pull",
+            "--no-start",
+        ],
+        cwd=tmp_path,
+        env=base_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ib_res.returncode != 0
+    assert "source-build compose file" in ib_res.stderr
+
+
+def _extract_fn(script_path: Path, func_name: str) -> str:
+    text = script_path.read_text(encoding="utf-8")
+    marker = f"{func_name}() {{"
+    start = text.index(marker)
+    depth = 0
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    raise AssertionError(f"Could not extract {func_name} from {script_path}")

@@ -72,6 +72,10 @@ has_controlling_tty() {
 }
 
 CLEAN_AUTODETECT="${RELAYTV_INSTALL_CLEAN_AUTODETECT:-1}"
+INSTALL_MODE_EXPLICIT="0"
+if [ "${RELAYTV_INSTALL_MODE+x}" = "x" ] && [ -n "${RELAYTV_INSTALL_MODE}" ]; then
+  INSTALL_MODE_EXPLICIT="1"
+fi
 INSTALL_MODE="${RELAYTV_INSTALL_MODE:-auto}"
 INSTALL_RUNTIME_PROFILE="${RELAYTV_INSTALL_RUNTIME_PROFILE:-native-qt}"
 while [[ $# -gt 0 ]]; do
@@ -90,6 +94,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       INSTALL_MODE="$1"
+      INSTALL_MODE_EXPLICIT="1"
       ;;
     --runtime-profile)
       shift
@@ -368,6 +373,12 @@ else
     X11_OVERLAY_VAL=""
   fi
 fi
+SAVED_RELAYTV_MODE="$(existing_env_value RELAYTV_MODE || true)"
+SAVED_DRM_CONNECTOR="$(existing_env_value RELAYTV_DRM_CONNECTOR || true)"
+SAVED_QT_QPA_PLATFORM="$(existing_env_value QT_QPA_PLATFORM || true)"
+SAVED_DISPLAY="$(existing_env_value DISPLAY || true)"
+SAVED_WAYLAND_DISPLAY="$(existing_env_value WAYLAND_DISPLAY || true)"
+SAVED_XDG_RUNTIME_DIR="$(existing_env_value XDG_RUNTIME_DIR || true)"
 IMAGE_REF_VAL="$(resolve_saved_or_env_scalar RELAYTV_IMAGE_REF "")"
 HEADLESS_REMOTE_ENABLED_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_REMOTE_ENABLED "")"
 HEADLESS_REMOTE_DISPLAY_VAL="$(resolve_saved_or_env_scalar RELAYTV_HEADLESS_REMOTE_DISPLAY "")"
@@ -707,15 +718,24 @@ if [ -n "$DRM_CONNECTOR_DETECTED" ]; then
   DRM_CONNECTED="1"
 fi
 
+SAVED_MODE_FALLBACK_USED="0"
 MODE=""
 if [ "$INSTALL_MODE" != "auto" ]; then
   MODE="$INSTALL_MODE"
+elif [ "$INSTALL_MODE_EXPLICIT" = "0" ] && [ "$SAVED_RELAYTV_MODE" = "headless" ]; then
+  MODE="headless"
 elif [ "$XDG_SESSION_TYPE_VAL" = "wayland" ] || [ -n "$WAYLAND_DISPLAY_VAL" ]; then
   MODE="wayland"
 elif [ "$XDG_SESSION_TYPE_VAL" = "x11" ] || [ -n "$DISPLAY_VAL" ]; then
   MODE="x11"
+elif [ "$INSTALL_MODE_EXPLICIT" = "0" ] && { [ "$SAVED_RELAYTV_MODE" = "wayland" ] || [ "$SAVED_RELAYTV_MODE" = "x11" ]; }; then
+  MODE="$SAVED_RELAYTV_MODE"
+  SAVED_MODE_FALLBACK_USED="1"
 elif [ "$DRM_CONNECTED" = "1" ]; then
   MODE="drm"
+elif [ "$INSTALL_MODE_EXPLICIT" = "0" ] && [ "$SAVED_RELAYTV_MODE" = "drm" ]; then
+  MODE="drm"
+  SAVED_MODE_FALLBACK_USED="1"
 fi
 
 if [ -z "$MODE" ]; then
@@ -726,9 +746,48 @@ if [ -z "$MODE" ]; then
 fi
 
 if [ "$MODE" = "drm" ] && [ "$DRM_CONNECTED" != "1" ]; then
-  say "ERROR: DRM/KMS mode requested, but no connected DRM output was detected." >&2
-  say "Connect an HDMI/DP display and re-run ./scripts/install.sh." >&2
-  exit 3
+  if [ "$INSTALL_MODE_EXPLICIT" = "0" ] && [ "$SAVED_RELAYTV_MODE" = "drm" ]; then
+    SAVED_MODE_FALLBACK_USED="1"
+  else
+    say "ERROR: DRM/KMS mode requested, but no connected DRM output was detected." >&2
+    say "Connect an HDMI/DP display and re-run ./scripts/install.sh." >&2
+    exit 3
+  fi
+fi
+
+if [ "$SAVED_MODE_FALLBACK_USED" = "1" ]; then
+  if [ "$MODE" = "drm" ]; then
+    say "WARN: No active display session or connected DRM output detected; preserving saved RELAYTV_MODE=drm from .env."
+  else
+    say "WARN: No active graphical session detected; preserving saved RELAYTV_MODE=${MODE} from .env."
+  fi
+  if [ -n "$SAVED_XDG_RUNTIME_DIR" ] && { [ "$CLEAN_AUTODETECT" = "1" ] || [ -z "${XDG_RUNTIME_DIR:-}" ]; }; then
+    XDG_RUNTIME_DIR_VAL="$SAVED_XDG_RUNTIME_DIR"
+  fi
+  case "$MODE" in
+    x11)
+      XDG_SESSION_TYPE_VAL="x11"
+      if [ -z "$DISPLAY_VAL" ]; then
+        if [ -n "$SAVED_DISPLAY" ]; then
+          DISPLAY_VAL="$SAVED_DISPLAY"
+        elif [ "$CLEAN_AUTODETECT" = "0" ]; then
+          DISPLAY_VAL="$(find_host_x11_display || true)"
+        fi
+        if [ -z "$DISPLAY_VAL" ]; then
+          DISPLAY_VAL=":0"
+        fi
+      fi
+      ;;
+    wayland)
+      XDG_SESSION_TYPE_VAL="wayland"
+      if [ -z "$WAYLAND_DISPLAY_VAL" ]; then
+        WAYLAND_DISPLAY_VAL="${SAVED_WAYLAND_DISPLAY:-wayland-0}"
+      fi
+      if [ -z "$DISPLAY_VAL" ] && [ -n "$SAVED_DISPLAY" ]; then
+        DISPLAY_VAL="$SAVED_DISPLAY"
+      fi
+      ;;
+  esac
 fi
 
 # Explicit non-desktop modes must not inherit host desktop sockets or displays.
@@ -752,14 +811,14 @@ fi
 
 # Wayland sessions often expose Xwayland for xcb delegate runtime; infer DISPLAY
 # when missing so overlay notifications can stay visible on this host profile.
-if [ "$MODE" = "wayland" ] && [ -z "$DISPLAY_VAL" ]; then
+if [ "$MODE" = "wayland" ] && [ -z "$DISPLAY_VAL" ] && [ "$SAVED_MODE_FALLBACK_USED" != "1" ]; then
   DISPLAY_VAL="$(find_host_x11_display || true)"
 fi
 
 compose_supports_local_build() {
   local compose_file="$ROOT/docker-compose.yml"
   [ -f "$compose_file" ] || return 0
-  grep -Eq '^[[:space:]]*build:[[:space:]]*$' "$compose_file"
+  grep -Eq '^[[:space:]]*build:([[:space:]]|$|#)' "$compose_file"
 }
 
 uses_standard_release_image() {
@@ -776,6 +835,13 @@ uses_standard_release_image() {
     [[ "$ref_without_digest" =~ ^ghcr\.io/mcgeezy/relaytv:v?[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
 }
 
+if [ -z "$QT_QPA_PLATFORM_VAL" ] && [ "$MODE" = "$SAVED_RELAYTV_MODE" ] && [ -n "$SAVED_QT_QPA_PLATFORM" ]; then
+  case "$MODE:$SAVED_QT_QPA_PLATFORM" in
+    wayland:wayland|wayland:xcb*|x11:xcb*|x11:x11)
+      QT_QPA_PLATFORM_VAL="$SAVED_QT_QPA_PLATFORM"
+      ;;
+  esac
+fi
 if [ -z "$QT_QPA_PLATFORM_VAL" ]; then
   case "$MODE" in
     wayland) QT_QPA_PLATFORM_VAL="wayland" ;;
@@ -865,7 +931,7 @@ fi
 if [ "$HOST_PROFILE" = "raspi" ] && [ "$MODE" = "wayland" ] && [ "$QT_SHELL_MODULE_VAL" = "relaytv_app.qt_shell_app" ]; then
   # Raspberry Pi Wayland/libmpv is not reliably visible with native Wayland Qt.
   # Prefer Xwayland unless the operator explicitly selected a Qt platform.
-  if [ "$QT_QPA_PLATFORM_FROM_ENV" != "1" ]; then
+  if [ "$QT_QPA_PLATFORM_FROM_ENV" != "1" ] && ! { [ "$SAVED_RELAYTV_MODE" = "wayland" ] && [ "$SAVED_QT_QPA_PLATFORM" = "wayland" ]; }; then
     QT_QPA_PLATFORM_VAL="xcb"
   fi
 fi
@@ -941,7 +1007,7 @@ if [ -z "$VIDEO_MODE_VAL" ]; then
 fi
 
 if [ -z "$DRM_CONNECTOR_VAL" ] && [ "$MODE" = "drm" ]; then
-  DRM_CONNECTOR_VAL="$DRM_CONNECTOR_DETECTED"
+  DRM_CONNECTOR_VAL="${DRM_CONNECTOR_DETECTED:-$SAVED_DRM_CONNECTOR}"
 fi
 
 detect_render_gid() {
