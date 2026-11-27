@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.2](https://github.com/mcgeezy/relaytv/compare/v0.13.1...v0.13.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* redesign TV overlay toast notifications with electric-blue smoked-glass styling and bezel animations ([#185](https://github.com/mcgeezy/relaytv/issues/185)) ([a736ca1](https://github.com/mcgeezy/relaytv/commit/a736ca1e7a1965405d75d3b4d5739b4306dc243d))
+* support in-place installer updates with rollback and refresh docs ([#187](https://github.com/mcgeezy/relaytv/issues/187)) ([631d4bd](https://github.com/mcgeezy/relaytv/commit/631d4bd226410a136b6970bf335d31de70a64b25))
+
 ## [0.13.1](https://github.com/mcgeezy/relaytv/compare/v0.13.0...v0.13.1) (2026-11-26)
 
 
